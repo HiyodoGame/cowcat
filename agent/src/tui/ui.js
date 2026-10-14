@@ -5,8 +5,9 @@
 import { Screen } from './screen.js';
 import {
   renderHeader, renderStatus, renderCard, createCard, buildScreen,
-  wrapText, truncateAnsi, visibleLen, SPINNER, renderUserBubble,
+  wrapText, truncateAnsi, visibleLen, padLine, SPINNER, renderUserBubble,
 } from './render.js';
+import { renderFileCard, renderGroup } from '../diffcard.js';
 import { LineEditor } from '../lineeditor.js';
 import { analyzeContext } from '../contextviz.js';
 import { getTheme } from './theme.js';
@@ -14,6 +15,26 @@ import { createMarkdownRenderer } from './markdown.js';
 import { highlightCode } from './highlight.js';
 
 const SPINNER_MS = 150;
+
+// Approval card frame: permission-tinted mark/border column (rounded corners
+// arrive with the Task 10 input-box restyle). Body folds to the quip; ctrl+o
+// expands to the fullLines (quip + diff preview rows).
+function renderApprovalCard(card, { width, colors = true, theme = null } = {}) {
+  const perm = theme?.permission ?? '\x1b[36m';
+  const p = (s) => (colors ? `${perm}${s}\x1b[0m` : s);
+  const lines = [padLine(`${p('✓')} ${card.title}`, width)];
+  const shown = card.expanded ? card.fullLines : card.summaryLines;
+  for (const l of shown.slice(0, card.expanded ? 30 : 3)) {
+    lines.push(padLine(`  ${p('│')} ${truncateAnsi(l, width - 4)}`, width));
+  }
+  if (!card.expanded && card.fullLines.length > 3) {
+    lines.push(padLine(`  ${p('│')} ··· (${card.fullLines.length} lines) ···`, width));
+  }
+  if (card.expanded || card.fullLines.length > 3) {
+    lines.push(padLine(`  ${p('· ctrl+o to expand/collapse')}`, width));
+  }
+  return lines;
+}
 
 export class TuiUI {
   constructor({
@@ -197,19 +218,34 @@ export class TuiUI {
 
   // --- approvals / questions -------------------------------------------------------
 
-  // Inline approval card; y/n/a keys resolve it.
-  approve(toolName, summary, { dangerous = false } = {}) {
+  // Inline approval card; y/n/a keys resolve it. The prospective diff from the
+  // loop (preview/group) folds into the expandable body — same grouping rules
+  // as the line-mode UI, rendered by diffcard.js.
+  approve(toolName, summary, { dangerous = false, preview = null, group = null } = {}) {
     return new Promise((resolve) => {
       const card = createCard('approval', `${this.color('\x1b[33m', '批准请求')} ${toolName} ${truncateAnsi(String(summary || ''), 50)}`);
       card.status = 'done';
-      card.summaryLines = [(this.lang === 'zh' ? '我要跑这个了，盯着它看三秒。' : 'Running this. Stare for three seconds.') + (dangerous ? ' ⚠' : '')];
-      card.fullLines = [summary || ''];
+      const quip = (this.lang === 'zh' ? '我要跑这个了，盯着它看三秒。' : 'Running this. Stare for three seconds.') + (dangerous ? ' ⚠' : '');
+      const previewLines = this._approvalPreviewLines(preview, group);
+      card.summaryLines = [quip];
+      card.fullLines = previewLines.length ? [quip, ...previewLines] : [summary || ''];
       const entry = { kind: 'card', card, _rendered: null };
       this.entries.push(entry);
       this._follow();
       this._pendingApproval = { card, entry, resolve };
       this._draw();
     });
+  }
+
+  _approvalPreviewLines(preview, group) {
+    if (!preview) return [];
+    const lines = [];
+    const total = group?.total ?? 1;
+    if (total > 1) lines.push(`  ┌─ change ${group.index}/${total}`);
+    lines.push(...(total > 3 && group
+      ? renderGroup(group.previews, { colors: this.colors })
+      : renderFileCard(preview, { colors: this.colors })));
+    return lines;
   }
 
   askQuestions(questions) {
@@ -425,7 +461,9 @@ export class TuiUI {
     if (entry._rendered && entry._rendered.width === width) return entry._rendered.lines;
     let lines;
     if (entry.kind === 'card') {
-      lines = renderCard(entry.card, { width, spinFrame: this.spinFrame, colors: this.colors, theme: this.theme });
+      lines = entry.card.kind === 'approval'
+        ? renderApprovalCard(entry.card, { width, colors: this.colors, theme: this.theme })
+        : renderCard(entry.card, { width, spinFrame: this.spinFrame, colors: this.colors, theme: this.theme });
     } else if (entry.kind === 'user') {
       lines = renderUserBubble(entry.text, width, this.theme, this.colors);
     } else if (entry.kind === 'assistant') {
