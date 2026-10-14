@@ -116,7 +116,9 @@ test('TUI screen: enter/leave writes alternate-screen sequences', () => {
   assert.ok(all.includes('\x1b[?1049l'), 'alternate screen off');
   assert.ok(all.includes('\x1b[?25h'), 'cursor restored');
   assert.ok(all.includes('\x1b[H'), 'frame home');
-  assert.ok(all.includes('a\nb'), 'frame content written');
+  assert.ok(all.includes('\x1b[1;1Ha'), 'absolute-addressed frame content');
+  assert.ok(all.includes('\x1b[2;1Hb'), 'second row absolute address');
+  assert.ok(!all.slice(all.indexOf('\x1b[H')).includes('\n'), 'no bare newline inside a frame');
 });
 
 test('TUI wiring: bin must start the TUI (regression — missing tui.start() exits instantly on TTY)', async () => {
@@ -276,4 +278,130 @@ test('TUI app: tool cards update in place and fold', async () => {
   // no active card anymore -> error printed as its own entry path is fine
   tui.close();
   assert.equal(entry.card.status, 'done');
+});
+
+// --- regression wave: slash menu, hardware cursor, absolute-addressed redraw ---
+
+const SLASH_COMMANDS = ['/clear', '/exit', '/help', '/output', '/theme'];
+
+function headlessTui2({ completions = null, realScreen = false } = {}) {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.columns = 100;
+  output.rows = 30;
+  const chunks = [];
+  output.on('data', (d) => chunks.push(d.toString()));
+  const tui = new TuiUI({
+    input, output, colors: false, version: '0.10.1', cwd: '/x',
+    getModel: () => 'm', getMode: () => 'default', getCost: () => '',
+    getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    completions: completions ? () => SLASH_COMMANDS : null,
+    capabilities: { colors: '256', altScreen: true, osc8: false },
+  });
+  if (!realScreen) tui.screen.draw = () => {};
+  tui.start();
+  return { tui, input, chunks };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// candidate row helper: the only input-box line that starts with a blank + '/'
+const slashRow = (box) => box.find((l) => l.startsWith(' /'));
+
+test('TUI app: slash menu auto-opens on /, filters, Esc dismisses without interrupt', async () => {
+  const { tui, input } = headlessTui2({ completions: true });
+  let interrupts = 0;
+  tui.onInterrupt = () => interrupts++;
+  const p = tui.readLine();
+  input.write('/');
+  await sleep(10);
+  let row = slashRow(tui._inputBox());
+  assert.ok(row, 'candidate row shown after typing /');
+  for (const c of SLASH_COMMANDS) assert.ok(row.includes(c), `menu lists ${c}`);
+  assert.ok(!row.includes('1/'), 'no n/m counter on slash menu');
+
+  input.write('th');
+  await sleep(10);
+  row = slashRow(tui._inputBox());
+  assert.ok(row, 'candidate row still shown');
+  assert.ok(row.includes('/theme'), 'narrowed to /theme');
+  assert.ok(!row.includes('/help'), 'other candidates filtered out');
+
+  input.write('\x1b'); // Esc: dismiss the menu, must NOT interrupt
+  await sleep(30);
+  assert.equal(interrupts, 0, 'Esc on open menu does not interrupt');
+  assert.equal(tui.editor.text, '/th', 'Esc keeps the draft text');
+  assert.ok(!slashRow(tui._inputBox()), 'menu dismissed after Esc');
+
+  input.write('e'); // any edit re-opens the menu
+  await sleep(10);
+  row = slashRow(tui._inputBox());
+  assert.ok(row && row.includes('/theme'), 'menu reappears after editing');
+
+  input.write('\t'); // Tab cycling still works on top of the slash menu
+  await sleep(10);
+  assert.equal(tui.editor.text, '/theme', 'Tab completes the filtered prefix');
+  input.write('\r');
+  assert.equal(await p, '/theme');
+  tui.close();
+});
+
+test('TUI app: slash menu hidden while a bare command is exact or has arguments', async () => {
+  const { tui, input } = headlessTui2({ completions: true });
+  tui.readLine();
+  input.write('/clear');
+  await sleep(10);
+  assert.ok(!slashRow(tui._inputBox()), 'exact command match: no menu');
+  input.write(' x');
+  await sleep(10);
+  assert.ok(!slashRow(tui._inputBox()), 'arguments after the command word: no menu');
+  tui.close();
+});
+
+test('TUI app: hardware cursor lands on the editing point inside the input box', async () => {
+  const { tui, input, chunks } = headlessTui2({ completions: true, realScreen: true });
+  const p = tui.readLine();
+  chunks.length = 0;
+  input.write('/');
+  await sleep(10);
+  const all = chunks.join('');
+  const height = 29; // max(10, output.rows - 1)
+  const inputLen = tui._inputBox().length;
+  const row = height - inputLen - 1 + 2;      // inputStart + frame top + first body row
+  const col = 2 + 1;                          // border '│ ' + 0-based cursor col after '/'
+  assert.ok(
+    all.includes(`\x1b[${row + 1};${col + 1}H\x1b[?25h`),
+    `expected cursor seq at row=${row + 1} col=${col + 1}`,
+  );
+  input.write('\r');
+  await p;
+  tui.close();
+});
+
+test('TUI screen: absolute addressing, no bare newlines, shrink clears the tail', () => {
+  const chunks = [];
+  const out = { write: (s) => chunks.push(s), columns: 80, rows: 24 };
+  const scr = new Screen({ input: { on: () => {}, off: () => {}, once: () => {}, setRawMode: () => {} }, output: out });
+  scr.enter();
+  chunks.length = 0;
+  scr.draw(['aa', 'bb', 'cc']);
+  scr.draw(['aa', 'BX', 'cc']);   // change one row
+  scr.draw(['aa', 'BX']);         // shrink: row 3 must be erased
+  const all = chunks.join('');
+  assert.ok(all.includes('\x1b[2;1H'), 'dirty row addressed absolutely');
+  assert.ok(!all.includes('\n'), 'frame writer never emits bare newlines');
+  assert.ok(all.includes('\x1b[3;1H\x1b[J'), 'shrink erases the leftover tail');
+  scr.draw(['aa', 'BX'], { row: 1, col: 2 });
+  assert.ok(chunks.join('').includes('\x1b[2;3H\x1b[?25h'), 'cursor param positions and shows the cursor');
+  scr.leave();
+});
+
+test('TUI app: submitting a line leaks no bare newline into the alternate screen', async () => {
+  const { tui, input, chunks } = headlessTui2({ realScreen: true });
+  chunks.length = 0;
+  const p = tui.readLine();
+  input.write('hi\r');
+  await p;
+  assert.ok(!chunks.join('').includes('\n'), '_finishRead must not write a bare newline while the screen is active');
+  tui.close();
 });

@@ -1,5 +1,12 @@
 # CowCat changelog
 
+## 0.10.1（2026-10-15）— TUI 热修复：光标、斜杠菜单、幽灵行
+
+- **输入框硬件光标**：`Screen.draw` 改为绝对寻址重绘（每行 `\x1b[{n};1H`，不再写裸 `'\n'`），帧末按 0 基 `{row, col}` 定位并显示硬件光标——编辑时光标真实落在输入框 caret 处，流式输出期间保持隐藏（src/tui/screen.js、src/tui/ui.js）。
+- **修复幽灵重叠行**：根因是帧绘制用相对移动 + 裸 `'\n'`，画完整帧后硬件光标停在终端末行，`_finishRead` 再写一个裸 `'\n'` 使备用屏整体上滚一行，此后逐消息累积漂移、旧行残留。绝对寻址 + `_finishRead` 守卫（alt-screen 内严禁裸写）后从机制上免疫（src/tui/screen.js、src/tui/ui.js）。
+- **自动斜杠菜单**：输入 `/` 即弹出可用命令候选（不高亮、无计数器），继续输入实时过滤；Esc 关闭菜单但不中断任务，任意编辑后菜单自动重现；Tab 循环补全行为不变（src/tui/ui.js，配合 LineEditor 新增 `rev` 变更计数器 src/lineeditor.js）。
+- **测试**：tui.test.mjs 新增 4 组回归（斜杠菜单、光标定位、绝对寻址绘制、submit 无裸换行泄漏），全量 326 → 331 passed / 0 failed。
+
 ## 0.10.0（2026-10-14）— P4：TUI 全面翻新
 
 - **字素宽度测量**：基于 Intl.Segmenter 的 grapheme 遍历 + CJK/emoji 宽度表，东亚文字与 emoji 在表格、边框、对齐场景下不再错位（src/tui/wcwidth.js）。

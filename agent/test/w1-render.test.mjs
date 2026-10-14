@@ -72,27 +72,27 @@ test('screen: draw diffs against lastLines, skipping unchanged rows', () => {
   scr.leave();
 });
 
-test('screen: identical frame writes nothing', () => {
-  const { scr, chunks } = fakeScreen();
+test('screen: identical frame writes nothing but the cursor tail', () => {
+  const { scr, chunks, last } = fakeScreen();
   scr.draw(['x', 'y']);
   const n = chunks.length;
   scr.draw(['x', 'y']);
-  assert.equal(chunks.length, n, 'no output for an unchanged frame');
+  assert.equal(chunks.length, n + 1, 'unchanged frame: one write, cursor tail only');
+  assert.equal(last(), '\x1b[?25l', 'no row content rewritten');
   scr.leave();
 });
 
-test('screen: re-entering after leave resets the diff state (full redraw, no stale cursor row)', () => {
+test('screen: re-entering after leave resets the diff state (full redraw via absolute addressing)', () => {
   const { scr, chunks } = fakeScreen();
   scr.draw(['a', 'b']);
   const beforeReenter = chunks.length;
   scr.leave();
   scr.enter();
   assert.equal(scr.lastLines, null);
-  assert.equal(scr._cursorRow, 0);
   scr.draw(['a', 'b']);
   const redrawn = chunks.slice(beforeReenter).join('');
   assert.ok(redrawn.includes('\x1b[H'), 'first frame after re-enter homes the cursor');
-  assert.ok(redrawn.includes('a\n') && redrawn.includes('b'), 'rows rewritten in full');
+  assert.ok(redrawn.includes('\x1b[1;1Ha') && redrawn.includes('\x1b[2;1Hb'), 'rows rewritten in full at absolute addresses');
   scr.leave();
 });
 

@@ -8,10 +8,12 @@ export class LineEditor {
     this.completions = completions; // () => string[] of "/name" entries
     this.fileCompletions = fileCompletions; // (prefix) => string[] of "@path" entries
     this.history = [];
+    this.rev = 0; // bumped on every text mutation; UI watches it to re-open dismissed menus
     this.reset();
   }
 
   reset() {
+    this.rev++;
     this.text = '';
     this._cursor = 0;      // code-unit offset into text
     this.hIdx = null;      // index into history while browsing
@@ -31,7 +33,7 @@ export class LineEditor {
 
   _browsing() { return this.hIdx !== null; }
 
-  _setText(s) { this.text = s; this._cursor = s.length; }
+  _setText(s) { this.rev++; this.text = s; this._cursor = s.length; }
 
   _historyPrev() {
     if (!this.history.length) return;
@@ -91,6 +93,7 @@ export class LineEditor {
 
   insert(ch) {
     const s = String(ch);
+    this.rev++;
     this.text = this.text.slice(0, this._cursor) + s + this.text.slice(this._cursor);
     this._cursor += s.length;
     this.tabBase = null; // typing invalidates tab cycling
@@ -110,12 +113,14 @@ export class LineEditor {
 
   deleteBack() {
     if (this._cursor === 0) return;
+    this.rev++;
     this.text = this.text.slice(0, this._cursor - 1) + this.text.slice(this._cursor);
     this._cursor--;
   }
 
   deleteForward() {
     if (this._cursor >= this.text.length) return;
+    this.rev++;
     this.text = this.text.slice(0, this._cursor) + this.text.slice(this._cursor + 1);
   }
 
@@ -126,18 +131,21 @@ export class LineEditor {
     let i = this._cursor;
     if (isWord(this.text[i - 1])) { while (i > 0 && isWord(this.text[i - 1])) i--; }
     else { while (i > 0 && !isWord(this.text[i - 1])) i--; }
+    this.rev++;
     this.text = this.text.slice(0, i) + this.text.slice(this._cursor);
     this._cursor = i;
   }
 
   killToStart() {
     const i = this.text.lastIndexOf('\n', this._cursor - 1) + 1;
+    this.rev++;
     this.text = this.text.slice(0, i) + this.text.slice(this._cursor);
     this._cursor = i;
   }
 
   killToEnd() {
     const i = this.text.indexOf('\n', this._cursor);
+    this.rev++;
     this.text = this.text.slice(0, this._cursor) + this.text.slice(i === -1 ? this.text.length : i);
   }
 

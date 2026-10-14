@@ -67,6 +67,8 @@ export class TuiUI {
     this.onInterrupt = null;
     this.multiline = false;
     this._reading = null;
+    this._menuDismissed = false;  // slash menu dismissed via Esc until the text changes
+    this._lastRev = 0;
     this._promptText = '';
     this._pendingApproval = null;
     this._meta = { version, cwd, getModel, getMode, getCost, getConfig, getMessages };
@@ -316,7 +318,9 @@ export class TuiUI {
     this._reading = null;
     this._resolveRead = null;
     this._promptText = '';
-    this.output.write('\n');
+    // inside the alternate screen a bare newline would scroll the whole frame;
+    // frame drawing is the only writer there
+    if (!this.screen.active) this.output.write('\n');
     r(line);
   }
 
@@ -347,6 +351,11 @@ export class TuiUI {
       this._handleKey(key);
     }
     this._keyBuf = buf;
+    // any text change re-opens an Esc-dismissed slash menu
+    if (this.editor.rev !== this._lastRev) {
+      this._menuDismissed = false;
+      this._lastRev = this.editor.rev;
+    }
     this._draw();
   }
 
@@ -384,8 +393,9 @@ export class TuiUI {
         if (!this.multiline) this.multiline = true;
         else this.editor.insert('\n');
         break;
-      case '\x1b': // Esc: cancel completion candidates, else interrupt, else clear the line
+      case '\x1b': // Esc: cancel tab completion, dismiss the slash menu, else interrupt, else clear
         if (this.editor.tabBase !== null) this.editor.cancelCompletion();
+        else if (this._slashCandidates().length) this._menuDismissed = true;
         else if (this.onInterrupt) { this.onInterrupt(); }
         else this.editor.reset();
         break;
@@ -431,6 +441,16 @@ export class TuiUI {
     });
   }
 
+  // Auto slash menu: while the draft is a bare command word ("/th", no args)
+  // and no Tab cycle is active, offer the completions that extend it. Esc
+  // dismisses until the text changes (see _onKeys).
+  _slashCandidates() {
+    const ed = this.editor;
+    if (ed.tabBase !== null || this._menuDismissed === true) return [];
+    if (!this.completions || !/^\/[^\s]*$/.test(ed.text)) return [];
+    return this.completions(ed.text).filter((c) => c.startsWith(ed.text) && c !== ed.text).sort();
+  }
+
   _inputBox() {
     const w = this._size().width;
     const placeholder = this._promptText || (this.lang === 'zh'
@@ -449,7 +469,14 @@ export class TuiUI {
       const shown = ed.tabCandidates.map((c, i) => (i === idx ? this.color(this.theme.brand, c) : this.color('\x1b[90m', c)));
       let row = ' ' + shown.join(this.color('\x1b[90m', '  '));
       if (idx < ed.tabCandidates.length) row += this.color('\x1b[90m', `  ${idx + 1}/${ed.tabCandidates.length}`);
-      lines.push(row);
+      lines.push(truncateAnsi(row, w));
+    } else {
+      // auto slash menu: same row, no highlight, no counter
+      const cands = this._slashCandidates();
+      if (cands.length) {
+        const row = ' ' + cands.map((c) => this.color('\x1b[90m', c)).join(this.color('\x1b[90m', '  '));
+        lines.push(truncateAnsi(row, w));
+      }
     }
     if (this.multiline) lines.push(` ${this.color('\x1b[90m', this.lang === 'zh' ? '[多行模式 Ctrl+J 退出]' : '[multiline Ctrl+J to exit]')}`);
     return lines;
@@ -529,15 +556,27 @@ export class TuiUI {
   _draw() {
     if (!this.screen.active) return;
     const { width, height } = this._size();
+    const input = this._inputBox();
     const screen = buildScreen({
       header: this._header(),
       transcript: this._flat(),
-      input: this._inputBox(),
+      input,
       status: this._status(),
       width, height,
       scroll: this.scroll,
     });
-    this.screen.draw(screen);
+    // While editing, place the hardware cursor at the editor's caret inside
+    // the input box; otherwise leave it hidden (streaming output needs none).
+    let cursor = null;
+    if (this._reading) {
+      const { cursorRow, cursorCol } = this.editor.render(width);
+      const bodyW = width - 4; // '│ ' + body + ' │'
+      // buildInputBox left-scrolls the last row when the caret overflows it
+      const visibleCursorCol = cursorCol - Math.max(0, cursorCol - bodyW + 1);
+      const inputStart = height - input.length - 1;
+      cursor = { row: inputStart + 2 + cursorRow, col: 2 + visibleCursorCol };
+    }
+    this.screen.draw(screen, cursor);
   }
 
   _tick() {

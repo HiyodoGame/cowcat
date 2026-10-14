@@ -9,7 +9,6 @@ export class Screen {
     this.active = false;
     this.lastHeight = 0;
     this.lastLines = null;
-    this._cursorRow = 0;
     this._onExit = () => this.leave();
   }
 
@@ -17,7 +16,6 @@ export class Screen {
     if (this.active) return;
     this.active = true;
     this.lastLines = null;
-    this._cursorRow = 0;
     this.output.write('\x1b[?1049h\x1b[?25l\x1b[H'); // alt screen, hide cursor
     process.once('exit', this._onExit);
     process.once('SIGINT', this._onExit);
@@ -31,33 +29,32 @@ export class Screen {
     process.removeListener('SIGINT', this._onExit);
   }
 
-  // Diff draw: track the cursor row below the last frame; on change, move to
-  // the first dirty row, rewrite only the dirty rows, and erase rows left
-  // over from a taller previous frame.
-  draw(lines) {
+  // Diff draw with absolute addressing: every row is written at its own
+  // coordinate (`\x1b[{row};1H`), never via relative moves or bare newlines,
+  // so a full-width row cannot trigger a pending-wrap scroll and the frame is
+  // immune to drift. `cursor` is a 0-based {row, col} frame coordinate: when
+  // given, the hardware cursor is placed there and shown (editing); otherwise
+  // it stays hidden (streaming output needs no cursor).
+  draw(lines, cursor = null) {
     if (!this.active) return;
     const prev = this.lastLines;
     let start = 0;
     if (prev) {
       while (start < lines.length && start < prev.length && lines[start] === prev[start]) start++;
-      if (start === lines.length && lines.length === prev.length) return;
     }
     let lastDirty = -1;
     for (let i = start; i < lines.length; i++) {
-      if (i >= (prev ? prev.length : 0) || lines[i] !== prev[i]) lastDirty = i;
+      if (!prev || i >= prev.length || lines[i] !== prev[i]) lastDirty = i;
     }
-    if (prev && prev.length > lines.length) lastDirty = lines.length - 1;
+    const shrink = prev !== null && prev.length > lines.length;
+    if (shrink) lastDirty = Math.max(lastDirty, lines.length - 1);
     const parts = [];
     if (!prev) parts.push('\x1b[H');
-    else if (this._cursorRow > start) parts.push(`\x1b[${this._cursorRow - start}A`);
-    else if (this._cursorRow < start) parts.push(`\x1b[${start - this._cursorRow}B`);
-    for (let i = start; i <= lastDirty; i++) parts.push(lines[i], '\n');
-    if (prev && prev.length > lines.length) {
-      if (lines.length > lastDirty + 1) parts.push(`\x1b[${lines.length - lastDirty - 1}B`);
-      parts.push('\x1b[J');
-    }
+    for (let i = start; i <= lastDirty; i++) parts.push(`\x1b[${i + 1};1H`, lines[i]);
+    if (shrink) parts.push(`\x1b[${lines.length + 1};1H\x1b[J`);
+    if (cursor) parts.push(`\x1b[${cursor.row + 1};${cursor.col + 1}H\x1b[?25h`);
+    else parts.push('\x1b[?25l');
     this.output.write(parts.join(''));
-    this._cursorRow = prev && prev.length > lines.length ? lines.length : lastDirty + 1;
     this.lastLines = lines.slice();
     this.lastHeight = lines.length;
   }
