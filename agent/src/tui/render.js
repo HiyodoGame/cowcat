@@ -1,25 +1,52 @@
 // Pure TUI rendering core: layout math, ANSI-aware truncation/wrapping, header
 // and status bar builders, and the tool-card state machine. No side effects —
 // everything here is unit-testable without a terminal.
+import { stringWidth, graphemes, charWidth } from './wcwidth.js';
 
 export const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const ANSI_TOKEN_RE = /^\x1b\[[0-9;?]*[A-Za-z]/;
+const CTRL_RE = /[\x00-\x1f\x7f]/;
+
+// Split an ANSI-bearing line into tokens: escape sequences or grapheme
+// clusters with their display widths. Control characters are dropped.
+function tokensOf(line) {
+  const toks = [];
+  const s = String(line);
+  let i = 0;
+  while (i < s.length) {
+    if (s[i] === '\x1b') {
+      const m = ANSI_TOKEN_RE.exec(s.slice(i));
+      if (m) { toks.push({ ansi: m[0] }); i += m[0].length; }
+      else { toks.push({ ansi: s[i] }); i++; }
+      continue;
+    }
+    const nextEsc = s.indexOf('\x1b', i);
+    const chunk = nextEsc === -1 ? s.slice(i) : s.slice(i, nextEsc);
+    for (const g of graphemes(chunk)) {
+      if (CTRL_RE.test(g)) continue;
+      toks.push({ ch: g, w: charWidth(g) });
+    }
+    i += chunk.length;
+  }
+  return toks;
+}
 
 export function visibleLen(s) {
-  return String(s).replace(ANSI_RE, '').length;
+  return stringWidth(String(s).replace(ANSI_RE, '').replace(CTRL_RE, ''));
 }
 
 // Width-aware truncate that preserves ANSI sequences (drops whole sequences,
-// never splits one).
+// never splits one). Fill semantics: a wide cluster that starts before the
+// width limit is kept whole, so the result may exceed width by one column.
 export function truncateAnsi(line, width) {
   if (visibleLen(line) <= width) return line;
   let out = '';
-  let vis = 0;
-  const tokens = String(line).match(/\x1b\[[0-9;?]*[A-Za-z]|[\s\S]/g) || [];
-  for (const tok of tokens) {
-    if (tok.startsWith('\x1b')) { out += tok; continue; }
-    if (vis >= width) break;
-    out += tok;
-    vis++;
+  let w = 0;
+  for (const t of tokensOf(line)) {
+    if (t.ansi) { out += t.ansi; continue; }
+    if (w >= width) break;
+    out += t.ch;
+    w += t.w;
   }
   return out + '\x1b[0m';
 }
@@ -29,37 +56,80 @@ export function padLine(line, width) {
   return len >= width ? truncateAnsi(line, width) : line + ' '.repeat(width - len);
 }
 
-// Greedy word-wrap honoring existing newlines; ANSI-safe by truncating chunks.
+// Extract the SGR state still active at the end of a line, for prefixing a
+// wrapped continuation so its style matches the line it was cut from.
+export function ansiStateCarry(line) {
+  const active = [];
+  const isFg = (p) => (p >= 30 && p <= 37) || p === 38 || (p >= 90 && p <= 97);
+  const isBg = (p) => (p >= 40 && p <= 47) || p === 48 || (p >= 100 && p <= 107);
+  const OFF = { 22: [1, 2], 23: [3], 24: [4], 25: [5, 6], 27: [7], 28: [8], 29: [9] };
+  for (const m of String(line).matchAll(/\x1b\[([0-9;]*)m/g)) {
+    const params = m[1] === '' ? [0] : m[1].split(';').map((p) => (p === '' ? 0 : Number(p)));
+    if (params.includes(0)) { active.length = 0; continue; }
+    for (const p of params) {
+      if (Number.isNaN(p)) continue;
+      if (p === 39) { for (let k = active.length - 1; k >= 0; k--) if (isFg(active[k])) active.splice(k, 1); continue; }
+      if (p === 49) { for (let k = active.length - 1; k >= 0; k--) if (isBg(active[k])) active.splice(k, 1); continue; }
+      const off = OFF[p];
+      if (off) { for (let k = active.length - 1; k >= 0; k--) if (off.includes(active[k])) active.splice(k, 1); continue; }
+      if (!active.includes(p)) active.push(p);
+    }
+  }
+  return active.length ? `\x1b[${active.join(';')}m` : '';
+}
+
+const joinToks = (toks) => toks.map((t) => t.ansi || t.ch).join('');
+
+// Greedy wrap honoring existing newlines. Breaks after the last space that
+// fits; otherwise hard-cuts at the width boundary (whole clusters only).
+// Continuation lines are prefixed with the carried SGR state.
 export function wrapText(text, width) {
   const out = [];
   for (const raw of String(text).split('\n')) {
     let line = raw;
     while (visibleLen(line) > width) {
-      // find the last break at/before width, else hard-cut
-      let cut = -1;
-      const plain = line.replace(ANSI_RE, '');
-      for (let i = Math.min(width, plain.length); i > 0; i--) {
-        if (plain[i] === ' ') { cut = i; break; }
+      const toks = tokensOf(line);
+      let w = 0, cut = -1, i = 0;
+      for (; i < toks.length; i++) {
+        const t = toks[i];
+        if (t.ansi) continue;
+        if (w + t.w > width) break;
+        w += t.w;
+        if (t.ch === ' ') cut = i;
       }
-      const at = cut > 0 ? cut : width;
-      out.push(truncateAnsi(line, at));
-      line = stripFirstChars(line, cut > 0 ? cut + 1 : at);
+      let emitEnd, restStart;
+      if (cut >= 0) { emitEnd = cut; restStart = cut + 1; }
+      else {
+        if (i === 0) i = toks.findIndex((t) => !t.ansi) + 1 || 1;
+        emitEnd = i; restStart = i;
+      }
+      const head = toks.slice(0, emitEnd);
+      out.push(joinToks(head) + '\x1b[0m');
+      line = ansiStateCarry(joinToks(head)) + joinToks(toks.slice(restStart));
     }
     out.push(line);
   }
   return out;
 }
 
-// Remove the first n visible characters from an ANSI-bearing line.
+// Remove the first n display columns from an ANSI-bearing line (whole
+// clusters only, so up to n + 1 columns may be removed).
 export function stripFirstChars(line, n) {
-  let out = '';
+  const toks = tokensOf(line);
   let removed = 0;
-  const tokens = String(line).match(/\x1b\[[0-9;?]*[A-Za-z]|[\s\S]/g) || [];
+  let idx = 0;
+  for (; idx < toks.length; idx++) {
+    const t = toks[idx];
+    if (t.ansi) continue;
+    if (removed + t.w > n) break;
+    removed += t.w;
+  }
   let pendingAnsi = '';
-  for (const tok of tokens) {
-    if (tok.startsWith('\x1b')) { pendingAnsi += tok; continue; }
-    if (removed < n) { removed++; continue; }
-    out += pendingAnsi + tok;
+  let out = '';
+  for (; idx < toks.length; idx++) {
+    const t = toks[idx];
+    if (t.ansi) { pendingAnsi += t.ansi; continue; }
+    out += pendingAnsi + t.ch;
     pendingAnsi = '';
   }
   return out;

@@ -113,7 +113,8 @@ test('TUI screen: enter/leave writes alternate-screen sequences', () => {
   assert.ok(all.includes('\x1b[?25l'), 'cursor hidden');
   assert.ok(all.includes('\x1b[?1049l'), 'alternate screen off');
   assert.ok(all.includes('\x1b[?25h'), 'cursor restored');
-  assert.ok(all.includes('\x1b[J\x1b[H'), 'frame erase + home');
+  assert.ok(all.includes('\x1b[H'), 'frame home');
+  assert.ok(all.includes('a\nb'), 'frame content written');
 });
 
 test('TUI wiring: bin must start the TUI (regression — missing tui.start() exits instantly on TTY)', async () => {

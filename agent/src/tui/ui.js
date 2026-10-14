@@ -10,7 +10,7 @@ import {
 import { LineEditor } from '../lineeditor.js';
 import { analyzeContext } from '../contextviz.js';
 
-const DRAW_MS = 100;
+const SPINNER_MS = 150;
 
 export class TuiUI {
   constructor({
@@ -25,9 +25,10 @@ export class TuiUI {
     this.t = { noDiff: '这回合还没有 diff。' };
     this.interactive = true;
     this.screen = new Screen({ input, output });
-    this.entries = [];          // {kind:'text',lines} | {kind:'card',card} | {kind:'stream',lines}
+    this.entries = [];          // {kind:'text',lines,_rendered} | {kind:'card',card,_rendered} | {kind:'stream',lines,_rendered}
     this.scroll = 0;
     this.spinFrame = 0;
+    this._timer = null;         // spinner interval, only while a card is running
     this.editor = new LineEditor({});
     this.completions = null;
     this.fileCompletions = null;
@@ -38,8 +39,6 @@ export class TuiUI {
     this._promptText = '';
     this._pendingApproval = null;
     this._meta = { version, cwd, getModel, getMode, getCost, getConfig, getMessages };
-    this._timer = setInterval(() => this._tick(), DRAW_MS);
-    if (this._timer.unref) this._timer.unref();
   }
 
   // --- lifecycle ---------------------------------------------------------------
@@ -49,12 +48,16 @@ export class TuiUI {
     this.input.setRawMode?.(true);
     this._dispatch = (chunk) => this._onKeys(chunk);
     this.input.on('data', this._dispatch);
+    this._onResize = () => this._draw();
+    this.output.on?.('resize', this._onResize);
     this._draw();
+    this._syncSpinner();
   }
 
   close() {
-    clearInterval(this._timer);
+    if (this._timer) { clearInterval(this._timer); this._timer = null; }
     if (this._dispatch) this.input.off?.('data', this._dispatch);
+    if (this._onResize) this.output.off?.('resize', this._onResize);
     this.input.setRawMode?.(false);
     this.screen.leave();
   }
@@ -68,20 +71,23 @@ export class TuiUI {
 
   print(s = '') {
     const lines = String(s).split('\n');
-    this.entries.push({ kind: 'text', lines });
+    this.entries.push({ kind: 'text', lines, _rendered: null });
     this._follow();
+    this._draw();
   }
 
   streamChunk(s) {
     let e = this.entries[this.entries.length - 1];
     if (!e || e.kind !== 'stream') {
-      e = { kind: 'stream', lines: [''] };
+      e = { kind: 'stream', lines: [''], _rendered: null };
       this.entries.push(e);
     }
     const parts = String(s).split('\n');
     e.lines[e.lines.length - 1] += parts[0];
     for (let i = 1; i < parts.length; i++) e.lines.push(parts[i]);
+    e._rendered = null;
     this._follow();
+    this._draw();
   }
 
   endStream() { /* stream entry stays as-is */ }
@@ -96,15 +102,22 @@ export class TuiUI {
 
   toolCall(name, summary) {
     const card = createCard('tool', `⏺ ${name}${summary ? `(${truncateAnsi(String(summary), 60)})` : ''}`);
-    this.entries.push({ kind: 'card', card });
+    const entry = { kind: 'card', card, _rendered: null };
+    this.entries.push(entry);
     this._follow();
     this._activeCard = card;
+    this._activeEntry = entry;
+    this._syncSpinner();
+    this._draw();
   }
 
   toolSuccess() {
     const c = this._activeCard;
-    if (c) { c.status = 'done'; c.summaryLines = ['']; c.fullLines = []; }
+    if (c) { c.status = 'done'; c.summaryLines = ['']; c.fullLines = []; this._invalidateEntry(this._activeEntry); }
     this._activeCard = null;
+    this._activeEntry = null;
+    this._syncSpinner();
+    this._draw();
   }
 
   toolError(err) {
@@ -113,8 +126,12 @@ export class TuiUI {
       c.status = 'error';
       c.summaryLines = [String(err).slice(0, 120)];
       c.fullLines = [String(err)];
+      this._invalidateEntry(this._activeEntry);
     }
     this._activeCard = null;
+    this._activeEntry = null;
+    this._syncSpinner();
+    this._draw();
   }
 
   denied() { this.print(this.color('\x1b[90m', this.lang === 'zh' ? '行吧。（把爪子缩回来，但眼睛还盯着那面墙）' : 'Fine. (retracts paw)')); }
@@ -133,6 +150,9 @@ export class TuiUI {
       c.status = exitCode !== 0 ? 'error' : 'done';
       c.summaryLines = lines.slice(0, 3);
       c.fullLines = lines;
+      this._invalidateEntry(this._activeEntry);
+      this._syncSpinner();
+      this._draw();
     } else {
       for (const l of lines) this.print(l);
     }
@@ -147,9 +167,10 @@ export class TuiUI {
       card.status = 'done';
       card.summaryLines = [(this.lang === 'zh' ? '我要跑这个了，盯着它看三秒。' : 'Running this. Stare for three seconds.') + (dangerous ? ' ⚠' : '')];
       card.fullLines = [summary || ''];
-      this.entries.push({ kind: 'card', card });
+      const entry = { kind: 'card', card, _rendered: null };
+      this.entries.push(entry);
       this._follow();
-      this._pendingApproval = { card, resolve };
+      this._pendingApproval = { card, entry, resolve };
       this._draw();
     });
   }
@@ -240,9 +261,9 @@ export class TuiUI {
     if (this._pendingApproval && !this.multiline) {
       const k = key.toLowerCase();
       const p = this._pendingApproval;
-      if (k === 'y') { p.card.title += ' → y'; this._pendingApproval = null; p.resolve('y'); return; }
-      if (k === 'n' || key === '\r') { p.card.title += ' → n'; this._pendingApproval = null; p.resolve('n'); return; }
-      if (k === 'a') { p.card.title += ' → always'; this._pendingApproval = null; p.resolve('always'); return; }
+      if (k === 'y') { p.card.title += ' → y'; this._invalidateEntry(p.entry); this._pendingApproval = null; p.resolve('y'); return; }
+      if (k === 'n' || key === '\r') { p.card.title += ' → n'; this._invalidateEntry(p.entry); this._pendingApproval = null; p.resolve('n'); return; }
+      if (k === 'a') { p.card.title += ' → always'; this._invalidateEntry(p.entry); this._pendingApproval = null; p.resolve('always'); return; }
       // other keys fall through to global handling
     }
     switch (key) {
@@ -324,16 +345,29 @@ export class TuiUI {
     }, this._size().width);
   }
 
+  _invalidateEntry(entry) {
+    if (entry) entry._rendered = null;
+  }
+
+  // Per-entry render cache: same entry + same width returns the same lines
+  // array; mutating callers null `_rendered` to force a recompute.
+  _materialize(entry, width) {
+    if (entry._rendered && entry._rendered.width === width) return entry._rendered.lines;
+    let lines;
+    if (entry.kind === 'card') {
+      lines = renderCard(entry.card, { width, spinFrame: this.spinFrame, colors: this.colors });
+    } else {
+      lines = [];
+      for (const l of entry.lines) lines.push(...wrapText(l, width));
+    }
+    entry._rendered = { width, lines };
+    return lines;
+  }
+
   _flat() {
     const { width } = this._size();
     const lines = [];
-    for (const e of this.entries) {
-      if (e.kind === 'card') {
-        lines.push(...renderCard(e.card, { width, spinFrame: this.spinFrame, colors: this.colors }));
-      } else {
-        for (const l of e.lines) lines.push(...wrapText(l, width));
-      }
-    }
+    for (const e of this.entries) lines.push(...this._materialize(e, width));
     return lines;
   }
 
@@ -353,7 +387,24 @@ export class TuiUI {
 
   _tick() {
     this.spinFrame++;
+    for (const e of this.entries) {
+      if (e.kind === 'card' && e.card.status === 'running') e._rendered = null;
+    }
     this._draw();
+    this._syncSpinner();
+  }
+
+  // The 150ms spinner interval only runs while a card is in running state;
+  // with no running card there is nothing animated, so no periodic redraw.
+  _syncSpinner() {
+    const want = this.screen.active && this.entries.some((e) => e.kind === 'card' && e.card.status === 'running');
+    if (want && !this._timer) {
+      this._timer = setInterval(() => this._tick(), SPINNER_MS);
+      if (this._timer.unref) this._timer.unref();
+    } else if (!want && this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
   }
 
   // hooks the loop/bin sometimes touch

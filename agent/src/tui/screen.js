@@ -1,5 +1,5 @@
 // Alternate-screen management: enter/leave the full-screen buffer, raw stdin,
-// cursor visibility, and a full-frame writer. Restores the terminal on exit
+// cursor visibility, and a frame-diff writer. Restores the terminal on exit
 // and SIGINT. Works on Git Bash / PowerShell / cmd on Windows (ANSI via
 // ConPTY; we also enable VT processing through Node's built-in console).
 export class Screen {
@@ -8,6 +8,8 @@ export class Screen {
     this.output = output;
     this.active = false;
     this.lastHeight = 0;
+    this.lastLines = null;
+    this._cursorRow = 0;
     this._onExit = () => this.leave();
   }
 
@@ -27,11 +29,34 @@ export class Screen {
     process.removeListener('SIGINT', this._onExit);
   }
 
-  // Full-frame draw: home cursor, write lines, erase the rest, home again.
+  // Diff draw: track the cursor row below the last frame; on change, move to
+  // the first dirty row, rewrite only the dirty rows, and erase rows left
+  // over from a taller previous frame.
   draw(lines) {
     if (!this.active) return;
-    const frame = `${lines.join('\n')}\x1b[J\x1b[H`;
-    this.output.write(frame);
+    const prev = this.lastLines;
+    let start = 0;
+    if (prev) {
+      while (start < lines.length && start < prev.length && lines[start] === prev[start]) start++;
+      if (start === lines.length && lines.length === prev.length) return;
+    }
+    let lastDirty = -1;
+    for (let i = start; i < lines.length; i++) {
+      if (i >= (prev ? prev.length : 0) || lines[i] !== prev[i]) lastDirty = i;
+    }
+    if (prev && prev.length > lines.length) lastDirty = lines.length - 1;
+    const parts = [];
+    if (!prev) parts.push('\x1b[H');
+    else if (this._cursorRow > start) parts.push(`\x1b[${this._cursorRow - start}A`);
+    else if (this._cursorRow < start) parts.push(`\x1b[${start - this._cursorRow}B`);
+    for (let i = start; i <= lastDirty; i++) parts.push(lines[i], '\n');
+    if (prev && prev.length > lines.length) {
+      if (lines.length > lastDirty + 1) parts.push(`\x1b[${lines.length - lastDirty - 1}B`);
+      parts.push('\x1b[J');
+    }
+    this.output.write(parts.join(''));
+    this._cursorRow = prev && prev.length > lines.length ? lines.length : lastDirty + 1;
+    this.lastLines = lines.slice();
     this.lastHeight = lines.length;
   }
 }
