@@ -6,6 +6,7 @@ import { Screen } from './screen.js';
 import {
   renderHeader, renderStatus, renderCard, createCard, buildScreen,
   wrapText, truncateAnsi, visibleLen, padLine, SPINNER, renderUserBubble,
+  buildInputBox,
 } from './render.js';
 import { renderFileCard, renderGroup } from '../diffcard.js';
 import { LineEditor } from '../lineeditor.js';
@@ -16,9 +17,8 @@ import { highlightCode } from './highlight.js';
 
 const SPINNER_MS = 150;
 
-// Approval card frame: permission-tinted mark/border column (rounded corners
-// arrive with the Task 10 input-box restyle). Body folds to the quip; ctrl+o
-// expands to the fullLines (quip + diff preview rows).
+// Approval card frame: permission-tinted mark/border column. Body folds to
+// the quip; ctrl+o expands to the fullLines (quip + diff preview rows).
 function renderApprovalCard(card, { width, colors = true, theme = null } = {}) {
   const perm = theme?.permission ?? '\x1b[36m';
   const p = (s) => (colors ? `${perm}${s}\x1b[0m` : s);
@@ -405,23 +405,27 @@ export class TuiUI {
   }
 
   _inputBox() {
-    const textLines = this.editor.text.split('\n');
-    const box = [];
     const w = this._size().width;
-    const prompt = this._promptText || (this.lang === 'zh' ? 'cowcat> ' : 'cowcat> ');
-    textLines.forEach((l, i) => {
-      const content = i === 0 ? `${prompt}${l}` : `  ${l}`;
-      box.push(` ${truncateAnsi(content, w - 2)}`);
+    const placeholder = this._promptText || (this.lang === 'zh'
+      ? '输入消息，/ 命令，@ 文件'
+      : 'Type a message, / for commands, @ for files');
+    const lastLine = this.editor.text.slice(this.editor.text.lastIndexOf('\n') + 1);
+    const box = buildInputBox({
+      text: this.editor.text, width: w, theme: this.theme, placeholder,
+      multiline: this.multiline, cursor: lastLine.length,
     });
-    box.push(` ${this.color('\x1b[90m', '─'.repeat(Math.max(1, w - 2)))}`);
-    if (this.multiline) box.push(` ${this.color('\x1b[90m', this.lang === 'zh' ? '[多行模式 Ctrl+J 退出]' : '[multiline Ctrl+J to exit]')}`);
-    return box;
+    const lines = ['', ...box, ''];
+    if (this.multiline) lines.push(` ${this.color('\x1b[90m', this.lang === 'zh' ? '[多行模式 Ctrl+J 退出]' : '[multiline Ctrl+J to exit]')}`);
+    return lines;
   }
 
   _status() {
     const m = this._meta;
+    const hint = this._pendingApproval
+      ? ''
+      : this.lang === 'zh' ? '? 快捷键 · shift+tab 切换模式' : '? for shortcuts · shift+tab to switch mode';
     return renderStatus({
-      cost: m.getCost(), version: m.version, cwd: m.cwd, mode: m.getMode(),
+      cost: m.getCost(), version: m.version, cwd: m.cwd, mode: m.getMode(), hint,
     }, this._size().width, this.theme);
   }
 

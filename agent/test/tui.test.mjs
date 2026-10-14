@@ -246,6 +246,14 @@ test('TUI app: readLine submit, history recall, multiline via Ctrl+J', async () 
   tui.close();
 });
 
+test('TUI app: ask() prompt text renders inside the input box', () => {
+  const { tui } = headlessTui();
+  tui.ask('Choose [1-2]: ');
+  const box = tui._inputBox();
+  assert.ok(box.some((l) => l.includes('Choose [1-2]:')), 'prompt shown as box content while reading');
+  tui.close();
+});
+
 test('TUI app: Esc interrupts even mid-stream (no readLine active)', async () => {
   const { tui, input } = headlessTui();
   let hits = 0;

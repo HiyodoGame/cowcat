@@ -174,13 +174,15 @@ export function renderHeader({ bannerLines = [], pct = 0, model = '', mode = 'de
   return lines.slice(0, 3);
 }
 
-export function renderStatus({ cost = '', version = '', cwd = '', mode = '' }, width, theme = null) {
+export function renderStatus({ cost = '', version = '', cwd = '', mode = '', hint = '' }, width, theme = null) {
   const left = ` ${cost}`;
   const dim = theme?.inactive ?? '';
   const mid = dim ? `${dim} cowcat/${version} ${mode}\x1b[0m` : ` cowcat/${version} ${mode}`;
+  const hintPart = hint ? (dim ? `${dim} ${hint}\x1b[0m` : ` ${hint}`) : '';
   const right = cwd;
-  const gap1 = Math.max(1, width - visibleLen(left) - visibleLen(mid) - visibleLen(right) - 3);
-  return padLine(`${left}${' '.repeat(gap1)}${mid}${' '.repeat(Math.max(1, width - visibleLen(left) - gap1 - visibleLen(mid) - visibleLen(right)))}${right}`, width);
+  const gap1 = Math.max(1, width - visibleLen(left) - visibleLen(mid) - visibleLen(hintPart) - visibleLen(right) - 3);
+  const gap2 = Math.max(1, width - visibleLen(left) - gap1 - visibleLen(mid) - visibleLen(hintPart) - visibleLen(right));
+  return padLine(`${left}${' '.repeat(gap1)}${mid}${hintPart}${' '.repeat(gap2)}${right}`, width);
 }
 
 // --- transcript entries -------------------------------------------------------
@@ -253,6 +255,48 @@ export function renderCard(card, { width, spinFrame = 0, colors = true, theme = 
     lines.push(padLine(`  ${p(C.gray, '│')} ··· (${card.fullLines.length} lines) ···`, width));
   }
   return lines;
+}
+
+// Rounded input box: permission-tinted ╭─╮│╯─╰ frame around the draft text.
+// Empty drafts show the placeholder dimmed; multiline keeps every text line
+// plus one spare editing row; `cursor` is the column in the last line and
+// scrolls the line horizontally so the cursor stays visible.
+export function buildInputBox({ text = '', width, theme = null, placeholder = '', multiline = false, cursor = null }) {
+  const w = Math.max(6, width);
+  const inner = w - 2;
+  const bodyW = inner - 2;
+  const border = theme?.permission ?? '';
+  const dim = theme?.inactive ?? '';
+  const reset = '\x1b[0m';
+  const frame = (s) => (border ? `${border}${s}${reset}` : s);
+  const hline = '─'.repeat(inner);
+
+  const draft = String(text);
+  const isEmpty = draft === '';
+  let body = isEmpty ? [placeholder] : (multiline ? draft.split('\n') : [draft.split('\n')[0]]);
+  if (multiline && !isEmpty) body = [...body, ''];
+  const fit = (line) => {
+    if (visibleLen(line) <= bodyW) return line;
+    if (line.includes('\x1b[')) return truncateAnsi(line, bodyW);
+    let out = '', w = 0;
+    for (const g of graphemes(line)) {
+      const gw = charWidth(g);
+      if (w + gw > bodyW) break;
+      out += g;
+      w += gw;
+    }
+    return out;
+  };
+  const rows = body.map((line, i) => {
+    const isLast = i === body.length - 1;
+    let shown = line;
+    if (isEmpty) shown = dim ? `${dim}${line}${reset}` : line;
+    else if (isLast && cursor !== null && visibleLen(shown) > bodyW) {
+      shown = stripFirstChars(shown, Math.max(0, cursor - bodyW + 1));
+    }
+    return `${frame('│')} ${padLine(fit(shown), bodyW)} ${frame('│')}`;
+  });
+  return [frame(`╭${hline}╮`), ...rows, frame(`╰${hline}╯`)];
 }
 
 // Final screen assembly: fixed header, scrolling transcript window, input box,
