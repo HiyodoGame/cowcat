@@ -1,0 +1,122 @@
+# CowCat changelog
+
+## 0.9.0（2026-10-14）— P3：长任务与规划基础设施
+
+- **plan mode 工具对**：EnterPlanMode（切入 plan 权限档，只读规划）+ ExitPlanMode（提交计划文本走审批卡；批准后会话切 `acceptEdits` 档——Write/Edit 免审批、Bash 仍走规则，allowedPrompts 转为会话内临时 allow 规则；拒绝则保持 plan 模式让模型修订）。新增权限档 `acceptEdits`，与 default/plan/yolo 并列（src/tools/planmode.js、permissions.js）。
+- **结构化任务工具**：TaskCreate/TaskGet/TaskUpdate/TaskList，多任务并存、status 五态（pending/in_progress/completed/failed/deleted）、blocks/blockedBy 依赖双向镜像、metadata 合并（src/tools/tasktools.js）。
+- **定时唤醒**：CronCreate/CronDelete/CronList + ScheduleWakeup——自研 5 字段 cron 解析器（*/n、列表、区间、步进、dom/dow OR 语义），持久化 `~/.cowcat/crons.json`，REPL 空闲时到期 prompt 自动注入为新回合；ScheduleWakeup 为一次性唤醒（上限 24h）（src/tools/cron.js）。
+- **MCP resources**：ListMcpResources/ReadMcpResource，在现有 stdio+http 传输上补 resources/list + resources/read（文本直返、base64 标注、单 server 故障隔离）（src/tools/mcpresources.js、mcp.js）。
+- **Agent 异步与思考档位**：`effort` 五档（low/medium/high/xhigh/max）透传子代理 LLM 调用（Anthropic 映射 thinking.budget_tokens、OpenAI 映射 reasoning_effort）；`run_in_background` 真后台——子代理包装为后台任务，TaskOutput/TaskStop 直接取回/终止（src/tools/agent.js、subagent.js、background.js startAsync）。
+- **Bash 后台超时分层**：后台默认 1800s、上限 7200s（前台 60s/600s 不变）（src/tools/bash.js、background.js）。
+- **Read allow_large**：5–20MB 文件显式 opt-in 直读（跳过分页），>20MB 仍拒（src/tools/read.js）。
+- 内置工具 15 → 25；全量测试 198 passed / 0 failed。
+- **修复**：TUI 模式秒退（`tui.start()` 接线缺失导致事件循环无活句柄、进程打印提示符后直接退出）；补充进程异常退出时的终端恢复兜底；UI 提示语中的猫比喻文案全部中性化。
+
+## 0.8.0（2026-10-14）— 全屏 TUI（P2-9）
+
+- **alternate screen 四区全屏布局**：顶部 header（精简 banner 行 + context 用量条绿/黄/红 + model/mode）、中部 transcript（工具调用原地更新卡片：running spinner → ✓/✗ 折叠结果卡；流式文本逐字渲染；审批内联卡片 y/n/a 键）、底部输入框（多行 Ctrl+J、↑ 历史、Tab 补全、@-mention、shift+tab 切模式、光标可见）、状态栏（版本/cwd + 奶牛猫动画帧）。
+- **交互**：Esc 中断当前任务（AbortController 全链路：UI → runLoop → provider → fetch，返回 `[interrupted]`）；shift+↑/↓ 与 PgUp/PgDn 滚动 transcript；10fps 渲染循环，渲染核心为纯函数模块（src/tui/render.js）单测覆盖。
+- **降级保证**：非 TTY（管道/CI）、`-p`、`--output-format stream-json`、`NO_COLOR` 自动走原线性模式且行为不变；`COWCAT_TUI=off` 强制关闭。spawn 级测试断言管道输出零 alternate-screen 转义序列。
+- 模块：src/tui/render.js（纯渲染）、src/tui/screen.js（alternate screen + 帧绘制）、src/tui/ui.js（鸭子接口 TuiUI，复用 lineeditor/animator 帧/contextviz）。
+
+## 0.7.0（2026-10-14）— P2 第二波：集成/系统
+
+- **IDE 集成（最小实现）**：终端环境检测（VS Code/Cursor/JetBrains，`detectIde`）；Edit/Write 产生的 diff 以 `file_edited` 事件、工具失败以 `diagnostic` 事件写入 JSONL 通道（`COWCAT_IDE_PIPE` 指定路径，未配置则只计数不落盘）；`/ide` 查看检测状态/通道/事件数（src/ide.js）。
+- **worktree 隔离**：`/worktree [名]` 创建 `../<repo>-cowcat-<名>`（分支 `cowcat/<名>`）并把会话 cwd 切入；`/worktree list` 查看；Agent 工具新增 `isolation: "worktree"` 参数让子代理在独立 worktree 执行并在报告尾部标注路径（src/worktree.js）。
+- **团队/lead 模式等效**：内建角色增至 5——新增 `lead`（编排 prompt：按 scout/plan/general/verify 分工、整合报告、对结果负责），可在子代理内再嵌套一层 Agent 调用（深度上限 1），其它角色不可嵌套；`/agents` 自动列出。
+- **后台执行 + 系统通知**：`cowcat -p --background "任务"` 分离子进程运行，日志/元数据/结果落盘 `~/.cowcat/background/<id>/`（meta.json/output.log/result.json），完成时 Windows PowerShell 气球通知（无 GUI/非 Windows 静默降级）；父进程立即返回任务 id。
+- P2 全部完成：ROADMAP P2 八行全 ✅。
+
+## 0.6.0（2026-10-14）— P2 第一波：可视化/交互
+
+- **/context 上下文可视化**：token 占用（chars/4 估算）、角色占比条、按消息段（同角色连续合并）网格、最大 5 条消息清单、70%/90% 阈值预警（src/contextviz.js）。
+- **思考链可折叠展示**：thinking 块不回传上游约定不变；每回合结束渲染折叠卡片（摘要 + 字符数），`/thinking` 展开最近思考全文（src/thinking.js）。
+- **@-mention 文件补全**：输入 `@<前缀>` 后 Tab 循环补全项目文件路径（模糊子串、大小写不敏感、上限 20），候选基于原始前缀循环（src/mention.js + LineEditor 扩展）。
+- **doctor 三形态**：`cowcat doctor` 默认检查；`cowcat doctor inspect` 深度报告（脱敏配置/规则/hooks/状态分区）；`cowcat doctor fix` 自动修复（补 config.json、修 permissions/hooks 形态、清除坏规则）；`--json` 机器可读输出（src/doctor.js 扩展）。
+
+## 0.5.0（2026-10-14）— P1 第一波：记忆系统完整版 + 权限规则引擎
+
+- **记忆系统**（多级加载，启动时注入 system prompt 并标注来源层级）：
+  - user 级 `~/.cowcat/CLAUDE.md`；项目级从 cwd 向上逐级（止于 home/盘符根）收集 `CLAUDE.md`、`.cowcat/CLAUDE.md`、`.cowcat/rules/*.md`（按文件名排序）；与既有 COWCAT.md→AGENTS.md→CLAUDE.md 项目指令合并去重（同一文件只注入一次）。
+  - 单文件超 10000 字符截断；`COWCAT_DISABLE_MEMORY=1` 整体跳过；文件不存在一律跳过、不自动创建。
+  - `/memory`：选 user/project 层级，不存在则创建带原创模板头的文件，打印路径+内容引导外部编辑器编辑；`/memory add <一行>` 直接追加到 project 级（走审批）。
+- **权限规则引擎**（`~/.cowcat/config.json` 的 `permissions: {allow, deny, ask}`）：
+  - 语法 `Tool` / `Tool(模式)`；`:*` 结尾为前缀匹配（Bash 按命令串，边界为空格/冒号/斜杠——`Bash(npm run test:*)` 命中 `npm run test` 与 `npm run test:unit`，不命中 `npm run testing`）；路径工具可用 glob（`Edit(src/**)`）。
+  - 优先级 deny > ask > allow > 默认；**yolo 模式下规则一律不生效**（文档明示）。
+  - 加载时逐条校验（工具已注册/括号配对/模式非空/`*` 合法），坏规则跳过并以中文告警（`permissions.deny 第 2 条被跳过：…`），不阻断启动。
+  - deny 命中时模型收到含规则原文的拒绝 tool_result；`/permissions` 查看三列+语法说明，`/permissions add|remove` 在线增删并立即持久化生效。
+- **hooks 核心子集**（8 事件：PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）：
+  - 配置在 config.json `hooks` 字段；`command` 类型经 shell 执行、stdin 收 JSON 事件载荷，stdout 非空或非 0 退出对 PreToolUse 视为 deny（首行原因回灌模型，对齐原版 ExitCode 2 语义），超时默认 60s SIGKILL（孤儿管道有兜底强结），`once` 执行后自动从配置移除，`async` 不阻塞只进日志；`http` 类型 POST JSON（默认 30s），2xx 放行、4xx deny（body 首行）、网络错误放行+警告。
+  - hook 执行不弹审批；SessionStart 打印"已加载 N 个 hooks"；`COWCAT_DISABLE_HOOKS=1` 全关；`/hooks` 列表 + `disable|enable <事件> <序号>` + `test <事件>` 手动触发（打印 JSON 载荷与结果）。
+- **MCP 客户端**（OAuth 不做）：
+  - stdio（JSON-RPC 2.0 over NDJSON，initialize→tools/list→动态注册 `mcp__<server>__<tool>`，inputSchema 直转）+ http（POST JSON-RPC，SSE/JSON 响应解析）；配置 `~/.cowcat/mcp.json` 与项目 `.cowcat/mcp.json`（项目级同名覆盖）；启动并发连接、单失败隔离（✗+原因）、退出统一杀进程（`COWCAT_MCP_TIMEOUT` 控超时，默认 60s，输出截断 20k）。
+  - 首次连接新 server 交互询问并记忆到 config.json `mcpTrusted`；`/mcp` 列出 servers（✓/✗+工具数）、`/mcp reconnect <名>` 重连。
+- **自定义 commands/agents/skills 加载**（user 级 `~/.cowcat/`、项目级 `.cowcat/`，项目覆盖同名）：
+  - `commands/<名>.md`（frontmatter: description/allowed-tools?/model?/argument-hint?，正文 `$ARGUMENTS` 模板）注册为 `/<名> [参数]`，执行=展开后作为 user 消息送入当前会话；与内建重名时内建优先；`/help` 单列自定义组。
+  - `agents/<名>.md`（frontmatter: description/tools?/model?）= 子代理角色；Agent 工具新增 `subagent_type`（先查自定义再查内建）/`skill`/`resume` 参数。
+  - `skills/<名>/SKILL.md` 按需加载：启动仅注入"索引"（名字+一句话），Agent 工具 `skill` 参数触发正文注入子代理；`/skills` 列出。
+  - 全部惰性+容错：坏 frontmatter 跳过并 SessionStart 告警，不炸启动。
+- **后台任务**：Bash `run_in_background: true` 立即返回 task id；新工具 TaskOutput（非阻塞快照 / `block:true`+timeout 等待，截断 20k）与 TaskStop（SIGKILL+输出摘要）；`/tasks` 列表 + `/tasks kill <id>`；超时仍限 600s 到期强杀；CLI 退出统一清理（Windows taskkill /T 杀整树，无孤儿）。
+- **子代理体系扩展**：内建角色 4 个（scout 只读侦察 / plan 只读出方案 / general 全工具 / verify 只读核对，全部原创 prompt）；Agent 工具 `resume: <sessionFile>` 用原子代理 transcript 初始化消息续跑；`subagent_type` 自定义优先、内建兜底。
+- **输出样式 + statusline**：
+  - output-styles：`~/.cowcat/output-styles/<名>.md` + 项目 `.cowcat/output-styles/`（项目覆盖同名），frontmatter 仅 `description`，正文为追加到 system prompt 尾部的风格指令；`/output-style` 列出/切换，经 system() 闭包**热生效**；默认无样式=现有行为。
+  - statusline 自定义：config.json `statusLine: {command}`，命令经 shell 执行、stdin 收一行 JSON（`{"model","mode","ctx_pct","cwd"}`）、2s 硬超时静默跳过、首行输出渲染在状态栏右侧；`/statusline` 查看/set/clear（清除恢复默认）。
+- **TUI 键位增强**（LineEditor 纯逻辑 + UI 集成；非 TTY 全部静默禁用）：↑/↓ 召回会话级输入历史（编辑中内容暂存）；Tab 在 `/` 前缀下循环补全内建+自定义斜杠命令（其它位置插入两空格）；shift+tab 逐档轮换 default↔plan 并即时刷新状态栏；Windows TTY raw 模式单键可读，跨 PowerShell/Windows Terminal/Git Bash。
+- **结构化输出**（`-p` 模式，人类可读路径不受影响）：
+  - `--output-format stream-json`：纯 NDJSON 事件流（`system`/`assistant`(delta)/`tool_use`/`tool_result`/`result`/`error`），与 banner/动画/状态栏等一切装饰互斥。
+  - `--output-schema '<JSON Schema>'`：mini 校验器（type/object/required/properties/items/enum/string length/pattern/number bounds）；prompt 约束 + 本地校验，失败把校验错误回喂模型重试一次，两次失败 exit 3。
+  - `--max-turns N`：回合上限，超限 exit 4；权限受阻仍 exit 2。
+- 版本 0.5.0（P1 全部完成：ROADMAP P1 十行全 ✅）。
+
+## 0.4.0（2026-10-14）— P0 第一波：接线修复 + WebFetch/WebSearch + 描述扩写 + OpenAI countTokens
+
+- 修 5 个接线 bug：
+  - TodoWrite 持久化断裂：`sessionId` 接入 CLI baseCtx，真实 CLI 路径回归测试钉住（不再写 `todos/undefined.json`）。
+  - Agent 工具 `model` 参数透传：subagent runner → runLoop → 双 provider 请求体全链路生效。
+  - `npm test` 脚本改为 `node --test test/*.test.mjs`（Node 24 目录写法会误报 1 fail）。
+  - 死代码清理：`smallModel` 由 compact summarizer 消费、`config.animation` 统一由 config 读取（bin 不再直读 env）、`trackProcess` 落实为 Ctrl-C 转发杀 Bash 子进程、`envReminder`/`extractSummary`/compact 未用导入/`void keepRecent` 删除。
+  - Grep 补参：`-B`/`-A` 定向上下文（`-C` 仍双向）、`type` 语言过滤（js/ts/py/rs/go/java/c/cpp/json/md 等 20+ 枚举）、`multiline`（dotall 跨行匹配）。
+- 新工具 **WebFetch**：fetch + 10s 超时 + 5MB 上限；HTML→markdown 轻转换（去 script/style，保留标题/列表/链接/段落）、纯文本直出、二进制拒绝、20k 截断；`ctx.fetch` 可注入便于测试。
+- 新工具 **WebSearch**：默认 DuckDuckGo HTML 端点（免费无 key），title/url/snippet 格式对齐原版，`allowed_domains`/`blocked_domains`/`count` 过滤；引擎接口可换付费 provider；`ctx.searchEngine` 可注入。
+- 工具描述扩写：Read/Edit/Write/Bash/Glob/Grep 优先 + TodoWrite/AskUserQuestion/Agent，全部补"何时用/何时不用/约束/失败模式"（原创改写，schema 不变），描述长度 ≥400 字符有测试钉住。
+- OpenAI provider `countTokens`：纯 JS 校准启发式 tokenizer（`src/llm/tokapprox.js`，英文/中文/代码三类文本量级校准，±20% 内）；doctor 对 openai 改用极小 generate 调用做真实连通探测。
+- **文件 checkpoint + `/rewind`**：Edit/Write 执行前把被改文件快照到 `~/.cowcat/checkpoints/<sessionId>/<N>/`（序号单调递增，会话结束后保留），session JSONL 记 `{type:"checkpoint"}` 条目；`/rewind` 时间倒序列出检查点（文件数+触发工具），确认后回写文件（走审批）并把对话截断到检查点位置——代码和对话一起回滚。
+- **compact 增强**：双模板——历史 >2×KEEP_RECENT(6) 时走"近期比例"模板（仅压缩更早部分，最近 6 条原文保留，消息少仍全量）；压缩完成后向 session JSONL 写 `{type:"compact_boundary", summary}` + `{type:"compacted", count}` 折叠条目，resume 用摘要替代被压缩原文；`/compact [指令]` 支持自定义压缩指令透传 summarizer。
+- **斜杠命令第一波 6 个**：`/cost`（轮数/工具数/input/output/cache_read/cache_creation 真实 usage 累计 + 额度消耗参考·标注估算）、`/status`（版本/provider/脱敏 baseURL/模型/权限/信任状态/上下文占用%/会话时长）、`/export [文件]`（markdown 导出，走审批）、`/fork [名称]`（会话分叉，原会话不动）、`/todos`（查看 todo）、`/theme dark|light`（两套 ANSI 配色即时生效并持久化到 config.json）。
+
+## 0.3.3（2026-10-13）— /exit 挂起修复 + 目录信任 + /setup 热生效
+
+- 修复 `/exit` 后进程不退出：UI 新增 `close()`（移除 stdin data/end 监听器并 `pause()`），REPL 正常退出（/exit、/quit、EOF）均调用 `animator.stop() + ui.close()`，干净退出 code 0；stdin EOF 现在也会主动关闭 REPL 而不是干等。
+- 目录信任机制（对齐 trust dialog）：未信任 cwd 交互启动询问 `Trust the files in <cwd>? [y/N]`；y 持久化进 `trustedProjects`（保留 installId 等字段），n/回车进入只读 plan 模式（状态栏 `[受限]`），`/act` 需二次确认（仅本次放行）；`-p` 不提问、未信任一律只读，`-y` 不覆盖信任。
+- REPL 新增 `/setup`：复用 setup 向导，完成后热生效——就地更新 config、重建 provider 与子代理 runner，下一次对话即用新 key/模型，并打印 doctor 风格逐项 ✓/✗。
+
+## 0.3.2（2026-10-13）— 首次启动体验修复
+
+- 未配置 API key 时（交互模式）：跳过启动 count_tokens 探针（不再向默认端点刷 403 噪音），打印简洁双语 onboarding 引导（setup/环境变量/kimi 推荐配置一句），状态栏 model 显示"未配置"；已配 key 行为不变，`-p` 模式保持现有错误路径。
+- 横幅选择：新增 `COWCAT_BANNER=pixel|ascii` 强制覆盖；自动逻辑改为"真彩 **且** 终端宽 ≥100 列"才用像素横幅，否则回退 ASCII 盒式，避免弱终端/粘贴时的纯色块墙。
+
+## 0.3.1（2026-10-13）— 非交互模式修复 + 企业化发布准备
+
+- 修复 `-p/--print` 模式两个问题：
+  - 需要审批的工具不再挂起等待 stdin——非交互模式下自动判为"拒绝"，模型收到明确消息（"Non-interactive mode: … rerun with -y to auto-approve"）可改走只读路径继续；若回合中发生权限拒绝，退出码为 2。
+  - 最终输出不再重复打印（流式与最终消息二合一，仅保留一份）。
+- 企业化发布准备（心感科技（深圳）有限公司 / CoreScense）：package.json 补 author/keywords/files、新增 LICENSE（MIT）与 README（发布页）、内部发布手册见 `docs/PUBLISH.md`。
+
+## 0.3.0（2026-10-13）— 体验对齐批次（发布前 P1）
+
+- 全局启动：`bin/cowcat`（POSIX sh）+ `bin/cowcat.cmd`（Windows），按脚本自身位置解析仓库路径；`<repo>/bin` 加 PATH 即可全局 `cowcat`；`agent/` 支持 `npm link`。
+- 项目上下文：启动时从 cwd 向上查找 `COWCAT.md` → `AGENTS.md` → `CLAUDE.md`（首个命中），以独立 section 注入 system prompt；`/clear` 后保留。
+- 会话续接增强：session 文件头部写入 cwd（meta 记录，旧文件按现状兜底）；`-c/--continue` 恢复本项目最近一次会话；`--resume` 不带参数列出会话（时间倒序编号）交互选择；无会话友好提示。
+- `cowcat setup`：交互配置向导（apiKey 静默输入不回显），写入 `~/.cowcat/config.json` 并保留已有字段（含 installId）。
+- `cowcat doctor`：配置完整性 + count_tokens 连通性逐项 ✓/✗，退出码反映结果。
+- `--version`：打印 `cowcat/<version>`。
+- `/init`：一次只读 LLM 调用探索项目、起草 COWCAT.md，确认后写入 cwd（写文件走审批/确认）。
+
+## 0.2.0（2026-10-13）— 品牌 P0/P1 + 能力 P0/P1/P2
+
+- 更名 ccagent → CowCat：`COWCAT_*` 环境变量（`CC_*` 过渡兼容）、`~/.cowcat/` 目录、CLI/包名/文案全量品牌化。
+- ASCII banner 随机斑块系统 + S0–S7 状态猫帧动画（`COWCAT_ANIMATION=off` 降级）。
+- Plan/Act 模式、逐动作审批卡、diff 折叠卡、终端输出折叠卡。
+- system prompt 分层重写（~10k 字符）、cache_control 断点、`max_tokens` 32000。
+- count_tokens 预检、reminder 位置对齐、子代理角色化、compact 对齐实测结构。
+- metadata.user_id + anthropic-beta 声明头（不冒充 claude-cli 身份）。

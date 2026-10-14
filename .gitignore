@@ -1,0 +1,7 @@
+logs/
+analysis/*.pretty.js
+artifacts/*.js
+node_modules/
+*.tgz
+.keys.env
+sandbox/

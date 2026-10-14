@@ -1,0 +1,84 @@
+# CowCat 全量功能路线图（对标 Claude Code CLI 2.1.55）
+
+> 目标：把 CowCat 从"核心闭环可用"推进到"Claude Code 全功能面（除账号体系）的完整体验"。
+> 依据：三路侦察——CowCat 现状盘点（agent/src 全模块）、2.1.55 完整功能面（analysis/cli-2.1.55.pretty.js 50 万行 + 已有逆向文档）、本机其他 CLI 借鉴面（cline / glm-acp-agent / minimax code / openclaw / codex）。
+
+## 0. 范围声明
+
+**包含**：LLM 协议层全部机制、约 30 个工具、40+ 斜杠命令中除账号绑定外全部、记忆系统、设置体系、权限规则引擎、hooks、MCP 客户端、子代理体系、compact/checkpoint、会话恢复、TUI 体验（主题/vim/键位/statusline/输出样式）、自定义 agents/commands/skills 加载、后台任务、结构化输出。
+
+**排除**（账号/商业体系，用户明确豁免"Claude 账号登录部分"，同类项一并排除）：
+- OAuth 登录、订阅、/upgrade、/usage（额度）、/login /logout /privacy-settings /install-github-app /install-slack-app /desktop
+- cowork 协作、远程/tmux、Claude Desktop 互转
+- GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
+- 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
+
+## 1. 现状快照（v0.9.0，198 tests 全绿）
+
+**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（alternate screen 四区布局/内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large。
+
+**整块缺失**（对照 2.1.55/2.1.296 功能面）：Read 多模态（图片/PDF/notebook 读取）、Bash 沙箱、bypassPermissions 权限档、NotebookEdit、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）。
+
+## 2. P0 — 核心闭环补全（修 bug + 堵窟窿）
+
+> ✅ **全部完成（v0.4.0，87 tests 全绿 + 真实 Kimi 冒烟通过，2026-10-13）**
+
+| # | 事项 | 对标 | 说明 | 状态 |
+|---|---|---|---|---|
+| P0-1 | 修 5 个接线 bug | — | todo sessionId、Agent model 透传、npm test glob、死代码清理（smallModel 由 compact 消费、trackProcess 落实为 SIGINT 杀子进程）、Grep 补 -B/-A/type/multiline | ✅ |
+| P0-2 | WebFetch + WebSearch | WebFetch/WebSearch 工具 | WebFetch：fetch+HTML→markdown、5MB/20k 截断；WebSearch：DuckDuckGo HTML 引擎（可换付费 provider）、域名过滤 | ✅ |
+| P0-3 | 工具描述扩写 | analysis/tools-descriptions/ | 9+2 工具全部补"何时用/不用/约束/失败模式"，原创改写，schema 零变动 | ✅ |
+| P0-4 | 文件 checkpoint + /rewind | persistence.md §6 | 会话内简化版：Edit/Write 前快照到 ~/.cowcat/checkpoints/，/rewind 选点回滚文件+截断对话 | ✅ |
+| P0-5 | compact 增强 | agent-loop.md §2 | 双模板（全量/近期比例）、compact_boundary+compacted 落盘、resume 不重放原文、/compact [指令] | ✅ |
+| P0-6 | 斜杠命令第一波 | 命令清单 | /cost /status /export /fork /todos /theme，/help 全量更新（现共 17 条命令） | ✅ |
+| P0-7 | OpenAI provider countTokens | — | tokapprox.js 本地校准启发式（±20%），doctor 改极小 generate 真实探网 | ✅ |
+
+## 3. P1 — 体系化功能
+
+| # | 事项 | 对标 | 说明 |
+|---|---|---|---|
+| P1-1 | 记忆系统完整版 | persistence.md §5 | `~/.cowcat/CLAUDE.md`（user 级）→ 项目 CLAUDE.md/.cowcat/CLAUDE.md/.cowcat/rules/ → 父目录递归；/memory 交互编辑（选 scope）；企业 policy 层不做 ✅ |
+| P1-2 | 权限规则引擎 | agent-loop.md §5 + 校验器 119014 | settings 里 `permissions.allow/deny/ask` 数组，`Tool(pattern)` 语法（Bash 前缀 `:*` 匹配），zod 式校验器带错误建议；/permissions 管理界面；权限档当前仅 default/plan/yolo 三档，acceptEdits（自动接受编辑）与 bypassPermissions 未实现（后续批次，见 §4.5） ✅ |
+| P1-3 | hooks 核心子集 | agent-loop.md §6 | 8 事件：PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact；command 类型（timeout/once/async）+ http 类型；prompt/agent 类型评估后置 ✅ |
+| P1-4 | MCP 客户端 | protocol/README.md | stdio 传输（.cowcat.json 或 .mcp.json 项目级 + user 级）+ http 流式；动态 mcp__server__tool 注册；超时/输出截断；resources/prompts 支持（ListMcpResources/ReadMcpResource）未做（后续批次，见 §4.5）；OAuth 登录不做（与账号豁免一致） ✅ |
+| P1-5 | 自定义 agents/commands/skills 加载 | persistence.md §1/§5 | `~/.cowcat/{agents,commands,skills}` + 项目 `.cowcat/{...}` 目录加载；commands 即斜杠命令 markdown（frontmatter 支持 allowed-tools/model）；agents 为角色定义（tools/model 白名单）；skills 为按需注入 prompt ✅ |
+| P1-6 | 后台任务 | TaskOutput/TaskStop + /tasks | Bash run_in_background + TaskOutput 取回、TaskStop 终止、/tasks 列表管理；TaskCreate 系列结构化任务工具未实现（后续批次，见 §4.5） ✅ |
+| P1-7 | 子代理体系扩展 | prompts README §2 | 内建角色增至 4 个（explore/plan/general-purpose/statusline-setup 等效物）；自定义 agent 定义生效（含 model 覆盖、只读工具集声明）；Task resume 续接子代理 transcript ✅ |
+| P1-8 | 输出样式 + statusline | §14/§13 | output-styles 目录加载 + /output-style 切换；statusline 自定义命令（stdin 收 JSON：model/cost/context） ✅ |
+| P1-9 | TUI 增强 | §16 | 键位：shift+tab 切权限模式、ctrl+t todos、上一条 prompt 召回（↑）；/vim 简化版（行编辑增强或后置）； prefersReducedMotion 尊重 ✅ |
+| P1-10 | 结构化输出 | minimax/codex 借鉴 | -p 增加 `--output-format stream-json`（NDJSON 事件流）与 `--output-schema`（JSON Schema 约束最终回答），CI 可用 ✅ |
+
+## 4. P2 — 深度体验
+
+| # | 事项 | 说明 |
+|---|---|---|
+| P2-1 | /context 上下文可视化 | 用量彩色网格（本地 tokenizer 估算各消息占比） ✅ |
+| P2-2 | IDE 集成 | /ide 状态 + diff 跳转（VS Code cursor 协议最小实现） ✅ |
+| P2-3 | 团队/lead 模式 | 原版实验性（CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS），CowCat 用子代理编排等效实现，优先级低 ✅ |
+| P2-4 | EnterWorktree 等效 | git worktree 隔离执行子代理任务 ✅ |
+| P2-5 | 思考链展示 | thinking delta 作为可折叠段渲染（本地可见、不回传上游的约定不变） ✅ |
+| P2-6 | @-mention 文件补全 | 输入 @ 触发项目文件模糊补全 |
+| P2-7 | doctor 三形态 | 借鉴 openclaw：inspect / fix / --json（CI） ✅ |
+| P2-8 | 后台执行+通知 | 借鉴 cline --zen：长任务 detach、完成系统通知 ✅ |
+| P2-9 | 全屏 TUI（alternate screen 四区布局/内联审批卡/Esc 中断/可滚动 transcript） | 用户反馈高优先级；纯 ANSI 自绘，COWCAT_TUI=off 降级线性模式 ✅ |
+
+## 4.5 P3 — 长任务与规划基础设施
+
+> ✅ **全部完成（v0.9.0，198 tests 全绿，2026-10-14）**
+
+| # | 事项 | 对标 | 说明 | 状态 |
+|---|---|---|---|---|
+| P3-1 | plan mode 工具对 | EnterPlanMode/ExitPlanMode | 模型可主动进入/退出只读规划态，配合 plan 权限档形成"先规划后执行"闭环 | ✅ |
+| P3-2 | 结构化任务工具 | TaskCreate/TaskGet/TaskUpdate/TaskList | 与 Bash run_in_background 分层：后台进程归 TaskOutput/TaskStop，结构化待办归 TaskCreate 系列 | ✅ |
+| P3-3 | 定时唤醒 | CronCreate/CronDelete/CronList + ScheduleWakeup | 会话内定时任务与唤醒调度，支撑周期性检查与长任务轮询 | ✅ |
+| P3-4 | MCP resources | ListMcpResources/ReadMcpResource | 在现有 tools/list + tools/call 之上补 resources 支持 | ✅ |
+| P3-5 | Agent 异步与思考档位 | Agent 工具 run_in_background + effort 五档 | 子代理后台派发不阻塞主循环；低/中/高/极高思考档位透传 | ✅ |
+| P3-6 | Read 大文件/多模态 | Read allow_large、图片读取 | allow_large 大文件 opt-in 直读已完成；图片/PDF/notebook 多模态读取未做（低优先） | ◐ 部分 |
+
+## 5. 执行原则
+
+1. **每个 P 级批次 = 实现 + 测试 + 文档 + 版本号**，跑 `node --test 'test/**/*.test.mjs'` 全绿 + 真实 Kimi 冒烟后才算完
+2. **法律边界不变**：prompt/描述改写不照抄；功能性短句可用；逆向产物不进发布 tarball（`files` 白名单已隔离）
+3. **不冒充**：UA、user_id、产物品牌均为 CowCat/CoreScense
+4. **原版实验性功能**（团队/远程/cowork）永远低优先，核心体验（工具/权限/记忆/hooks/MCP）优先
+5. 各批次间用户可随时要求 npm 发布当前版本（流程见 docs/PUBLISH.md）

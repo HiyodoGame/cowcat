@@ -1,0 +1,10 @@
+{
+  "name": "claude-code-re-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "devDependencies": {
+    "js-beautify": "^1.15.4",
+    "prettier": "^3.6.2"
+  }
+}

@@ -1,0 +1,6 @@
+#!/bin/sh
+# CowCat global launcher shim — resolves the repo location from this script's
+# own path, so the repo can live anywhere and still be on PATH.
+set -e
+DIR="$(cd "$(dirname "$0")" && pwd)"
+exec node "$DIR/../agent/bin/cowcat.mjs" "$@"
