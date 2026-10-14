@@ -224,3 +224,15 @@ test('W3: handle routes arrows/home/end/delete/ctrl-w/u/k to the cursor model', 
   ed.handle('\x7f'); // backspace
   assert.equal(ed.text, '');
 });
+
+test('W3: handle routes ctrl+a to home and ctrl+e to end (readline keys)', () => {
+  const ed = new LineEditor({});
+  ed.handle('foo bar');
+  ed.handle('\x01'); // ctrl+a
+  assert.equal(ed.cursor, 0, 'ctrl+a jumps to line start');
+  ed.handle('\x05'); // ctrl+e
+  assert.equal(ed.cursor, 7, 'ctrl+e jumps to line end');
+  ed.handle('\x01');
+  ed.insert('x');
+  assert.equal(ed.text, 'xfoo bar');
+});

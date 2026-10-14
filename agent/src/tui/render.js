@@ -5,7 +5,7 @@ import { stringWidth, graphemes, charWidth } from './wcwidth.js';
 
 export const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const ANSI_TOKEN_RE = /^\x1b\[[0-9;?]*[A-Za-z]/;
-const CTRL_RE = /[\x00-\x1f\x7f]/;
+const CTRL_RE = /[\x00-\x1f\x7f]/g;
 
 // Split an ANSI-bearing line into tokens: escape sequences or grapheme
 // clusters with their display widths. Control characters are dropped.
@@ -23,7 +23,7 @@ function tokensOf(line) {
     const nextEsc = s.indexOf('\x1b', i);
     const chunk = nextEsc === -1 ? s.slice(i) : s.slice(i, nextEsc);
     for (const g of graphemes(chunk)) {
-      if (CTRL_RE.test(g)) continue;
+      if (g.match(CTRL_RE)) continue;
       toks.push({ ch: g, w: charWidth(g) });
     }
     i += chunk.length;

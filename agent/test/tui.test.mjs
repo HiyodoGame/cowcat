@@ -215,6 +215,7 @@ function headlessTui() {
     input, output, colors: false, version: '0.8.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   tui.screen.enter = () => { tui.screen.active = true; };
   tui.screen.draw = () => {};

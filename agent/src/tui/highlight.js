@@ -147,15 +147,8 @@ const RULES = {
   md: MD_RULES,
 };
 
-function cyanFor(theme) {
-  const probe = theme && theme.text ? theme.text : '';
-  if (probe.includes('38;2;')) return '\x1b[38;2;95;175;215m';
-  if (probe.includes('38;5;')) return '\x1b[38;5;74m';
-  return '\x1b[36m';
-}
-
 function stylesFor(theme) {
-  const cyan = cyanFor(theme);
+  const cyan = theme.cyan;
   return {
     keyword: theme.permission,
     literal: theme.permission,

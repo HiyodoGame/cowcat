@@ -19,10 +19,11 @@ export function detectCapabilities({ env = {}, stdinIsTTY = false, stdoutIsTTY =
   }
 
   const altScreen = isTTY && term !== 'dumb';
+  // OSC8 needs a genuinely modern terminal emulator: WT_SESSION / TERM_PROGRAM
+  // are reliable signals. TERM alone is not — Git Bash inside classic conhost
+  // reports TERM=xterm yet cannot render hyperlinks.
   const modernTerminal =
-    env.WT_SESSION !== undefined ||
-    env.TERM_PROGRAM !== undefined ||
-    (term !== '' && term !== 'dumb');
+    env.WT_SESSION !== undefined || env.TERM_PROGRAM !== undefined;
   const osc8 = altScreen && modernTerminal;
 
   return { colors, altScreen, osc8 };

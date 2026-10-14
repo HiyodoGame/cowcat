@@ -39,6 +39,7 @@ function headlessTui(config = {}) {
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000, ...config }),
     getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   tui.screen.enter = () => { tui.screen.active = true; };
   tui.screen.draw = (lines) => { frames.push(lines); };

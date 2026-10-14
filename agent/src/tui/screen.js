@@ -16,6 +16,8 @@ export class Screen {
   enter() {
     if (this.active) return;
     this.active = true;
+    this.lastLines = null;
+    this._cursorRow = 0;
     this.output.write('\x1b[?1049h\x1b[?25l\x1b[H'); // alt screen, hide cursor
     process.once('exit', this._onExit);
     process.once('SIGINT', this._onExit);

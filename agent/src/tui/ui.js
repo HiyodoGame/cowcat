@@ -12,6 +12,7 @@ import { renderFileCard, renderGroup } from '../diffcard.js';
 import { LineEditor } from '../lineeditor.js';
 import { analyzeContext } from '../contextviz.js';
 import { getTheme } from './theme.js';
+import { detectCapabilities } from './capabilities.js';
 import { createMarkdownRenderer } from './markdown.js';
 import { highlightCode } from './highlight.js';
 
@@ -42,6 +43,7 @@ export class TuiUI {
     version = '0.8.0', cwd = process.cwd(),
     getModel = () => '', getMode = () => 'default', getCost = () => '', getConfig = () => ({}), getMessages = () => [],
     completions = null, fileCompletions = null,
+    capabilities = null,
   } = {}) {
     this.input = input;
     this.output = output;
@@ -68,8 +70,18 @@ export class TuiUI {
     this._promptText = '';
     this._pendingApproval = null;
     this._meta = { version, cwd, getModel, getMode, getCost, getConfig, getMessages };
+    // TuiUI is only constructed on a dual-TTY stdout; capabilities decide the
+    // palette depth and OSC8 hyperlink support. `none` maps to '16' as a
+    // defensive floor (should not happen on the TTY path).
+    const caps = capabilities ?? detectCapabilities({
+      env: process.env,
+      stdinIsTTY: process.stdin.isTTY === true,
+      stdoutIsTTY: process.stdout.isTTY === true,
+    });
+    this._colorLevel = { '24bit': '24bit', '256': '256', '16': '16', none: '16' }[caps.colors];
+    this._osc8 = caps.osc8 === true;
     this.themeName = this._meta.getConfig().theme === 'light' ? 'light' : 'dark';
-    this.theme = getTheme(this.themeName, '256');
+    this.theme = getTheme(this.themeName, this._colorLevel);
   }
 
   // --- lifecycle ---------------------------------------------------------------
@@ -117,7 +129,10 @@ export class TuiUI {
 
   // The renderer returns newly closed rows (emitted once, kept forever) plus a
   // full re-render of the open tail (replaced wholesale on every push); the
-  // array's splitIndex marks the boundary between the two sections.
+  // array's splitIndex marks the boundary between the two sections. A push
+  // flagged `supersedes` (the fast→full markdown transition) re-renders the
+  // previously emitted rows, so the closed section replaces the accumulated
+  // rows instead of appending to them.
   streamChunk(s) {
     let e = this.entries[this.entries.length - 1];
     if (!e || e.kind !== 'assistant' || e.done) {
@@ -128,7 +143,8 @@ export class TuiUI {
     const chunk = String(s);
     e.raw += chunk;
     const rows = e.renderer.push(chunk);
-    e.closedRows.push(...rows.slice(0, rows.splitIndex));
+    if (rows.supersedes) e.closedRows = rows.slice(0, rows.splitIndex);
+    else e.closedRows.push(...rows.slice(0, rows.splitIndex));
     e.tailRows = rows.slice(rows.splitIndex);
     e._rendered = null;
     this._follow();
@@ -139,7 +155,8 @@ export class TuiUI {
     const e = this.entries[this.entries.length - 1];
     if (e && e.kind === 'assistant' && !e.done) {
       const rows = e.renderer.push('');
-      e.closedRows.push(...rows.slice(0, rows.splitIndex));
+      if (rows.supersedes) e.closedRows = rows.slice(0, rows.splitIndex);
+      else e.closedRows.push(...rows.slice(0, rows.splitIndex));
       e.tailRows = rows.slice(rows.splitIndex);
       e.done = true;
       e._rendered = null;
@@ -349,6 +366,7 @@ export class TuiUI {
       case '\x1b[H': case '\x1b[F': case '\x1b[1~': case '\x1b[4~': // Home / End
       case '\x1b[3~':                                          // Delete
       case '\x17': case '\x15': case '\x0b':                   // ctrl+w / ctrl+u / ctrl+k
+      case '\x01': case '\x05':                                // ctrl+a / ctrl+e (readline home/end)
         if (this._reading) this.editor.handle(key);
         break;
       case '\x1b[1;2A': this.scroll += 5; break;                // shift+up
@@ -458,6 +476,7 @@ export class TuiUI {
       renderer: createMarkdownRenderer({
         theme: this.theme, width,
         highlight: (code, lang) => highlightCode(code, lang, this.theme),
+        osc8: this._osc8,
       }),
       _rendered: null,
     };
@@ -469,6 +488,7 @@ export class TuiUI {
     entry.renderer = createMarkdownRenderer({
       theme: this.theme, width,
       highlight: (code, lang) => highlightCode(code, lang, this.theme),
+      osc8: this._osc8,
     });
     entry.rendererWidth = width;
     const rows = entry.renderer.push(entry.raw);
@@ -547,7 +567,7 @@ export class TuiUI {
   // dirty so the next draw re-renders the whole transcript in the new theme.
   setTheme(name) {
     if (name !== 'dark' && name !== 'light') return false;
-    this.theme = getTheme(name, '256');
+    this.theme = getTheme(name, this._colorLevel);
     this.themeName = name;
     for (const e of this.entries) {
       e._rendered = null;

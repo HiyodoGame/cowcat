@@ -81,6 +81,21 @@ test('screen: identical frame writes nothing', () => {
   scr.leave();
 });
 
+test('screen: re-entering after leave resets the diff state (full redraw, no stale cursor row)', () => {
+  const { scr, chunks } = fakeScreen();
+  scr.draw(['a', 'b']);
+  const beforeReenter = chunks.length;
+  scr.leave();
+  scr.enter();
+  assert.equal(scr.lastLines, null);
+  assert.equal(scr._cursorRow, 0);
+  scr.draw(['a', 'b']);
+  const redrawn = chunks.slice(beforeReenter).join('');
+  assert.ok(redrawn.includes('\x1b[H'), 'first frame after re-enter homes the cursor');
+  assert.ok(redrawn.includes('a\n') && redrawn.includes('b'), 'rows rewritten in full');
+  scr.leave();
+});
+
 function headlessTui() {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -90,6 +105,7 @@ function headlessTui() {
     input, output, colors: false, version: '0.9.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   return tui;
 }

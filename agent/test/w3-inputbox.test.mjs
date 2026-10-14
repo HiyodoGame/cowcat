@@ -24,6 +24,9 @@ test('buildInputBox: empty input shows placeholder inside a rounded permission-t
   assert.ok(narrow[0].includes('╭') && narrow[0].includes(theme.permission));
   assert.ok(narrow[narrow.length - 1].includes('╰'));
   assert.ok(narrow.every((l) => visibleLen(l) === 20));
+
+  const clamped = buildInputBox({ text: 'ab', width: 4, theme, placeholder: '' });
+  assert.ok(clamped.every((l) => visibleLen(l) === 6), 'width < 6 clamps to the 6-column floor');
 });
 
 test('buildInputBox: placeholder disappears once text is present', () => {
@@ -74,6 +77,7 @@ test('TuiUI: input box uses rounded permission border and status shows hints', (
     input, output, colors: true, lang: 'zh', version: '0.8.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   tui.screen.enter = () => { tui.screen.active = true; };
   tui.screen.draw = () => {};

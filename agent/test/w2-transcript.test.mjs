@@ -34,6 +34,7 @@ function headless() {
     input, output, colors: true, version: '0.9.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   tui.screen.enter = () => { tui.screen.active = true; };
   tui.screen.draw = () => {};
@@ -126,6 +127,55 @@ test('transcript: fast->full switch keeps already-emitted plain lines', () => {
   const flat = texts(tui);
   assert.ok(flat.includes('hello'), 'plain line survives the switch to full parsing');
   assert.ok(flat.includes('T'), 'heading rendered after switch');
+});
+
+test('transcript: opener paragraph then heading — fast→full supersedes closed rows, nothing lost', () => {
+  const { tui } = headless();
+  tui.streamChunk('Sure, here you go.\n\n');
+  tui.streamChunk('# Steps\n\n1. one\n');
+  const flat = texts(tui);
+  for (const want of ['Sure, here you go.', 'Steps', '1. one']) {
+    assert.ok(flat.includes(want), `${want} present`);
+    assert.equal(flat.filter((l) => l === want).length, 1, `${want} exactly once`);
+  }
+});
+
+test('transcript: capabilities wiring — 24bit caps drive the palette, osc8 reaches the markdown renderer', () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.columns = 100;
+  output.rows = 30;
+  const tui = new TuiUI({
+    input, output, colors: true, version: '0.9.0', cwd: '/x',
+    getModel: () => 'm', getMode: () => 'default', getCost: () => '',
+    getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '24bit', altScreen: true, osc8: true },
+  });
+  tui.screen.enter = () => { tui.screen.active = true; };
+  tui.screen.draw = () => {};
+  tui.start();
+  assert.equal(tui.theme.brand, '\x1b[38;2;215;119;87m', 'theme parsed at the 24bit level');
+  tui.streamChunk('**b** [click](http://x)\n');
+  const raw = tui._flat().join('\n');
+  assert.ok(raw.includes('\x1b]8;;http://x\x1b\\'), 'OSC8 hyperlink emitted when caps.osc8');
+  tui.setTheme('light');
+  assert.equal(tui.theme.brand, '\x1b[38;2;215;119;87m', 'setTheme keeps the detected level');
+  tui.close();
+});
+
+test('transcript: capabilities wiring — 16/none caps floor the palette at the 16-color level', () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.columns = 100;
+  output.rows = 30;
+  const tui = new TuiUI({
+    input, output, colors: true, version: '0.9.0', cwd: '/x',
+    getModel: () => 'm', getMode: () => 'default', getCost: () => '',
+    getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: 'none', altScreen: false, osc8: false },
+  });
+  assert.equal(tui.theme.userBubbleBg, '\x1b[100m', "'none' maps to the 16-color level");
+  tui.close();
 });
 
 test('transcript: fenced block closed by ``` survives subsequent streaming', () => {

@@ -13,13 +13,15 @@ export class LineEditor {
 
   reset() {
     this.text = '';
-    this.cursor = 0;        // code-unit offset into text
+    this._cursor = 0;      // code-unit offset into text
     this.hIdx = null;      // index into history while browsing
     this.stash = '';       // in-progress line saved while browsing history
     this.tabBase = null;   // line before tab cycling
     this.tabIdx = -1;
     this.tabCandidates = []; // candidates of the active tab cycle (for display)
   }
+
+  get cursor() { return this._cursor; }
 
   cancelCompletion() {
     this.tabBase = null;
@@ -29,7 +31,7 @@ export class LineEditor {
 
   _browsing() { return this.hIdx !== null; }
 
-  _setText(s) { this.text = s; this.cursor = s.length; }
+  _setText(s) { this.text = s; this._cursor = s.length; }
 
   _historyPrev() {
     if (!this.history.length) return;
@@ -80,7 +82,7 @@ export class LineEditor {
       .filter((c) => c.startsWith(this.tabBase) && c !== this.tabBase)
       .sort();
     this.tabCandidates = candidates;
-    if (!candidates.length) return;
+    if (!candidates.length) { this.tabBase = null; return; }
     this.tabIdx = (this.tabIdx + 1) % (candidates.length + 1);
     this._setText(this.tabIdx === candidates.length ? this.tabBase : candidates[this.tabIdx]);
   }
@@ -89,63 +91,63 @@ export class LineEditor {
 
   insert(ch) {
     const s = String(ch);
-    this.text = this.text.slice(0, this.cursor) + s + this.text.slice(this.cursor);
-    this.cursor += s.length;
+    this.text = this.text.slice(0, this._cursor) + s + this.text.slice(this._cursor);
+    this._cursor += s.length;
     this.tabBase = null; // typing invalidates tab cycling
     this.tabCandidates = [];
   }
 
-  moveLeft() { if (this.cursor > 0) this.cursor--; }
+  moveLeft() { if (this._cursor > 0) this._cursor--; }
 
-  moveRight() { if (this.cursor < this.text.length) this.cursor++; }
+  moveRight() { if (this._cursor < this.text.length) this._cursor++; }
 
-  home() { this.cursor = this.text.lastIndexOf('\n', this.cursor - 1) + 1; }
+  home() { this._cursor = this.text.lastIndexOf('\n', this._cursor - 1) + 1; }
 
   end() {
-    const i = this.text.indexOf('\n', this.cursor);
-    this.cursor = i === -1 ? this.text.length : i;
+    const i = this.text.indexOf('\n', this._cursor);
+    this._cursor = i === -1 ? this.text.length : i;
   }
 
   deleteBack() {
-    if (this.cursor === 0) return;
-    this.text = this.text.slice(0, this.cursor - 1) + this.text.slice(this.cursor);
-    this.cursor--;
+    if (this._cursor === 0) return;
+    this.text = this.text.slice(0, this._cursor - 1) + this.text.slice(this._cursor);
+    this._cursor--;
   }
 
   deleteForward() {
-    if (this.cursor >= this.text.length) return;
-    this.text = this.text.slice(0, this.cursor) + this.text.slice(this.cursor + 1);
+    if (this._cursor >= this.text.length) return;
+    this.text = this.text.slice(0, this._cursor) + this.text.slice(this._cursor + 1);
   }
 
   // Delete the word right before the cursor, bounded by non-word characters;
   // when the cursor sits on a non-word run, that run is removed instead.
   killWordBack() {
     const isWord = (c) => c !== undefined && /[\w]/.test(c);
-    let i = this.cursor;
+    let i = this._cursor;
     if (isWord(this.text[i - 1])) { while (i > 0 && isWord(this.text[i - 1])) i--; }
     else { while (i > 0 && !isWord(this.text[i - 1])) i--; }
-    this.text = this.text.slice(0, i) + this.text.slice(this.cursor);
-    this.cursor = i;
+    this.text = this.text.slice(0, i) + this.text.slice(this._cursor);
+    this._cursor = i;
   }
 
   killToStart() {
-    const i = this.text.lastIndexOf('\n', this.cursor - 1) + 1;
-    this.text = this.text.slice(0, i) + this.text.slice(this.cursor);
-    this.cursor = i;
+    const i = this.text.lastIndexOf('\n', this._cursor - 1) + 1;
+    this.text = this.text.slice(0, i) + this.text.slice(this._cursor);
+    this._cursor = i;
   }
 
   killToEnd() {
-    const i = this.text.indexOf('\n', this.cursor);
-    this.text = this.text.slice(0, this.cursor) + this.text.slice(i === -1 ? this.text.length : i);
+    const i = this.text.indexOf('\n', this._cursor);
+    this.text = this.text.slice(0, this._cursor) + this.text.slice(i === -1 ? this.text.length : i);
   }
 
   // Display mapping: split lines plus the cursor position in row/col terms.
   render(width) {
     const lines = this.text.split('\n');
-    const before = this.text.slice(0, this.cursor);
+    const before = this.text.slice(0, this._cursor);
     return {
       lines,
-      cursorRow: lines.length - this.text.slice(this.cursor).split('\n').length,
+      cursorRow: lines.length - this.text.slice(this._cursor).split('\n').length,
       cursorCol: before.length - (before.lastIndexOf('\n') + 1),
     };
   }
@@ -187,6 +189,8 @@ export class LineEditor {
       if (ch === '\x17') { this.killWordBack(); events.push({ type: 'redraw' }); i++; continue; }
       if (ch === '\x15') { this.killToStart(); events.push({ type: 'redraw' }); i++; continue; }
       if (ch === '\x0b') { this.killToEnd(); events.push({ type: 'redraw' }); i++; continue; }
+      if (ch === '\x01') { this.home(); events.push({ type: 'redraw' }); i++; continue; }
+      if (ch === '\x05') { this.end(); events.push({ type: 'redraw' }); i++; continue; }
       if (ch >= ' ') {
         this.insert(ch);
         events.push({ type: 'redraw' });

@@ -18,6 +18,7 @@ function headlessTui(opts = {}) {
     input, output, colors: false, version: '0.8.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
     ...opts,
   });
   tui.screen.enter = () => { tui.screen.active = true; };
@@ -113,6 +114,20 @@ test('W3 completion: without callbacks Tab is inert on slash input', () => {
   tui._handleKey('\t');
   assert.equal(tui.editor.text, '/th', 'no candidates -> text untouched');
   assert.ok(!tui._inputBox().some((l) => l.includes('/theme')), 'no candidate row');
+  tui._finishRead(null);
+  tui.close();
+});
+
+test('W3 completion: Tab with no candidates resets tabBase so the next Esc interrupts', () => {
+  const tui = headlessTui({ completions: () => SLASH, fileCompletions: fakeFiles });
+  let hits = 0;
+  tui.onInterrupt = () => { hits++; };
+  tui.readLine();
+  type(tui, '/zz');
+  tui._handleKey('\t');
+  assert.equal(tui.editor.tabBase, null, 'no-match Tab leaves no candidate state behind');
+  tui._handleKey('\x1b');
+  assert.equal(hits, 1, 'Esc after a no-match Tab falls through to interrupt');
   tui._finishRead(null);
   tui.close();
 });

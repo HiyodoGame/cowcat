@@ -3,7 +3,10 @@
 // full re-render of the still-open tail block; the returned array carries a
 // `splitIndex` property marking the boundary — rows before it are closed
 // (emitted exactly once in the renderer's lifetime), rows from it on form the
-// open tail and are re-rendered on every push.
+// open tail and are re-rendered on every push. The fast→full transition push
+// additionally carries `supersedes: true`: its closed section re-renders
+// everything emitted by the plain fast path, so callers must replace their
+// accumulated closed rows wholesale instead of appending.
 
 import { stringWidth, charWidth, graphemes } from './wcwidth.js';
 
@@ -30,6 +33,7 @@ const TABLE_ROW_RE = /^\|.*\|$/;
 const SEP_CELL_RE = /^:?-{3,}:?$/;
 const INLINE_RE = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`|\[[^\]\n]*\]\([^)\n]*\))/g;
 const LINK_RE = /^\[([^\]]*)\]\(([^)]*)\)$/;
+const ESC_SEQ_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;]*m/y;
 
 function parseCells(line) {
   return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
@@ -62,14 +66,36 @@ function unitsFromSpans(spans, baseStyle = null) {
   const units = [];
   for (const sp of spans) {
     const style = sp.style === null ? baseStyle : sp.style;
+    if (sp.style === 'raw') {
+      // Escape sequences inside raw spans (OSC8 hyperlinks, SGR wrappers)
+      // are zero-width units: they must not count toward wrap width nor be
+      // split mid-sequence by a line break.
+      const text = sp.text;
+      let k = 0;
+      while (k < text.length) {
+        ESC_SEQ_RE.lastIndex = k;
+        const m = ESC_SEQ_RE.exec(text);
+        if (m) {
+          units.push({ g: m[0], style, w: 0 });
+          k += m[0].length;
+        } else {
+          const g = graphemes(text.slice(k))[0];
+          units.push({ g, style });
+          k += g.length;
+        }
+      }
+      continue;
+    }
     for (const g of graphemes(sp.text)) units.push({ g, style });
   }
   return units;
 }
 
+const unitWidth = (u) => (u.w !== undefined ? u.w : charWidth(u.g));
+
 function widthOf(units) {
   let w = 0;
-  for (const u of units) w += charWidth(u.g);
+  for (const u of units) w += unitWidth(u);
   return w;
 }
 
@@ -87,7 +113,7 @@ function wrapUnits(units, width) {
   };
   while (i < units.length) {
     const u = units[i];
-    const uw = charWidth(u.g);
+    const uw = unitWidth(u);
     if (w + uw <= width || w === 0) {
       cur.push(u);
       w += uw;
@@ -134,7 +160,6 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
   let fast = true;
   let fastText = '';
   let fastLinesSeen = 0;
-  let fastEmitted = false;
 
   const lineObj = (text) => ({ text, width: stringWidth(stripAnsi(text)) });
 
@@ -321,7 +346,6 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
     const tail = wrapPlain(rest);
     const rows = out.concat(tail);
     rows.splitIndex = out.length;
-    if (rows.length) fastEmitted = true;
     return rows;
   }
 
@@ -342,11 +366,14 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
         rest = rest.slice(i + 1);
       }
       buf = rest;
-      closedSeen = fastEmitted ? closed.length : 0;
-      const replayed = closed.slice(closedSeen);
+      // The fast path already emitted plain rows that don't correspond to
+      // replay-closed blocks, so replay supersedes them: hand back the full
+      // closed set and let the caller replace its accumulated rows.
+      const replayed = closed;
       closedSeen = closed.length;
       const rows = replayed.concat(currentRows());
       rows.splitIndex = replayed.length;
+      rows.supersedes = true;
       return rows;
     }
     buf += chunk;
@@ -372,7 +399,6 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
     fast = true;
     fastText = '';
     fastLinesSeen = 0;
-    fastEmitted = false;
   }
 
   return { push, reset };

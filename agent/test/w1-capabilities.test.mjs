@@ -51,12 +51,14 @@ test('capabilities: altScreen requires dual TTY and TERM !== dumb', () => {
   assert.equal(detectCapabilities({ env: {}, stdinIsTTY: false, stdoutIsTTY: true }).altScreen, false);
 });
 
-test('capabilities: osc8 off on classic conhost (no WT_SESSION/TERM_PROGRAM, TERM unset or dumb)', () => {
+test('capabilities: osc8 requires WT_SESSION/TERM_PROGRAM (Git Bash conhost TERM=xterm is not a signal)', () => {
   assert.equal(detectCapabilities({ env: {}, ...TTY }).osc8, false);
   assert.equal(detectCapabilities({ env: { TERM: 'dumb' }, ...TTY }).osc8, false);
-  assert.equal(detectCapabilities({ env: { TERM: 'xterm-256color' }, ...TTY }).osc8, true);
+  assert.equal(detectCapabilities({ env: { TERM: 'xterm' }, ...TTY }).osc8, false, 'Git Bash on classic conhost reports TERM=xterm but cannot render OSC8');
+  assert.equal(detectCapabilities({ env: { TERM: 'xterm-256color' }, ...TTY }).osc8, false, 'TERM alone never enables OSC8');
   assert.equal(detectCapabilities({ env: { WT_SESSION: 'x' }, ...TTY }).osc8, true);
   assert.equal(detectCapabilities({ env: { TERM_PROGRAM: 'vscode' }, ...TTY }).osc8, true);
+  assert.equal(detectCapabilities({ env: { WT_SESSION: 'x', TERM: 'dumb' }, ...TTY }).osc8, false, 'no altScreen → no osc8 regardless of env');
   // no altScreen → no osc8 regardless of env
   assert.equal(detectCapabilities({ env: { WT_SESSION: 'x' }, stdinIsTTY: false, stdoutIsTTY: true }).osc8, false);
 });

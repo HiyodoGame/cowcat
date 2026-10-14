@@ -16,6 +16,7 @@ function headlessTui() {
     input, output, colors: true, version: '0.8.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
+    capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   tui.screen.enter = () => { tui.screen.active = true; };
   tui.screen.draw = () => {};
@@ -33,8 +34,6 @@ function editPreview() {
 function flatText(tui) {
   return tui._flat().join('\n').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 }
-
-const ANSI_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
 test('approval card: preview rows fold into the card, ctrl+o expands, frame is permission-colored', async () => {
   const { tui, input } = headlessTui();

@@ -105,6 +105,22 @@ test('markdown: osc8 true emits OSC8 hyperlink sequences and hides the url', () 
   assert.ok(rows[0].text.includes(theme.permission));
 });
 
+test('markdown: osc8 link wraps with escapes as zero-width units (no split inside a sequence)', () => {
+  const r = createMarkdownRenderer({ theme, width: 10, osc8: true });
+  const rows = r.push('a *b* [click here now](http://example.com)\n');
+  assert.ok(rows.length > 1, 'long link wraps across rows');
+  const joined = rows.map((row) => row.text).join('');
+  assert.equal(
+    joined.replace(/ /g, ''),
+    `a \x1b[3mb\x1b[0m \x1b]8;;http://example.com\x1b\\${theme.permission}click here now\x1b[0m\x1b]8;;\x1b\\`.replace(/ /g, ''),
+    'concatenated rows reproduce the full span — no escape sequence was truncated by a break',
+  );
+  for (const row of rows) {
+    assert.ok(row.width <= 10, `visible width within budget: ${row.width}`);
+    assert.ok(!/\x1b]8[^\x1b]*$/.test(row.text) && !/\x1b$/.test(row.text), 'no row ends mid-escape');
+  }
+});
+
 test('markdown: chunk split mid-bold re-renders the word exactly once', () => {
   const r = createMarkdownRenderer({ theme, width: 80 });
   const first = r.push('**bo');
@@ -135,15 +151,24 @@ test('markdown: plain fast path wraps without any SGR for 200+ meta-free chars',
   assert.equal(rows.map((row) => stripAnsi(row.text)).join(''), 'a'.repeat(300));
 });
 
-test('markdown: fast path switches to full parsing once a metachar arrives', () => {
+test('markdown: fast→full transition replays closed rows once with supersedes set', () => {
   const r = createMarkdownRenderer({ theme, width: 80 });
   const first = r.push('hello\n');
   assert.deepEqual(plain(first), ['hello']);
   const rows = r.push('# T\n');
-  assert.ok(!plain(rows).includes('hello'), 'already-emitted plain line is not re-emitted');
+  assert.equal(rows.supersedes, true, 'transition push supersedes fast-path rows');
+  assert.deepEqual(plain(rows), ['hello', 'T', ''], 'fast row replayed by the closed section, not appended by the caller');
   const heading = rows.find((row) => stripAnsi(row.text) === 'T');
-  assert.ok(heading, 'heading rendered after switch');
   assert.ok(heading.text.includes('\x1b[4m'));
+});
+
+test('markdown: opener paragraph followed by a heading is not lost on fast→full switch (regression)', () => {
+  const r = createMarkdownRenderer({ theme, width: 80 });
+  const first = r.push('Sure, here you go.\n\n');
+  assert.deepEqual(plain(first), ['Sure, here you go.']);
+  const rows = r.push('# Steps\n\n1. one\n');
+  assert.equal(rows.supersedes, true);
+  assert.deepEqual(plain(rows), ['Sure, here you go.', 'Steps', '', '1. one'], 'heading rows kept, list tail present');
 });
 
 test('markdown: CJK paragraph wraps at width without splitting words', () => {

@@ -6,12 +6,12 @@ import { TOKENS, getTheme } from '../src/tui/theme.js';
 
 const EXPECTED_TOKENS = [
   'brand', 'permission', 'promptBorder', 'text', 'inactive', 'subtle',
-  'success', 'error', 'warning', 'bashBorder', 'userBubbleBg', 'bashBubbleBg',
+  'success', 'error', 'warning', 'cyan', 'bashBorder', 'userBubbleBg', 'bashBubbleBg',
   'planMode', 'autoAccept', 'diffAddedFg', 'diffAddedBg',
   'diffRemovedFg', 'diffRemovedBg',
 ];
 
-test('theme: TOKENS lists exactly the 17 semantic tokens', () => {
+test('theme: TOKENS lists exactly the 18 semantic tokens', () => {
   assert.deepEqual(TOKENS, EXPECTED_TOKENS);
 });
 
@@ -26,6 +26,7 @@ test('theme: dark/256 locks hand-picked nearest xterm-256 values', () => {
   assert.equal(t.success, '\x1b[38;5;78m');
   assert.equal(t.error, '\x1b[38;5;204m');
   assert.equal(t.warning, '\x1b[38;5;220m');
+  assert.equal(t.cyan, '\x1b[38;5;74m');
   assert.equal(t.bashBorder, '\x1b[38;5;205m');
   assert.equal(t.planMode, '\x1b[38;5;73m');
   assert.equal(t.autoAccept, '\x1b[38;5;141m');
@@ -46,6 +47,7 @@ test('theme: dark/24bit emits exact spec RGB', () => {
   assert.equal(t.success, '\x1b[38;2;78;186;101m');
   assert.equal(t.error, '\x1b[38;2;255;107;128m');
   assert.equal(t.warning, '\x1b[38;2;255;193;7m');
+  assert.equal(t.cyan, '\x1b[38;2;95;175;215m');
   assert.equal(t.bashBorder, '\x1b[38;2;253;93;177m');
   assert.equal(t.userBubbleBg, '\x1b[48;2;55;55;55m');
   assert.equal(t.bashBubbleBg, '\x1b[48;2;65;60;65m');
@@ -94,6 +96,7 @@ test('theme: light values come from the spec light column and differ from dark',
   assert.equal(light.success, '\x1b[38;2;44;122;57m');
   assert.equal(light.error, '\x1b[38;2;171;43;63m');
   assert.equal(light.warning, '\x1b[38;2;150;108;30m');
+  assert.equal(light.cyan, '\x1b[38;2;0;128;128m');
   assert.equal(light.bashBorder, '\x1b[38;2;255;0;135m');
   assert.equal(light.userBubbleBg, '\x1b[48;2;240;240;240m');
   assert.equal(light.bashBubbleBg, '\x1b[48;2;250;245;250m');
@@ -118,6 +121,7 @@ test('theme: light/256 locks nearest xterm-256 values', () => {
   assert.equal(t.success, '\x1b[38;5;29m');
   assert.equal(t.error, '\x1b[38;5;125m');
   assert.equal(t.warning, '\x1b[38;5;94m');
+  assert.equal(t.cyan, '\x1b[38;5;30m');
   assert.equal(t.bashBorder, '\x1b[38;5;198m');
   assert.equal(t.userBubbleBg, '\x1b[48;5;255m');
   assert.equal(t.bashBubbleBg, '\x1b[48;5;231m');
@@ -136,11 +140,13 @@ test('theme: 16-color level emits classic ANSI SGR codes', () => {
   assert.equal(dark.text, '\x1b[97m');
   assert.equal(dark.success, '\x1b[92m');
   assert.equal(dark.error, '\x1b[91m');
+  assert.equal(dark.cyan, '\x1b[36m');
   assert.equal(dark.userBubbleBg, '\x1b[100m');
   assert.equal(dark.diffAddedBg, '\x1b[42m');
   const light = getTheme('light', '16');
   assert.equal(light.text, '\x1b[30m');
   assert.equal(light.permission, '\x1b[34m');
+  assert.equal(light.cyan, '\x1b[36m');
   assert.equal(light.userBubbleBg, '\x1b[47m');
 });
 
