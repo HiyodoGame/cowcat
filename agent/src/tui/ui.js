@@ -340,7 +340,11 @@ export class TuiUI {
       // other keys fall through to global handling
     }
     switch (key) {
-      case '\x1b[A': case '\x1b[B': case '\t': case '\x7f':
+      case '\x1b[A': case '\x1b[B': case '\t': case '\x7f':   // history / completion / backspace
+      case '\x1b[D': case '\x1b[C':                            // ← →
+      case '\x1b[H': case '\x1b[F': case '\x1b[1~': case '\x1b[4~': // Home / End
+      case '\x1b[3~':                                          // Delete
+      case '\x17': case '\x15': case '\x0b':                   // ctrl+w / ctrl+u / ctrl+k
         if (this._reading) this.editor.handle(key);
         break;
       case '\x1b[1;2A': this.scroll += 5; break;                // shift+up
@@ -356,7 +360,7 @@ export class TuiUI {
         break;
       case '\x0a': // Ctrl+J: enter multiline, then insert newlines
         if (!this.multiline) this.multiline = true;
-        else this.editor.text += '\n';
+        else this.editor.insert('\n');
         break;
       case '\x1b': // Esc: interrupt the current task, else clear the line
         if (this.onInterrupt) { this.onInterrupt(); }
@@ -409,10 +413,10 @@ export class TuiUI {
     const placeholder = this._promptText || (this.lang === 'zh'
       ? '输入消息，/ 命令，@ 文件'
       : 'Type a message, / for commands, @ for files');
-    const lastLine = this.editor.text.slice(this.editor.text.lastIndexOf('\n') + 1);
+    const { cursorCol } = this.editor.render(w);
     const box = buildInputBox({
       text: this.editor.text, width: w, theme: this.theme, placeholder,
-      multiline: this.multiline, cursor: lastLine.length,
+      multiline: this.multiline, cursor: cursorCol,
     });
     const lines = ['', ...box, ''];
     if (this.multiline) lines.push(` ${this.color('\x1b[90m', this.lang === 'zh' ? '[多行模式 Ctrl+J 退出]' : '[multiline Ctrl+J to exit]')}`);
