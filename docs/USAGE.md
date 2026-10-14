@@ -200,10 +200,11 @@ cowcat -p --max-turns 10 "..."                       # 回合上限，超限 exi
 - **lead 角色** — `subagent_type: "lead"` 的团队编排：它会按 scout/plan/general/verify 分工派发、整合报告并对结果负责（可嵌套一层子代理）。
 - `cowcat -p --background "长任务"` — 后台执行：立即返回任务 id，日志与结果在 `~/.cowcat/background/<id>/`；完成时系统通知（Windows 气球提示，无 GUI 静默）。
 
-## 全屏 TUI（0.8.0）
+## 全屏 TUI（0.8.0，v0.10.0 全面翻新）
 
 在交互式真实终端（Git Bash / PowerShell / Windows Terminal / cmd）中直接运行 `cowcat` 即进入全屏界面：
 
-- **布局**：顶部 header（文本 banner 行 + context 用量条 + model/mode）；中部 transcript（工具卡片原地更新：spinner → ✓/✗ 折叠卡；审批请求是内联卡片，按 y/n/a 应答）；底部输入框（多行用 Ctrl+J 进入/再按插入换行，Enter 发送）；状态栏（版本/cwd + 状态文本）。
-- **键位**：↑/↓ 历史、Tab 补全斜杠命令、`@` 文件补全、shift+tab 切 plan/act、shift+↑/↓ 与 PgUp/PgDn 滚动 transcript、**Esc 中断当前任务**。
+- **布局**：顶部 header（文本 banner 行 + context 用量条 + model/mode）；中部 transcript（帧 diff 增量重绘；工具块 ⏺ 三态 running/done/error + 回合页脚 ✻；用户消息右侧气泡；模型输出流式 markdown 渲染——标题/列表/引用/表格/行内样式，代码块六语言语法高亮 js/ts/python/sh/json/md；审批请求是内联卡片附 diff 预览，按 y/n/a 应答）；底部圆角输入框（空态 placeholder 提示；多行用 Ctrl+J 进入/再按插入换行，Enter 发送）；状态栏（版本/cwd + 状态文本 + 操作提示）。
+- **键位**：↑/↓ 历史、Tab 补全斜杠命令、`@` 文件补全、shift+tab 切 plan/act、Ctrl+A/E/K/U/W 与左右方向键等行编辑、shift+↑/↓ 与 PgUp/PgDn 滚动 transcript、**Esc 中断当前任务**。
+- **主题**：`/theme dark|light` 语义色 token 双主题，TUI 全界面即时生效（含输入框边框、气泡、工具块配色）。
 - **降级**：管道/CI、`-p`、`--output-format stream-json`、`NO_COLOR` 自动使用原线性模式；`COWCAT_TUI=off` 可强制关闭全屏。

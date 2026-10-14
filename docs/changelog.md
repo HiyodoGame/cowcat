@@ -1,5 +1,20 @@
 # CowCat changelog
 
+## 0.10.0（2026-10-14）— P4：TUI 全面翻新
+
+- **字素宽度测量**：基于 Intl.Segmenter 的 grapheme 遍历 + CJK/emoji 宽度表，东亚文字与 emoji 在表格、边框、对齐场景下不再错位（src/tui/grapheme.js）。
+- **终端能力探测**：启动探测 COLORTERM/TERM/NO_COLOR 与 cursor-style 支持，能力矩阵驱动渲染降级（truecolor → 256 → 16 色），未知终端安全回退（src/tui/capabilities.js）。
+- **语义色 token 系统**：全套语义色 token（text/muted/accent/success/warning/danger 等）定义 dark/light 双主题，`/theme dark|light` 切换在 TUI 全界面即时生效（src/tui/theme.js）。
+- **帧 diff 渲染 + 条目缓存**：transcript 改为结构化条目缓存，渲染时帧 diff 只重绘变化行，替代原 10fps 全量重绘的渲染循环（src/tui/transcript.js）。
+- **流式 markdown 渲染**：模型输出流式解析渲染——标题、无序/有序列表、引用块、表格、行内粗体/斜体/行内码（src/tui/markdown.js）。
+- **语法高亮**：六种语言（js/ts/python/sh/json/md）的终端语法高亮，用于代码块渲染（src/tui/highlight.js）。
+- **消息气泡与工具块三态**：用户消息右侧气泡样式；工具块 ⏺ 三态（running/done/error）+ 回合页脚 ✻ 分隔线。
+- **审批卡 diff 预览**：审批请求内联卡片附 Edit/Write 变更的 diff 摘要预览，y/n/a 应答前可见改动内容。
+- **圆角输入框 + placeholder + 状态栏提示**：底部输入框圆角描边、空态 placeholder 提示、状态栏上下文操作提示。
+- **LineEditor 编辑键**：光标移动/删除/行首行尾等完整编辑键位（Ctrl+A/E/K/U/W、左右方向键等）。
+- **Tab/@ 补全增强**：Tab 循环补全斜杠命令，@ 触发项目文件模糊补全，候选高亮与翻页。
+- **修复/测试**：全量测试 199 → 318 passed / 0 failed。
+
 ## 0.9.0（2026-10-14）— P3：长任务与规划基础设施
 
 - **plan mode 工具对**：EnterPlanMode（切入 plan 权限档，只读规划）+ ExitPlanMode（提交计划文本走审批卡；批准后会话切 `acceptEdits` 档——Write/Edit 免审批、Bash 仍走规则，allowedPrompts 转为会话内临时 allow 规则；拒绝则保持 plan 模式让模型修订）。新增权限档 `acceptEdits`，与 default/plan/yolo 并列（src/tools/planmode.js、permissions.js）。

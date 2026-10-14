@@ -13,9 +13,9 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.9.0，198 tests 全绿）
+## 1. 现状快照（v0.10.0，318 tests 全绿）
 
-**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（alternate screen 四区布局/内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large。
+**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（v0.10.0 全面翻新：字素宽度测量 CJK/emoji 对齐、终端能力探测、语义色 token 双主题 /theme 即时生效、帧 diff 渲染 + 条目缓存、流式 markdown 渲染、六语言语法高亮、用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻、审批卡 diff 预览、圆角输入框 + placeholder + 状态栏提示、LineEditor 完整编辑键、Tab/@ 补全；内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large。
 
 **整块缺失**（对照 2.1.55/2.1.296 功能面）：Read 多模态（图片/PDF/notebook 读取）、Bash 沙箱、bypassPermissions 权限档、NotebookEdit、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）。
 
@@ -74,6 +74,22 @@
 | P3-4 | MCP resources | ListMcpResources/ReadMcpResource | 在现有 tools/list + tools/call 之上补 resources 支持 | ✅ |
 | P3-5 | Agent 异步与思考档位 | Agent 工具 run_in_background + effort 五档 | 子代理后台派发不阻塞主循环；低/中/高/极高思考档位透传 | ✅ |
 | P3-6 | Read 大文件/多模态 | Read allow_large、图片读取 | allow_large 大文件 opt-in 直读已完成；图片/PDF/notebook 多模态读取未做（低优先） | ◐ 部分 |
+
+## 4.6 P4 — TUI 全面翻新
+
+> ✅ **全部完成（v0.10.0，318 tests 全绿，2026-10-14）**
+
+| # | 事项 | 说明 | 状态 |
+|---|---|---|---|
+| P4-1 | 字素宽度测量 | Intl.Segmenter grapheme 遍历 + CJK/emoji 宽度表，表格/边框/对齐不错位 | ✅ |
+| P4-2 | 终端能力探测 | COLORTERM/TERM/NO_COLOR 探测，truecolor→256→16 色分级降级 | ✅ |
+| P4-3 | 语义色 token 双主题 | dark/light 语义色 token 系统，`/theme` 切换 TUI 全界面即时生效 | ✅ |
+| P4-4 | 帧 diff 渲染 + 条目缓存 | transcript 结构化条目缓存，帧 diff 只重绘变化行，替代 10fps 全量重绘 | ✅ |
+| P4-5 | 流式 markdown 渲染 | 标题/列表/引用/表格/行内样式（粗体/斜体/行内码）流式解析渲染 | ✅ |
+| P4-6 | 语法高亮 | js/ts/python/sh/json/md 六语言终端高亮 | ✅ |
+| P4-7 | 消息气泡与工具块三态 | 用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻ | ✅ |
+| P4-8 | 审批卡 diff 预览 + 圆角输入框 | 审批卡附 diff 摘要；圆角输入框 + placeholder + 状态栏提示 | ✅ |
+| P4-9 | LineEditor 编辑键 + Tab/@ 补全 | Ctrl+A/E/K/U/W、方向键、行首行尾；Tab 斜杠命令、@ 文件模糊补全 | ✅ |
 
 ## 5. 执行原则
 
