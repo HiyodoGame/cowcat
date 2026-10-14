@@ -5,11 +5,13 @@
 import { Screen } from './screen.js';
 import {
   renderHeader, renderStatus, renderCard, createCard, buildScreen,
-  wrapText, truncateAnsi, visibleLen, SPINNER,
+  wrapText, truncateAnsi, visibleLen, SPINNER, renderUserBubble,
 } from './render.js';
 import { LineEditor } from '../lineeditor.js';
 import { analyzeContext } from '../contextviz.js';
 import { getTheme } from './theme.js';
+import { createMarkdownRenderer } from './markdown.js';
+import { highlightCode } from './highlight.js';
 
 const SPINNER_MS = 150;
 
@@ -26,10 +28,11 @@ export class TuiUI {
     this.t = { noDiff: '这回合还没有 diff。' };
     this.interactive = true;
     this.screen = new Screen({ input, output });
-    this.entries = [];          // {kind:'text',lines,_rendered} | {kind:'card',card,_rendered} | {kind:'stream',lines,_rendered}
+    this.entries = [];          // {kind:'user',text,_rendered} | {kind:'assistant',raw,rows,prevLen,done,renderer,_rendered} | {kind:'text',lines,_rendered} | {kind:'card',card,_rendered}
     this.scroll = 0;
     this.spinFrame = 0;
     this._timer = null;         // spinner interval, only while a card is running
+    this._turnStart = null;     // userMessage timestamp, consumed by endStream footer
     this.editor = new LineEditor({});
     this.completions = null;
     this.fileCompletions = null;
@@ -79,21 +82,51 @@ export class TuiUI {
     this._draw();
   }
 
+  // User turn marker: starts the turn clock and appends a bubble entry.
+  userMessage(text) {
+    this._turnStart = Date.now();
+    this.entries.push({ kind: 'user', text: String(text), _rendered: null });
+    this._follow();
+    this._draw();
+  }
+
+  // The renderer returns newly closed rows plus a full re-render of the open
+  // tail; replacing the previous return wholesale keeps entry.rows equal to
+  // the complete current render at every step.
   streamChunk(s) {
     let e = this.entries[this.entries.length - 1];
-    if (!e || e.kind !== 'stream') {
-      e = { kind: 'stream', lines: [''], _rendered: null };
+    if (!e || e.kind !== 'assistant' || e.done) {
+      const width = this._size().width;
+      e = this._newAssistantEntry(width);
       this.entries.push(e);
     }
-    const parts = String(s).split('\n');
-    e.lines[e.lines.length - 1] += parts[0];
-    for (let i = 1; i < parts.length; i++) e.lines.push(parts[i]);
+    const chunk = String(s);
+    e.raw += chunk;
+    const rows = e.renderer.push(chunk);
+    e.rows.splice(e.rows.length - e.prevLen, e.prevLen, ...rows);
+    e.prevLen = rows.length;
     e._rendered = null;
     this._follow();
     this._draw();
   }
 
-  endStream() { /* stream entry stays as-is */ }
+  endStream() {
+    const e = this.entries[this.entries.length - 1];
+    if (e && e.kind === 'assistant' && !e.done) {
+      const rows = e.renderer.push('');
+      e.rows.splice(e.rows.length - e.prevLen, e.prevLen, ...rows);
+      e.prevLen = rows.length;
+      e.done = true;
+      e._rendered = null;
+    }
+    const s = this.turnSeconds();
+    this.print(this.color(this.theme.inactive, `✻ for ${s < 60 ? `${s}s` : `${Math.round(s / 60)}m`}`));
+  }
+
+  turnSeconds() {
+    if (!this._turnStart) return 0;
+    return Math.max(0, Math.round((Date.now() - this._turnStart) / 1000));
+  }
 
   waitingModel() {}
   compacting() { this.print(this.color('\x1b[90m', this.lang === 'zh' ? '压缩中，马上回来。' : 'Compacting, back in a moment.')); }
@@ -278,6 +311,12 @@ export class TuiUI {
       case '\x1b[5~': this.scroll += 20; break;                 // PgUp
       case '\x1b[6~': this.scroll = Math.max(0, this.scroll - 20); break; // PgDn
       case '\x1b[Z': this.onShiftTab?.(); break;                // shift+tab
+      case '\x0f': case '\x1b[15;5~': case '\x1bOj':            // ctrl+o: toggle latest card
+        for (let i = this.entries.length - 1; i >= 0; i--) {
+          const e = this.entries[i];
+          if (e.kind === 'card') { e.card.expanded = !e.card.expanded; this._invalidateEntry(e); break; }
+        }
+        break;
       case '\x0a': // Ctrl+J: enter multiline, then insert newlines
         if (!this.multiline) this.multiline = true;
         else this.editor.text += '\n';
@@ -353,6 +392,32 @@ export class TuiUI {
     if (entry) entry._rendered = null;
   }
 
+  _newAssistantEntry(width) {
+    return {
+      kind: 'assistant', raw: '', rows: [], prevLen: 0, done: false,
+      rendererWidth: width,
+      renderer: createMarkdownRenderer({
+        theme: this.theme, width,
+        highlight: (code, lang) => highlightCode(code, lang, this.theme),
+      }),
+      _rendered: null,
+    };
+  }
+
+  // Rebuild an assistant entry's renderer (theme swap or width change) by
+  // replaying the raw stream into a fresh renderer.
+  _replayAssistant(entry, width) {
+    entry.renderer = createMarkdownRenderer({
+      theme: this.theme, width,
+      highlight: (code, lang) => highlightCode(code, lang, this.theme),
+    });
+    entry.rendererWidth = width;
+    const rows = entry.renderer.push(entry.raw);
+    entry.rows = rows;
+    entry.prevLen = rows.length;
+    entry._rendered = null;
+  }
+
   // Per-entry render cache: same entry + same width returns the same lines
   // array; mutating callers null `_rendered` to force a recompute.
   _materialize(entry, width) {
@@ -360,6 +425,11 @@ export class TuiUI {
     let lines;
     if (entry.kind === 'card') {
       lines = renderCard(entry.card, { width, spinFrame: this.spinFrame, colors: this.colors, theme: this.theme });
+    } else if (entry.kind === 'user') {
+      lines = renderUserBubble(entry.text, width, this.theme, this.colors);
+    } else if (entry.kind === 'assistant') {
+      if (entry.rendererWidth !== width) this._replayAssistant(entry, width);
+      lines = entry.rows.map((r) => r.text);
     } else {
       lines = [];
       for (const l of entry.lines) lines.push(...wrapText(l, width));
@@ -418,7 +488,10 @@ export class TuiUI {
     if (name !== 'dark' && name !== 'light') return false;
     this.theme = getTheme(name, '256');
     this.themeName = name;
-    for (const e of this.entries) e._rendered = null;
+    for (const e of this.entries) {
+      e._rendered = null;
+      if (e.kind === 'assistant') this._replayAssistant(e, e.rendererWidth);
+    }
     this._draw();
     return true;
   }

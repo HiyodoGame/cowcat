@@ -193,11 +193,51 @@ export function createCard(kind, title) {
 
 export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+// User bubble: bubble background across width-4 columns, subtle › prefix on the
+// first row, continuations indented to the text column.
+export function renderUserBubble(text, width, theme = null, colors = true) {
+  if (!colors) return wrapText(String(text), width);
+  const innerW = Math.max(10, width - 4);
+  const bodyW = innerW - 2;
+  const bg = theme?.userBubbleBg ?? '';
+  const subtle = theme?.inactive ?? '';
+  const reset = '\x1b[0m';
+  return wrapText(String(text), bodyW).map((row, k) => {
+    const pad = row + ' '.repeat(Math.max(0, bodyW - visibleLen(row)));
+    return `${k === 0 ? `${subtle}› ${reset}` : '  '}${bg}${pad}${reset}`;
+  });
+}
+
 export function renderCard(card, { width, spinFrame = 0, colors = true, theme = null } = {}) {
   const C = theme
     ? { green: theme.success, red: theme.error, cyan: theme.permission, gray: theme.inactive, reset: '\x1b[0m' }
     : { green: '\x1b[32m', red: '\x1b[31m', cyan: '\x1b[36m', gray: '\x1b[90m', reset: '\x1b[0m' };
   const p = (c, s) => (colors ? `${c}${s}${C.reset}` : s);
+  // Tool cards carry a leading ⏺: it becomes the state-colored prefix column
+  // (minWidth 2), tinted dim while running, green on success, red on error.
+  const m = /^⏺/.exec(card.title);
+  if (m) {
+    const col = card.status === 'running' ? C.gray : card.status === 'error' ? C.red : C.green;
+    const prefix = p(col, '⏺') + ' '.repeat(Math.max(0, 2 - visibleLen('⏺')));
+    const rest = card.title.slice(1);
+    if (card.status === 'running') {
+      const spin = SPINNER[spinFrame % SPINNER.length];
+      const body = card.summaryLines.length ? card.summaryLines[0] : '';
+      return [padLine(`${prefix}${p(C.cyan, spin)} ${rest}${body ? ` — ${truncateAnsi(body, Math.max(10, width - visibleLen(card.title) - 8))}` : ''}`, width)];
+    }
+    const lines = [padLine(`${prefix}${rest}`, width)];
+    const shown = card.expanded ? card.fullLines : card.summaryLines;
+    for (const l of shown.slice(0, card.expanded ? 30 : 3)) {
+      lines.push(padLine(`  ${p(C.gray, '│')} ${truncateAnsi(l, width - 4)}`, width));
+    }
+    if (!card.expanded && card.fullLines.length > 3) {
+      lines.push(padLine(`  ${p(C.gray, '│')} ··· (${card.fullLines.length} lines) ···`, width));
+    }
+    if (card.expanded || card.fullLines.length > 3) {
+      lines.push(padLine(`  ${p(C.gray, '· ctrl+o to expand/collapse')}`, width));
+    }
+    return lines;
+  }
   if (card.status === 'running') {
     const spin = SPINNER[spinFrame % SPINNER.length];
     const body = card.summaryLines.length ? card.summaryLines[0] : '';

@@ -105,6 +105,8 @@ export class UI {
   print(s = '') { this.output.write(`${s}\n`); }
   streamChunk(s) { this.output.write(s); }
   endStream() { this.output.write('\n'); }
+  // Line-mode transcript has no user bubble — the TUI overrides this.
+  userMessage() {}
 
   waitingModel() { this.print(this.color(C.inactive, this.t.waiting)); }
 
@@ -298,6 +300,7 @@ export class MockUI {
   print(s = '') { this.printed.push(s); }
   endStream() {}
   streamChunk(s) { this.streamed += s; }
+  userMessage() {}
   toolCall(name, summary) { this.calls.push({ name, summary }); }
   toolSuccess() {}
   toolError() {}

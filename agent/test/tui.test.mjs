@@ -67,21 +67,23 @@ test('TUI render: card state machine running -> done/error, folded and expanded'
   const running = renderCard(card, { width: 50, spinFrame: 3, colors: false });
   assert.equal(running.length, 1);
   assert.ok(running[0].includes(SPINNER[3]));
+  assert.ok(running[0].includes('⏺'), 'tool-card prefix column');
 
   card.status = 'done';
   card.summaryLines = ['exit 0', 'hello', 'world', 'line4'];
   card.fullLines = ['exit 0', 'hello', 'world', 'line4', 'line5', 'line6'];
   const folded = renderCard(card, { width: 50, colors: false });
-  assert.ok(folded[0].includes('✓'));
-  assert.ok(folded.length <= 5, 'folded shows ≤3 body lines + ellipsis');
+  assert.ok(folded[0].includes('⏺'));
+  assert.ok(folded.length <= 6, 'folded shows ≤3 body lines + ellipsis + ctrl+o hint');
   assert.ok(folded.some((l) => l.includes('lines) ···')));
+  assert.ok(folded.some((l) => l.includes('ctrl+o to expand/collapse')), 'card tail hint');
 
   card.expanded = true;
   const expanded = renderCard(card, { width: 50, colors: false });
   assert.ok(expanded.some((l) => l.includes('line6')));
 
   card.status = 'error';
-  assert.ok(renderCard(card, { width: 50, colors: false })[0].includes('✗'));
+  assert.ok(renderCard(card, { width: 50, colors: false })[0].includes('⏺'));
 });
 
 test('TUI render: buildScreen assembles exact height with scroll clamping', () => {

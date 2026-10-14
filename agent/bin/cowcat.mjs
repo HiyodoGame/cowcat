@@ -929,6 +929,7 @@ async function main() {
       continue;
     }
     try {
+      ui.userMessage(line); // TUI bubble + turn clock; no-op in line mode
       await runTurn(line);
     } catch (e) {
       if (e instanceof ConfigError) { ui.print(`Config error: ${e.message}`); }
