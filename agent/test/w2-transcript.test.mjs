@@ -85,6 +85,59 @@ test('transcript: incremental chunks replace the open tail without duplicating r
   assert.ok(asst, 'assistant entry kind');
 });
 
+// Closed rows are emitted once and kept; only the open tail is replaced.
+const texts = (tui) => tui._flat().map(strip).map((l) => l.trim());
+
+test('transcript: heading closed by blank line survives the next chunk (closed rows kept)', () => {
+  const { tui } = headless();
+  tui.streamChunk('## Hi\n\n');
+  tui.streamChunk('Body text');
+  const flat = texts(tui);
+  assert.ok(flat.includes('Hi'), 'closed heading row still present after later push');
+  assert.ok(flat.includes('Body text'), 'new tail rendered');
+  assert.equal(flat.filter((l) => l === 'Hi').length, 1, 'heading not duplicated');
+});
+
+test('transcript: multiple paragraphs accumulate across pushes', () => {
+  const { tui } = headless();
+  tui.streamChunk('Para one\n\nPara two\n\n');
+  tui.streamChunk('Para three');
+  const flat = texts(tui);
+  for (const p of ['Para one', 'Para two', 'Para three']) {
+    assert.ok(flat.includes(p), `${p} present`);
+    assert.equal(flat.filter((l) => l === p).length, 1, `${p} exactly once`);
+  }
+});
+
+test('transcript: plain fast path keeps completed lines when a later chunk arrives', () => {
+  const { tui } = headless();
+  tui.streamChunk('Hello world\n');
+  tui.streamChunk('again');
+  const flat = texts(tui);
+  assert.ok(flat.includes('Hello world'), 'fast-path completed line kept after next push');
+  assert.ok(flat.includes('again'), 'continuation rendered');
+  assert.equal(flat.filter((l) => l === 'Hello world').length, 1, 'completed line not duplicated');
+});
+
+test('transcript: fast->full switch keeps already-emitted plain lines', () => {
+  const { tui } = headless();
+  tui.streamChunk('hello\n');
+  tui.streamChunk('# T\n');
+  const flat = texts(tui);
+  assert.ok(flat.includes('hello'), 'plain line survives the switch to full parsing');
+  assert.ok(flat.includes('T'), 'heading rendered after switch');
+});
+
+test('transcript: fenced block closed by ``` survives subsequent streaming', () => {
+  const { tui } = headless();
+  tui.streamChunk('```js\nconst x=1\n```\n');
+  tui.streamChunk('done');
+  const flat = texts(tui);
+  assert.ok(flat.includes('const x=1'), 'highlighted fence body kept');
+  assert.ok(flat.includes('done'), 'post-fence tail rendered');
+  assert.equal(flat.filter((l) => l === 'const x=1').length, 1, 'fence rows not duplicated');
+});
+
 test('transcript: tool card states tint the ⏺ prefix column (dim/green/red) with a ctrl+o hint', () => {
   const { tui } = headless();
   tui.toolCall('Bash', 'node -v');
@@ -197,6 +250,43 @@ test('transcript degrade: fake-SSE conversation over pipes stays linear — no a
     assert.equal(res.code, 0);
     assert.ok(res.out.includes('plain-mode-ok'), 'one full conversation turn completed');
     assert.ok(!res.out.includes('\x1b[?1049h'), 'piped stdout must never enter the alternate screen');
+  } finally {
+    server.close();
+  }
+});
+
+function toolCallServer() {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (req.url.startsWith('/v1/messages/count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      for (const ev of [
+        { type: 'message_start', message: { usage: { input_tokens: 3 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Read', input: {} } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"file_path":"/x"}' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+        { type: 'message_stop' },
+      ]) res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+      res.end();
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
+}
+
+test('transcript degrade: tool-call turn over pipes carries no escape sequences at all', async () => {
+  const { server, port } = await toolCallServer();
+  try {
+    const res = await runCli(['-p', '--max-turns', '2', 'read a file'], {
+      NO_COLOR: '1',
+      COWCAT_PROVIDER: 'anthropic', COWCAT_BASE_URL: `http://127.0.0.1:${port}`,
+      COWCAT_API_KEY: 'k', COWCAT_MODEL: 'm', COWCAT_ANIMATION: 'off',
+    });
+    assert.equal(res.code, 4, 'max-turns overrun against the always-tool fake');
+    assert.ok(res.out.includes('⏺'), 'tool-call line-mode output present (tool path exercised)');
+    assert.ok(!res.out.includes('\x1b'), 'piped stdout must contain no escape sequences whatsoever');
   } finally {
     server.close();
   }

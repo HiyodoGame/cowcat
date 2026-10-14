@@ -1,6 +1,9 @@
 // Streaming markdown block renderer: line-based block state machine plus an
 // inline span tokenizer. push() returns rows closed in that call followed by a
-// full re-render of the still-open tail block; the caller replaces the tail.
+// full re-render of the still-open tail block; the returned array carries a
+// `splitIndex` property marking the boundary — rows before it are closed
+// (emitted exactly once in the renderer's lifetime), rows from it on form the
+// open tail and are re-rendered on every push.
 
 import { stringWidth, charWidth, graphemes } from './wcwidth.js';
 
@@ -315,9 +318,11 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
       for (const row of wrapPlain(line)) out.push(row);
     }
     fastLinesSeen = lines.length;
-    for (const row of wrapPlain(rest)) out.push(row);
-    if (out.length) fastEmitted = true;
-    return out;
+    const tail = wrapPlain(rest);
+    const rows = out.concat(tail);
+    rows.splitIndex = out.length;
+    if (rows.length) fastEmitted = true;
+    return rows;
   }
 
   function currentRows() {
@@ -340,7 +345,9 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
       closedSeen = fastEmitted ? closed.length : 0;
       const replayed = closed.slice(closedSeen);
       closedSeen = closed.length;
-      return replayed.concat(currentRows());
+      const rows = replayed.concat(currentRows());
+      rows.splitIndex = replayed.length;
+      return rows;
     }
     buf += chunk;
     let i;
@@ -351,7 +358,9 @@ export function createMarkdownRenderer({ theme, width, highlight, osc8 = false }
     }
     const out = closed.slice(closedSeen);
     closedSeen = closed.length;
-    return out.concat(currentRows());
+    const rows = out.concat(currentRows());
+    rows.splitIndex = out.length;
+    return rows;
   }
 
   function reset(newWidth) {

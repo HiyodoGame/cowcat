@@ -90,9 +90,9 @@ export class TuiUI {
     this._draw();
   }
 
-  // The renderer returns newly closed rows plus a full re-render of the open
-  // tail; replacing the previous return wholesale keeps entry.rows equal to
-  // the complete current render at every step.
+  // The renderer returns newly closed rows (emitted once, kept forever) plus a
+  // full re-render of the open tail (replaced wholesale on every push); the
+  // array's splitIndex marks the boundary between the two sections.
   streamChunk(s) {
     let e = this.entries[this.entries.length - 1];
     if (!e || e.kind !== 'assistant' || e.done) {
@@ -103,8 +103,8 @@ export class TuiUI {
     const chunk = String(s);
     e.raw += chunk;
     const rows = e.renderer.push(chunk);
-    e.rows.splice(e.rows.length - e.prevLen, e.prevLen, ...rows);
-    e.prevLen = rows.length;
+    e.closedRows.push(...rows.slice(0, rows.splitIndex));
+    e.tailRows = rows.slice(rows.splitIndex);
     e._rendered = null;
     this._follow();
     this._draw();
@@ -114,12 +114,13 @@ export class TuiUI {
     const e = this.entries[this.entries.length - 1];
     if (e && e.kind === 'assistant' && !e.done) {
       const rows = e.renderer.push('');
-      e.rows.splice(e.rows.length - e.prevLen, e.prevLen, ...rows);
-      e.prevLen = rows.length;
+      e.closedRows.push(...rows.slice(0, rows.splitIndex));
+      e.tailRows = rows.slice(rows.splitIndex);
       e.done = true;
       e._rendered = null;
     }
     const s = this.turnSeconds();
+    this._turnStart = null;
     this.print(this.color(this.theme.inactive, `✻ for ${s < 60 ? `${s}s` : `${Math.round(s / 60)}m`}`));
   }
 
@@ -394,7 +395,7 @@ export class TuiUI {
 
   _newAssistantEntry(width) {
     return {
-      kind: 'assistant', raw: '', rows: [], prevLen: 0, done: false,
+      kind: 'assistant', raw: '', closedRows: [], tailRows: [], done: false,
       rendererWidth: width,
       renderer: createMarkdownRenderer({
         theme: this.theme, width,
@@ -413,8 +414,8 @@ export class TuiUI {
     });
     entry.rendererWidth = width;
     const rows = entry.renderer.push(entry.raw);
-    entry.rows = rows;
-    entry.prevLen = rows.length;
+    entry.closedRows = rows.slice(0, rows.splitIndex);
+    entry.tailRows = rows.slice(rows.splitIndex);
     entry._rendered = null;
   }
 
@@ -429,7 +430,7 @@ export class TuiUI {
       lines = renderUserBubble(entry.text, width, this.theme, this.colors);
     } else if (entry.kind === 'assistant') {
       if (entry.rendererWidth !== width) this._replayAssistant(entry, width);
-      lines = entry.rows.map((r) => r.text);
+      lines = [...entry.closedRows, ...entry.tailRows].map((r) => r.text);
     } else {
       lines = [];
       for (const l of entry.lines) lines.push(...wrapText(l, width));
