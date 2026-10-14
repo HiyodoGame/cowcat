@@ -5,16 +5,15 @@ import { renderGroup, renderFileCard } from './diffcard.js';
 import { renderBashCard } from './outputcard.js';
 import { THEMES } from './slashcmds.js';
 import { LineEditor } from './lineeditor.js';
+import { getTheme } from './tui/theme.js';
 
+// Shared palette derived from the semantic theme tokens; setTheme() re-parses
+// in place so every card/status line follows without re-rendering.
 const C = {
   reset: '\x1b[0m',
   dim: '\x1b[2m',
   bold: '\x1b[1m',
-  cyan: '\x1b[36m',
-  yellow: '\x1b[33m',
-  green: '\x1b[32m',
-  red: '\x1b[31m',
-  gray: '\x1b[90m',
+  ...getTheme('dark', '256'),
 };
 
 // Voice: terse, high-energy. Errors are always printed verbatim alongside the quip.
@@ -51,8 +50,8 @@ export const COPY = {
   },
 };
 
-// brand colors, nearest xterm-256: act #4A9EDA -> 74, plan #E0A63C -> 179, alert #E05C4A -> 167
-export const BRAND = { act: '\x1b[38;5;74m', plan: '\x1b[38;5;179m', alert: '\x1b[38;5;167m' };
+// brand accents mapped onto semantic tokens: act -> permission, plan -> warning, alert -> error
+export const BRAND = { act: C.permission, plan: C.warning, alert: C.error };
 // First-message language sniff: CJK chars -> zh, otherwise en.
 export function detectLang(text) {
   return /[\u4e00-\u9fff]/.test(text || '') ? 'zh' : 'en';
@@ -92,10 +91,9 @@ export class UI {
   // Swap the ANSI palette (dark/light). Mutates the shared palette objects so
   // every card/status line follows immediately.
   setTheme(name) {
-    const p = THEMES[name];
-    if (!p) return false;
-    Object.assign(C, p);
-    Object.assign(BRAND, { act: p.act, plan: p.plan, alert: p.alert });
+    if (!THEMES[name]) return false;
+    Object.assign(C, getTheme(name, '256'));
+    Object.assign(BRAND, { act: C.permission, plan: C.warning, alert: C.error });
     this.themeName = name;
     return true;
   }
@@ -108,26 +106,26 @@ export class UI {
   streamChunk(s) { this.output.write(s); }
   endStream() { this.output.write('\n'); }
 
-  waitingModel() { this.print(this.color(C.gray, this.t.waiting)); }
+  waitingModel() { this.print(this.color(C.inactive, this.t.waiting)); }
 
-  compacting() { this.print(this.color(C.gray, this.t.compacting)); }
+  compacting() { this.print(this.color(C.inactive, this.t.compacting)); }
 
   toolCall(name, summary) {
-    this.print(this.color(C.cyan, `  ⏺ Tool ▸ ${this.color(C.bold, name)}${summary ? `(${this.truncate(summary)})` : ''}`));
+    this.print(this.color(C.permission, `  ⏺ Tool ▸ ${this.color(C.bold, name)}${summary ? `(${this.truncate(summary)})` : ''}`));
   }
 
   toolSuccess() {
-    this.print(this.color(C.green, `  ${this.t.success}`));
+    this.print(this.color(C.success, `  ${this.t.success}`));
   }
 
   toolError(err) {
     // quip first, then the real error — never swallow diagnostics
-    this.print(this.color(C.yellow, `  ${this.t.failure}`));
-    this.print(this.color(C.red, `  ✗ ${this.truncate(String(err), 300)}`));
+    this.print(this.color(C.warning, `  ${this.t.failure}`));
+    this.print(this.color(C.error, `  ✗ ${this.truncate(String(err), 300)}`));
   }
 
   denied() {
-    this.print(this.color(C.gray, `  ${this.t.denied}`));
+    this.print(this.color(C.inactive, `  ${this.t.denied}`));
   }
 
   truncate(s, n = 120) {
@@ -141,10 +139,10 @@ export class UI {
   // then the quip and the y/n/always options.
   async approve(toolName, summary, { dangerous = false, preview = null, group = null } = {}) {
     if (!this.interactive) {
-      this.print(this.color(C.gray, `  ⊘ non-interactive: ${toolName} auto-denied (rerun with -y to auto-approve)`));
+      this.print(this.color(C.inactive, `  ⊘ non-interactive: ${toolName} auto-denied (rerun with -y to auto-approve)`));
       return 'n';
     }
-    if (dangerous) this.print(this.color(C.red, `  ${this.t.dangerousWarn}`));
+    if (dangerous) this.print(this.color(C.error, `  ${this.t.dangerousWarn}`));
     if (preview) {
       const idx = group?.index ?? 1;
       const total = group?.total ?? 1;
@@ -263,7 +261,7 @@ export class UI {
     for (const q of questions) {
       this.print(this.color(C.bold, `\n${q.question}`));
       q.options.forEach((o, i) => {
-        this.print(`  ${i + 1}. ${this.color(C.bold, o.label)}${o.description ? this.color(C.gray, ` — ${o.description}`) : ''}`);
+        this.print(`  ${i + 1}. ${this.color(C.bold, o.label)}${o.description ? this.color(C.inactive, ` — ${o.description}`) : ''}`);
       });
       this.output.write(`Choose${q.multiSelect ? ' (comma-separated)' : ''} [1-${q.options.length}]: `);
       const ans = ((await this.readLine()) ?? '').trim();
@@ -277,7 +275,7 @@ export class UI {
 
   showTodos(todos) {
     if (!todos?.length) return;
-    this.print(this.color(C.green, '  Todos:'));
+    this.print(this.color(C.success, '  Todos:'));
     for (const t of todos) this.print(`    ${t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '◐' : '○'} ${t.content}`);
   }
 }

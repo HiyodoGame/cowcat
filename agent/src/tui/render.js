@@ -60,22 +60,38 @@ export function padLine(line, width) {
 // wrapped continuation so its style matches the line it was cut from.
 export function ansiStateCarry(line) {
   const active = [];
+  const head = (p) => (typeof p === 'object' ? p[0] : p);
   const isFg = (p) => (p >= 30 && p <= 37) || p === 38 || (p >= 90 && p <= 97);
   const isBg = (p) => (p >= 40 && p <= 47) || p === 48 || (p >= 100 && p <= 107);
   const OFF = { 22: [1, 2], 23: [3], 24: [4], 25: [5, 6], 27: [7], 28: [8], 29: [9] };
   for (const m of String(line).matchAll(/\x1b\[([0-9;]*)m/g)) {
     const params = m[1] === '' ? [0] : m[1].split(';').map((p) => (p === '' ? 0 : Number(p)));
     if (params.includes(0)) { active.length = 0; continue; }
-    for (const p of params) {
+    for (let i = 0; i < params.length; i++) {
+      const p = params[i];
       if (Number.isNaN(p)) continue;
-      if (p === 39) { for (let k = active.length - 1; k >= 0; k--) if (isFg(active[k])) active.splice(k, 1); continue; }
-      if (p === 49) { for (let k = active.length - 1; k >= 0; k--) if (isBg(active[k])) active.splice(k, 1); continue; }
+      if (p === 38 || p === 48) {
+        // extended color: mode + args form one unit, cleared wholesale by 39/49
+        const mode = params[i + 1];
+        const argc = mode === 5 ? 3 : mode === 2 ? 5 : 2;
+        const unit = params.slice(i, i + argc);
+        for (let k = active.length - 1; k >= 0; k--) {
+          if (typeof active[k] === 'object' && active[k][0] === p) active.splice(k, 1);
+        }
+        active.push(unit);
+        i += argc - 1;
+        continue;
+      }
+      if (p === 39) { for (let k = active.length - 1; k >= 0; k--) if (isFg(head(active[k]))) active.splice(k, 1); continue; }
+      if (p === 49) { for (let k = active.length - 1; k >= 0; k--) if (isBg(head(active[k]))) active.splice(k, 1); continue; }
       const off = OFF[p];
       if (off) { for (let k = active.length - 1; k >= 0; k--) if (off.includes(active[k])) active.splice(k, 1); continue; }
       if (!active.includes(p)) active.push(p);
     }
   }
-  return active.length ? `\x1b[${active.join(';')}m` : '';
+  return active.length
+    ? `\x1b[${active.map((a) => (typeof a === 'object' ? a.join(';') : a)).join(';')}m`
+    : '';
 }
 
 const joinToks = (toks) => toks.map((t) => t.ansi || t.ch).join('');
@@ -137,16 +153,19 @@ export function stripFirstChars(line, n) {
 
 export const CTX_COLORS = { ok: '\x1b[32m', warn: '\x1b[33m', crit: '\x1b[31m', reset: '\x1b[0m', dim: '\x1b[2m' };
 
-export function ctxBar(pct, width = 20) {
+export function ctxBar(pct, width = 20, theme = null) {
   const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
-  const color = pct >= 90 ? CTX_COLORS.crit : pct >= 70 ? CTX_COLORS.warn : CTX_COLORS.ok;
+  const ok = theme?.success ?? CTX_COLORS.ok;
+  const warn = theme?.warning ?? CTX_COLORS.warn;
+  const crit = theme?.error ?? CTX_COLORS.crit;
+  const color = pct >= 90 ? crit : pct >= 70 ? warn : ok;
   return `${color}${'█'.repeat(filled)}${CTX_COLORS.dim}${'░'.repeat(width - filled)}${CTX_COLORS.reset}`;
 }
 
 // Header: compact banner row + context meter + model/mode. Returns ≤3 lines.
-export function renderHeader({ bannerLines = [], pct = 0, model = '', mode = 'default', plan = null, width }) {
+export function renderHeader({ bannerLines = [], pct = 0, model = '', mode = 'default', plan = null, width, theme = null }) {
   const lines = [];
-  const meter = `${ctxBar(pct)} ${pct}%`;
+  const meter = `${ctxBar(pct, 20, theme)} ${pct}%`;
   const right = `${model} [${mode}]${plan ? ` ${plan}` : ''}`;
   const banner = bannerLines.length ? bannerLines[0] : 'CowCat';
   const gap = width - visibleLen(banner) - visibleLen(meter) - visibleLen(right) - 4;
@@ -155,9 +174,10 @@ export function renderHeader({ bannerLines = [], pct = 0, model = '', mode = 'de
   return lines.slice(0, 3);
 }
 
-export function renderStatus({ cost = '', version = '', cwd = '', mode = '' }, width) {
+export function renderStatus({ cost = '', version = '', cwd = '', mode = '' }, width, theme = null) {
   const left = ` ${cost}`;
-  const mid = ` cowcat/${version} ${mode}`;
+  const dim = theme?.inactive ?? '';
+  const mid = dim ? `${dim} cowcat/${version} ${mode}\x1b[0m` : ` cowcat/${version} ${mode}`;
   const right = cwd;
   const gap1 = Math.max(1, width - visibleLen(left) - visibleLen(mid) - visibleLen(right) - 3);
   return padLine(`${left}${' '.repeat(gap1)}${mid}${' '.repeat(Math.max(1, width - visibleLen(left) - gap1 - visibleLen(mid) - visibleLen(right)))}${right}`, width);
@@ -173,8 +193,10 @@ export function createCard(kind, title) {
 
 export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-export function renderCard(card, { width, spinFrame = 0, colors = true } = {}) {
-  const C = { green: '\x1b[32m', red: '\x1b[31m', cyan: '\x1b[36m', gray: '\x1b[90m', reset: '\x1b[0m' };
+export function renderCard(card, { width, spinFrame = 0, colors = true, theme = null } = {}) {
+  const C = theme
+    ? { green: theme.success, red: theme.error, cyan: theme.permission, gray: theme.inactive, reset: '\x1b[0m' }
+    : { green: '\x1b[32m', red: '\x1b[31m', cyan: '\x1b[36m', gray: '\x1b[90m', reset: '\x1b[0m' };
   const p = (c, s) => (colors ? `${c}${s}${C.reset}` : s);
   if (card.status === 'running') {
     const spin = SPINNER[spinFrame % SPINNER.length];

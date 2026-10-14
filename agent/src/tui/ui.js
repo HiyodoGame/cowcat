@@ -9,6 +9,7 @@ import {
 } from './render.js';
 import { LineEditor } from '../lineeditor.js';
 import { analyzeContext } from '../contextviz.js';
+import { getTheme } from './theme.js';
 
 const SPINNER_MS = 150;
 
@@ -39,6 +40,8 @@ export class TuiUI {
     this._promptText = '';
     this._pendingApproval = null;
     this._meta = { version, cwd, getModel, getMode, getCost, getConfig, getMessages };
+    this.themeName = this._meta.getConfig().theme === 'light' ? 'light' : 'dark';
+    this.theme = getTheme(this.themeName, '256');
   }
 
   // --- lifecycle ---------------------------------------------------------------
@@ -321,6 +324,7 @@ export class TuiUI {
       model: this._meta.getModel(),
       mode: this._meta.getMode(),
       width: this._size().width,
+      theme: this.theme,
     });
   }
 
@@ -342,7 +346,7 @@ export class TuiUI {
     const m = this._meta;
     return renderStatus({
       cost: m.getCost(), version: m.version, cwd: m.cwd, mode: m.getMode(),
-    }, this._size().width);
+    }, this._size().width, this.theme);
   }
 
   _invalidateEntry(entry) {
@@ -355,7 +359,7 @@ export class TuiUI {
     if (entry._rendered && entry._rendered.width === width) return entry._rendered.lines;
     let lines;
     if (entry.kind === 'card') {
-      lines = renderCard(entry.card, { width, spinFrame: this.spinFrame, colors: this.colors });
+      lines = renderCard(entry.card, { width, spinFrame: this.spinFrame, colors: this.colors, theme: this.theme });
     } else {
       lines = [];
       for (const l of entry.lines) lines.push(...wrapText(l, width));
@@ -408,5 +412,14 @@ export class TuiUI {
   }
 
   // hooks the loop/bin sometimes touch
-  setTheme() {}
+  // Swap the palette (dark/light): re-parse tokens, mark every cached entry
+  // dirty so the next draw re-renders the whole transcript in the new theme.
+  setTheme(name) {
+    if (name !== 'dark' && name !== 'light') return false;
+    this.theme = getTheme(name, '256');
+    this.themeName = name;
+    for (const e of this.entries) e._rendered = null;
+    this._draw();
+    return true;
+  }
 }
