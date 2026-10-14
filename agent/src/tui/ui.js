@@ -41,6 +41,7 @@ export class TuiUI {
     input = process.stdin, output = process.stdout, colors = true, lang = 'zh',
     version = '0.8.0', cwd = process.cwd(),
     getModel = () => '', getMode = () => 'default', getCost = () => '', getConfig = () => ({}), getMessages = () => [],
+    completions = null, fileCompletions = null,
   } = {}) {
     this.input = input;
     this.output = output;
@@ -54,9 +55,12 @@ export class TuiUI {
     this.spinFrame = 0;
     this._timer = null;         // spinner interval, only while a card is running
     this._turnStart = null;     // userMessage timestamp, consumed by endStream footer
-    this.editor = new LineEditor({});
-    this.completions = null;
-    this.fileCompletions = null;
+    this.completions = completions;         // (prefix) => string[] of "/name"
+    this.fileCompletions = fileCompletions; // (prefix) => string[] of "@path"
+    this.editor = new LineEditor({
+      completions: () => (this.completions ? this.completions(this.editor.text) : []),
+      fileCompletions: (prefix) => (this.fileCompletions ? this.fileCompletions(prefix) : []),
+    });
     this.onShiftTab = null;
     this.onInterrupt = null;
     this.multiline = false;
@@ -362,8 +366,9 @@ export class TuiUI {
         if (!this.multiline) this.multiline = true;
         else this.editor.insert('\n');
         break;
-      case '\x1b': // Esc: interrupt the current task, else clear the line
-        if (this.onInterrupt) { this.onInterrupt(); }
+      case '\x1b': // Esc: cancel completion candidates, else interrupt, else clear the line
+        if (this.editor.tabBase !== null) this.editor.cancelCompletion();
+        else if (this.onInterrupt) { this.onInterrupt(); }
         else this.editor.reset();
         break;
       case '\r':
@@ -419,6 +424,15 @@ export class TuiUI {
       multiline: this.multiline, cursor: cursorCol,
     });
     const lines = ['', ...box, ''];
+    const ed = this.editor;
+    if (ed.tabBase !== null && ed.tabCandidates.length) {
+      // completion candidate row: current pick highlighted, rest dim, n/m counter
+      const idx = ed.tabIdx;
+      const shown = ed.tabCandidates.map((c, i) => (i === idx ? this.color(this.theme.brand, c) : this.color('\x1b[90m', c)));
+      let row = ' ' + shown.join(this.color('\x1b[90m', '  '));
+      if (idx < ed.tabCandidates.length) row += this.color('\x1b[90m', `  ${idx + 1}/${ed.tabCandidates.length}`);
+      lines.push(row);
+    }
     if (this.multiline) lines.push(` ${this.color('\x1b[90m', this.lang === 'zh' ? '[多行模式 Ctrl+J 退出]' : '[multiline Ctrl+J to exit]')}`);
     return lines;
   }

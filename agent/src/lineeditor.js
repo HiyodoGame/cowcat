@@ -18,6 +18,13 @@ export class LineEditor {
     this.stash = '';       // in-progress line saved while browsing history
     this.tabBase = null;   // line before tab cycling
     this.tabIdx = -1;
+    this.tabCandidates = []; // candidates of the active tab cycle (for display)
+  }
+
+  cancelCompletion() {
+    this.tabBase = null;
+    this.tabIdx = -1;
+    this.tabCandidates = [];
   }
 
   _browsing() { return this.hIdx !== null; }
@@ -50,12 +57,14 @@ export class LineEditor {
     // @-mention file completion takes precedence: @<prefix> + Tab
     const at = this.text.match(/@([\w./-]*)$/);
     if (at) {
+      this.tabCandidates = [];
       if (!this.fileCompletions) return;
       if (this.tabBase === null) this.tabBase = this.text;
       const m = this.tabBase.match(/@([\w./-]*)$/);
       if (!m) return;
       const candidates = this.fileCompletions(m[1]).slice(0, 20);
       if (!candidates.length) return;
+      this.tabCandidates = candidates;
       this.tabIdx = (this.tabIdx + 1) % (candidates.length + 1); // last slot restores the raw prefix
       const pre = this.tabBase.slice(0, this.tabBase.length - m[0].length);
       this._setText(this.tabIdx === candidates.length ? this.tabBase : pre + candidates[this.tabIdx]);
@@ -70,6 +79,7 @@ export class LineEditor {
     const candidates = (this.completions ? this.completions() : [])
       .filter((c) => c.startsWith(this.tabBase) && c !== this.tabBase)
       .sort();
+    this.tabCandidates = candidates;
     if (!candidates.length) return;
     this.tabIdx = (this.tabIdx + 1) % (candidates.length + 1);
     this._setText(this.tabIdx === candidates.length ? this.tabBase : candidates[this.tabIdx]);
@@ -82,6 +92,7 @@ export class LineEditor {
     this.text = this.text.slice(0, this.cursor) + s + this.text.slice(this.cursor);
     this.cursor += s.length;
     this.tabBase = null; // typing invalidates tab cycling
+    this.tabCandidates = [];
   }
 
   moveLeft() { if (this.cursor > 0) this.cursor--; }
