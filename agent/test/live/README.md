@@ -28,7 +28,7 @@ What each one covers:
 | `everything.mjs` | official `server-everything`: `resources/list` + `resources/read` against a real implementation, and measures the gaps (templates / prompts / server→client notifications) |
 | `keepalive.mjs` | SSE keep-alive (web-standard transport, `keepAliveMs`) and a server that answers then holds the stream open — the case that used to stall until the timeout |
 | `notify-negative.mjs` | the old behaviour measured against a real server (documents that the SDK tolerates a request-shaped `initialized` — the fix is spec correctness, not a blocker) |
-| `cli-e2e.mjs` | project `.cowcat/mcp.json` → trust from `state.json` → real tool call → the tool output reaching the model. Note the pre-trust of the cwd: an untrusted dir locks `-p` to read-only plan mode, which denies MCP tool calls |
+| `cli-e2e.mjs` | phase 1: project `.cowcat/mcp.json` → trust from `state.json` → real tool call → the tool output reaching the model. phase 2: the user-level config runs `server-everything` and `/mcp__everything__simple-prompt` — the prompt text is read from the server first, then asserted inside the CLI's model request (covers third-party server → slash command → model). Note the pre-trust of the cwd: an untrusted dir locks `-p` to read-only plan mode, which denies MCP tool calls |
 
 `paged-server.mjs` is the SDK-based fixture server used by `http.mjs`.
 
