@@ -204,6 +204,29 @@ test('cron: takeDueCrons injects due prompts; one-shots are removed, recurring r
   assert.ok(Date.parse(untouched.nextFireAt) > Date.now() + 3000_000, 'not-due job untouched');
 });
 
+test('cron: takeDueCrons with sessionId only fires this session\'s jobs; foreign jobs stay armed', () => {
+  const ctx = makeCtx();
+  const past = new Date(Date.now() - 60_000).toISOString();
+  saveCrons([
+    { id: 'mine', cron: null, prompt: 'mine', recurring: false, nextFireAt: past, createdAt: past, sessionId: 'sess-A' },
+    { id: 'theirs', cron: null, prompt: 'theirs', recurring: false, nextFireAt: past, createdAt: past, sessionId: 'sess-B' },
+    { id: 'legacy', cron: null, prompt: 'legacy', recurring: false, nextFireAt: past, createdAt: past },
+  ]);
+
+  const due = takeDueCrons(new Date(), { sessionId: 'sess-A' });
+  assert.deepEqual(due.map((d) => d.id).sort(), ['legacy', 'mine'], 'own + legacy jobs fire');
+
+  const remaining = loadCrons();
+  assert.deepEqual(remaining.map((j) => j.id), ['theirs'], 'foreign job survives, not fired, not deleted');
+
+  // no opts -> full sweep (backwards compatible)
+  saveCrons([
+    { id: 'x', cron: null, prompt: 'x', recurring: false, nextFireAt: past, createdAt: past, sessionId: 'sess-B' },
+  ]);
+  assert.deepEqual(takeDueCrons().map((d) => d.id), ['x']);
+  assert.equal(loadCrons().length, 0);
+});
+
 test('cron: cronFirePrompt marks recurring vs one-shot', () => {
   const rec = cronFirePrompt({ id: 'a', cron: '*/5 * * * *', recurring: true, prompt: 'ping' });
   assert.match(rec, /kind="recurring cron"/);

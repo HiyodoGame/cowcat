@@ -140,13 +140,25 @@ function addJob({ cron = null, prompt, recurring, nextFireAt, sessionId = null, 
 // Due-fire sweep used by the REPL idle hook. Returns the prompts to inject
 // (wrapped with fire context); recurring jobs advance to their next fire time,
 // one-shot jobs (incl. ScheduleWakeup) are removed. Mutations are persisted.
-export function takeDueCrons(now = new Date()) {
+//
+// opts.sessionId scopes the sweep to one session: jobs are stamped with the
+// session that created them (addJob), and without this filter a job created in
+// session A fires as a user turn inside unrelated session B. Jobs whose
+// sessionId is missing (legacy entries) still fire everywhere. Foreign jobs are
+// kept untouched — they fire when their own session sweeps, and are never
+// silently deleted.
+export function takeDueCrons(now = new Date(), opts = {}) {
+  const { sessionId = null } = opts;
   const list = loadCrons();
   const due = [];
   const keep = [];
   for (const job of list) {
     const t = Date.parse(job.nextFireAt);
     if (!Number.isNaN(t) && t <= now.getTime()) {
+      if (sessionId && job.sessionId && job.sessionId !== sessionId) {
+        keep.push(job); // due, but belongs to another session — leave it armed
+        continue;
+      }
       due.push(job);
       if (job.recurring) {
         try {
