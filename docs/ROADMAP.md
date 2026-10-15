@@ -95,7 +95,7 @@
 
 ## 5. 执行原则
 
-1. **每个 P 级批次 = 实现 + 测试 + 文档 + 版本号**，跑 `node --test 'test/**/*.test.mjs'` 全绿 + 真实 Kimi 冒烟后才算完
+1. **每个 P 级批次 = 实现 + 测试 + 文档 + 版本号**，跑 `cd agent && npm install && npm test` 全绿（`pretest` 先跑 ESLint `no-undef`/`no-unused-vars`）+ 真实 Kimi 冒烟后才算完
 2. **法律边界不变**：prompt/描述改写不照抄；功能性短句可用；逆向产物不进发布 tarball（`files` 白名单已隔离）
 3. **不冒充**：UA、user_id、产物品牌均为 CowCat/CoreScense
 4. **原版实验性功能**（团队/远程/cowork）永远低优先，核心体验（工具/权限/记忆/hooks/MCP）优先

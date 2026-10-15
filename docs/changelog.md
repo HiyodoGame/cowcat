@@ -45,6 +45,25 @@
 - **新增 REPL 斜杠命令冒烟测试**（`test/lifecycle.test.mjs`）：斜杠命令只能经 REPL 触达，此前单测全部绕开（这正是 `writeState` 漏网的原因）。用 piped stdin 跑一遍无网络依赖的 22 条命令，断言退出码 0、stderr 无 `ReferenceError/is not defined/TypeError`、且 `/sandbox light` 与 `/theme light` 真的落盘。
 - 全量 561 passed / 0 failed。
 
+### 第六轮（静态门禁：ESLint no-undef/no-unused-vars）
+
+第五轮归纳出「文档/调用点与真实接线之间存在无人校验的间隙」，`writeState` 那类（**调用了未 import 的标识符**）用测试堵不干净——只有跑到那条路径才暴露。改为加静态门禁：最小 ESLint 配置只开两条规则，经 `pretest` 接入 `npm test`。
+
+**门禁配置**（`agent/eslint.config.mjs`）：`no-undef` + `no-unused-vars`（`args: 'none'`、`caughtErrors: 'none'`、`ignoreRestSiblings`），只扫 `bin/**/*.mjs`、`src/**/*.js`、`test/**/*.mjs`；忽略 `test/live/**`（可选联调脚本，依赖未安装）与 `test/fixtures/**`。Node 内建全局手写列在白名单里（不引 `globals` 包，保持零运行时依赖；漏写会以 `no-undef` 失败，是安全方向）。
+
+**首次运行即抓出 4 个 `no-undef` + 51 个 `no-unused-vars`**，其中两个是真 bug：
+
+- **`Glob` 的 `path` 参数直接崩**（`src/tools/glob.js:88`）：`resolve(ctx.cwd, input.path)` 里的 `resolve` 从未从 `node:path` 导入 → 带 `path` 调用 Glob 抛 ReferenceError。此前测试只覆盖工具注册与 schema，没有一次真实调用（因此从未暴露）。修复：补 import。新增回归测试（相对路径/绝对路径/默认 cwd/目录不存在四条断言）。
+- **`/output-style` 整个功能没接**（`bin/cowcat.mjs`）：命令体引用 `outputStyles`、`currentStyle` 两个不存在的标识符（列出与切换都会 ReferenceError 打死 CLI），而 `loadOutputStyles`、`styleSection` 被 import 却从未调用——即使不崩，样式也永远不会进 system prompt。修复：启动时 `loadOutputStyles(cwd)` + 打印 warnings，`system()` 每回合按 `activeStyle` 注入 `styleSection(body)`，命令体改为读写真实状态。新增 E2E（临时 output-styles 目录 → `/output-style terse` → 断言下一个请求体里出现样式正文）。
+
+**清理**：51 个 `no-unused-vars` 全部处理——12 处 src/bin 死导入与冗余解构、13 处测试死导入、其余为测试里的未使用局部量。其中 5 处「`let body = ''` + data 监听」是**排空请求体让 `end` 触发**的载荷代码（删掉会让 handler 挂起），改用语义等价的 `req.resume()`；`p3-cron` 两处 `makeCtx()` 是纯副作用调用（建临时 COWCAT_HOME），保留调用并注明理由。`p0-wave2` 有个 `cyanBefore` 探针从未参与断言（作者原先想做切换前后对比），按现状删除并在此记录，不臆造断言。
+
+**牙齿验证**：对 `7fda95b` 的 pre-fix 源跑门禁 → 7 errors（4× `no-undef`：`outputStyles`/`currentStyle`×2/`resolve`；3× `no-unused-vars`）。
+
+**代价（需知会）**：`npm test` 现在需要先 `npm install`（`agent/` 有了第一个 devDependency，锁定在 `package-lock.json`）。运行时依赖仍为零，发布 tarball 不含 devDependency。文档（`docs/PUBLISH.md` 发布清单、`docs/ROADMAP.md` 执行原则）已同步为 `cd agent && npm install && npm test`。
+
+全量 563 passed / 0 failed（561 + Glob 1 + output-style 1）。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
