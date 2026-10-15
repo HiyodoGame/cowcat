@@ -1,7 +1,9 @@
 // IDE integration (P2-2, minimal): detect the hosting IDE from the terminal
-// environment, and emit file/diagnostic events as JSONL on a channel the IDE
-// extension can tail. Channel resolution: COWCAT_IDE_PIPE env (a file path);
-// without it, events are counted but not written. /ide reports the state.
+// environment, and emit file_edited events (Edit/Write successes) as JSONL on a
+// channel the IDE extension can tail. Channel resolution: COWCAT_IDE_PIPE env
+// (a file path); without it, events are counted but not written. /ide reports
+// the state. NOTE: the `diagnostic` event type promised in early docs was never
+// wired up — only file_edited is emitted today.
 import { appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

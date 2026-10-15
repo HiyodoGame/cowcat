@@ -255,7 +255,7 @@ cowcat -p --max-turns 10 "..."                       # 回合上限，超限 exi
 
 ## P2 第二波
 
-- `/ide` — IDE 集成状态：检测到的 IDE（VS Code/Cursor/JetBrains）、JSONL 事件通道（`COWCAT_IDE_PIPE=<路径>`，扩展端 tail 该文件即可收到 `file_edited`/`diagnostic` 事件）、本会话事件数。
+- `/ide` — IDE 集成状态：检测到的 IDE（VS Code/Cursor/JetBrains）、JSONL 事件通道（`COWCAT_IDE_PIPE=<路径>`，扩展端 tail 该文件即可收到 `file_edited` 事件）、本会话事件数。
 - `/worktree [名]` — 创建 git worktree（`../<repo>-cowcat-<名>`，分支 `cowcat/<名>`）并把会话切入；`/worktree list` 列出。Agent 工具传 `isolation: "worktree"` 可让子代理在独立 worktree 里跑。
 - **lead 角色** — `subagent_type: "lead"` 的团队编排：它会按 scout/plan/general/verify 分工派发、整合报告并对结果负责（可嵌套一层子代理）。
 - `cowcat -p --background "长任务"` — 后台执行：立即返回任务 id，日志与结果在 `~/.cowcat/background/<id>/`；完成时系统通知（Windows 气球提示，无 GUI 静默）。

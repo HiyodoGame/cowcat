@@ -2,6 +2,13 @@
 
 ## 0.12.0（未发布）— P1–P5：思考链流式 / 工具增量 / 右侧面板 / 轻量沙箱 / 并行执行
 
+- **稳定性修复（摸底深挖批次）**：`-p` 模式在所有 return 路径（含 `--max-turns` 超限、`--output-schema` 失败）经 try/finally 统一执行子进程清理——修复「模型开了 `run_in_background` 任务后 CLI 挂起直到任务超时」的 CI 静默挂起；新增 SIGTERM 处理器（原来只有 SIGINT，docker stop/CI runner 杀进程时留下孤儿）；MCP stdio server 与后台 registry 纳入信号清理范围（`bin/cowcat.mjs`）。
+- **权限规则覆盖 MCP 工具**：`mcp__<server>__<tool>` 名跳过 knownTools 启动快照校验（工具在连接后才注册，预置规则此前全被跳过并告警），规则名允许 `-`/`.`（`get-issue` 这类 MCP 工具名原来连解析都过不了）；MCP 连接后重跑 applyRules，`/permissions add` 用实时工具列表（`src/perrules.js`、`bin/cowcat.mjs`）。
+- **后台任务输出保留尾部**：TaskOutput 超 20000 字符时从尾部截断并标注丢弃量——此前保头截断丢掉的正是报错栈与测试汇总（`src/background.js`、`src/tools/taskoutput.js`）。
+- **后台子代理可取消**：`startAsync` 向任务函数传入 AbortSignal 并经 Agent 工具 → spawnAgent → runLoop → provider.chat 贯通；修复 `/tasks kill` 对异步任务抛 TypeError 被吞、假成功的缺陷；已取消任务的迟到结果不再覆盖 killed 终态（`src/background.js`、`src/subagent.js`、`src/tools/agent.js`）。
+- **cron 按会话隔离**：`takeDueCrons(now, { sessionId })`，A 会话创建的定时任务不再在 B 会话里作为用户消息触发；外来任务原样保留不删，无 sessionId 的历史任务保持全量触发（向后兼容）（`src/tools/cron.js`、`bin/cowcat.mjs`）。
+- **文档诚实化**：`diagnostic` IDE 事件自 0.7.0 起只存在于文档/注释，代码从未发射——`USAGE.md` 与 `src/ide.js` 注释改为只承诺实际发射的 `file_edited`（`docs/USAGE.md`、`agent/src/ide.js`）。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
