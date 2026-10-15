@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // cowcat CLI entry: REPL with slash commands, resume, streaming, tool approvals.
-import { loadConfig, ConfigError, displayModel, contextLimit, resolveModelConfig, configuredProviders } from '../src/config.js';
+import { loadConfig, ConfigError, displayModel, contextLimit, resolveModelConfig, configuredProviders, writeState } from '../src/config.js';
 import { catalogRefs, formatModelHint } from '../src/modelhint.js';
 import { createProvider } from '../src/llm/client.js';
 import { buildSystemPrompt, PLAN_MODE_ADDENDUM } from '../src/prompts/system.js';
@@ -530,6 +530,11 @@ async function main() {
   let currentAbort = null;
   if (tui) tui.onInterrupt = () => { currentAbort?.abort(); };
   if (tui) {
+    // ctrl+b goes straight through TuiUI.togglePanel(), so without this hook the
+    // documented "panel state is remembered" only held for the /panel command.
+    tui.onTogglePanel = (on) => { writeState((s) => { s.panel = on; return s; }); };
+  }
+  if (tui) {
     // shift+tab: act <-> plan (the keybinding exists since the TUI redesign, but
     // nothing ever assigned onShiftTab, so the key did nothing). Plan is a
     // detour, not a tier: remember the mode we left so coming back restores it —
@@ -890,9 +895,9 @@ async function main() {
         else ui.print(ui.lang === 'zh' ? 'todo 列表是空的。' : 'Todo list is empty.');
       } else if (cmd === 'panel') {
         if (tui) {
-          const on = tui.togglePanel();
-          sessionState.panel = on;
-          writeState((s) => { s.panel = on; return s; });
+          // single persistence path: togglePanel() reports the outcome through
+          // onTogglePanel, which mirrors it into state.json
+          tui.togglePanel();
         } else {
           ui.print(ui.lang === 'zh' ? '面板只在 TUI 模式下可用。' : 'The panel is only available in TUI mode.');
         }

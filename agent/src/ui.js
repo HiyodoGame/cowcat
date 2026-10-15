@@ -76,7 +76,6 @@ export class UI {
     this.editor = null;          // lazy LineEditor for interactive TTY input
     this.completions = null;     // () => string[] of "/name" for Tab
     this.fileCompletions = null; // (prefix) => string[] of "@path" for @-mention Tab
-    this.onShiftTab = null;      // mode-switch hook
     this._promptText = '';
   }
 
