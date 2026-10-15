@@ -15,6 +15,13 @@ export class ToolRegistry {
     return [...this.tools.values()];
   }
 
+  // Used by /mcp reconnect: drop the adapters bound to a stopped client before
+  // re-registering, so no stale mcp__server__tool entry keeps pointing at the
+  // dead transport.
+  unregister(name) {
+    return this.tools.delete(name);
+  }
+
   get(name) {
     return this.tools.get(name);
   }

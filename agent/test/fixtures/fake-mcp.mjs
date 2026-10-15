@@ -10,6 +10,12 @@ const RESOURCES = [
   { uri: 'memo://welcome', name: 'welcome', description: 'Greeting memo', mimeType: 'text/plain' },
   { uri: 'blob://logo', name: 'logo', description: 'Binary blob', mimeType: 'application/octet-stream' },
 ];
+// Env-gated behaviours so one fixture covers the tricky cases:
+//   FAKE_MCP_PAGE=<n>        serve tools/list in pages of n with nextCursor
+//   FAKE_MCP_IGNORE_SIGTERM  stay alive on SIGTERM (exercises SIGKILL escalation)
+//   FAKE_MCP_HANG_INIT       never answer initialize (exercises the connect budget)
+const PAGE = Number(process.env.FAKE_MCP_PAGE) || 0;
+if (process.env.FAKE_MCP_IGNORE_SIGTERM) process.on('SIGTERM', () => {});
 let buf = '';
 process.stdin.on('data', (chunk) => {
   buf += chunk.toString('utf8');
@@ -22,9 +28,14 @@ process.stdin.on('data', (chunk) => {
     try { msg = JSON.parse(line); } catch { continue; }
     if (msg.method === 'notifications/initialized') continue;
     if (msg.method === 'initialize') {
+      if (process.env.FAKE_MCP_HANG_INIT) continue; // never answer
       respond(msg.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1.0.0' } });
     } else if (msg.method === 'tools/list') {
-      respond(msg.id, { tools: TOOLS });
+      if (!PAGE) { respond(msg.id, { tools: TOOLS }); continue; }
+      const start = msg.params?.cursor ? Number(msg.params.cursor) : 0;
+      const slice = TOOLS.slice(start, start + PAGE);
+      const next = start + PAGE;
+      respond(msg.id, next < TOOLS.length ? { tools: slice, nextCursor: String(next) } : { tools: slice });
     } else if (msg.method === 'resources/list') {
       respond(msg.id, { resources: RESOURCES });
     } else if (msg.method === 'resources/read') {
