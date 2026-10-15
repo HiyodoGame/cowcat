@@ -19,7 +19,7 @@ const AGENT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // dark-256 theme tokens (getTheme('dark', '256'))
 const BUBBLE_BG = '\x1b[48;5;237m';  // userBubbleBg (background SGR)
-const DIM = '\x1b[38;5;246m';        // inactive — running cards
+const CYAN = '\x1b[38;5;147m';       // permission — running-card spinner
 const GREEN = '\x1b[38;5;78m';       // success
 const RED = '\x1b[38;5;204m';        // error
 
@@ -188,25 +188,30 @@ test('transcript: fenced block closed by ``` survives subsequent streaming', () 
   assert.equal(flat.filter((l) => l === 'const x=1').length, 1, 'fence rows not duplicated');
 });
 
-test('transcript: tool card states tint the ⏺ prefix column (dim/green/red) with a ctrl+o hint', () => {
+test('transcript: tool cards run with a cyan spinner, tint the ● dot green/red, bash titles show $ cmd', () => {
   const { tui } = headless();
-  tui.toolCall('Bash', 'node -v');
-  let line = tui._flat().find((l) => strip(l).includes('⏺'));
-  assert.ok(line.includes(DIM), 'running = dim');
-  assert.ok(strip(line).startsWith('⏺ '), '⏺ prefix column padded to minWidth 2');
+  tui.toolCall('TodoWrite', 'plan the wall');
+  let line = tui._flat().find((l) => strip(l).includes('Used TodoWrite'));
+  assert.ok(line.includes(CYAN), 'running = permission-cyan spinner');
+  assert.ok(!strip(line).includes('●'), 'no status dot while running');
   const entry = tui.entries[tui.entries.length - 1];
   tui.toolSuccess();
   entry.card.summaryLines = ['l1', 'l2', 'l3'];
   entry.card.fullLines = ['l1', 'l2', 'l3', 'l4'];
   tui._invalidateEntry(entry);
   const flat1 = tui._flat();
-  line = flat1.find((l) => strip(l).includes('⏺'));
-  assert.ok(line.includes(GREEN), 'success = green');
+  line = flat1.find((l) => strip(l).includes('●'));
+  assert.ok(line.includes(GREEN), 'success = green dot');
+  assert.ok(strip(line).startsWith('● Used TodoWrite'), 'done title shape');
   assert.ok(flat1.some((l) => strip(l).includes('ctrl+o to expand/collapse')), 'card tail hint');
+  tui.toolCall('Bash', 'npm test');
+  tui.toolSuccess();
+  line = tui._flat().find((l) => strip(l).includes('$ npm test'));
+  assert.ok(strip(line).startsWith('● Ran a command · $ npm test'), 'bash title shows the command');
   tui.toolCall('Bash', 'bad');
   tui.toolError('boom');
-  line = tui._flat().find((l) => strip(l).includes('⏺') && strip(l).includes('bad'));
-  assert.ok(line.includes(RED), 'error = red');
+  line = tui._flat().find((l) => strip(l).includes('●') && strip(l).includes('$ bad'));
+  assert.ok(line.includes(RED), 'error = red dot');
 });
 
 test('transcript: ctrl+o toggles the most recent tool card expanded (three key forms)', async () => {

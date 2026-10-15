@@ -31,6 +31,13 @@ export class LineEditor {
     this.tabCandidates = [];
   }
 
+  // Whole-line replacement used by the TUI popup menu (accept-with-space);
+  // any active tab cycle is cancelled first.
+  setText(s) {
+    this.cancelCompletion();
+    this._setText(s);
+  }
+
   _browsing() { return this.hIdx !== null; }
 
   _setText(s) { this.rev++; this.text = s; this._cursor = s.length; }

@@ -1,4 +1,4 @@
-// W3 Task 10: rounded input box (buildInputBox) + status-bar hints.
+// W3 Task 10: minimal input box (buildInputBox) + status-bar chips.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
@@ -10,44 +10,52 @@ import { TuiUI } from '../src/tui/ui.js';
 const theme = getTheme('dark', '256');
 const PH_ZH = '输入消息，/ 命令，@ 文件';
 const PH_EN = 'Type a message, / for commands, @ for files';
+const RULE = (w) => '─'.repeat(w);
 
-test('buildInputBox: empty input shows placeholder inside a rounded permission-tinted box', () => {
+test('buildInputBox: empty input shows placeholder behind a > prompt between rule lines', () => {
   const lines = buildInputBox({ text: '', width: 40, theme, placeholder: PH_ZH });
-  assert.ok(lines.length >= 3, 'top border + content + bottom border');
-  assert.ok(lines[0].includes('╭') && lines[0].includes('╮'));
-  assert.ok(lines[lines.length - 1].includes('╰') && lines[lines.length - 1].includes('╯'));
-  assert.ok(lines.some((l) => l.includes(PH_ZH)), 'placeholder visible when input is empty');
-  assert.ok(lines[0].includes(theme.permission), 'border uses theme.permission SGR');
+  assert.equal(lines.length, 3, 'rule + body + rule');
+  assert.equal(lines[0].replace(/\x1b\[[0-9;]*m/g, ''), RULE(40));
+  assert.equal(lines[2].replace(/\x1b\[[0-9;]*m/g, ''), RULE(40));
+  assert.ok(lines[0].includes(theme.permission), 'rule line uses theme.permission SGR');
+  const body = lines[1].replace(/\x1b\[[0-9;]*m/g, '');
+  assert.ok(body.startsWith('> '), 'brand-bold > prompt');
+  assert.ok(body.includes(PH_ZH), 'placeholder visible when input is empty');
+  assert.ok(lines[1].includes(theme.inactive), 'placeholder dimmed');
   for (const l of lines) assert.equal(visibleLen(l), 40, 'every box line is exactly width');
 
   const narrow = buildInputBox({ text: '', width: 20, theme, placeholder: PH_ZH });
-  assert.ok(narrow[0].includes('╭') && narrow[0].includes(theme.permission));
-  assert.ok(narrow[narrow.length - 1].includes('╰'));
+  assert.equal(narrow[0].replace(/\x1b\[[0-9;]*m/g, ''), RULE(20));
   assert.ok(narrow.every((l) => visibleLen(l) === 20));
 
   const clamped = buildInputBox({ text: 'ab', width: 4, theme, placeholder: '' });
   assert.ok(clamped.every((l) => visibleLen(l) === 6), 'width < 6 clamps to the 6-column floor');
 });
 
-test('buildInputBox: placeholder disappears once text is present', () => {
-  const lines = buildInputBox({ text: 'hello', width: 20, theme, placeholder: PH_EN });
-  assert.ok(!lines.some((l) => l.includes('Type a message')), 'placeholder gone');
-  assert.ok(lines.some((l) => l.includes('hello')));
+test('buildInputBox: no rounded corners, no side borders anywhere', () => {
+  const lines = buildInputBox({ text: 'hello', width: 30, theme, placeholder: PH_EN });
+  const all = lines.join('');
+  for (const ch of ['╭', '╮', '╰', '╯', '│']) {
+    assert.ok(!all.includes(ch), `no ${ch}`);
+  }
+  assert.ok(!lines.some((l) => l.includes(PH_EN)), 'placeholder gone once text is present');
+  assert.ok(lines[1].replace(/\x1b\[[0-9;]*m/g, '').startsWith('> hello'), 'text after the > prompt');
 });
 
-test('buildInputBox: no theme renders plain borders, placeholder unstyled', () => {
+test('buildInputBox: no theme renders plain rule lines, placeholder unstyled', () => {
   const lines = buildInputBox({ text: '', width: 12, theme: null, placeholder: PH_EN });
-  assert.equal(lines[0], '╭──────────╮');
-  assert.equal(lines[lines.length - 1], '╰──────────╯');
+  assert.equal(lines[0], RULE(12));
+  assert.equal(lines[2], RULE(12));
   assert.ok(!lines.join('').includes('\x1b['), 'no ANSI without theme');
 });
 
-test('buildInputBox: multiline keeps all lines and leaves a spare editing row', () => {
+test('buildInputBox: multiline keeps all lines, indents continuations by 2, plus a spare row', () => {
   const lines = buildInputBox({ text: 'a\nb', width: 16, theme, placeholder: '', multiline: true });
   const body = lines.slice(1, -1);
-  assert.ok(body.some((l) => l.includes('a')) && body.some((l) => l.includes('b')));
   assert.equal(body.length, 3, 'two text lines + one spare row');
-  assert.equal(body[2].replace(/\x1b\[[0-9;]*m/g, ''), '│' + ' '.repeat(14) + '│', 'spare row is blank');
+  assert.ok(body[0].replace(/\x1b\[[0-9;]*m/g, '').startsWith('> a'), 'first row carries the prompt');
+  assert.ok(body[1].replace(/\x1b\[[0-9;]*m/g, '').startsWith('  b'), 'continuation rows indent by 2');
+  assert.equal(body[2].replace(/\x1b\[[0-9;]*m/g, ''), ' '.repeat(16), 'spare row is blank (padded to width)');
 });
 
 test('buildInputBox: cursor scrolls a long last line so the cursor stays visible', () => {
@@ -59,22 +67,27 @@ test('buildInputBox: cursor scrolls a long last line so the cursor stays visible
   assert.ok(visibleLen(last) === 20);
 });
 
-test('renderStatus: dim hint slot when no pending approval', () => {
-  const hint = '? for shortcuts · shift+tab to switch mode';
-  const s = renderStatus({ cost: '$0', version: '0.8.0', cwd: '/repo', mode: 'default', hint }, 100, theme);
+test('renderStatus: chips for permission/mode/model with separators, cwd right-aligned', () => {
+  const s = renderStatus({ cost: '$0', permMode: 'default', mode: 'default', model: 'kimi', cwd: '/repo', lang: 'en' }, 100, theme);
   assert.equal(visibleLen(s), 100);
-  assert.ok(s.includes('? for shortcuts'), 'hint text present');
-  assert.ok(s.includes('shift+tab to switch mode'));
-  assert.ok(s.includes(theme.inactive), 'hint rendered with theme.inactive SGR');
+  assert.ok(s.includes('$0'), 'cost chip');
+  assert.ok(s.includes('Ask When Needed'), 'permission chip');
+  assert.ok(s.includes(theme.warning), 'permission chip uses theme.warning');
+  assert.ok(s.includes(theme.success), 'mode chip uses theme.success');
+  assert.ok(s.includes('kimi'), 'model chip');
+  assert.ok(s.replace(/\x1b\[[0-9;]*m/g, '').trimEnd().endsWith('/repo'), 'cwd right-aligned');
+  const noCost = renderStatus({ permMode: 'yolo', mode: 'default', model: 'm', cwd: '/r', lang: 'zh' }, 80, theme);
+  assert.ok(!noCost.replace(/\x1b\[[0-9;]*m/g, '').includes('$'), 'cost omitted when empty');
+  assert.ok(noCost.includes('全部自动允许'), 'zh permission label');
 });
 
-test('TuiUI: input box uses rounded permission border and status shows hints', () => {
+test('TuiUI: rule-line input box, context-line hint, chip status bar', () => {
   const input = new PassThrough();
   const output = new PassThrough();
   output.columns = 60;
   output.rows = 24;
   const tui = new TuiUI({
-    input, output, colors: true, lang: 'zh', version: '0.8.0', cwd: '/x',
+    input, output, colors: true, lang: 'zh', version: '0.11.0', cwd: '/x',
     getModel: () => 'm', getMode: () => 'default', getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
     capabilities: { colors: '256', altScreen: true, osc8: false },
@@ -83,15 +96,17 @@ test('TuiUI: input box uses rounded permission border and status shows hints', (
   tui.screen.draw = () => {};
   tui.start();
   const box = tui._inputBox();
-  const top = box.find((l) => l.includes('╭'));
-  assert.ok(top, 'rounded top border');
-  assert.ok(box.some((l) => l.includes(PH_ZH)), 'zh placeholder on empty input');
-  assert.ok(top.includes(tui.theme.permission), 'permission-tinted border');
-  assert.ok(box.every((l) => !l.trim() || visibleLen(l) === 60), 'margin rows blank, box rows exact width');
+  const plain = box.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+  assert.equal(plain.filter((l) => l === RULE(60)).length, 2, 'top and bottom rule lines');
+  assert.ok(box.some((l) => l.replace(/\x1b\[[0-9;]*m/g, '').startsWith('> ') && l.includes(PH_ZH)), 'zh placeholder behind the prompt');
+  const context = plain[0];
+  assert.ok(context.startsWith('› '), 'context line above the input box');
+  assert.ok(context.includes('shift+tab 切换模式'), 'hint lives in the context line now');
   const status = tui._status();
-  assert.ok(status.includes('? for shortcuts') || status.includes('? 快捷键'), 'status hint without pending approval');
-  // a pending approval suppresses the hint
+  assert.ok(status.includes('需要时询问'), 'permission chip');
+  assert.ok(!status.includes('快捷键'), 'status bar no longer carries the hint');
+  // a pending approval suppresses the hint in the context line
   tui._pendingApproval = { resolve: () => {}, card: null, entry: null };
-  assert.ok(!tui._status().includes('shortcuts') && !tui._status().includes('快捷键'), 'no hint while approval pending');
+  assert.ok(!tui._inputBox()[0].includes('shift+tab'), 'no hint while approval pending');
   tui.close();
 });

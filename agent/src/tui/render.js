@@ -174,15 +174,37 @@ export function renderHeader({ bannerLines = [], pct = 0, model = '', mode = 'de
   return lines.slice(0, 3);
 }
 
-export function renderStatus({ cost = '', version = '', cwd = '', mode = '', hint = '' }, width, theme = null) {
-  const left = ` ${cost}`;
+// Status bar as chips: [cost] [perm chip] [mode chip] [model chip] ... cwd.
+// `permMode` is the raw permission mode ('default' | 'acceptEdits' | 'yolo' |
+// 'plan'); an empty or unknown value degrades to no permission/mode chips.
+// `thinking` (optional level string) appends a dim `thinking: level` to the
+// model chip. Chips are separated by a dim `·`; cwd stays dim right-aligned.
+const PERM_LABELS = {
+  default: { zh: '需要时询问', en: 'Ask When Needed' },
+  acceptEdits: { zh: '自动批准编辑', en: 'Auto Edits' },
+  yolo: { zh: '全部自动允许', en: 'Bypass Permissions' },
+  plan: { zh: '只读模式', en: 'Read Only' },
+};
+
+export function renderStatus({ cost = '', permMode = '', mode = '', model = '', thinking = '', cwd = '', lang = 'en' }, width, theme = null) {
   const dim = theme?.inactive ?? '';
-  const mid = dim ? `${dim} cowcat/${version} ${mode}\x1b[0m` : ` cowcat/${version} ${mode}`;
-  const hintPart = hint ? (dim ? `${dim} ${hint}\x1b[0m` : ` ${hint}`) : '';
-  const right = cwd;
-  const gap1 = Math.max(1, width - visibleLen(left) - visibleLen(mid) - visibleLen(hintPart) - visibleLen(right) - 3);
-  const gap2 = Math.max(1, width - visibleLen(left) - gap1 - visibleLen(mid) - visibleLen(hintPart) - visibleLen(right));
-  return padLine(`${left}${' '.repeat(gap1)}${mid}${hintPart}${' '.repeat(gap2)}${right}`, width);
+  const reset = '\x1b[0m';
+  const d = (s) => (dim ? `${dim}${s}${reset}` : s);
+  const chip = (color, s) => (color ? `${color}${s}${reset}` : s);
+  const parts = [];
+  if (cost) parts.push(d(cost));
+  if (PERM_LABELS[permMode]) parts.push(chip(theme?.warning, PERM_LABELS[permMode][lang] ?? PERM_LABELS[permMode].en));
+  if (PERM_LABELS[permMode]) {
+    const plan = permMode === 'plan' || mode === 'plan';
+    parts.push(chip(plan ? theme?.brand : theme?.success, plan ? 'plan' : 'act'));
+  }
+  if (model) parts.push(thinking ? `${model} ${d(`thinking: ${thinking}`)}` : model);
+  let left = parts.length ? ' ' + parts.join(d(' · ')) : '';
+  const right = cwd ? d(cwd) : '';
+  const room = width - visibleLen(right) - 1;
+  if (visibleLen(left) > room) left = truncateAnsi(left, Math.max(0, room));
+  const gap = Math.max(1, width - visibleLen(left) - visibleLen(right));
+  return padLine(`${left}${' '.repeat(gap)}${right}`, width);
 }
 
 // --- transcript entries -------------------------------------------------------
@@ -215,25 +237,25 @@ export function renderCard(card, { width, spinFrame = 0, colors = true, theme = 
     ? { green: theme.success, red: theme.error, cyan: theme.permission, gray: theme.inactive, reset: '\x1b[0m' }
     : { green: '\x1b[32m', red: '\x1b[31m', cyan: '\x1b[36m', gray: '\x1b[90m', reset: '\x1b[0m' };
   const p = (c, s) => (colors ? `${c}${s}${C.reset}` : s);
-  // Tool cards carry a leading ⏺: it becomes the state-colored prefix column
-  // (minWidth 2), tinted dim while running, green on success, red on error.
-  const m = /^⏺/.exec(card.title);
+  // Tool cards carry a leading ●: it becomes the state-colored status dot
+  // (green on success, red on error); while running it is replaced by the
+  // spinner and the title keeps its plain shape.
+  const m = /^●/.exec(card.title);
   if (m) {
-    const col = card.status === 'running' ? C.gray : card.status === 'error' ? C.red : C.green;
-    const prefix = p(col, '⏺') + ' '.repeat(Math.max(0, 2 - visibleLen('⏺')));
     const rest = card.title.slice(1);
     if (card.status === 'running') {
       const spin = SPINNER[spinFrame % SPINNER.length];
       const body = card.summaryLines.length ? card.summaryLines[0] : '';
-      return [padLine(`${prefix}${p(C.cyan, spin)} ${rest}${body ? ` — ${truncateAnsi(body, Math.max(10, width - visibleLen(card.title) - 8))}` : ''}`, width)];
+      return [padLine(`${p(C.cyan, spin)}${rest}${body ? ` — ${truncateAnsi(body, Math.max(10, width - visibleLen(card.title) - 8))}` : ''}`, width)];
     }
-    const lines = [padLine(`${prefix}${rest}`, width)];
+    const col = card.status === 'error' ? C.red : C.green;
+    const lines = [padLine(`${p(col, '●')}${rest}`, width)];
     const shown = card.expanded ? card.fullLines : card.summaryLines;
     for (const l of shown.slice(0, card.expanded ? 30 : 3)) {
       lines.push(padLine(`  ${p(C.gray, '│')} ${truncateAnsi(l, width - 4)}`, width));
     }
     if (!card.expanded && card.fullLines.length > 3) {
-      lines.push(padLine(`  ${p(C.gray, '│')} ··· (${card.fullLines.length} lines) ···`, width));
+      lines.push(padLine(`  ${p(C.gray, '│')} ⌄ (${card.fullLines.length - 3} more lines, ctrl+o to expand)`, width));
     }
     if (card.expanded || card.fullLines.length > 3) {
       lines.push(padLine(`  ${p(C.gray, '· ctrl+o to expand/collapse')}`, width));
@@ -257,19 +279,20 @@ export function renderCard(card, { width, spinFrame = 0, colors = true, theme = 
   return lines;
 }
 
-// Rounded input box: permission-tinted ╭─╮│╯─╰ frame around the draft text.
-// Empty drafts show the placeholder dimmed; multiline keeps every text line
-// plus one spare editing row; `cursor` is the column in the last line and
-// scrolls the line horizontally so the cursor stays visible.
+// Minimal input box: a permission-tinted rule line, the draft prefixed with a
+// brand-bold `> ` (continuation rows indent by 2), and a closing rule line.
+// Empty drafts show the placeholder dimmed after the `> `; multiline keeps
+// every text line plus one spare editing row; `cursor` is the column in the
+// last line and scrolls the line horizontally so the cursor stays visible.
 export function buildInputBox({ text = '', width, theme = null, placeholder = '', multiline = false, cursor = null }) {
   const w = Math.max(6, width);
-  const inner = w - 2;
-  const bodyW = inner - 2;
+  const bodyW = w - 2; // '> ' prefix
   const border = theme?.permission ?? '';
+  const brand = theme?.brand ?? '';
   const dim = theme?.inactive ?? '';
   const reset = '\x1b[0m';
-  const frame = (s) => (border ? `${border}${s}${reset}` : s);
-  const hline = '─'.repeat(inner);
+  const rule = border ? `${border}${'─'.repeat(w)}${reset}` : '─'.repeat(w);
+  const prompt = brand ? `${brand}\x1b[1m> ${reset}` : '> ';
 
   const draft = String(text);
   const isEmpty = draft === '';
@@ -294,9 +317,10 @@ export function buildInputBox({ text = '', width, theme = null, placeholder = ''
     else if (isLast && cursor !== null && visibleLen(shown) > bodyW) {
       shown = stripFirstChars(shown, Math.max(0, cursor - bodyW + 1));
     }
-    return `${frame('│')} ${padLine(fit(shown), bodyW)} ${frame('│')}`;
+    const prefix = i === 0 ? prompt : '  ';
+    return padLine(`${prefix}${fit(shown)}`, w);
   });
-  return [frame(`╭${hline}╮`), ...rows, frame(`╰${hline}╯`)];
+  return [rule, ...rows, rule];
 }
 
 // Final screen assembly: fixed header, scrolling transcript window, input box,

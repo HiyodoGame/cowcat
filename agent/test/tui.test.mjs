@@ -13,6 +13,8 @@ import {
   ctxBar, renderHeader, renderStatus, createCard, renderCard, SPINNER,
   buildScreen, scrollClamp,
 } from '../src/tui/render.js';
+import { getTheme } from '../src/tui/theme.js';
+import { slashCommandDocs } from '../src/slashlist.js';
 import { Screen } from '../src/tui/screen.js';
 
 const AGENT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,27 +57,42 @@ test('TUI render: ctxBar thresholds and header layout', () => {
   assert.ok(h[0].includes('kimi [default]'));
 });
 
-test('TUI render: status line packs cost/version/cwd at exact width', () => {
-  const s = renderStatus({ cost: '$0', version: '0.8.0', cwd: '/repo', mode: 'plan' }, 80);
-  assert.equal(visibleLen(s), 80);
-  assert.ok(s.includes('cowcat/0.8.0'));
-  assert.ok(s.endsWith('/repo'));
+test('TUI render: status line renders chips and degrades without permission info', () => {
+  const theme = getTheme('dark', '256');
+  const s = renderStatus({ cost: '$0.12', permMode: 'default', mode: 'default', model: 'kimi', thinking: 'high', cwd: '/repo', lang: 'en' }, 110, theme);
+  assert.equal(visibleLen(s), 110);
+  assert.ok(s.includes('$0.12'), 'cost chip');
+  assert.ok(s.includes('Ask When Needed'), 'permission chip (warning-amber label)');
+  assert.ok(s.includes(theme.warning), 'permission chip uses theme.warning');
+  assert.ok(/\bact\b/.test(s.replace(/\x1b\[[0-9;]*m/g, '')), 'mode chip');
+  assert.ok(s.includes(theme.success), 'mode chip uses theme.success');
+  assert.ok(s.includes('kimi'), 'model chip');
+  assert.ok(s.includes('thinking: high'), 'thinking level appended to the model chip');
+  assert.ok(s.replace(/\x1b\[[0-9;]*m/g, '').trimEnd().endsWith('/repo'), 'cwd right-aligned');
+  const plan = renderStatus({ permMode: 'plan', mode: 'plan', model: 'm', cwd: '/r', lang: 'zh' }, 80, theme);
+  assert.ok(plan.includes('只读模式'), 'zh permission label');
+  assert.ok(plan.includes('plan'), 'plan mode chip');
+  const degraded = renderStatus({ permMode: '', model: 'm', cwd: '/r', lang: 'en' }, 80, theme);
+  assert.ok(!degraded.includes('Ask When Needed'), 'no permission chip without permission info');
+  assert.ok(!/\bact\b/.test(degraded.replace(/\x1b\[[0-9;]*m/g, '')), 'no mode chip either');
+  assert.ok(degraded.includes('m'), 'model chip survives degradation');
 });
 
 test('TUI render: card state machine running -> done/error, folded and expanded', () => {
-  const card = createCard('tool', '⏺ Bash(echo hi)');
+  const card = createCard('tool', '● Used Bash');
   const running = renderCard(card, { width: 50, spinFrame: 3, colors: false });
   assert.equal(running.length, 1);
-  assert.ok(running[0].includes(SPINNER[3]));
-  assert.ok(running[0].includes('⏺'), 'tool-card prefix column');
+  assert.ok(running[0].includes(SPINNER[3]), 'running shows the spinner');
+  assert.ok(running[0].includes('Used Bash'));
+  assert.ok(!running[0].includes('●'), 'no status dot while running');
 
   card.status = 'done';
   card.summaryLines = ['exit 0', 'hello', 'world', 'line4'];
   card.fullLines = ['exit 0', 'hello', 'world', 'line4', 'line5', 'line6'];
   const folded = renderCard(card, { width: 50, colors: false });
-  assert.ok(folded[0].includes('⏺'));
-  assert.ok(folded.length <= 6, 'folded shows ≤3 body lines + ellipsis + ctrl+o hint');
-  assert.ok(folded.some((l) => l.includes('lines) ···')));
+  assert.ok(folded[0].includes('● Used Bash'));
+  assert.ok(folded.length <= 6, 'folded shows ≤3 body lines + fold hint + ctrl+o hint');
+  assert.ok(folded.some((l) => l.includes('(3 more lines, ctrl+o to expand)')), 'fold hint counts hidden lines');
   assert.ok(folded.some((l) => l.includes('ctrl+o to expand/collapse')), 'card tail hint');
 
   card.expanded = true;
@@ -83,7 +100,7 @@ test('TUI render: card state machine running -> done/error, folded and expanded'
   assert.ok(expanded.some((l) => l.includes('line6')));
 
   card.status = 'error';
-  assert.ok(renderCard(card, { width: 50, colors: false })[0].includes('⏺'));
+  assert.ok(renderCard(card, { width: 50, colors: false })[0].includes('●'));
 });
 
 test('TUI render: buildScreen assembles exact height with scroll clamping', () => {
@@ -284,7 +301,7 @@ test('TUI app: tool cards update in place and fold', async () => {
 
 const SLASH_COMMANDS = ['/clear', '/exit', '/help', '/output', '/theme'];
 
-function headlessTui2({ completions = null, realScreen = false } = {}) {
+function headlessTui2({ completions = null, realScreen = false, commandDocs = null, colors = false, getMode = null } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   output.columns = 100;
@@ -292,10 +309,11 @@ function headlessTui2({ completions = null, realScreen = false } = {}) {
   const chunks = [];
   output.on('data', (d) => chunks.push(d.toString()));
   const tui = new TuiUI({
-    input, output, colors: false, version: '0.10.1', cwd: '/x',
-    getModel: () => 'm', getMode: () => 'default', getCost: () => '',
+    input, output, colors, version: '0.10.1', cwd: '/x',
+    getModel: () => 'm', getMode: getMode ?? (() => 'default'), getCost: () => '',
     getConfig: () => ({ maxContextTokens: 100000 }), getMessages: () => [],
     completions: completions ? () => SLASH_COMMANDS : null,
+    commandDocs,
     capabilities: { colors: '256', altScreen: true, osc8: false },
   });
   if (!realScreen) tui.screen.draw = () => {};
@@ -304,45 +322,145 @@ function headlessTui2({ completions = null, realScreen = false } = {}) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 
-// candidate row helper: the only input-box line that starts with a blank + '/'
-const slashRow = (box) => box.find((l) => l.startsWith(' /'));
+// popup menu helpers: one row per candidate (`  → /name` selected, `    /name`
+// otherwise) plus a bottom `  (n/m)` counter row.
+const menuRows = (box) => box.map(stripAnsi).filter((l) => /^\s+(→ )?\//.test(l));
+const menuCounter = (box) => box.map(stripAnsi).find((l) => /^\s+\(\d+\/\d+\)$/.test(l.trim()) || /^\s*\(\d+\/\d+\)/.test(l));
 
-test('TUI app: slash menu auto-opens on /, filters, Esc dismisses without interrupt', async () => {
-  const { tui, input } = headlessTui2({ completions: true });
+test('TUI app: slash menu auto-opens on /, filters, arrows move selection without history', async () => {
+  const { tui, input } = headlessTui2({ completions: true, commandDocs: slashCommandDocs() });
   let interrupts = 0;
   tui.onInterrupt = () => interrupts++;
   const p = tui.readLine();
   input.write('/');
   await sleep(10);
-  let row = slashRow(tui._inputBox());
-  assert.ok(row, 'candidate row shown after typing /');
-  for (const c of SLASH_COMMANDS) assert.ok(row.includes(c), `menu lists ${c}`);
-  assert.ok(!row.includes('1/'), 'no n/m counter on slash menu');
+  let rows = menuRows(tui._inputBox());
+  assert.equal(rows.length, SLASH_COMMANDS.length, 'one menu row per candidate');
+  assert.ok(rows[0].includes('→'), 'first row starts selected');
+  for (const c of SLASH_COMMANDS) assert.ok(rows.some((r) => r.includes(c)), `menu lists ${c}`);
+  assert.equal(menuCounter(tui._inputBox()).trim(), `(1/${SLASH_COMMANDS.length})`, 'n/m counter');
 
-  input.write('th');
+  input.write('\x1b[B'); // ↓ moves the selection, must not touch history
   await sleep(10);
-  row = slashRow(tui._inputBox());
-  assert.ok(row, 'candidate row still shown');
-  assert.ok(row.includes('/theme'), 'narrowed to /theme');
-  assert.ok(!row.includes('/help'), 'other candidates filtered out');
+  rows = menuRows(tui._inputBox());
+  assert.ok(rows[1].includes('→'), 'selection moved to the second row');
+  assert.ok(!rows[0].includes('→'), 'previous row deselected');
+  assert.equal(tui.editor.history.length, 0, 'menu arrows never touch history');
+
+  input.write('\x1b[B\x1b[B\x1b[B\x1b[B'); // wrap around past the end
+  await sleep(10);
+  rows = menuRows(tui._inputBox());
+  assert.ok(rows[0].includes('→'), 'selection wraps to the first row');
+
+  input.write('th'); // typing re-filters and resets the selection
+  await sleep(10);
+  rows = menuRows(tui._inputBox());
+  assert.equal(rows.length, 1, 'narrowed to /theme');
+  assert.ok(rows[0].includes('/theme'));
+  assert.ok(rows[0].includes('→'), 'selection resets to row 0 on re-filter');
+  assert.equal(menuCounter(tui._inputBox()).trim(), '(1/1)');
+
+  input.write('\r'); // Enter submits the selected command
+  assert.equal(await p, '/theme');
+  tui.close();
+});
+
+test('TUI app: slash menu Esc dismisses without interrupt; edits re-open it', async () => {
+  const { tui, input } = headlessTui2({ completions: true, commandDocs: slashCommandDocs() });
+  let interrupts = 0;
+  tui.onInterrupt = () => interrupts++;
+  const p = tui.readLine();
+  input.write('/th');
+  await sleep(10);
+  assert.equal(menuRows(tui._inputBox()).length, 1, 'menu open on /th');
 
   input.write('\x1b'); // Esc: dismiss the menu, must NOT interrupt
   await sleep(30);
   assert.equal(interrupts, 0, 'Esc on open menu does not interrupt');
   assert.equal(tui.editor.text, '/th', 'Esc keeps the draft text');
-  assert.ok(!slashRow(tui._inputBox()), 'menu dismissed after Esc');
+  assert.equal(menuRows(tui._inputBox()).length, 0, 'menu dismissed after Esc');
 
   input.write('e'); // any edit re-opens the menu
   await sleep(10);
-  row = slashRow(tui._inputBox());
-  assert.ok(row && row.includes('/theme'), 'menu reappears after editing');
+  assert.equal(menuRows(tui._inputBox()).length, 1, 'menu reappears after editing');
 
-  input.write('\t'); // Tab cycling still works on top of the slash menu
-  await sleep(10);
-  assert.equal(tui.editor.text, '/theme', 'Tab completes the filtered prefix');
+  input.write('\x1b');
+  await sleep(30);
+  input.write('\x1b'); // second Esc now falls through to interrupt
+  await sleep(30);
+  assert.equal(interrupts, 1, 'Esc with a dismissed menu interrupts');
   input.write('\r');
-  assert.equal(await p, '/theme');
+  await p;
+  tui.close();
+});
+
+test('TUI app: slash menu Tab accepts the selection with a trailing space; Enter submits it', async () => {
+  const { tui, input } = headlessTui2({ completions: true, commandDocs: slashCommandDocs() });
+  const p = tui.readLine();
+  input.write('/cl');
+  await sleep(10);
+  assert.equal(menuRows(tui._inputBox()).length, 1);
+  input.write('\t'); // Tab accepts into the draft, menu closes (arg-ready space)
+  await sleep(10);
+  assert.equal(tui.editor.text, '/clear ', 'Tab fills the selected command plus a trailing space');
+  assert.equal(menuRows(tui._inputBox()).length, 0, 'menu closed after accept');
+  input.write('\x15'); // ctrl+u clears the line
+  await sleep(10);
+
+  input.write('/he');
+  await sleep(10);
+  input.write('\r'); // Enter submits the selected command
+  assert.equal(await p, '/help');
+  tui.close();
+});
+
+test('TUI app: slash menu scrolls the window so the selection stays visible past 8 rows', async () => {
+  const MANY = Array.from({ length: 12 }, (_, i) => `/cmd${String(i).padStart(2, '0')}`);
+  const { tui, input } = headlessTui2({ completions: true });
+  // swap in the 12-command set after construction
+  tui.completions = () => MANY;
+  const p = tui.readLine();
+  input.write('/');
+  await sleep(10);
+  let rows = menuRows(tui._inputBox());
+  assert.equal(rows.length, 8, 'at most 8 rows visible');
+  assert.equal(menuCounter(tui._inputBox()).trim(), '(1/12)');
+  assert.ok(rows[0].includes('/cmd00'));
+
+  for (let i = 0; i < 10; i++) input.write('\x1b[B'); // selection -> index 10
+  await sleep(10);
+  rows = menuRows(tui._inputBox());
+  assert.equal(rows.length, 8, 'window still 8 rows');
+  assert.ok(rows.some((r) => r.includes('→') && r.includes('/cmd10')), 'selection visible at row 10');
+  assert.ok(stripAnsi(rows[0]).includes('/cmd03'), 'window scrolled to start at /cmd03');
+  assert.equal(menuCounter(tui._inputBox()).trim(), '(11/12)');
+
+  input.write('\x1b[A\x1b[A'); // back to index 8
+  await sleep(10);
+  rows = menuRows(tui._inputBox());
+  assert.ok(stripAnsi(rows[0]).includes('/cmd01'), 'window scrolled back to start at /cmd01');
+  assert.ok(rows.some((r) => r.includes('→') && r.includes('/cmd08')));
+
+  input.write('\r');
+  assert.equal(await p, '/cmd08', 'Enter submits the selected visible command');
+  tui.close();
+});
+
+test('TUI app: slash menu rows show brand selection, description column, counter', () => {
+  const { tui } = headlessTui2({ completions: true, commandDocs: slashCommandDocs(), colors: true });
+  tui.readLine();
+  tui.editor.insert('/');
+  const box = tui._inputBox();
+  const rawSel = box.find((l) => stripAnsi(l).startsWith('  →'));
+  assert.ok(rawSel, 'selected row rendered with the arrow');
+  assert.ok(rawSel.includes(tui.theme.brand), 'arrow + command name in theme.brand');
+  const docs = slashCommandDocs();
+  const exitRow = box.find((l) => stripAnsi(l).includes('/exit'));
+  assert.ok(exitRow.includes(tui.theme.inactive), 'description column dimmed');
+  assert.ok(stripAnsi(exitRow).includes(docs.find((d) => d.name === '/exit').zh), 'zh description text present');
+  assert.ok(box.some((l) => stripAnsi(l).trim() === '(1/5)'), 'bottom counter row');
   tui.close();
 });
 
@@ -351,10 +469,80 @@ test('TUI app: slash menu hidden while a bare command is exact or has arguments'
   tui.readLine();
   input.write('/clear');
   await sleep(10);
-  assert.ok(!slashRow(tui._inputBox()), 'exact command match: no menu');
+  assert.equal(menuRows(tui._inputBox()).length, 0, 'exact command match: no menu');
   input.write(' x');
   await sleep(10);
-  assert.ok(!slashRow(tui._inputBox()), 'arguments after the command word: no menu');
+  assert.equal(menuRows(tui._inputBox()).length, 0, 'arguments after the command word: no menu');
+  tui.close();
+});
+
+test('TUI app: context line shows › branch · mode · hint; approval blanks the hint', async () => {
+  const { tui } = headlessTui2(); // cwd '/x' is not a git repo -> '-' branch placeholder
+  tui.readLine();
+  await sleep(10);
+  const line = stripAnsi(tui._inputBox()[0]);
+  assert.ok(line.startsWith('› '), 'brand › prefix');
+  assert.ok(line.includes('- ·'), 'branch placeholder when git is unavailable');
+  assert.ok(line.includes('act'), 'mode segment');
+  assert.ok(line.includes('shift+tab 切换模式 · esc 中断'), 'zh hint from the former status bar');
+  tui._pendingApproval = { resolve: () => {}, card: null, entry: null };
+  const pending = stripAnsi(tui._inputBox()[0]);
+  assert.ok(!pending.includes('shift+tab'), 'hint cleared while an approval is pending');
+  tui._pendingApproval = null;
+  tui.close();
+});
+
+test('TUI app: status bar renders chips from mode/model and degrades without mode info', () => {
+  const { tui } = headlessTui2();
+  const s = stripAnsi(tui._status());
+  assert.ok(s.includes('需要时询问'), 'permission chip (zh)');
+  assert.ok(/\bact\b/.test(s), 'mode chip');
+  assert.ok(s.includes('m'), 'model chip');
+  assert.ok(s.replace(/\x1b\[[0-9;]*m/g, '').trimEnd().endsWith('/x'), 'cwd right-aligned');
+  assert.ok(!s.includes('快捷键') && !s.includes('shortcuts'), 'hint moved out of the status bar');
+  tui.close();
+
+  const degraded = headlessTui2({ getMode: () => '' });
+  const d = stripAnsi(degraded.tui._status());
+  assert.ok(!d.includes('需要时询问'), 'no permission chip when mode info is unavailable');
+  assert.ok(!/\bact\b/.test(d), 'no mode chip either');
+  assert.ok(d.includes('m'), 'model chip still rendered');
+  degraded.tui.close();
+});
+
+test('TUI app: input box uses rule lines and a > prompt, no rounded frame', () => {
+  const { tui } = headlessTui2();
+  tui.readLine();
+  const box = tui._inputBox();
+  const plain = box.map(stripAnsi);
+  assert.ok(!box.join('').includes('╭') && !box.join('').includes('╮') && !box.join('').includes('╰') && !box.join('').includes('╯'), 'no rounded corners');
+  assert.ok(!box.join('').includes('│'), 'no side borders');
+  const rules = plain.filter((l) => l === '─'.repeat(100));
+  assert.equal(rules.length, 2, 'top and bottom rule lines, full width');
+  const body = plain.find((l) => l.startsWith('> '));
+  assert.ok(body, '> prompt row');
+  assert.ok(body.includes('输入消息'), 'placeholder after the prompt');
+  tui.close();
+});
+
+test('TUI app: tool card titles — ● Used {Tool} and ● Ran a command · $ …', () => {
+  const { tui } = headlessTui2({ colors: true });
+  tui.toolCall('TodoWrite', 'x');
+  tui.toolSuccess();
+  let line = tui._flat().map(stripAnsi).find((l) => l.startsWith('●'));
+  assert.ok(line.startsWith('● Used TodoWrite'), 'done title for a generic tool');
+  tui.toolCall('Bash', 'npm test -- --watch');
+  tui.toolSuccess();
+  line = tui._flat().map(stripAnsi).find((l) => l.includes('$ npm test -- --watch'));
+  assert.ok(line.startsWith('● Ran a command · $ npm test -- --watch'), 'bash title shows the command');
+  tui.toolCall('Bash', 'x'.repeat(100));
+  tui.toolSuccess();
+  line = tui._flat().map(stripAnsi).reverse().find((l) => l.startsWith('● Ran a command'));
+  assert.ok(visibleLen(line.split('$ ')[1].trimEnd()) <= 60, 'long command truncated to ~60 cols');
+  tui.toolCall('Bash', 'bad');
+  tui.toolError('boom');
+  const raw = tui._flat().find((l) => stripAnsi(l).startsWith('● Ran a command · $ bad'));
+  assert.ok(raw.includes(tui.theme.error), 'error card tints the ● dot red');
   tui.close();
 });
 

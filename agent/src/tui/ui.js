@@ -3,6 +3,7 @@
 // approve/askQuestions/readLine/...) so the REPL and loop need no changes.
 // Degrades out of the picture entirely unless the caller opts in.
 import { Screen } from './screen.js';
+import { execFile } from 'node:child_process';
 import {
   renderHeader, renderStatus, renderCard, createCard, buildScreen,
   wrapText, truncateAnsi, visibleLen, padLine, SPINNER, renderUserBubble,
@@ -42,7 +43,7 @@ export class TuiUI {
     input = process.stdin, output = process.stdout, colors = true, lang = 'zh',
     version = '0.8.0', cwd = process.cwd(),
     getModel = () => '', getMode = () => 'default', getCost = () => '', getConfig = () => ({}), getMessages = () => [],
-    completions = null, fileCompletions = null,
+    completions = null, fileCompletions = null, commandDocs = null,
     capabilities = null,
   } = {}) {
     this.input = input;
@@ -59,6 +60,7 @@ export class TuiUI {
     this._turnStart = null;     // userMessage timestamp, consumed by endStream footer
     this.completions = completions;         // (prefix) => string[] of "/name"
     this.fileCompletions = fileCompletions; // (prefix) => string[] of "@path"
+    this.commandDocs = commandDocs;         // [{name, zh, en}] popup menu descriptions
     this.editor = new LineEditor({
       completions: () => (this.completions ? this.completions(this.editor.text) : []),
       fileCompletions: (prefix) => (this.fileCompletions ? this.fileCompletions(prefix) : []),
@@ -68,9 +70,12 @@ export class TuiUI {
     this.multiline = false;
     this._reading = null;
     this._menuDismissed = false;  // slash menu dismissed via Esc until the text changes
+    this._menuSel = 0;            // selected row of the popup slash menu
     this._lastRev = 0;
     this._promptText = '';
     this._pendingApproval = null;
+    this._branch = '-';           // git branch for the context line; '-' until resolved
+    this._branchTimer = null;
     this._meta = { version, cwd, getModel, getMode, getCost, getConfig, getMessages };
     // TuiUI is only constructed on a dual-TTY stdout; capabilities decide the
     // palette depth and OSC8 hyperlink support. `none` maps to '16' as a
@@ -95,16 +100,30 @@ export class TuiUI {
     this.input.on('data', this._dispatch);
     this._onResize = () => this._draw();
     this.output.on?.('resize', this._onResize);
+    this._refreshBranch();
+    this._branchTimer = setInterval(() => { if (this.screen.active) this._refreshBranch(); }, 30000);
+    if (this._branchTimer.unref) this._branchTimer.unref();
     this._draw();
     this._syncSpinner();
   }
 
   close() {
     if (this._timer) { clearInterval(this._timer); this._timer = null; }
+    if (this._branchTimer) { clearInterval(this._branchTimer); this._branchTimer = null; }
     if (this._dispatch) this.input.off?.('data', this._dispatch);
     if (this._onResize) this.output.off?.('resize', this._onResize);
     this.input.setRawMode?.(false);
     this.screen.leave();
+  }
+
+  // git branch for the input-area context line: resolved once up front, then
+  // re-polled every 30s while the alternate screen is active. Failure (not a
+  // repo, git missing) keeps the '-' placeholder; never blocks rendering.
+  _refreshBranch() {
+    const cwd = this._meta?.cwd ?? process.cwd();
+    execFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, timeout: 5000 }, (err, stdout) => {
+      this._branch = (!err && stdout.trim()) ? stdout.trim() : '-';
+    });
   }
 
   attachAnimator() {}
@@ -181,8 +200,21 @@ export class TuiUI {
     for (const t of todos) this.print(`  ${t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '◐' : '○'} ${t.content}`);
   }
 
+  // Card title for a tool call: `● Used {ToolName}` (bold name), Bash special
+  // `● Ran a command · $ {command}` (command truncated ~60 cols, dim). The
+  // leading ● is tinted by renderCard per card status (green/red/spinner).
+  _toolTitle(name, summary) {
+    const bold = (s) => (this.colors ? `\x1b[1m${s}\x1b[0m` : s);
+    const dim = (s) => (this.colors ? `${this.theme.inactive}${s}\x1b[0m` : s);
+    if (name === 'Bash') {
+      const cmd = String(summary || '').trim();
+      return `● Ran a command${cmd ? dim(` · $ ${truncateAnsi(cmd, 60)}`) : ''}`;
+    }
+    return `● Used ${bold(name)}`;
+  }
+
   toolCall(name, summary) {
-    const card = createCard('tool', `⏺ ${name}${summary ? `(${truncateAnsi(String(summary), 60)})` : ''}`);
+    const card = createCard('tool', this._toolTitle(name, summary));
     const entry = { kind: 'card', card, _rendered: null };
     this.entries.push(entry);
     this._follow();
@@ -351,9 +383,10 @@ export class TuiUI {
       this._handleKey(key);
     }
     this._keyBuf = buf;
-    // any text change re-opens an Esc-dismissed slash menu
+    // any text change re-opens an Esc-dismissed slash menu and resets its selection
     if (this.editor.rev !== this._lastRev) {
       this._menuDismissed = false;
+      this._menuSel = 0;
       this._lastRev = this.editor.rev;
     }
     this._draw();
@@ -368,6 +401,32 @@ export class TuiUI {
       if (k === 'n' || key === '\r') { p.card.title += ' → n'; this._invalidateEntry(p.entry); this._pendingApproval = null; p.resolve('n'); return; }
       if (k === 'a') { p.card.title += ' → always'; this._invalidateEntry(p.entry); this._pendingApproval = null; p.resolve('always'); return; }
       // other keys fall through to global handling
+    }
+    // Popup slash menu takes priority over editor keys while it is open:
+    // ↑↓ move the selection (history is untouched), Enter submits the selected
+    // command, Tab accepts it into the draft with a trailing space, Esc closes
+    // it. Any other key falls through to normal editing (which re-filters).
+    if (this._reading) {
+      const menu = this._slashCandidates();
+      if (menu.length) {
+        const sel = Math.min(this._menuSel, menu.length - 1);
+        if (key === '\x1b[A') { this._menuSel = (sel - 1 + menu.length) % menu.length; return; }
+        if (key === '\x1b[B') { this._menuSel = (sel + 1) % menu.length; return; }
+        if (key === '\r') {
+          const line = menu[sel].name;
+          if (line.trim() && !this.multiline) this.editor.history.push(line);
+          this.multiline = false;
+          this._menuSel = 0;
+          this._finishRead(line);
+          return;
+        }
+        if (key === '\t') {
+          this.editor.setText(menu[sel].name + ' ');
+          this._menuSel = 0;
+          return;
+        }
+        if (key === '\x1b') { this._menuDismissed = true; return; }
+      }
     }
     switch (key) {
       case '\x1b[A': case '\x1b[B': case '\t': case '\x7f':   // history / completion / backspace
@@ -442,13 +501,59 @@ export class TuiUI {
   }
 
   // Auto slash menu: while the draft is a bare command word ("/th", no args)
-  // and no Tab cycle is active, offer the completions that extend it. Esc
+  // and no Tab cycle is active, offer the completions that extend it as
+  // {name, desc} rows (desc from commandDocs, matching the UI language). Esc
   // dismisses until the text changes (see _onKeys).
   _slashCandidates() {
     const ed = this.editor;
     if (ed.tabBase !== null || this._menuDismissed === true) return [];
     if (!this.completions || !/^\/[^\s]*$/.test(ed.text)) return [];
-    return this.completions(ed.text).filter((c) => c.startsWith(ed.text) && c !== ed.text).sort();
+    const names = this.completions(ed.text).filter((c) => c.startsWith(ed.text) && c !== ed.text).sort();
+    return names.map((name) => {
+      const doc = this.commandDocs?.find((d) => d.name === name);
+      return { name, desc: doc ? (this.lang === 'zh' ? doc.zh : doc.en) : '' };
+    });
+  }
+
+  // Popup menu rows: selected row shows a brand `→` + brand command name,
+  // other rows are space-indented; a dim description column (fixed 18-col name
+  // field) and a bottom `(n/m)` counter follow. At most 8 rows are visible;
+  // the window scrolls so the selection always stays in view.
+  _menuLines(cands, w) {
+    const MENU_MAX = 8;
+    const NAME_W = 18;
+    const sel = Math.min(this._menuSel, cands.length - 1);
+    const start = Math.min(Math.max(0, sel - (MENU_MAX - 1)), Math.max(0, cands.length - MENU_MAX));
+    const descW = Math.max(8, w - 4 - NAME_W - 1);
+    const lines = [];
+    for (let i = start; i < Math.min(cands.length, start + MENU_MAX); i++) {
+      const c = cands[i];
+      const nameCol = visibleLen(c.name) > NAME_W
+        ? truncateAnsi(c.name, NAME_W)
+        : c.name + ' '.repeat(NAME_W - visibleLen(c.name));
+      const isSel = i === sel;
+      const arrow = isSel ? this.color(this.theme.brand, '→') : ' ';
+      const name = isSel ? this.color(this.theme.brand, nameCol) : nameCol;
+      const desc = c.desc ? ' ' + this.color(this.theme.inactive, truncateAnsi(c.desc, descW)) : '';
+      lines.push(truncateAnsi(`  ${arrow} ${name}${desc}`, w));
+    }
+    lines.push(this.color(this.theme.inactive, `  (${sel + 1}/${cands.length})`));
+    return lines;
+  }
+
+  // Context line directly above the input box: `› {branch} · {mode} · {hint}`.
+  // The hint moves here from the status bar; a pending approval blanks it.
+  _contextLine() {
+    const mode = this._meta.getMode();
+    const modeLabel = mode === 'plan' ? 'plan' : 'act';
+    const hint = this._pendingApproval
+      ? ''
+      : this.lang === 'zh' ? 'shift+tab 切换模式 · esc 中断' : 'shift+tab to switch mode · esc to interrupt';
+    const brand = this.color(this.theme.brand, '›');
+    const branch = this.colors ? `\x1b[1m${this._branch || '-'}\x1b[0m` : (this._branch || '-');
+    const sep = this.color(this.theme.inactive, '·');
+    const hintPart = hint ? ` ${sep} ${this.color(this.theme.inactive, hint)}` : '';
+    return `${brand} ${branch} ${sep} ${modeLabel}${hintPart}`;
   }
 
   _inputBox() {
@@ -461,22 +566,19 @@ export class TuiUI {
       text: this.editor.text, width: w, theme: this.theme, placeholder,
       multiline: this.multiline, cursor: cursorCol,
     });
-    const lines = ['', ...box, ''];
+    const lines = [this._contextLine(), ...box, ''];
     const ed = this.editor;
     if (ed.tabBase !== null && ed.tabCandidates.length) {
-      // completion candidate row: current pick highlighted, rest dim, n/m counter
+      // @-mention completion row: current pick highlighted, rest dim, n/m counter
       const idx = ed.tabIdx;
       const shown = ed.tabCandidates.map((c, i) => (i === idx ? this.color(this.theme.brand, c) : this.color('\x1b[90m', c)));
       let row = ' ' + shown.join(this.color('\x1b[90m', '  '));
       if (idx < ed.tabCandidates.length) row += this.color('\x1b[90m', `  ${idx + 1}/${ed.tabCandidates.length}`);
       lines.push(truncateAnsi(row, w));
     } else {
-      // auto slash menu: same row, no highlight, no counter
+      // popup slash command menu
       const cands = this._slashCandidates();
-      if (cands.length) {
-        const row = ' ' + cands.map((c) => this.color('\x1b[90m', c)).join(this.color('\x1b[90m', '  '));
-        lines.push(truncateAnsi(row, w));
-      }
+      if (cands.length) lines.push(...this._menuLines(cands, w));
     }
     if (this.multiline) lines.push(` ${this.color('\x1b[90m', this.lang === 'zh' ? '[多行模式 Ctrl+J 退出]' : '[multiline Ctrl+J to exit]')}`);
     return lines;
@@ -484,11 +586,10 @@ export class TuiUI {
 
   _status() {
     const m = this._meta;
-    const hint = this._pendingApproval
-      ? ''
-      : this.lang === 'zh' ? '? 快捷键 · shift+tab 切换模式' : '? for shortcuts · shift+tab to switch mode';
+    const cfg = m.getConfig();
     return renderStatus({
-      cost: m.getCost(), version: m.version, cwd: m.cwd, mode: m.getMode(), hint,
+      cost: m.getCost(), permMode: m.getMode(), mode: m.getMode(),
+      model: m.getModel(), thinking: cfg.thinking ?? '', cwd: m.cwd, lang: this.lang,
     }, this._size().width, this.theme);
   }
 
@@ -570,10 +671,11 @@ export class TuiUI {
     let cursor = null;
     if (this._reading) {
       const { cursorRow, cursorCol } = this.editor.render(width);
-      const bodyW = width - 4; // '│ ' + body + ' │'
+      const bodyW = width - 2; // '> ' prefix
       // buildInputBox left-scrolls the last row when the caret overflows it
       const visibleCursorCol = cursorCol - Math.max(0, cursorCol - bodyW + 1);
       const inputStart = height - input.length - 1;
+      // input area: [context, rule, body..., rule, '', menu...] — body starts at +2
       cursor = { row: inputStart + 2 + cursorRow, col: 2 + visibleCursorCol };
     }
     this.screen.draw(screen, cursor);

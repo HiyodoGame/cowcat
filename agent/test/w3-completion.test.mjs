@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 
 import { TuiUI } from '../src/tui/ui.js';
-import { slashCommandList } from '../src/slashlist.js';
+import { slashCommandList, slashCommandDocs } from '../src/slashlist.js';
 
 function headlessTui(opts = {}) {
   const input = new PassThrough();
@@ -35,25 +35,27 @@ function type(tui, s) { for (const ch of s) tui._handleKey(ch); }
 
 // --- slash completion via TuiUI --------------------------------------------------
 
-test('W3 completion: Tab replaces /th with first candidate, candidate row shows', () => {
+test('W3 completion: slash popup Tab accepts the selection with a trailing space', () => {
   const tui = headlessTui({ completions: () => SLASH, fileCompletions: fakeFiles });
   tui.readLine();
   type(tui, '/th');
+  tui._handleKey('\t');
+  assert.equal(tui.editor.text, '/theme ', 'menu Tab fills the selected command plus a trailing space');
+  assert.ok(!tui._inputBox().some((l) => l.includes('1/2')), 'no candidate row after accept');
+  tui._finishRead(tui.editor.text);
+  tui.close();
+});
+
+test('W3 completion: with the menu dismissed Tab cycles candidates and restores the raw prefix', () => {
+  const tui = headlessTui({ completions: () => SLASH, fileCompletions: fakeFiles });
+  tui.readLine();
+  type(tui, '/th');
+  tui._handleKey('\x1b'); // dismiss the popup menu -> legacy LineEditor tab cycling
   tui._handleKey('\t');
   assert.equal(tui.editor.text, '/theme', 'Tab completes to the first matching candidate');
   const row = tui._inputBox().filter((l) => l.includes('/theme') && l.includes('/thinking'));
   assert.ok(row.length, 'candidate row rendered under the input box');
   assert.ok(row[0].includes('1/2'), 'candidate row carries the position counter');
-  tui._finishRead(tui.editor.text);
-  tui.close();
-});
-
-test('W3 completion: consecutive Tab cycles candidates and restores the raw prefix', () => {
-  const tui = headlessTui({ completions: () => SLASH, fileCompletions: fakeFiles });
-  tui.readLine();
-  type(tui, '/th');
-  tui._handleKey('\t');
-  assert.equal(tui.editor.text, '/theme');
   tui._handleKey('\t');
   assert.equal(tui.editor.text, '/thinking', 'second Tab advances to the next candidate');
   tui._handleKey('\t');
@@ -82,6 +84,7 @@ test('W3 completion: Esc cancels candidates without firing onInterrupt', () => {
   tui.onInterrupt = () => { hits++; };
   tui.readLine();
   type(tui, '/th');
+  tui._handleKey('\x1b'); // dismiss the popup menu first
   tui._handleKey('\t');
   assert.equal(tui.editor.text, '/theme');
   tui._handleKey('\x1b');
@@ -99,6 +102,7 @@ test('W3 completion: typing after cycling invalidates the candidate state', () =
   const tui = headlessTui({ completions: () => SLASH, fileCompletions: fakeFiles });
   tui.readLine();
   type(tui, '/th');
+  tui._handleKey('\x1b'); // dismiss the popup menu so Tab enters the cycle
   tui._handleKey('\t');
   type(tui, 'x');
   assert.equal(tui.editor.tabBase, null, 'insert resets tab cycling');
@@ -144,4 +148,16 @@ test('W3 completion: slashCommandList is a clean static registry of built-ins', 
   for (const must of ['/theme', '/compact', '/status', '/exit', '/help', '/init', '/mcp', '/rewind']) {
     assert.ok(list.includes(must), `includes ${must}`);
   }
+});
+
+test('W3 completion: slashCommandDocs covers every command with one-line zh/en descriptions', () => {
+  const list = slashCommandList();
+  const docs = slashCommandDocs();
+  assert.equal(docs.length, list.length, 'one doc row per listed command');
+  for (const d of docs) {
+    assert.ok(list.includes(d.name), `doc name is a real command: ${d.name}`);
+    assert.ok(d.zh && d.en, `both languages present: ${d.name}`);
+    assert.ok(!d.zh.includes('\n') && !d.en.includes('\n'), `one-line descriptions: ${d.name}`);
+  }
+  assert.equal(new Set(docs.map((d) => d.name)).size, docs.length, 'no duplicate doc rows');
 });

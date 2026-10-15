@@ -44,7 +44,7 @@ import { writeEvent, validateSchema, extractJson } from '../src/structured.js';
 import { analyzeContext, renderContextReport } from '../src/contextviz.js';
 import { thinkingBlocksOf, renderThinkingCard } from '../src/thinking.js';
 import { completeFiles } from '../src/mention.js';
-import { slashCommandList } from '../src/slashlist.js';
+import { slashCommandList, slashCommandDocs } from '../src/slashlist.js';
 import { runInspect, renderInspect, runFix, doctorJson } from '../src/doctor.js';
 import { detectIde, makeIdeSink, ideStatus } from '../src/ide.js';
 import { TuiUI } from '../src/tui/ui.js';
@@ -206,6 +206,7 @@ async function main() {
       getConfig: () => config,
       getMessages: () => { try { return messages ?? []; } catch { return []; } },
       completions: () => slashCommandList(),
+      commandDocs: slashCommandDocs(),
       fileCompletions: (prefix) => completeFiles(cwd, prefix),
     });
     ui = tui;

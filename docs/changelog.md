@@ -1,5 +1,15 @@
 # CowCat changelog
 
+## 0.11.0（2026-10-15）— TUI 视觉改版：弹出式斜杠菜单、chips 状态栏、极简输入框、工具块新标题
+
+- **弹出式斜杠命令菜单**：替换原单行候选——输入框下方整宽弹出，每行 `  → /name` + 固定 18 列命令名 + dim 说明列；选中行箭头与命令名为 brand 色，底部 `(n/m)` 计数器，最多 8 行、超出滚动且选中项始终可见。菜单内 ↑↓ 移动选中（不再走历史记录）、Enter 直接提交选中命令、Tab 填入并补尾部空格后关闭、Esc 关闭、继续打字实时过滤并复位到第 0 项；选中索引存 TuiUI（`src/tui/ui.js`）。与 @-mention 文件补全 Tab 循环共存：非 `/` 前缀不弹菜单，菜单优先。
+- **命令说明数据**：`slashCommandDocs()` 导出 31 条 `{name, zh, en}`，覆盖 `slashCommandList()` 全部命令的中英文单行说明；TuiUI 新增可选构造参数 `commandDocs`，bin/cowcat.mjs 已接线（`src/slashlist.js`、`bin/cowcat.mjs`）。
+- **chips 状态栏**：`renderStatus` 重写为 chips 风格——cost(dim) → 权限模式 chip（theme.warning 琥珀，default/acceptEdits/yolo/plan 四档 zh/en 文案，取自 getMode()）→ 模式 chip（act=theme.success 绿 / plan=brand）→ 模型 chip（config.thinking 存在时追加 dim `thinking: level`）→ 右侧 cwd(dim 右对齐)；权限信息缺失时降级省略权限/模式 chip（`src/tui/render.js`）。
+- **输入框上方上下文行**：`› {branch} · {mode} · {hint}`——`›` brand 色、分支粗体、`·` dim 分隔、hint dim（原状态栏 hint 移至此处；有审批挂起时清空）。git 分支经 `git rev-parse --abbrev-ref HEAD` 异步获取并缓存（取不到显示 `-`），仅备用屏激活时每 30s 异步刷新，不阻塞渲染（`src/tui/ui.js`）。
+- **极简输入框**：去掉圆角 ╭╮╰╯ 与左右 │ 边框——permission 色满宽上规则线 + brand 粗体 `> ` 前缀（空态接 dim placeholder）+ 下规则线；多行续行以 2 空格缩进并保留 spare 行；硬件光标列公式同步更新（bodyW = width-2，body 行偏移 = inputStart+2）（`src/tui/render.js`、`src/tui/ui.js`）。
+- **工具块标题重做**：完成态 `● Used {ToolName}`（粗体名）、Bash 特殊 `● Ran a command · $ {command}`（截断 ~60 列，dim）；`●` 随状态着色（success 绿 / error 红），运行态为 permission 青色 spinner 无 `●`；折叠提示改 `⌄ (N more lines, ctrl+o to expand)`，内容预览 `│` 前缀风格不变（`src/tui/render.js`、`src/tui/ui.js`）。
+- **测试**：新增 9 项（菜单交互/滚动窗口/渲染、状态栏 chips 与降级、上下文行、输入框新结构、工具标题），重写 12 项失效旧断言；非 TTY degrade 字节一致性测试未动。全量 331 → 340 passed / 0 failed。
+
 ## 0.10.1（2026-10-15）— TUI 热修复：光标、斜杠菜单、幽灵行
 
 - **输入框硬件光标**：`Screen.draw` 改为绝对寻址重绘（每行 `\x1b[{n};1H`，不再写裸 `'\n'`），帧末按 0 基 `{row, col}` 定位并显示硬件光标——编辑时光标真实落在输入框 caret 处，流式输出期间保持隐藏（src/tui/screen.js、src/tui/ui.js）。
