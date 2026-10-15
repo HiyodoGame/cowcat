@@ -81,6 +81,15 @@
 - **实测出三个缺口（均有证据；属「未实现」而非「未验证」）**：① resource templates —— server 暴露 2 个 `demo://resource/dynamic/.../{resourceId}`，客户端只有 `resources/list`，模板资源对模型完全不可见；② prompts —— server 暴露 4 个 prompt，客户端**零处 `prompts/` 代码**，无 `prompts/list`/`prompts/get`；③ server→client 通道 —— 客户端只发 POST，从不打开 GET SSE 流，因此 `resources/subscribe`、`logging`、`*_list_changed` 永远收不到（`notifications/initialized` 是唯一的单向消息）。
 - 联调脚本新增 `agent/test/live/everything.mjs`、`keepalive.mjs`；5 个脚本全部通过。全量 565 passed / 0 failed。
 
+### 第八轮（把三个缺口里的两个补上）
+
+按用户选择，先补 **prompts** 与 **resource templates**（server→client 通道仍留待评估）。
+
+- **MCP prompts → 斜杠命令**：`/mcp__<server>__<prompt>`（与工具的命名空间一致，用户已熟悉的 `mcp__server__name` 形状）。客户端侧：`connect()` 现在从 initialize 结果取 capabilities（两个 transport 都回传 initialize 结果，此前 HTTP 路径丢弃），随后 `_listAllPrompts()` 发现 prompts（分页 + 容错：没这个 capability 的 server 回 `Method not found`，只是发现为空、绝不让连接失败）；`getPrompt()` 把返回的多条 message 展平成一条 user 消息，**非 user 角色加 `[assistant]` 标签**（不冒充模型说过的话）。bin 侧：启动与 `/mcp reconnect` 后重建 prompt→命令索引，派发时按声明顺序位置映射参数、缺必填参数本地报错（不发请求）、`/help` 列出带参数提示的命令、斜杠补全包含它们、连接横幅显示 `N tool(s), M prompt(s)`。
+- **resource templates 可列出**：`listResourceTemplates()`（分页 + 容错）并在 `ListMcpResources` 输出里以 `template <uriTemplate>` 追加，工具描述同步说明「模板不可枚举，用具体 URI 交给 ReadMcpResource」。
+- **测试**：fixture 新增 prompts（一个带必填参数、一个无参数）与 resource template、`prompts/list` 的错误路径（`FAKE_MCP_NO_PROMPTS`）；单测 3 项（发现+取值+角色标签、模板列出+进入 ListMcpResources、无 capability 不失败）；**piped REPL E2E 1 项**（`/mcp__fake__greet` 缺参报错、`/mcp__fake__greet World` 的文本真的进了模型请求、`/help` 列出命令）。联调脚本 `everything.mjs` 从「记录缺口」升级为断言：官方 server 的 2 个模板出现在 ListMcpResources、4 个 prompt 被发现、`prompts/get` 无参与带参（city/state）两条都取回内容。
+- 全量 569 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。

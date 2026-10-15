@@ -275,6 +275,31 @@ test('REPL: safe slash commands run to completion (regression — /sandbox hit a
   assert.equal(state.theme, 'light', '/theme persisted through persistTheme');
 });
 
+test('MCP prompts run as slash commands (/mcp__<server>__<prompt>)', async () => {
+  const { server, port, state } = await keyServer();
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+    // user-level MCP config: spawnCli picks its own cwd, so the server must come
+    // from ~/.cowcat/mcp.json; state.json pre-trusts it so nothing prompts.
+    writeFileSync(join(home, 'mcp.json'), JSON.stringify({
+      mcpServers: { fake: { command: process.execPath, args: [join(AGENT_ROOT, 'test', 'fixtures', 'fake-mcp.mjs')] } },
+    }));
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ mcpTrusted: ['fake'] }));
+
+    const res = await spawnCli([], ENV(port, home),
+      'y\n/help\n/mcp__fake__greet\n/mcp__fake__greet World\n/exit\n', 30000);
+
+    assert.equal(res.code, 0, `exit code ${res.code}\nstderr: ${res.err}`);
+    assert.match(res.out, /MCP fake: \d+ tool\(s\), \d+ prompt\(s\)/, 'connect reports the discovered prompts');
+    assert.match(res.out, /mcp__fake__greet <name>/, '/help lists the prompt command with its argument hints');
+    assert.match(res.out, /Missing required argument\(s\): name/, 'a missing required argument is reported locally');
+    assert.ok(state.bodies.some((b) => b.includes('Hello World!')), 'the prompt body reached the model');
+    assert.ok(!state.bodies.some((b) => b.includes('Missing required')), 'the invalid invocation never became a turn');
+  } finally {
+    server.close();
+  }
+});
+
 test('output styles: /output-style <name> injects the style into the next turn', async () => {
   const { server, port, state } = await keyServer();
   try {

@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { McpClient, loadMcpConfigs } from '../src/mcp.js';
+import { ListMcpResourcesTool } from '../src/tools/mcpresources.js';
 import { ToolRegistry } from '../src/tools/registry.js';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mcp.mjs');
@@ -76,6 +77,54 @@ test('mcp: a bare .cmd shim on PATH launches through cmd.exe', winOnly, async ()
 test('mcp: a genuinely missing command still reports the original launch error', winOnly, async () => {
   const client = new McpClient('nope', { command: 'definitely-missing-cowcat-9f', args: [] });
   await assert.rejects(() => client.connect(), /server exited \(code \d+\)|ENOENT/);
+});
+
+test('mcp: prompts are discovered on connect and fetched with arguments', async () => {
+  const client = new McpClient('prompts', stdio());
+  try {
+    await client.connect();
+    assert.deepEqual(client.prompts.map((p) => p.name), ['greet', 'status'], 'prompts/list ran during connect');
+    assert.equal(client.prompts[0].arguments[0].name, 'name');
+
+    const got = await client.getPrompt('greet', { name: 'World' });
+    assert.match(got.text, /Hello World!/, 'text content is injected verbatim');
+    assert.match(got.text, /\[assistant\] \(greeting goes here\)/, 'non-user roles are labelled, not impersonated');
+    assert.equal(got.description, 'Greet someone');
+
+    const plain = await client.getPrompt('status');
+    assert.match(plain.text, /Report the fake status/);
+    await assert.rejects(() => client.getPrompt('nope'), /Unknown prompt/);
+  } finally {
+    client.stop();
+  }
+});
+
+test('mcp: resource templates are listed (and reached through ListMcpResources)', async () => {
+  const client = new McpClient('templates', stdio());
+  try {
+    await client.connect();
+    const templates = await client.listResourceTemplates();
+    assert.deepEqual(templates.map((t) => t.uriTemplate), ['memo://note/{id}']);
+
+    const out = await ListMcpResourcesTool.execute({}, { mcpClients: new Map([['fake', client]]) });
+    assert.equal(out.ok, true);
+    assert.match(out.output, /\[fake\] template memo:\/\/note\/\{id\}/, 'templates show up next to the static resources');
+    assert.match(out.output, /memo:\/\/welcome/, 'static resources still listed');
+  } finally {
+    client.stop();
+  }
+});
+
+test('mcp: a server without the prompts capability is not a failure', async () => {
+  // FAKE_MCP_NO_PROMPTS simulates a server that answers Method not found
+  const client = new McpClient('noprompts', stdio({ FAKE_MCP_NO_PROMPTS: '1' }));
+  try {
+    await client.connect();
+    assert.equal(client.prompts.length, 0);
+    assert.ok(client.tools.length > 0, 'tools still work');
+  } finally {
+    client.stop();
+  }
 });
 
 test('mcp: an SSE stream that stays open after the response does not stall the call', async () => {

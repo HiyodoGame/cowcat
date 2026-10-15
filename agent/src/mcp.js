@@ -7,6 +7,23 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cowcatHome, writeState, PKG_VERSION } from './config.js';
 
+// Flatten one MCP content block to text. Prompts, tool results and resources all
+// carry the same shape; non-text parts are annotated so the model knows
+// something was there (and what kind) instead of silently dropping it.
+function contentToText(c) {
+  if (c == null) return '';
+  if (typeof c === 'string') return c;
+  if (c.type === 'text') return c.text ?? '';
+  if (c.type === 'resource') {
+    const r = c.resource || {};
+    if (r.text != null) return r.text;
+    return `[resource: ${r.uri || c.uri || '(embedded)'}]`;
+  }
+  if (c.type === 'image') return `[image: ${c.mimeType || 'image'}]`;
+  if (c.type === 'audio') return `[audio: ${c.mimeType || 'audio'}]`;
+  return `[${c.type || 'unknown'}]`;
+}
+
 const PROTOCOL_VERSION = '2024-11-05';
 const getTimeout = () => Number(process.env.COWCAT_MCP_TIMEOUT) || 60_000;
 const MAX_OUTPUT = 20_000;
@@ -250,7 +267,7 @@ class HttpTransport {
     return Math.max(1, Math.min(base, this.deadline - Date.now()));
   }
   async connect() {
-    await this.request('initialize', {
+    const res = await this.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: 'cowcat', version: PKG_VERSION },
@@ -259,7 +276,7 @@ class HttpTransport {
     // a JSON-RPC result (servers answer 202 with an empty body). Sending it as
     // a request with an id depended on the server tolerating an unmatched id.
     await this.notify('notifications/initialized', {});
-    return {};
+    return res;
   }
   _headers() {
     const h = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(this.def.headers || {}) };
@@ -382,11 +399,45 @@ export class McpClient {
       ? new HttpTransport(name, def, fetchImpl, { deadline })
       : new StdioTransport(name, def, { deadline });
     this.tools = [];
+    this.prompts = [];
+    this.capabilities = {};
   }
   async connect() {
-    await this.transport.connect();
+    // Capabilities decide what else we may ask for (prompts list is optional);
+    // both transports hand back the initialize result.
+    this.capabilities = (await this.transport.connect()) || {};
     this.tools = await this._listAllTools();
+    this.prompts = await this._listAllPrompts();
     return this;
+  }
+  // prompts/list is optional and paginated like tools/list: a server without the
+  // capability answers Method not found, and a cursor hides the rest of the page
+  // set. Discovery is best-effort — it must never fail the connection.
+  async _listAllPrompts() {
+    const all = [];
+    let cursor;
+    try {
+      for (let page = 0; page < 50; page++) { // hard stop against a cursor loop
+        const res = await this.transport.request('prompts/list', cursor ? { cursor } : {});
+        all.push(...(res.prompts || []));
+        cursor = res.nextCursor;
+        if (!cursor) break;
+      }
+    } catch { return []; }
+    return all;
+  }
+  // prompts/get returns messages rather than a single string. CowCat has one
+  // injection point per turn, so the messages are flattened into one user turn;
+  // non-user roles are labelled so the model is not told it said them.
+  async getPrompt(name, args = {}) {
+    const res = await this.transport.request('prompts/get', { name, arguments: args });
+    const parts = [];
+    for (const m of res.messages || []) {
+      const text = contentToText(m.content);
+      if (!text) continue;
+      parts.push(m.role && m.role !== 'user' ? `[${m.role}] ${text}` : text);
+    }
+    return { description: res.description || '', text: parts.join('\n\n') || '(empty prompt)' };
   }
   // tools/list is paginated: keep pulling while the server hands back a cursor.
   // Reading only the first page silently hid every tool past the server's page
@@ -424,6 +475,23 @@ export class McpClient {
     for (let page = 0; page < 50; page++) { // hard stop against a cursor loop
       const res = await this.transport.request('resources/list', cursor ? { cursor } : {});
       all.push(...(res.resources || []));
+      cursor = res.nextCursor;
+      if (!cursor) break;
+    }
+    return all;
+  }
+  // resources/templates/list: dynamic (templated) resources. Optional and
+  // paginated like the rest — a server without templates answers Method not
+  // found, which must not fail the caller.
+  async listResourceTemplates() {
+    const all = [];
+    let cursor;
+    for (let page = 0; page < 50; page++) { // hard stop against a cursor loop
+      let res;
+      try {
+        res = await this.transport.request('resources/templates/list', cursor ? { cursor } : {});
+      } catch { return all; }
+      all.push(...(res.resourceTemplates || []));
       cursor = res.nextCursor;
       if (!cursor) break;
     }

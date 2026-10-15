@@ -11,7 +11,7 @@ function clientsOf(ctx) {
 
 export const ListMcpResourcesTool = {
   name: 'ListMcpResources',
-  description: `List the MCP resources exposed by every connected MCP server. A resource is a data source (file, record, document) the server exposes as a stable URI, often with a MIME type.
+  description: `List the MCP resources exposed by every connected MCP server. A resource is a data source (file, record, document) the server exposes as a stable URI, often with a MIME type. Servers that expose templated resources are listed as \`template <uriTemplate>\` — those URIs are not enumerable, but a concrete URI built from the template can be passed to ReadMcpResource.
 When to use: before ReadMcpResource when you do not know the URIs a server exposes, or to survey which servers provide data rather than tools.
 When NOT to use: invoking capabilities — that is what the mcp__<server>__<tool> tools are for.
 Failure modes: servers that expose no resources are simply absent from the listing.`,
@@ -34,6 +34,14 @@ Failure modes: servers that expose no resources are simply absent from the listi
       } catch (e) {
         lines.push(`- ${server}: (resources/list failed: ${e.message})`);
       }
+      // Templated resources are not enumerable as URIs, but the model still needs
+      // to know they exist (ReadMcpResource takes a concrete URI built from one).
+      try {
+        const templates = await client.listResourceTemplates();
+        for (const t of templates) {
+          lines.push(`- [${server}] template ${t.uriTemplate} | ${t.name || ''}${t.description ? ` — ${t.description}` : ''}`);
+        }
+      } catch { /* servers without templates stay silent */ }
     }
     const out = lines.join('\n') || 'No MCP resources exposed by any connected server.';
     return { ok: true, output: out.length > MAX_OUTPUT ? `${out.slice(0, MAX_OUTPUT)}\n[truncated]` : out };

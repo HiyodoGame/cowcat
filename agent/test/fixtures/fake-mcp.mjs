@@ -12,10 +12,24 @@ const RESOURCES = [
   { uri: 'memo://welcome', name: 'welcome', description: 'Greeting memo', mimeType: 'text/plain' },
   { uri: 'blob://logo', name: 'logo', description: 'Binary blob', mimeType: 'application/octet-stream' },
 ];
+// Templated (dynamic) resources: not enumerable as URIs, listed separately.
+const RESOURCE_TEMPLATES = [
+  { uriTemplate: 'memo://note/{id}', name: 'note', description: 'One memo by id', mimeType: 'text/plain' },
+];
+// Prompts: one takes a required argument, one takes none.
+const PROMPTS = [
+  {
+    name: 'greet',
+    description: 'Greet someone',
+    arguments: [{ name: 'name', description: 'Who to greet', required: true }],
+  },
+  { name: 'status', description: 'Report the fake status', arguments: [] },
+];
 // Env-gated behaviours so one fixture covers the tricky cases:
 //   FAKE_MCP_PAGE=<n>        serve tools/list in pages of n with nextCursor
 //   FAKE_MCP_IGNORE_SIGTERM  stay alive on SIGTERM (exercises SIGKILL escalation)
 //   FAKE_MCP_HANG_INIT       never answer initialize (exercises the connect budget)
+//   FAKE_MCP_NO_PROMPTS      answer prompts/list with Method not found (optional capability)
 //   FAKE_MCP_PIDFILE=<path>  write our pid there (orphan checks after shutdown)
 //   FAKE_MCP_STDERR=<text>   print this to stderr, then exit 9 (startup failure)
 const PAGE = Number(process.env.FAKE_MCP_PAGE) || 0;
@@ -40,7 +54,7 @@ process.stdin.on('data', (chunk) => {
     if (msg.method === 'notifications/initialized') continue;
     if (msg.method === 'initialize') {
       if (process.env.FAKE_MCP_HANG_INIT) continue; // never answer
-      respond(msg.id, { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1.0.0' } });
+      respond(msg.id, { protocolVersion: '2024-11-05', capabilities: { tools: {}, resources: {}, prompts: {} }, serverInfo: { name: 'fake', version: '1.0.0' } });
     } else if (msg.method === 'tools/list') {
       if (!PAGE) { respond(msg.id, { tools: TOOLS }); continue; }
       const start = msg.params?.cursor ? Number(msg.params.cursor) : 0;
@@ -57,6 +71,33 @@ process.stdin.on('data', (chunk) => {
       respond(msg.id, next < RESOURCES.length
         ? { resources: slice, nextCursor: String(next) }
         : { resources: slice });
+    } else if (msg.method === 'resources/templates/list') {
+      respond(msg.id, { resourceTemplates: RESOURCE_TEMPLATES });
+    } else if (msg.method === 'prompts/list') {
+      if (process.env.FAKE_MCP_NO_PROMPTS) {
+        respond(msg.id, undefined, { code: -32601, message: 'Method not found' });
+      } else {
+        respond(msg.id, { prompts: PROMPTS });
+      }
+    } else if (msg.method === 'prompts/get') {
+      if (msg.params.name === 'greet') {
+        const name = msg.params.arguments?.name;
+        if (!name) {
+          respond(msg.id, undefined, { code: -32602, message: 'Missing required argument: name' });
+        } else {
+          respond(msg.id, {
+            description: 'Greet someone',
+            messages: [
+              { role: 'user', content: { type: 'text', text: `Hello ${name}! Please introduce yourself.` } },
+              { role: 'assistant', content: { type: 'text', text: '(greeting goes here)' } },
+            ],
+          });
+        }
+      } else if (msg.params.name === 'status') {
+        respond(msg.id, { messages: [{ role: 'user', content: { type: 'text', text: 'Report the fake status.' } }] });
+      } else {
+        respond(msg.id, undefined, { code: -32602, message: `Unknown prompt: ${msg.params.name}` });
+      }
     } else if (msg.method === 'resources/read') {
       if (msg.params.uri === 'memo://welcome') {
         respond(msg.id, { contents: [{ uri: msg.params.uri, mimeType: 'text/plain', text: 'hello resource' }] });
@@ -76,6 +117,7 @@ process.stdin.on('data', (chunk) => {
     }
   }
 });
-function respond(id, result) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
+function respond(id, result, error) {
+  const msg = error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result };
+  process.stdout.write(`${JSON.stringify(msg)}\n`);
 }

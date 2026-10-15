@@ -203,6 +203,9 @@ async function main() {
     && !process.env.NO_COLOR && process.stdin.isTTY === true && process.stdout.isTTY === true;
   let ui;
   let tui = null;
+  // Discovered MCP prompts, exposed as slash commands (/mcp__<server>__<prompt>).
+  // Declared before the TUI so the completion callback can read the live value.
+  let mcpPromptCommands = {};
   if (tuiWanted) {
     tui = new TuiUI({
       lang, colors: true, version: PKG_VERSION, cwd,
@@ -233,7 +236,7 @@ async function main() {
           }
           return refs.slice(0, 20);
         }
-        return slashCommandList();
+        return [...slashCommandList(), ...Object.keys(mcpPromptCommands).map((n) => `/${n}`)];
       },
       onModelPick: (ref) => {
         const prevModel = config.model;
@@ -478,8 +481,9 @@ async function main() {
         for (const tool of res.tools) {
           if (!registry.get(tool.name)) registry.register(mcpToolAdapter(res.client, name, tool));
         }
-        if (tui) tui.toast('success', 'MCP', `${name}: ${res.tools.length} tool(s)`);
-        else ui.print(`✓ MCP ${name}: ${res.tools.length} tool(s)`);
+        const promptCount = res.client.prompts?.length || 0;
+        if (tui) tui.toast('success', 'MCP', `${name}: ${res.tools.length} tool(s)${promptCount ? `, ${promptCount} prompt(s)` : ''}`);
+        else ui.print(`✓ MCP ${name}: ${res.tools.length} tool(s)${promptCount ? `, ${promptCount} prompt(s)` : ''}`);
       } else {
         if (tui) tui.toast('error', 'MCP', `${name}: ${res.error}`);
         else ui.print(`✗ MCP ${name}: ${res.error}`);
@@ -490,6 +494,17 @@ async function main() {
         }
       }
     }
+    indexMcpPrompts();
+  }
+  // MCP prompts surface as slash commands (/mcp__<server>__<prompt>), mirroring
+  // the tool namespace, so a server-provided prompt is reusable without the model
+  // in the loop. Rebuilt whenever the client set changes (startup, /mcp reconnect).
+  function indexMcpPrompts() {
+    const next = {};
+    for (const [server, client] of mcpClients) {
+      for (const p of client.prompts || []) next[`mcp__${server}__${p.name}`] = { server, client, prompt: p };
+    }
+    mcpPromptCommands = next;
   }
   if (Object.keys(mcpServers).length) await connectMcp();
   // MCP tools are registered now — re-apply so pre-configured mcp__* rules
@@ -1066,6 +1081,13 @@ async function main() {
           ui.print(ui.lang === 'zh' ? '自定义命令:' : 'Custom commands:');
           for (const l of customHelpLines(custom.commands)) ui.print(l);
         }
+        if (Object.keys(mcpPromptCommands).length) {
+          ui.print(ui.lang === 'zh' ? 'MCP prompts（来自已连接的 server）:' : 'MCP prompts (from connected servers):');
+          for (const [name, { server, prompt }] of Object.entries(mcpPromptCommands)) {
+            const argsHint = (prompt.arguments || []).map((a) => (a.required ? `<${a.name}>` : `[${a.name}]`)).join(' ');
+            ui.print(`  /${name}${argsHint ? ` ${argsHint}` : ''} — ${prompt.description || `[${server}]`}`);
+          }
+        }
       }
       else if (cmd === 'diff') {
         if (!sessionState.lastDiffs.length) { ui.print(ui.t.noDiff); continue; }
@@ -1186,6 +1208,31 @@ async function main() {
         }
       } else if (custom.commands[cmd]) {
         await runTurn(expandCommand(custom.commands[cmd], args.join(' ')));
+      } else if (mcpPromptCommands[cmd]) {
+        // MCP prompt: positional args map onto the declared argument list, and a
+        // missing required one is reported before the round trip.
+        const { client, prompt } = mcpPromptCommands[cmd];
+        const declared = prompt.arguments || [];
+        const values = {};
+        const missing = [];
+        declared.forEach((a, i) => {
+          const v = args[i];
+          if (v !== undefined && v !== '') values[a.name] = v;
+          else if (a.required) missing.push(a.name);
+        });
+        if (missing.length) {
+          const hint = declared.map((a) => (a.required ? `<${a.name}>` : `[${a.name}]`)).join(' ');
+          ui.print(ui.lang === 'zh'
+            ? `缺少必要参数：${missing.join(', ')}。用法: /${cmd} ${hint}`
+            : `Missing required argument(s): ${missing.join(', ')}. usage: /${cmd} ${hint}`);
+        } else {
+          try {
+            const { text } = await client.getPrompt(prompt.name, values);
+            await runTurn(text);
+          } catch (e) {
+            ui.print(`✗ MCP prompt ${prompt.name}: ${e.message}`);
+          }
+        }
       }
       else ui.print(`unknown command: /${cmd}`);
       continue;

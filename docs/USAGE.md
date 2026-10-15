@@ -214,7 +214,11 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 
 **真实 server 联调**（可选，需要联网）：`agent/test/live/` 下有 5 个针对官方 server/SDK 的实测脚本（真实文件系统 server、真实 Streamable HTTP session、keep-alive 与「应答后不关流」的服务器、resources/prompts 对照、CLI 端到端），不在 `npm test` 里，用法见 `agent/test/live/README.md`。
 
-**当前只 surface 静态 resources**（`ListMcpResources` + `ReadMcpResource` → `resources/list` + `resources/read`）。MCP 的 resource templates（`resources/templates/list`）、prompts（`prompts/list` / `prompts/get`）与 server→client 通知（`resources/subscribe`、`logging`、`*_list_changed`，需要 GET SSE 长连接）均未支持，详见 `docs/fix-plan-2026-10-15.md` 第七轮。
+**当前支持的 MCP 能力**：tools（`mcp__<server>__<tool>`）、静态 resources（`ListMcpResources` + `ReadMcpResource` → `resources/list` + `resources/read`）、resource templates（`ListMcpResources` 里以 `template <uriTemplate>` 列出，模板本身不可枚举，用具体 URI 交给 `ReadMcpResource`）、prompts（作为斜杠命令暴露，见下）。
+
+**MCP prompts 即斜杠命令**：连接的 server 若提供 prompts，启动时会发现并列成 `/mcp__<server>__<prompt>`，可在斜杠菜单里补全、在 `/help` 的「MCP prompts」段看到参数提示。参数按 `prompts/list` 里声明的顺序**位置对应**（`/mcp__fake__greet <name>` → `arguments.name`），缺必填参数会本地报错、不会发出请求。prompt 返回的多条 message 会展平成一条 user 消息（非 user 角色会加 `[assistant]` 之类的标签，不冒充模型说的）。
+
+**仍未支持**：server→client 通道（`resources/subscribe`、`logging`、`*_list_changed`，需要 GET SSE 长连接与断线重连）、OAuth 授权的 server。详见 `docs/fix-plan-2026-10-15.md` 第七、八轮。
 
 ## 自定义 commands / agents / skills
 
