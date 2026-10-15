@@ -2,11 +2,21 @@
 import { postJSON, parseSSE } from './client.js';
 import { estimateTokensLocal } from './tokapprox.js';
 
+// Reasoning field names across OpenAI-compatible endpoints: DeepSeek/GLM/Kimi
+// stream `reasoning_content`; OpenAI o-series uses `reasoning`. Either may be a
+// string or an array of typed parts (rare); we take the string form.
+function reasoningOf(msgOrDelta) {
+  const r = msgOrDelta?.reasoning_content ?? msgOrDelta?.reasoning;
+  return typeof r === 'string' ? r : '';
+}
+
 // Normalize a non-streaming OpenAI chat completion into internal assistant shape.
 export function normalizeOpenAIMessage(data) {
   const choice = data.choices?.[0];
   const msg = choice?.message ?? {};
   const content = [];
+  const reasoning = reasoningOf(msg);
+  if (reasoning) content.push({ type: 'thinking', thinking: reasoning });
   if (msg.content) content.push({ type: 'text', text: msg.content });
   for (const tc of msg.tool_calls || []) {
     let input = {};
@@ -22,8 +32,13 @@ export function normalizeOpenAIMessage(data) {
 }
 
 // Aggregate streamed OpenAI chunk deltas into the same internal shape.
-export function aggregateOpenAIStream(events, onText) {
+// onToolDelta (optional 4th arg, backwards-compatible with positional callers):
+// fired per chunk carrying tool_calls deltas as { index, id?, name?, argsDelta }
+// and once per tool after the event loop as { index, id, name, argsComplete, done }.
+// The buffered aggregate return value is identical either way.
+export function aggregateOpenAIStream(events, onText, onThinking, onToolDelta) {
   let text = '';
+  let thinking = '';
   const toolCalls = new Map(); // index -> {id, name, args}
   const order = [];
   let stopReason = null;
@@ -34,6 +49,8 @@ export function aggregateOpenAIStream(events, onText) {
     if (!choice) { if (ev.usage) usage = ev.usage; continue; }
     if (choice.finish_reason) stopReason = choice.finish_reason;
     const d = choice.delta || {};
+    const reasoning = reasoningOf(d);
+    if (reasoning) { thinking += reasoning; onThinking?.(reasoning); }
     if (d.content) { text += d.content; onText?.(d.content); }
     for (const tc of d.tool_calls || []) {
       if (!toolCalls.has(tc.index)) {
@@ -44,10 +61,19 @@ export function aggregateOpenAIStream(events, onText) {
       if (tc.id) agg.id = tc.id;
       if (tc.function?.name) agg.name = tc.function.name;
       if (tc.function?.arguments) agg.args += tc.function.arguments;
+      onToolDelta?.({ index: tc.index, id: tc.id || undefined, name: tc.function?.name || undefined, argsDelta: tc.function?.arguments || '' });
     }
     if (ev.usage) usage = ev.usage;
   }
+  // Completion signal fires after the loop (not on finish_reason): providers
+  // vary on whether a usage-only chunk or [DONE] follows the finish chunk,
+  // and tool deltas may still arrive after finish_reason on some endpoints.
+  for (const i of order) {
+    const t = toolCalls.get(i);
+    onToolDelta?.({ index: i, id: t.id || undefined, name: t.name || undefined, argsComplete: t.args, done: true });
+  }
   const content = [];
+  if (thinking) content.push({ type: 'thinking', thinking });
   if (text) content.push({ type: 'text', text });
   for (const i of order) {
     const t = toolCalls.get(i);
@@ -105,7 +131,7 @@ export class OpenAIProvider {
     }
     const events = [];
     for await (const ev of parseSSE(res)) events.push(ev);
-    return aggregateOpenAIStream(events, onText);
+    return aggregateOpenAIStream(events, onText, request.onThinking, request.onToolDelta);
   }
 }
 
@@ -129,7 +155,7 @@ export function toOpenAIMessages(system, messages) {
       if (b.type === 'text') texts.push(b.text);
       else if (b.type === 'tool_use') toolUses.push(b);
       else if (b.type === 'tool_result') toolResults.push(b);
-      else if (b.type === 'thinking') { /* thinking is dropped for openai-compatible endpoints */ }
+      else if (b.type === 'thinking') { /* local-only: never echo reasoning back upstream */ }
     }
     if (m.role === 'assistant') {
       out.push({

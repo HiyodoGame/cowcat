@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // cowcat CLI entry: REPL with slash commands, resume, streaming, tool approvals.
-import { loadConfig, ConfigError } from '../src/config.js';
+import { loadConfig, ConfigError, displayModel, contextLimit, resolveModelConfig, configuredProviders } from '../src/config.js';
+import { catalogRefs, formatModelHint } from '../src/modelhint.js';
 import { createProvider } from '../src/llm/client.js';
 import { buildSystemPrompt, PLAN_MODE_ADDENDUM } from '../src/prompts/system.js';
 import { compactConversation } from '../src/prompts/compact.js';
@@ -23,8 +24,8 @@ import { Session } from '../src/session.js';
 import { createSubagentRunner } from '../src/subagent.js';
 import { parseArgs } from '../src/cliargs.js';
 import { findProjectContext, PROJECT_SECTION } from '../src/project.js';
-import { runDoctorChecks } from '../src/doctor.js';
-import { runSetupWizard } from '../src/setup.js';
+import { runDoctorChecks, saveFixedConfig } from '../src/doctor.js';
+import { runSetupWizard, runSetupDialog } from '../src/setup.js';
 import { isTrustedProject, trustProject } from '../src/trust.js';
 import { listCheckpoints, restoreCheckpoint, checkpointSummaryLine } from '../src/checkpoint.js';
 import {
@@ -45,6 +46,7 @@ import { analyzeContext, renderContextReport } from '../src/contextviz.js';
 import { thinkingBlocksOf, renderThinkingCard } from '../src/thinking.js';
 import { completeFiles } from '../src/mention.js';
 import { slashCommandList, slashCommandDocs } from '../src/slashlist.js';
+import { parseApiError, formatApiErrorLines } from '../src/errfmt.js';
 import { runInspect, renderInspect, runFix, doctorJson } from '../src/doctor.js';
 import { detectIde, makeIdeSink, ideStatus } from '../src/ide.js';
 import { TuiUI } from '../src/tui/ui.js';
@@ -89,9 +91,12 @@ Config: env COWCAT_PROVIDER COWCAT_BASE_URL COWCAT_API_KEY COWCAT_MODEL COWCAT_M
         (CC_* still accepted during migration) or ~/.cowcat/config.json
 `;
 
+// Setup wizard: dialog version for picker-capable UIs (TuiUI), line mode otherwise.
+const runSetup = (ui) => (ui && typeof ui.pickOne === 'function' ? runSetupDialog(ui) : runSetupWizard(ui));
+
 async function cmdSetup(ui) {
   try {
-    await runSetupWizard(ui);
+    await runSetup(ui);
   } catch (e) {
     ui.print(`✗ 写入失败: ${e.message}`);
     process.exitCode = 1;
@@ -126,8 +131,8 @@ async function cmdDoctor(ui, opts = {}) {
     const reg = buildRegistry();
     const result = runFix(cfg, { hasConfigFile, configFile, knownTools: reg.list().map((t) => t.name) });
     fixes = result.fixes;
-    // persist merged config (preserving fields)
-    writeFileSync(configFile, JSON.stringify(result.config, null, 2));
+    // persist: config layer -> config.json, state layer -> state.json
+    saveFixedConfig(result.config);
   }
   const provider = await createProvider(cfg);
   const { items, ok } = await runDoctorChecks(cfg, {
@@ -200,16 +205,54 @@ async function main() {
   if (tuiWanted) {
     tui = new TuiUI({
       lang, colors: true, version: PKG_VERSION, cwd,
-      getModel: () => config.apiKey ? config.model : (lang === 'zh' ? '未配置' : 'not configured'),
+      getModel: () => config.apiKey ? displayModel(config) : (lang === 'zh' ? '未配置' : 'not configured'),
       getMode: () => permissionsPreview?.() ?? 'default',
       getCost: () => '',
       getConfig: () => config,
       getMessages: () => { try { return messages ?? []; } catch { return []; } },
-      completions: () => slashCommandList(),
+      getPermissions: () => permissions,
+      getTodos: () => { try { return state.todos?.length ? state.todos : null; } catch { return null; } },
+      getMcp: () => {
+        try {
+          const names = Object.keys(mcpServers ?? {});
+          return names.length ? names.map((name) => ({ name, ok: mcpClients.has(name) })) : null;
+        } catch { return null; }
+      },
+      completions: (text) => {
+        if (typeof text === 'string' && text.startsWith('/model ')) {
+          const q = text.slice('/model '.length).toLowerCase();
+          const refs = [];
+          for (const p of configuredProviders(config)) {
+            for (const [mid, m] of Object.entries(p.models || {})) {
+              if (!m || m.disabled) continue;
+              const name = (m.name || mid).toLowerCase();
+              if (q && !mid.toLowerCase().includes(q) && !name.includes(q)) continue;
+              refs.push(`${p.id}/${mid}`);
+            }
+          }
+          return refs.slice(0, 20);
+        }
+        return slashCommandList();
+      },
+      onModelPick: (ref) => {
+        const prevModel = config.model;
+        const prevRef = config.modelRef;
+        config.model = ref;
+        try {
+          resolveModelConfig(config);
+          ui.print(`model: ${displayModel(config)} (${config.provider}/${config.model})`);
+        } catch (e) {
+          config.model = prevModel;
+          config.modelRef = prevRef;
+          ui.print(`✗ ${e.message}`);
+        }
+        refreshStatus?.();
+      },
       commandDocs: slashCommandDocs(),
       fileCompletions: (prefix) => completeFiles(cwd, prefix),
     });
     ui = tui;
+    if (config.panel) tui.panelVisible = true; // /panel (or a prior session) left it on
     tui.start();
     // Uncaught errors / Ctrl+C would otherwise skip the REPL-tail cleanup and
     // leave the terminal in the alternate screen with raw mode on.
@@ -304,6 +347,15 @@ async function main() {
     const files = Session.list(cwd);
     if (!files.length) {
       ui.print(ui.lang === 'zh' ? '这个项目还没有会话。说点什么，让它开始拆。' : 'No sessions yet for this project. Say something to start one.');
+    } else if (tui) {
+      // picker instead of a numbered transcript list
+      const items = files.slice(0, 50).map((f) => ({
+        id: f,
+        title: f.split(/[\\/]/).pop().replace('.jsonl', ''),
+        description: '',
+      }));
+      const picked = await tui.pickOne({ title: ui.lang === 'zh' ? '恢复会话' : 'Resume session', items });
+      if (picked) useSessionFile(picked.id);
     } else {
       files.forEach((f, i) => ui.print(`  ${i + 1}. ${f}`));
       ui.output.write(ui.lang === 'zh' ? '恢复第几个？ [序号]: ' : 'Resume which? [number]: ');
@@ -334,8 +386,9 @@ async function main() {
   });
   const baseCtx = { cwd, readSet: new Set(), state, ui, permissions, config, session, sessionId: session.id, spawnAgent, trackProcess: (child) => { runningChildren.add(child); child.on?.('exit', () => runningChildren.delete(child)); } };
   // IDE integration sink (P2-2): detection + JSONL event channel.
+  // IDE integration sink (P2-2): detection + JSONL event channel.
   const ideSink = makeIdeSink();
-  if (detectIde()) ui.print(`IDE: ${detectIde().name} detected (/ide for details)`);
+  const ideDetected = detectIde();
 
   // Background tasks: Bash run_in_background + TaskOutput/TaskStop + /tasks.
   const background = new BackgroundRegistry();
@@ -343,8 +396,17 @@ async function main() {
 
   // Hooks core subset: loaded once, fired from the loop and the REPL.
   const hooksState = loadHooks(config);
-  if (!hooksState.disabled && hooksState.count > 0) {
-    ui.print(ui.lang === 'zh' ? `已加载 ${hooksState.count} 个 hooks` : `${hooksState.count} hook(s) loaded`);
+  // IDE + hooks startup notes: one muted transcript line in TUI, separate lines in line mode.
+  if (tui) {
+    const bits = [];
+    if (ideDetected) bits.push(`IDE: ${ideDetected.name} detected (/ide for details)`);
+    if (!hooksState.disabled && hooksState.count > 0) bits.push(ui.lang === 'zh' ? `已加载 ${hooksState.count} 个 hooks` : `${hooksState.count} hook(s) loaded`);
+    if (bits.length) ui.print(tui.color(tui.theme.inactive, bits.join(' · ')));
+  } else {
+    if (ideDetected) ui.print(`IDE: ${ideDetected.name} detected (/ide for details)`);
+    if (!hooksState.disabled && hooksState.count > 0) {
+      ui.print(ui.lang === 'zh' ? `已加载 ${hooksState.count} 个 hooks` : `${hooksState.count} hook(s) loaded`);
+    }
   }
   baseCtx.hooks = { ...hooksState, sessionFile: session.file, cwd };
   fireHooks(baseCtx.hooks, 'SessionStart', hookPayload('SessionStart', {}, baseCtx.hooks), { log: (m) => ui.print(m) }).catch(() => {});
@@ -361,9 +423,15 @@ async function main() {
       // first-connect trust prompt (remembered in config.mcpTrusted)
       if (!mcpTrustedList(config).includes(name)) {
         if (opts.print) { ui.print(`⊘ MCP server "${name}" not trusted — skipping (interactive session required to approve)`); continue; }
-        ui.output.write(ui.lang === 'zh' ? `连接 MCP server '\${name}'？[y/N] ` : `Connect to MCP server '\${name}'? [y/N] `);
-        const a = ((await ui.readLine()) ?? '').trim().toLowerCase();
-        if (a !== 'y' && a !== 'yes') { ui.print(ui.lang === 'zh' ? `已跳过 MCP server '\${name}'。` : `Skipped MCP server '\${name}'.`); continue; }
+        let a;
+        if (tui) {
+          // pill approval in the composer area — no transcript spam
+          a = await tui.approve('MCP server', `connect '${name}'`);
+        } else {
+          ui.output.write(ui.lang === 'zh' ? `连接 MCP server '${name}'？[y/N] ` : `Connect to MCP server '${name}'? [y/N] `);
+          a = ((await ui.readLine()) ?? '').trim().toLowerCase();
+        }
+        if (a !== 'y' && a !== 'yes' && a !== 'always') { ui.print(ui.lang === 'zh' ? `已跳过 MCP server '${name}'。` : `Skipped MCP server '${name}'.`); continue; }
         trustMcpServer(config, name);
       }
       const res = (await connectAll({ [name]: mcpServers[name] }))[0];
@@ -373,9 +441,11 @@ async function main() {
         for (const tool of res.tools) {
           if (!registry.get(tool.name)) registry.register(mcpToolAdapter(res.client, name, tool));
         }
-        ui.print(`✓ MCP \${name}: \${res.tools.length} tool(s)`);
+        if (tui) tui.toast('success', 'MCP', `${name}: ${res.tools.length} tool(s)`);
+        else ui.print(`✓ MCP ${name}: ${res.tools.length} tool(s)`);
       } else {
-        ui.print(`✗ MCP \${name}: \${res.error}`);
+        if (tui) tui.toast('error', 'MCP', `${name}: ${res.error}`);
+        else ui.print(`✗ MCP ${name}: ${res.error}`);
       }
     }
   }
@@ -403,13 +473,16 @@ async function main() {
     if (text !== null && text !== statusExtra) { statusExtra = text; refreshStatus(); }
   }
   const statusLine = () =>
-    `CowCat — provider: ${config.provider} | model: ${config.apiKey ? config.model : (ui.lang === 'zh' ? '未配置' : 'not configured')} | mode: ${permissions.mode} ${modeTag()}${statusExtra ? '  | ' + statusExtra : ''}`;
+    `CowCat — provider: ${config.provider} | model: ${config.apiKey ? displayModel(config) : (ui.lang === 'zh' ? '未配置' : 'not configured')} | mode: ${permissions.mode} ${modeTag()}${statusExtra ? '  | ' + statusExtra : ''}`;
 
   // First-run onboarding state: with no API key, skip the connectivity probe
   // (it would just spray a 403 at the default endpoint) and explain how to config.
   const missingKey = !config.apiKey;
 
-  const refreshStatus = () => ui.print(statusLine());
+  const refreshStatus = () => {
+    if (tui) { tui._requestDraw?.(); return; } // TUI 状态栏走 chips/getModel 回调，不灌 transcript
+    ui.print(statusLine());
+  };
 
   const events = {};
   let currentAbort = null;
@@ -424,12 +497,24 @@ async function main() {
     ui.toolCall = () => {};
     ui.waitingModel = () => {};
   }
-  if (!streamJsonMode) {
-    const modelDesc = config.apiKey ? config.model : (ui.lang === 'zh' ? '未配置' : 'not configured');
+  if (!streamJsonMode && !tui) {
+    const modelDesc = config.apiKey ? displayModel(config) : (ui.lang === 'zh' ? '未配置' : 'not configured');
     ui.print(`CowCat v${PKG_VERSION} — ${config.provider} / ${modelDesc}`);
     ui.print(`session: ${session.file}`);
     ui.print(`type /exit to quit, /help for slash commands\n`);
     ui.print(statusLine());
+  }
+
+  // Startup model-ref validation (P5): resolveModelConfig skips the catalog
+  // check for custom endpoints and empty catalogs, so a mistyped ref can slip
+  // through startup — catch it here, suggest the closest known refs. Non-fatal.
+  if (!streamJsonMode) {
+    const knownRefs = catalogRefs(config);
+    if (config.modelRef && knownRefs.length && !knownRefs.includes(config.modelRef)) {
+      const hint = formatModelHint(config.modelRef, knownRefs, { lang: ui.lang });
+      if (tui) tui.toast('warning', hint.title, hint.body);
+      else ui.print(hint.line);
+    }
   }
 
   // Startup connectivity probe (P1-5). Skipped in interactive mode when no
@@ -438,20 +523,31 @@ async function main() {
     try {
       await provider.countTokens?.({ messages: [{ role: 'user', content: 'ping' }] });
     } catch (e) {
-      ui.print(`[probe] count_tokens failed: ${e.message} — check COWCAT_BASE_URL / COWCAT_API_KEY (continuing anyway)`);
+      if (tui) tui.toast('error', ui.lang === 'zh' ? '连通性探针' : 'Connectivity probe', `${e.message} — check COWCAT_BASE_URL / COWCAT_API_KEY`);
+      else ui.print(`[probe] count_tokens failed: ${e.message} — check COWCAT_BASE_URL / COWCAT_API_KEY (continuing anyway)`);
     }
   }
   if (missingKey && !opts.print && !streamJsonMode) {
     const zh = ui.lang === 'zh';
-    ui.print(zh
-      ? '未配置模型服务。运行 cowcat setup 进行配置，或设置环境变量 COWCAT_BASE_URL / COWCAT_API_KEY / COWCAT_MODEL。'
-      : 'No model service configured. Run `cowcat setup`, or set COWCAT_BASE_URL / COWCAT_API_KEY / COWCAT_MODEL.');
-    if (config.provider === 'anthropic' && config.baseURL === 'https://api.anthropic.com') {
+    if (tui) {
+      // one hint toast + one muted transcript line (banner already shows 未配置)
+      tui.toast('warning', zh ? '未配置模型服务' : 'No model service configured',
+        zh ? '运行 /setup，或设置 COWCAT_BASE_URL / COWCAT_API_KEY / COWCAT_MODEL' : 'Run /setup, or set COWCAT_BASE_URL / COWCAT_API_KEY / COWCAT_MODEL');
+      const hint = config.provider === 'anthropic' && config.baseURL === 'https://api.anthropic.com'
+        ? (zh ? 'Kimi Code 推荐：/setup 选 kimi-code-plan-cn，或 baseURL https://api.kimi.com/coding + model kimi-for-coding。' : 'Kimi Code: /setup → kimi-code-plan-cn, or baseURL https://api.kimi.com/coding, model kimi-for-coding.')
+        : (zh ? '运行 /setup 配置模型服务。' : 'Run /setup to configure a model service.');
+      ui.print(tui.color(tui.theme.inactive, hint));
+    } else {
       ui.print(zh
-        ? 'Kimi Code 推荐：baseURL 用 https://api.kimi.com/coding，model 用 kimi-for-coding。'
-        : 'Kimi Code users: baseURL https://api.kimi.com/coding, model kimi-for-coding.');
+        ? '未配置模型服务。运行 cowcat setup 进行配置，或设置环境变量 COWCAT_BASE_URL / COWCAT_API_KEY / COWCAT_MODEL。'
+        : 'No model service configured. Run `cowcat setup`, or set COWCAT_BASE_URL / COWCAT_API_KEY / COWCAT_MODEL.');
+      if (config.provider === 'anthropic' && config.baseURL === 'https://api.anthropic.com') {
+        ui.print(zh
+          ? 'Kimi Code 推荐：baseURL 用 https://api.kimi.com/coding，model 用 kimi-for-coding。'
+          : 'Kimi Code users: baseURL https://api.kimi.com/coding, model kimi-for-coding.');
+      }
+      ui.print(zh ? '现在可以输入问题试试（会失败），或 /exit 退出。' : 'You can type a question now (it will fail), or /exit.');
     }
-    ui.print(zh ? '现在可以输入问题试试（会失败），或 /exit 退出。' : 'You can type a question now (it will fail), or /exit.');
   }
 
   const runTurn = async (userText, { onText = undefined, events: eventsOverride = null, maxTurns = null } = {}) => {
@@ -465,6 +561,9 @@ async function main() {
       provider, registry, system, messages, ctx: baseCtx, ui, permissions, config,
       // print mode must not stream: the final answer is printed exactly once below
       onText: onText !== undefined ? onText : (opts.print ? null : (d) => ui.streamChunk(d)),
+      onThinking: (onText !== undefined || opts.print) ? null : (d) => ui.thinkingChunk?.(d),
+      // live tool-call formation is TUI-only; print/line modes keep today's flow
+      onToolDelta: (onText !== undefined || opts.print) ? null : (d) => ui.toolCallDelta?.(d),
       events: eventsOverride ?? events,
       maxIterations: maxTurns || undefined,
       signal: currentAbort.signal,
@@ -481,9 +580,15 @@ async function main() {
     usageTotals.cache_read += u.cache_read || 0;
     usageTotals.cache_creation += u.cache_creation || 0;
     sessionState.toolCalls = (sessionState.toolCalls || 0) + (res.toolCalls || 0);
-    // collapsed thinking summary for this turn (expand with /thinking)
-    const lastAsst = [...messages].reverse().find((m) => m.role === 'assistant');
-    for (const blk of thinkingBlocksOf(lastAsst ? [lastAsst] : [])) {
+    // collapsed thinking summary for this turn (expand with /thinking) —
+    // every assistant message the turn produced, not just the last one.
+    // The turn's root user message has string content (tool_result messages
+    // are role:user too, but always carry array content).
+    let rootIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user' && !Array.isArray(messages[i].content)) { rootIdx = i; break; }
+    }
+    for (const blk of thinkingBlocksOf(rootIdx >= 0 ? messages.slice(rootIdx + 1) : [])) {
       ui.print(renderThinkingCard(blk, { expanded: false, colors: ui.colors }));
     }
     return res;
@@ -575,7 +680,7 @@ async function main() {
     } catch (e) {
       ui.print(`cron check failed: ${e.message}`);
     }
-    ui.output.write(ui.colors ? '\x1b[1mcowcat>\x1b[0m ' : 'cowcat> ');
+    if (!tui) ui.output.write(ui.colors ? '\x1b[1mcowcat>\x1b[0m ' : 'cowcat> '); // the TUI composer is the prompt
     const rawLine = await ui.readLine();
     if (rawLine === null) break; // stdin EOF — shut down cleanly
     const line = rawLine.trim();
@@ -595,8 +700,21 @@ async function main() {
         session.append({ type: 'compacted', count: result.compactedCount });
         ui.print('[compacted]');
       } else if (cmd === 'model') {
-        if (!args[0]) ui.print(`current model: ${config.model}`);
-        else { config.model = args[0]; ui.print(`model set to ${config.model}`); }
+        if (!args[0]) {
+          ui.print(`current model: ${displayModel(config)} (${config.provider}/${config.model})`);
+        } else {
+          const prevModel = config.model;
+          const prevRef = config.modelRef;
+          config.model = args[0];
+          try {
+            resolveModelConfig(config);
+            ui.print(`model set to ${displayModel(config)} (${config.provider}/${config.model})`);
+          } catch (e) {
+            config.model = prevModel;
+            config.modelRef = prevRef;
+            ui.print(`✗ ${e.message}`);
+          }
+        }
         refreshStatus();
       } else if (cmd === 'plan') {
         permissions.setMode('plan');
@@ -605,8 +723,7 @@ async function main() {
       } else if (cmd === 'act') {
         if (restricted) {
           // Untrusted folder: /act is a session-scoped trust decision.
-          ui.output.write(ui.lang === 'zh' ? 'Trust this folder for this session? [y/N] ' : 'Trust this folder for this session? [y/N] ');
-          const a = ((await ui.readLine()) ?? '').trim().toLowerCase();
+          const a = ((await ui.ask(ui.lang === 'zh' ? 'Trust this folder for this session? [y/N] ' : 'Trust this folder for this session? [y/N] ')) ?? '').trim().toLowerCase();
           if (a === 'y' || a === 'yes') {
             restricted = false;
             permissions.setMode('default');
@@ -620,8 +737,17 @@ async function main() {
         }
         refreshStatus();
       } else if (cmd === 'setup') {
-        const saved = await runSetupWizard(ui);
+        const saved = await runSetup(ui);
+        if (!saved) { refreshStatus(); continue; }
+        // new-schema results replace the legacy flat endpoint fields outright
+        // (otherwise the startup env values would override the fresh key)
+        if (saved.providers) {
+          delete config.provider;
+          delete config.baseURL;
+          delete config.apiKey;
+        }
         Object.assign(config, saved);
+        try { resolveModelConfig(config); } catch (e) { ui.print(`✗ ${e.message}`); }
         applyRules();
         provider = await createProvider(config);
         provider.setSessionId?.(session.id);
@@ -640,10 +766,10 @@ async function main() {
           usage: usageTotals, startedAt: sessionStart,
         }));
       } else if (cmd === 'status') {
-        const ctxUse = contextUsage(messages, config.maxContextTokens);
+        const ctxUse = contextUsage(messages, contextLimit(config));
         ui.print(formatStatus({
           version: PKG_VERSION, provider: config.provider, baseURL: config.baseURL,
-          model: config.apiKey ? config.model : (ui.lang === 'zh' ? '未配置' : 'not configured'),
+          model: config.apiKey ? displayModel(config) : (ui.lang === 'zh' ? '未配置' : 'not configured'),
           mode: permissions.mode + (restricted ? ' (restricted)' : ''),
           trusted: isTrustedProject(config, cwd),
           contextUsed: ctxUse.used, contextMax: ctxUse.max, startedAt: sessionStart,
@@ -668,6 +794,26 @@ async function main() {
       } else if (cmd === 'todos') {
         if (state.todos?.length) ui.showTodos(state.todos);
         else ui.print(ui.lang === 'zh' ? 'todo 列表是空的。' : 'Todo list is empty.');
+      } else if (cmd === 'panel') {
+        if (tui) {
+          const on = tui.togglePanel();
+          sessionState.panel = on;
+          writeState((s) => { s.panel = on; return s; });
+        } else {
+          ui.print(ui.lang === 'zh' ? '面板只在 TUI 模式下可用。' : 'The panel is only available in TUI mode.');
+        }
+      } else if (cmd === 'sandbox') {
+        const arg = (args[0] || '').toLowerCase();
+        const cur = config.sandbox === 'off' ? 'off' : 'light';
+        if (arg === 'off' || arg === 'light') {
+          config.sandbox = arg; // live: the next Bash run and card title pick it up
+          writeState((s) => { s.sandbox = arg; return s; });
+          ui.print(ui.lang === 'zh'
+            ? `sandbox: ${arg}（${arg === 'off' ? '环境变量不再脱敏，危险命令改走审批流' : '轻量护栏：脱敏环境变量 + 静态分级 + 审计日志'}）`
+            : `sandbox: ${arg} (${arg === 'off' ? 'env no longer sanitized; dangerous commands go through approval' : 'light guard rail: sanitized env + static triage + audit log'})`);
+        } else {
+          ui.print(`sandbox: ${cur} — usage: /sandbox off|light`);
+        }
       } else if (cmd === 'theme') {
         const want = args[0] === 'l' || args[0] === 'light' ? 'light' : (args[0] === 'd' || args[0] === 'dark' ? 'dark' : null);
         if (!want) { ui.print('usage: /theme <dark|light>'); continue; }
@@ -691,8 +837,7 @@ async function main() {
           continue;
         }
         // no args: pick a scope, ensure the file exists, print path + contents
-        ui.output.write(ui.lang === 'zh' ? '哪个层级？[user/project] (project): ' : 'Which scope? [user/project] (project): ');
-        const scope = (((await ui.readLine()) ?? '').trim() || 'project') === 'user' ? 'user' : 'project';
+        const scope = (((await ui.ask(ui.lang === 'zh' ? '哪个层级？[user/project] (project): ' : 'Which scope? [user/project] (project): ')) ?? '').trim() || 'project') === 'user' ? 'user' : 'project';
         const file = memoryPathFor(scope, cwd);
         const created = ensureMemoryFile(file);
         ui.print(`${created ? (ui.lang === 'zh' ? '已创建（含模板说明）: ' : 'created (with template): ') : ''}${file}`);
@@ -782,8 +927,7 @@ async function main() {
         const cps = listCheckpoints(baseCtx);
         if (!cps.length) { ui.print(ui.lang === 'zh' ? '这个会话还没有检查点。先让它拆点什么。' : 'No checkpoints in this session yet.'); continue; }
         cps.forEach((cp, i) => ui.print(`  ${i + 1}. ${checkpointSummaryLine(cp)}`));
-        ui.output.write(ui.lang === 'zh' ? '回滚到第几个？ [编号]: ' : 'Rewind to which? [number]: ');
-        const pick = parseInt(((await ui.readLine()) ?? '').trim(), 10);
+        const pick = parseInt(((await ui.ask(ui.lang === 'zh' ? '回滚到第几个？ [编号]: ' : 'Rewind to which? [number]: ')) ?? '').trim(), 10);
         const cp = cps[pick - 1];
         if (!cp || !cp.record) { ui.print(ui.lang === 'zh' ? '编号无效。' : 'Invalid pick.'); continue; }
         ui.print(ui.lang === 'zh' ? '将恢复：' : 'Will restore:');
@@ -801,7 +945,7 @@ async function main() {
           ui.print(ui.lang === 'zh' ? '行吧，墙保持原样。' : 'Fine — the wall stays as is.');
         }
       } else if (cmd === 'help') {
-        ui.print('/init /setup /memory [add] /permissions [add|remove] /hooks [test|disable|enable] /mcp [reconnect] /rewind /compact [指令] /context /thinking /cost /status /export [f] /fork [名] /todos /tasks [kill] /agents /skills /theme <d|l> /model <名> /plan /act /diff /output /clear /exit');
+        ui.print('/init /setup /memory [add] /permissions [add|remove] /sandbox <off|light> /hooks [test|disable|enable] /mcp [reconnect] /rewind /compact [指令] /context /thinking /cost /status /export [f] /fork [名] /todos /tasks [kill] /agents /skills /theme <d|l> /model <名> /plan /act /panel /diff /output /clear /exit');
         if (Object.keys(custom.commands).length) {
           ui.print(ui.lang === 'zh' ? '自定义命令:' : 'Custom commands:');
           for (const l of customHelpLines(custom.commands)) ui.print(l);
@@ -827,8 +971,7 @@ async function main() {
         if (!permissions.check('Write', { file_path: target })) {
           decision = await ui.approve('Write', target, {});
         } else {
-          ui.output.write(ui.lang === 'zh' ? '写入 COWCAT.md？[y/n] ' : 'Write COWCAT.md? [y/n] ');
-          decision = (await ui.readLine()).trim().toLowerCase();
+          decision = ((await ui.ask(ui.lang === 'zh' ? '写入 COWCAT.md？[y/n] ' : 'Write COWCAT.md? [y/n] ')) ?? '').trim().toLowerCase();
         }
         if (decision === 'y' || decision === 'yes') {
           if (existsSync(target)) baseCtx.readSet.add(target); // Write requires prior read for overwrites
@@ -937,7 +1080,13 @@ async function main() {
       await runTurn(line);
     } catch (e) {
       if (e instanceof ConfigError) { ui.print(`Config error: ${e.message}`); }
-      else { ui.print(`Error: ${e.message}`); }
+      else if (tui && typeof tui.apiError === 'function') { tui.apiError(e); }
+      else {
+        // line mode: readable summary + actionable hint, raw detail on its own line
+        const p = formatApiErrorLines(parseApiError(e), { lang: ui.lang ?? 'zh' });
+        ui.print(p.lines.join('\n'));
+        if (p.raw && p.raw !== p.summary) ui.print(p.raw.split('\n').slice(0, 10).join('\n'));
+      }
     }
   }
   if (baseCtx.hooks) await fireHooks(baseCtx.hooks, 'SessionEnd', hookPayload('SessionEnd', { turns: turnCount }, baseCtx.hooks), { log: (m) => ui.print(m) }).catch(() => {});

@@ -1,5 +1,5 @@
 // Provider abstraction: shared fetch/retry logic + factory.
-import { ConfigError } from '../config.js';
+import { ConfigError, resolveModelConfig } from '../config.js';
 
 export class LLMError extends Error {
   constructor(msg, { status, retryable } = {}) {
@@ -87,8 +87,19 @@ export async function* parseSSE(res) {
   if (ev !== undefined && ev !== null) yield ev;
 }
 
+// Protocol registry: model ref → resolved provider entry → protocol module.
+// The resolved cfg carries protocol/baseURL/apiKey (see config.js
+// resolveModelConfig); providers receive that resolved object.
+const PROTOCOL_MODULES = {
+  anthropic: './anthropic.js',
+  openai: './openai.js',
+};
+
 export async function createProvider(cfg) {
-  if (cfg.provider === 'openai') {
+  resolveModelConfig(cfg); // idempotent; overlays protocol/baseURL/apiKey/model
+  const mod = PROTOCOL_MODULES[cfg.protocol];
+  if (!mod) throw new ConfigError(`Unsupported protocol "${cfg.protocol}" (expected anthropic|openai)`);
+  if (cfg.protocol === 'openai') {
     const { OpenAIProvider } = await import('./openai.js');
     return new OpenAIProvider(cfg);
   }

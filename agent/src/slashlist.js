@@ -5,8 +5,8 @@ export function slashCommandList() {
   return [
     '/act', '/agents', '/clear', '/compact', '/context', '/cost', '/diff', '/exit',
     '/export', '/fork', '/help', '/hooks', '/ide', '/init', '/mcp', '/memory',
-    '/model', '/output', '/output-style', '/permissions', '/plan', '/quit',
-    '/rewind', '/setup', '/skills', '/status', '/statusline', '/tasks', '/theme',
+    '/model', '/output', '/output-style', '/panel', '/permissions', '/plan', '/quit',
+    '/rewind', '/sandbox', '/setup', '/skills', '/status', '/statusline', '/tasks', '/theme',
     '/thinking', '/todos', '/worktree',
   ];
 }
@@ -35,10 +35,12 @@ export function slashCommandDocs() {
     { name: '/model', zh: '查看或切换当前模型', en: 'Show or switch the current model' },
     { name: '/output', zh: '查看最近一条命令输出', en: 'Show the last command output' },
     { name: '/output-style', zh: '切换输出风格', en: 'Switch the output style' },
+    { name: '/panel', zh: '开关右侧信息面板（也可 ctrl+b）', en: 'Toggle the right sidebar panel (ctrl+b)' },
     { name: '/permissions', zh: '管理 allow/deny/ask 权限规则', en: 'Manage allow/deny/ask permission rules' },
     { name: '/plan', zh: '切换到只读计划模式', en: 'Switch to read-only plan mode' },
     { name: '/quit', zh: '退出 CowCat', en: 'Quit CowCat' },
     { name: '/rewind', zh: '回滚到之前的检查点', en: 'Rewind to a previous checkpoint' },
+    { name: '/sandbox', zh: 'Bash 沙箱开关：off 或 light', en: 'Toggle the Bash sandbox: off or light' },
     { name: '/setup', zh: '运行配置向导并体检', en: 'Run the setup wizard and doctor' },
     { name: '/skills', zh: '列出已加载的 skills', en: 'List loaded skills' },
     { name: '/status', zh: '查看版本/模型/权限/上下文状态', en: 'Show version/model/permissions/context status' },

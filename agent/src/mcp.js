@@ -3,9 +3,9 @@
 // SSE bodies parsed). Config: ~/.cowcat/mcp.json + <cwd>/.cowcat/mcp.json,
 // project level wins per server name.
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { cowcatHome } from './config.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { cowcatHome, writeState } from './config.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const getTimeout = () => Number(process.env.COWCAT_MCP_TIMEOUT) || 60_000;
@@ -28,17 +28,12 @@ export function mcpTrustedList(cfg) {
 }
 
 export function trustMcpServer(cfg, name) {
-  const file = join(cowcatHome(), 'config.json');
-  let existing = {};
-  if (existsSync(file)) {
-    try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch { existing = {}; }
-  }
-  const list = Array.from(new Set([...(existing.mcpTrusted || []), name]));
-  const merged = { ...existing, mcpTrusted: list };
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(merged, null, 2));
-  cfg.mcpTrusted = list;
-  return merged;
+  const next = writeState((state) => {
+    state.mcpTrusted = Array.from(new Set([...(Array.isArray(state.mcpTrusted) ? state.mcpTrusted : []), name]));
+    return state;
+  });
+  cfg.mcpTrusted = next.mcpTrusted;
+  return next;
 }
 
 // --- stdio transport ----------------------------------------------------------

@@ -71,16 +71,16 @@ test('P1-8: statusline timeout and failure fall back to null silently', async ()
   assert.equal(await runStatusLine('exit 1', '{}'), null);
 });
 
-test('P1-8: statusline set/clear persists to config.json preserving fields', () => {
+test('P1-8: statusline set/clear persists to state.json preserving fields', () => {
   const { home, restore } = setupHome();
   try {
     writeFileSync(join(home, 'config.json'), JSON.stringify({ installId: 'keep' }));
     saveStatusLine('echo hi');
-    let onDisk = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    let onDisk = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
     assert.equal(onDisk.statusLine.command, 'echo hi');
     assert.equal(onDisk.installId, 'keep');
     saveStatusLine(null);
-    onDisk = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    onDisk = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
     assert.equal(onDisk.statusLine, undefined, 'clear restores default');
   } finally {
     restore();

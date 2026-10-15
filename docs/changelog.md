@@ -1,5 +1,19 @@
 # CowCat changelog
 
+## 0.12.0（未发布）— P1–P5：思考链流式 / 工具增量 / 右侧面板 / 轻量沙箱 / 并行执行
+
+- **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
+- **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
+- **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
+- **P5 并行工具执行**：同一回合内无依赖的多个工具调用并发执行，并发上限 `maxParallelTools`（默认 4，config/env 可调），结果按调用顺序回拼、transcript 不乱序；usage 与错误逐工具聚合（`src/loop.js` executeToolUses）。
+- **P5 启动模型引用校验**：启动时校验 `provider/model` 引用，未命中已知目录时 toast/行模式提示最接近的可用引用（`src/modelhint.js`，自定义 endpoint 跳过目录校验的场景同样兜底）。
+- **右侧信息面板**：ctrl+b 或 `/panel` 开关，26 列右栏显示 Context 用量条（本地 estimateTokens + analyzeContext 估值，非网络探测）、模型 + effort、权限模式、MCP 服务器列表（带状态点）、当前 todos；<100 列终端自动隐藏回单列；切换状态持久化到 state.json（`panel` 键）并在会话内镜像。纯渲染在 `src/tui/sidebar.js`（renderSidebar/stitchSidebar/sidebarWidth），TuiUI 唯一收窄点 `_contentWidth()`，transcript/输入区/状态栏同步缩窄后拼接侧栏（`src/tui/ui.js`、`src/tui/keybind.js`、`bin/cowcat.mjs`、`src/config.js` STATE_KEYS）。
+- **错误卡片化**：Bash 非零退出渲染红色错误卡（标题含失败命令、红色 `✗ exit N` 行、collapseToolOutput 折叠输出尾部，ctrl+o 展开全文），行模式非零退出同样走红色边框卡；`!` 本地 shell 失败路径不再 raw dump，改为同款错误卡；provider/API 错误经 `src/errfmt.js` 解析（HTTP 状态 + 内嵌 JSON 错误体如 `{"error":{"code":"1211","message":"Unknown Model..."}}`，容忍尾部脏数据），TUI 里渲染 `apiError` 红色卡片（ctrl+o 看 raw 响应体），行模式输出 summary + 可操作提示 + 原文；已知场景提示：unknown model → /model 切换、401/403 → 查 API key、429 → 稍后重试、5xx → 服务端错误、网络 → 查 base URL/代理。
+- **审批卡升级**：卡片与 PermissionPrompt 显示将命中的权限规则（perrules.findMatch，deny>ask>allow 优先级），无匹配时显示「无匹配规则（默认：询问）」；新增 y/a/n 裸键快捷选择（pills ←→/enter/esc 不变），pill 标签带键位字母；loop.js 向 approve 透传 tool input。approve 异步契约与 plan 门不变。
+- **测试**：新增 `test/panel.test.mjs` 14 项（sidebar 纯渲染/自动隐藏/拼接、布局缩窄与整帧宽度、错误解析与提示、bash/apiError 错误卡、审批规则展示与 y/a/n）；P1/P2 新增 `test/p1-wave{1-4}`、`test/p2*`、`tooldelta`、`msgstream`、`reasoning` 共 74 项（思考链聚合/流式回调、工具 delta 生命周期与 pending 卡取代）；P4/P5 新增 `test/sandbox.test.mjs` 12 项（脱敏/分级/审计/持久化）、`test/parallel.test.mjs` 6 项（并发上限/保序/错误聚合）、`test/modelhint.test.mjs` 7 项；全量 533 passed / 0 failed。
+- **进程级 E2E 冒烟**：stub OpenAI 兼容 SSE server（`test/fixtures/stub-openai-server.mjs`）驱动 `cowcat -p -y` 全链路——reasoning_content delta → transcript thinking 块、Bash 执行、二次请求 tool_calls/tool 正确配对（思考块不回传）、audit.log 落审计行、模型引用警告提示，`-p` 与 `--output-format stream-json` 双模式 exit 0。
+- **E2E 修复**：print/line 模式回合末折叠思考卡改为扫描本回合全部 assistant 消息（同回合早前迭代的思考不再丢失）；loop 的 usage 聚合兼容 OpenAI 字段名（`prompt_tokens`/`completion_tokens`/`prompt_cache_hit_tokens`），openai provider 的 /cost 与 stream-json usage 恢复真实数值（`test/loop.test.mjs` 新增用例）。
+
 ## 0.11.0（2026-10-15）— TUI 视觉改版：弹出式斜杠菜单、chips 状态栏、极简输入框、工具块新标题
 
 - **弹出式斜杠命令菜单**：替换原单行候选——输入框下方整宽弹出，每行 `  → /name` + 固定 18 列命令名 + dim 说明列；选中行箭头与命令名为 brand 色，底部 `(n/m)` 计数器，最多 8 行、超出滚动且选中项始终可见。菜单内 ↑↓ 移动选中（不再走历史记录）、Enter 直接提交选中命令、Tab 填入并补尾部空格后关闭、Esc 关闭、继续打字实时过滤并复位到第 0 项；选中索引存 TuiUI（`src/tui/ui.js`）。与 @-mention 文件补全 Tab 循环共存：非 `/` 前缀不弹菜单，菜单优先。

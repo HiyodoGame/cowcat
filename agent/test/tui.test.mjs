@@ -90,7 +90,7 @@ test('TUI render: card state machine running -> done/error, folded and expanded'
   card.summaryLines = ['exit 0', 'hello', 'world', 'line4'];
   card.fullLines = ['exit 0', 'hello', 'world', 'line4', 'line5', 'line6'];
   const folded = renderCard(card, { width: 50, colors: false });
-  assert.ok(folded[0].includes('● Used Bash'));
+  assert.ok(folded[0].includes('✓ Used Bash'));
   assert.ok(folded.length <= 6, 'folded shows ≤3 body lines + fold hint + ctrl+o hint');
   assert.ok(folded.some((l) => l.includes('(3 more lines, ctrl+o to expand)')), 'fold hint counts hidden lines');
   assert.ok(folded.some((l) => l.includes('ctrl+o to expand/collapse')), 'card tail hint');
@@ -100,7 +100,7 @@ test('TUI render: card state machine running -> done/error, folded and expanded'
   assert.ok(expanded.some((l) => l.includes('line6')));
 
   card.status = 'error';
-  assert.ok(renderCard(card, { width: 50, colors: false })[0].includes('●'));
+  assert.ok(renderCard(card, { width: 50, colors: false })[0].includes('✗'));
 });
 
 test('TUI render: buildScreen assembles exact height with scroll clamping', () => {
@@ -242,10 +242,10 @@ function headlessTui() {
   return { tui, input };
 }
 
-test('TUI app: approval resolves via y/n/a keys without an active readLine', async () => {
+test('TUI app: approval resolves via the pill options (enter on the selection)', async () => {
   const { tui, input } = headlessTui();
   const p = tui.approve('Write', '/tmp/x', {});
-  setImmediate(() => input.write('a'));
+  setImmediate(() => input.write('\x1b[C\r')); // → Allow always, then confirm
   assert.equal(await p, 'always');
   tui.close();
 });
@@ -274,13 +274,16 @@ test('TUI app: ask() prompt text renders inside the input box', () => {
   tui.close();
 });
 
-test('TUI app: Esc interrupts even mid-stream (no readLine active)', async () => {
+test('TUI app: double-Esc interrupts even mid-stream (no readLine active)', async () => {
   const { tui, input } = headlessTui();
   let hits = 0;
   tui.onInterrupt = () => { hits++; };
   input.write('\x1b');
   await new Promise((r) => setTimeout(r, 20));
-  assert.equal(hits, 1);
+  assert.equal(hits, 0, 'first esc arms the interrupt confirmation');
+  input.write('\x1b');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(hits, 1, 'second esc within the window fires the interrupt');
   tui.close();
 });
 
@@ -354,16 +357,16 @@ test('TUI app: slash menu auto-opens on /, filters, arrows move selection withou
   rows = menuRows(tui._inputBox());
   assert.ok(rows[0].includes('→'), 'selection wraps to the first row');
 
-  input.write('th'); // typing re-filters and resets the selection
+  input.write('cl'); // typing re-filters and resets the selection
   await sleep(10);
   rows = menuRows(tui._inputBox());
-  assert.equal(rows.length, 1, 'narrowed to /theme');
-  assert.ok(rows[0].includes('/theme'));
+  assert.equal(rows.length, 1, 'narrowed to /clear');
+  assert.ok(rows[0].includes('/clear'));
   assert.ok(rows[0].includes('→'), 'selection resets to row 0 on re-filter');
   assert.equal(menuCounter(tui._inputBox()).trim(), '(1/1)');
 
   input.write('\r'); // Enter submits the selected command
-  assert.equal(await p, '/theme');
+  assert.equal(await p, '/clear');
   tui.close();
 });
 
@@ -386,11 +389,15 @@ test('TUI app: slash menu Esc dismisses without interrupt; edits re-open it', as
   await sleep(10);
   assert.equal(menuRows(tui._inputBox()).length, 1, 'menu reappears after editing');
 
-  input.write('\x1b');
+  input.write('\x1b'); // second Esc dismisses the re-opened menu
   await sleep(30);
-  input.write('\x1b'); // second Esc now falls through to interrupt
+  assert.equal(interrupts, 0, 'menu dismissal never interrupts');
+  input.write('\x1b'); // third Esc arms the interrupt confirmation
   await sleep(30);
-  assert.equal(interrupts, 1, 'Esc with a dismissed menu interrupts');
+  assert.equal(interrupts, 0, 'first esc at the interrupt level only arms');
+  input.write('\x1b'); // fourth Esc fires
+  await sleep(30);
+  assert.equal(interrupts, 1, 'double-Esc with a dismissed menu interrupts');
   input.write('\r');
   await p;
   tui.close();
@@ -476,73 +483,68 @@ test('TUI app: slash menu hidden while a bare command is exact or has arguments'
   tui.close();
 });
 
-test('TUI app: context line shows › branch · mode · hint; approval blanks the hint', async () => {
+test('TUI app: metadata row shows model · mode; approval swaps the composer for the prompt', async () => {
   const { tui } = headlessTui2(); // cwd '/x' is not a git repo -> '-' branch placeholder
   tui.readLine();
   await sleep(10);
-  const line = stripAnsi(tui._inputBox()[0]);
-  assert.ok(line.startsWith('› '), 'brand › prefix');
-  assert.ok(line.includes('- ·'), 'branch placeholder when git is unavailable');
-  assert.ok(line.includes('act'), 'mode segment');
-  assert.ok(line.includes('shift+tab 切换模式 · esc 中断'), 'zh hint from the former status bar');
+  const meta = stripAnsi(tui._inputBox()[0]);
+  assert.ok(meta.includes('m'), 'model segment (the only place the model shows)');
+  assert.ok(meta.includes('act'), 'mode segment');
   tui._pendingApproval = { resolve: () => {}, card: null, entry: null };
+  // a stub without pills keeps the normal composer; a real approval replaces it
   const pending = stripAnsi(tui._inputBox()[0]);
-  assert.ok(!pending.includes('shift+tab'), 'hint cleared while an approval is pending');
+  assert.ok(!pending.includes('△'), 'stub pending approval leaves the composer alone');
   tui._pendingApproval = null;
   tui.close();
 });
 
-test('TUI app: status bar renders chips from mode/model and degrades without mode info', () => {
+test('TUI app: status bar shows the dir cluster left and info right, no duplicate model/cwd', () => {
   const { tui } = headlessTui2();
   const s = stripAnsi(tui._status());
-  assert.ok(s.includes('需要时询问'), 'permission chip (zh)');
-  assert.ok(/\bact\b/.test(s), 'mode chip');
-  assert.ok(s.includes('m'), 'model chip');
-  assert.ok(s.replace(/\x1b\[[0-9;]*m/g, '').trimEnd().endsWith('/x'), 'cwd right-aligned');
-  assert.ok(!s.includes('快捷键') && !s.includes('shortcuts'), 'hint moved out of the status bar');
+  assert.ok(s.includes('/x'), 'cwd cluster on the left');
+  assert.ok(!s.trimEnd().endsWith('/x'), 'cwd not repeated as the right anchor');
+  assert.ok(s.includes('shift+tab'), 'key hints on the right');
+  assert.ok(!s.includes('需要时询问'), 'permission chips moved out (mode lives in the metadata row)');
   tui.close();
 
   const degraded = headlessTui2({ getMode: () => '' });
   const d = stripAnsi(degraded.tui._status());
-  assert.ok(!d.includes('需要时询问'), 'no permission chip when mode info is unavailable');
-  assert.ok(!/\bact\b/.test(d), 'no mode chip either');
-  assert.ok(d.includes('m'), 'model chip still rendered');
+  assert.ok(d.includes('/x'), 'dir cluster still rendered without mode info');
   degraded.tui.close();
 });
 
-test('TUI app: input box uses rule lines and a > prompt, no rounded frame', () => {
+test('TUI app: composer is a left-border bar with a › prompt, no rules, no rounded frame', () => {
   const { tui } = headlessTui2();
   tui.readLine();
   const box = tui._inputBox();
   const plain = box.map(stripAnsi);
   assert.ok(!box.join('').includes('╭') && !box.join('').includes('╮') && !box.join('').includes('╰') && !box.join('').includes('╯'), 'no rounded corners');
-  assert.ok(!box.join('').includes('│'), 'no side borders');
-  const rules = plain.filter((l) => l === '─'.repeat(100));
-  assert.equal(rules.length, 2, 'top and bottom rule lines, full width');
-  const body = plain.find((l) => l.startsWith('> '));
-  assert.ok(body, '> prompt row');
+  assert.ok(!box.join('').includes('─'), 'no rule lines');
+  const body = plain.find((l) => l.includes('› '));
+  assert.ok(body, '› prompt row');
+  assert.ok(body.startsWith('▎'), 'left border bar');
   assert.ok(body.includes('输入消息'), 'placeholder after the prompt');
   tui.close();
 });
 
-test('TUI app: tool card titles — ● Used {Tool} and ● Ran a command · $ …', () => {
+test('TUI app: tool card titles — ✓ Used {Tool} and ✓ Ran a command · $ …', () => {
   const { tui } = headlessTui2({ colors: true });
   tui.toolCall('TodoWrite', 'x');
   tui.toolSuccess();
-  let line = tui._flat().map(stripAnsi).find((l) => l.startsWith('●'));
-  assert.ok(line.startsWith('● Used TodoWrite'), 'done title for a generic tool');
+  let line = tui._flat().map(stripAnsi).find((l) => l.startsWith('✓'));
+  assert.ok(line.startsWith('✓ Used TodoWrite'), 'done title for a generic tool');
   tui.toolCall('Bash', 'npm test -- --watch');
   tui.toolSuccess();
   line = tui._flat().map(stripAnsi).find((l) => l.includes('$ npm test -- --watch'));
-  assert.ok(line.startsWith('● Ran a command · $ npm test -- --watch'), 'bash title shows the command');
+  assert.ok(line.startsWith('✓ Ran a command · $ npm test -- --watch'), 'bash title shows the command');
   tui.toolCall('Bash', 'x'.repeat(100));
   tui.toolSuccess();
-  line = tui._flat().map(stripAnsi).reverse().find((l) => l.startsWith('● Ran a command'));
+  line = tui._flat().map(stripAnsi).reverse().find((l) => l.startsWith('✓ Ran a command'));
   assert.ok(visibleLen(line.split('$ ')[1].trimEnd()) <= 60, 'long command truncated to ~60 cols');
   tui.toolCall('Bash', 'bad');
   tui.toolError('boom');
-  const raw = tui._flat().find((l) => stripAnsi(l).startsWith('● Ran a command · $ bad'));
-  assert.ok(raw.includes(tui.theme.error), 'error card tints the ● dot red');
+  const raw = tui._flat().find((l) => stripAnsi(l).startsWith('✗ Ran a command · $ bad'));
+  assert.ok(raw.includes(tui.theme.error), 'error card tints the ✗ icon red');
   tui.close();
 });
 
@@ -554,9 +556,9 @@ test('TUI app: hardware cursor lands on the editing point inside the input box',
   await sleep(10);
   const all = chunks.join('');
   const height = 29; // max(10, output.rows - 1)
-  const inputLen = tui._inputBox().length;
-  const row = height - inputLen - 1 + 2;      // inputStart + frame top + first body row
-  const col = 2 + 1;                          // border '│ ' + 0-based cursor col after '/'
+  const inputLen = tui._inputFixed().length; // the floating menu is not part of the layout block
+  const row = height - inputLen - 1 + 1;      // inputStart + metadata row + first composer row
+  const col = 1 + 2 + 2 + 1;                  // bar + padding(2) + '› ' + 0-based cursor col after '/'
   assert.ok(
     all.includes(`\x1b[${row + 1};${col + 1}H\x1b[?25h`),
     `expected cursor seq at row=${row + 1} col=${col + 1}`,

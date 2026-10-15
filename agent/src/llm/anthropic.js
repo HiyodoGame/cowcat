@@ -25,7 +25,11 @@ export function normalizeAnthropicMessage(msg) {
 }
 
 // Aggregate streamed Anthropic events into the same shape as normalizeAnthropicMessage.
-export function aggregateAnthropicStream(events, onText) {
+// onToolDelta (optional 3rd arg, backwards-compatible): fired on tool_use block
+// start as { index, id, name, argsDelta: '' }, per input_json_delta as
+// { index, id, name, argsDelta }, and once per tool after the loop as
+// { index, id, name, argsComplete, done }. Return value unchanged.
+export function aggregateAnthropicStream(events, onText, onToolDelta) {
   const blocks = new Map(); // index -> block
   const order = [];
   let stopReason = null;
@@ -43,6 +47,9 @@ export function aggregateAnthropicStream(events, onText) {
               : { type: cb.type };
         blocks.set(ev.index, block);
         order.push(ev.index);
+        if (cb.type === 'tool_use') {
+          onToolDelta?.({ index: ev.index, id: cb.id, name: cb.name, argsDelta: '' });
+        }
         break;
       }
       case 'content_block_delta': {
@@ -54,6 +61,9 @@ export function aggregateAnthropicStream(events, onText) {
           onText?.(d.text);
         } else if (d.type === 'input_json_delta') {
           block.input += d.partial_json;
+          if (block.type === 'tool_use') {
+            onToolDelta?.({ index: ev.index, id: block.id, name: block.name, argsDelta: d.partial_json });
+          }
         } else if (d.type === 'thinking_delta') {
           block.thinking += d.thinking;
         }
@@ -71,6 +81,12 @@ export function aggregateAnthropicStream(events, onText) {
       default:
         break;
     }
+  }
+  // Completion signal once the event loop ends (message_stop has no payload
+  // to key on; post-loop covers stop_reason variants uniformly).
+  for (const i of order) {
+    const b = blocks.get(i);
+    if (b?.type === 'tool_use') onToolDelta?.({ index: i, id: b.id, name: b.name, argsComplete: b.input, done: true });
   }
   const content = order.map((i) => {
     const b = blocks.get(i);
@@ -143,7 +159,7 @@ export class AnthropicProvider {
       if (ev.__done) break;
       events.push(ev);
     }
-    return aggregateAnthropicStream(events, onText);
+    return aggregateAnthropicStream(events, onText, request.onToolDelta);
   }
 }
 

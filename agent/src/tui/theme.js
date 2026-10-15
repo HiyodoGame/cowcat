@@ -172,3 +172,31 @@ export function getTheme(name, level = '256') {
   for (const token of TOKENS) theme[token] = sgr(token, name, level);
   return theme;
 }
+
+// Open Code v2 semantic aliases mapped onto the shipped 19 tokens — visual
+// identity is unchanged (the right-hand side IS the color), new code should
+// prefer the aliased names so a future palette swap touches one table.
+export const TOKEN_ALIASES = {
+  'text.base': 'text',
+  'text.muted': 'inactive',
+  'text.subtle': 'subtle',
+  'feedback.info': 'cyan',
+  'feedback.success': 'success',
+  'feedback.warning': 'warning',
+  'feedback.error': 'error',
+  'accent.brand': 'brand',
+  'accent.permission': 'permission',
+  'surface.raised': 'userBubbleBg',
+  'surface.bash': 'bashBubbleBg',
+  'border.prompt': 'promptBorder',
+  'border.bash': 'bashBorder',
+  'mode.plan': 'planMode',
+  'mode.autoAccept': 'autoAccept',
+};
+
+// Resolve an (possibly aliased) token name to the concrete theme key, then
+// read its SGR from a getTheme() palette. Unknown names yield ''.
+export function token(theme, name) {
+  const key = TOKEN_ALIASES[name] ?? name;
+  return theme?.[key] ?? '';
+}

@@ -93,7 +93,9 @@ test('W3 completion: Esc cancels candidates without firing onInterrupt', () => {
   assert.equal(tui.editor.text, '/theme', 'completed text is kept');
   assert.ok(!tui._inputBox().some((l) => l.includes('1/3')), 'candidate row gone');
   tui._handleKey('\x1b');
-  assert.equal(hits, 1, 'Esc without candidates falls through to interrupt');
+  assert.equal(hits, 0, 'first esc at the interrupt level arms the confirmation');
+  tui._handleKey('\x1b');
+  assert.equal(hits, 1, 'second esc fires the interrupt');
   tui._finishRead(null);
   tui.close();
 });
@@ -131,7 +133,9 @@ test('W3 completion: Tab with no candidates resets tabBase so the next Esc inter
   tui._handleKey('\t');
   assert.equal(tui.editor.tabBase, null, 'no-match Tab leaves no candidate state behind');
   tui._handleKey('\x1b');
-  assert.equal(hits, 1, 'Esc after a no-match Tab falls through to interrupt');
+  assert.equal(hits, 0, 'first esc arms the interrupt confirmation');
+  tui._handleKey('\x1b');
+  assert.equal(hits, 1, 'second esc after a no-match Tab fires the interrupt');
   tui._finishRead(null);
   tui.close();
 });

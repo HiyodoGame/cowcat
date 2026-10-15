@@ -188,7 +188,7 @@ test('transcript: fenced block closed by ``` survives subsequent streaming', () 
   assert.equal(flat.filter((l) => l === 'const x=1').length, 1, 'fence rows not duplicated');
 });
 
-test('transcript: tool cards run with a cyan spinner, tint the ● dot green/red, bash titles show $ cmd', () => {
+test('transcript: tool cards run with a cyan spinner, tint the ✓/✗ icon green/red, bash titles show $ cmd', () => {
   const { tui } = headless();
   tui.toolCall('TodoWrite', 'plan the wall');
   let line = tui._flat().find((l) => strip(l).includes('Used TodoWrite'));
@@ -200,18 +200,18 @@ test('transcript: tool cards run with a cyan spinner, tint the ● dot green/red
   entry.card.fullLines = ['l1', 'l2', 'l3', 'l4'];
   tui._invalidateEntry(entry);
   const flat1 = tui._flat();
-  line = flat1.find((l) => strip(l).includes('●'));
-  assert.ok(line.includes(GREEN), 'success = green dot');
-  assert.ok(strip(line).startsWith('● Used TodoWrite'), 'done title shape');
+  line = flat1.find((l) => strip(l).includes('✓'));
+  assert.ok(line.includes(GREEN), 'success = green icon');
+  assert.ok(strip(line).startsWith('✓ Used TodoWrite'), 'done title shape');
   assert.ok(flat1.some((l) => strip(l).includes('ctrl+o to expand/collapse')), 'card tail hint');
   tui.toolCall('Bash', 'npm test');
   tui.toolSuccess();
   line = tui._flat().find((l) => strip(l).includes('$ npm test'));
-  assert.ok(strip(line).startsWith('● Ran a command · $ npm test'), 'bash title shows the command');
+  assert.ok(strip(line).startsWith('✓ Ran a command · $ npm test'), 'bash title shows the command');
   tui.toolCall('Bash', 'bad');
   tui.toolError('boom');
-  line = tui._flat().find((l) => strip(l).includes('●') && strip(l).includes('$ bad'));
-  assert.ok(line.includes(RED), 'error = red dot');
+  line = tui._flat().find((l) => strip(l).includes('✗') && strip(l).includes('$ bad'));
+  assert.ok(line.includes(RED), 'error = red icon');
 });
 
 test('transcript: ctrl+o toggles the most recent tool card expanded (three key forms)', async () => {

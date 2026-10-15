@@ -384,7 +384,7 @@ test('P1-8) large-file reminders injected for dropped big reads (char fallback)'
 });
 
 test('j) COWCAT_* env vars win over CC_* fallback', async () => {
-  const { loadConfig } = await import('../src/config.js');
+  const { loadConfig, ConfigError } = await import('../src/config.js');
   const touched = ['COWCAT_PROVIDER', 'CC_PROVIDER', 'COWCAT_MODEL', 'CC_MODEL', 'COWCAT_HOME'];
   const saved = Object.fromEntries(touched.map((k) => [k, process.env[k]]));
   const home = mkdtempSync(join(tmpdir(), 'cowcat-cfg-'));
@@ -392,15 +392,21 @@ test('j) COWCAT_* env vars win over CC_* fallback', async () => {
     delete process.env.COWCAT_PROVIDER;
     process.env.COWCAT_HOME = home;
     process.env.CC_PROVIDER = 'openai';
-    process.env.CC_MODEL = 'fallback-model';
+    process.env.CC_MODEL = 'gpt-6-sol'; // catalog-valid bare model on the openai preset
     let cfg = loadConfig();
     assert.equal(cfg.provider, 'openai');
-    assert.equal(cfg.model, 'fallback-model');
+    assert.equal(cfg.model, 'gpt-6-sol');
     process.env.COWCAT_PROVIDER = 'anthropic';
-    process.env.COWCAT_MODEL = 'primary-model';
+    process.env.COWCAT_MODEL = 'claude-sonnet-5-5';
     cfg = loadConfig();
     assert.equal(cfg.provider, 'anthropic');
-    assert.equal(cfg.model, 'primary-model');
+    assert.equal(cfg.model, 'claude-sonnet-5-5');
+    // Bare model names outside the provider's catalog are rejected with guidance.
+    process.env.COWCAT_MODEL = 'primary-model';
+    assert.throws(() => loadConfig(), ConfigError, 'unknown bare model name must throw');
+    process.env.COWCAT_MODEL = 'openai/gpt-6-sol';
+    cfg = loadConfig();
+    assert.equal(cfg.provider, 'openai', 'composite ref drives the provider');
   } finally {
     for (const k of touched) {
       if (saved[k] === undefined) delete process.env[k];
@@ -598,4 +604,13 @@ test('h) session JSONL is appended under the cowcat home dir and resumable', asy
   assert.equal(loaded[0].content, 'q');
   rmSync(ctx.cwd, { recursive: true, force: true });
   rmSync(ctx.home, { recursive: true, force: true });
+});
+
+test('i) OpenAI-style usage field names (prompt_tokens/completion_tokens) are aggregated', async () => {
+  const res = await run([
+    { respond: () => ({ content: [{ type: 'tool_use', id: 'u1', name: 'Bash', input: { command: 'echo hi' } }], stopReason: 'tool_use', usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } }) },
+    { respond: () => ({ content: [{ type: 'text', text: 'done' }], usage: { prompt_tokens: 20, completion_tokens: 5 } }) },
+  ], { messages: [{ role: 'user', content: 'count tokens' }] });
+  assert.equal(res.usage.input, 27, 'prompt_tokens folds into usage.input');
+  assert.equal(res.usage.output, 8, 'completion_tokens folds into usage.output');
 });

@@ -105,6 +105,12 @@ export class UI {
   print(s = '') { this.output.write(`${s}\n`); }
   streamChunk(s) { this.output.write(s); }
   endStream() { this.output.write('\n'); }
+  // Reasoning deltas are not rendered live in line mode; the collapsed
+  // thinking card is printed after the turn from the message history.
+  thinkingChunk() {}
+  // Tool-call formation deltas are TUI-only; line mode shows the call once
+  // toolCall() fires (same contract as thinkingChunk).
+  toolCallDelta() {}
   // Line-mode transcript has no user bubble — the TUI overrides this.
   userMessage() {}
 
@@ -170,8 +176,10 @@ export class UI {
   }
 
   // Bash result card (§5.2 终端输出): folded by default, full via /output.
+  // Non-zero exits render as the red-tinted error frame even for short output,
+  // so a failing command never reads as a plain text dump.
   bashResultCard({ model, command = '', exitCode = 0, file = null }) {
-    if (!model.folded) {
+    if (!model.folded && exitCode === 0) {
       for (const l of model.headLines) this.print(l);
       return;
     }
@@ -300,7 +308,9 @@ export class MockUI {
   print(s = '') { this.printed.push(s); }
   endStream() {}
   streamChunk(s) { this.streamed += s; }
+  thinkingChunk() {}
   userMessage() {}
+  toolCallDelta() {}
   toolCall(name, summary) { this.calls.push({ name, summary }); }
   toolSuccess() {}
   toolError() {}

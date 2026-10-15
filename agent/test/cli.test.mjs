@@ -105,42 +105,53 @@ test('doctor: checklist passes and fails correctly; ping result reflected', asyn
     { hasConfigFile: true, ping: async () => {} },
   );
   assert.equal(good.ok, true);
-  assert.equal(good.items.length, 6);
+  assert.equal(good.items.length, 7);
   assert.ok(good.items.every((i) => i.ok));
 
-  const bad = await runDoctorChecks(
-    { provider: 'anthropic', baseURL: '', apiKey: '', model: 'm' },
-    { hasConfigFile: false, ping: async () => { throw new Error('HTTP 401'); } },
-  );
-  assert.equal(bad.ok, false);
-  const byName = Object.fromEntries(bad.items.map((i) => [i.name, i]));
-  assert.equal(byName['config file'].ok, false);
-  assert.equal(byName['base URL'].ok, false);
-  assert.equal(byName['API key'].ok, false);
-  assert.match(byName['API connectivity'].detail, /401/);
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    const bad = await runDoctorChecks(
+      { provider: 'anthropic', model: 'claude-sonnet-5-5' },
+      { hasConfigFile: false, ping: async () => { throw new Error('HTTP 401'); } },
+    );
+    assert.equal(bad.ok, false);
+    const byName = Object.fromEntries(bad.items.map((i) => [i.name, i]));
+    assert.equal(byName['config file'].ok, false);
+    assert.equal(byName['model ref'].ok, true, 'catalog model ref resolves');
+    assert.equal(byName['base URL'].ok, true, 'preset default baseURL counts as present');
+    assert.equal(byName['API key'].ok, false);
+    assert.match(byName['API key'].detail, /ANTHROPIC_API_KEY/, 'missing env var is named');
+    assert.equal(byName['model catalog'].ok, true);
+    assert.match(byName['API connectivity'].detail, /401/);
+  } finally {
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
 
   const noPing = await runDoctorChecks({ provider: 'openai', baseURL: 'u', apiKey: 'k', model: 'm' }, {});
   assert.equal(noPing.items.some((i) => i.name === 'API connectivity'), false, 'no ping fn -> no connectivity item');
   assert.equal(noPing.ok, true);
 });
 
-test('setup: merge preserves installId and untouched fields', () =>
+test('setup: merge keeps untouched fields; state keys migrate to state.json', () =>
   withHome(async () => {
     const existing = { installId: 'abc123', maxTokens: 1234, provider: 'openai' };
     const merged = mergeSetupConfig({ provider: 'anthropic', baseURL: 'https://api.kimi.com/coding', apiKey: 'sk', model: 'kimi-for-coding' }, existing);
-    assert.equal(merged.installId, 'abc123');
+    assert.equal(merged.installId, undefined, 'state keys never live in the config layer');
     assert.equal(merged.maxTokens, 1234);
     assert.equal(merged.provider, 'anthropic');
     assert.equal(merged.apiKey, 'sk');
-    // round-trip through the real file
+    // round-trip through the real file: installId moves to state.json
     const { saveSetupConfig } = await import('../src/doctor.js');
+    const { readState } = await import('../src/config.js');
     writeFileSync(join(process.env.COWCAT_HOME, 'config.json'), JSON.stringify(existing));
     const { file, config } = saveSetupConfig({ apiKey: 'new-key' });
-    assert.equal(config.installId, 'abc123');
+    assert.equal(config.installId, undefined);
     assert.equal(config.apiKey, 'new-key');
     assert.equal(config.provider, 'openai', 'untouched wizard fields keep old values');
     const onDisk = JSON.parse(readFileSync(file, 'utf8'));
-    assert.equal(onDisk.installId, 'abc123');
+    assert.equal(onDisk.installId, undefined, 'config.json no longer carries state');
+    assert.equal(readState().installId, 'abc123', 'installId migrated to state.json');
   }));
 
 test('/init: draft generated read-only (Read/Glob/Grep/Bash only, writes rejected)', async () => {

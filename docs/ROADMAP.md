@@ -13,11 +13,13 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.10.0，318 tests 全绿）
+## 1. 现状快照（v0.12.0 未发布，533 tests 全绿）
 
-**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（v0.10.0 全面翻新：字素宽度测量 CJK/emoji 对齐、终端能力探测、语义色 token 双主题 /theme 即时生效、帧 diff 渲染 + 条目缓存、流式 markdown 渲染、六语言语法高亮、用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻、审批卡 diff 预览、圆角输入框 + placeholder + 状态栏提示、LineEditor 完整编辑键、Tab/@ 补全；内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large。
+**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（v0.10.0 全面翻新：字素宽度测量 CJK/emoji 对齐、终端能力探测、语义色 token 双主题 /theme 即时生效、帧 diff 渲染 + 条目缓存、流式 markdown 渲染、六语言语法高亮、用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻、审批卡 diff 预览、圆角输入框 + placeholder + 状态栏提示、LineEditor 完整编辑键、Tab/@ 补全；内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large、v0.12.0 新增：OpenAI 兼容 provider 思考链流式（reasoning_content/reasoning → 本地 thinking 块，不回传上游）、工具调用 delta 实时 pending 卡、右侧面板（ctrl+b / /panel）、错误卡片化 + API 错误提示（src/errfmt.js）、并行工具执行（maxParallelTools 默认 4、结果保序）、启动模型引用校验提示（src/modelhint.js）、轻量 Bash 沙箱（见下）。
 
-**整块缺失**（对照 2.1.55/2.1.296 功能面）：Read 多模态（图片/PDF/notebook 读取）、Bash 沙箱、bypassPermissions 权限档、NotebookEdit、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）。
+**沙箱（v0.12.0，light 档）**：secret 脱敏 env + 静态命令分级 + `~/.cowcat/audit.log` 审计追踪，`/sandbox off|light` 切换、Bash 卡 `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——无系统级隔离，不抵御恶意命令，只防误操作与留审计痕迹；系统级沙箱（容器/命名空间）仍未做。
+
+**整块缺失**（对照 2.1.55/2.1.296 功能面）：Read 多模态（图片/PDF/notebook 读取）、bypassPermissions 权限档、NotebookEdit、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）、系统级 Bash 沙箱（见上方威胁模型说明）。
 
 ## 2. P0 — 核心闭环补全（修 bug + 堵窟窿）
 
@@ -56,7 +58,7 @@
 | P2-2 | IDE 集成 | /ide 状态 + diff 跳转（VS Code cursor 协议最小实现） ✅ |
 | P2-3 | 团队/lead 模式 | 原版实验性（CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS），CowCat 用子代理编排等效实现，优先级低 ✅ |
 | P2-4 | EnterWorktree 等效 | git worktree 隔离执行子代理任务 ✅ |
-| P2-5 | 思考链展示 | thinking delta 作为可折叠段渲染（本地可见、不回传上游的约定不变） ✅ |
+| P2-5 | 思考链展示 | thinking delta 作为可折叠段渲染（本地可见、不回传上游的约定不变）；v0.12.0 起 OpenAI 兼容 provider 的 reasoning_content/reasoning delta 同样流式接入（P1） ✅ |
 | P2-6 | @-mention 文件补全 | 输入 @ 触发项目文件模糊补全 |
 | P2-7 | doctor 三形态 | 借鉴 openclaw：inspect / fix / --json（CI） ✅ |
 | P2-8 | 后台执行+通知 | 借鉴 cline --zen：长任务 detach、完成系统通知 ✅ |

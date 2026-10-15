@@ -1,11 +1,9 @@
-// Permission rules engine (simplified). Rules live in ~/.cowcat/config.json
+// Permission rules engine (simplified). Rules live in ~/.cowcat/state.json
 // under permissions: { allow: [], deny: [], ask: [] }. Syntax: "Tool" matches
 // the whole tool; "Tool(pattern)" matches an exact subject; a trailing ":*"
 // makes it a prefix match ("Bash(npm run test:*)"). Priority: deny > ask >
 // allow > default behavior. Rules never apply in yolo mode.
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { cowcatHome } from './config.js';
+import { writeState } from './config.js';
 import { globToRegExp } from './tools/glob.js';
 
 const RULE_RE = /^([A-Za-z][\w]*)\s*(?:\((.*)\))?$/s;
@@ -82,17 +80,12 @@ export function findMatch(rules, toolName, input) {
   return rules.find((r) => matchRule(r, toolName, input)) || null;
 }
 
-// Persist one column back into config.json (merged — other fields survive).
+// Persist one column back into state.json (merged — other fields survive).
 export function saveRuleColumn(column, rulesRaw) {
-  const file = join(cowcatHome(), 'config.json');
-  let existing = {};
-  if (existsSync(file)) {
-    try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch { existing = {}; }
-  }
-  const perms = { ...(existing.permissions || {}) };
-  perms[column] = rulesRaw;
-  const merged = { ...existing, permissions: perms };
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(merged, null, 2));
-  return merged;
+  return writeState((state) => {
+    const perms = { ...(state.permissions || {}) };
+    perms[column] = rulesRaw;
+    state.permissions = perms;
+    return state;
+  });
 }

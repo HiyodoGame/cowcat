@@ -32,18 +32,13 @@ export function runStatusLine(command, payload) {
   });
 }
 
-// Persist (or clear, command=null) the statusLine config, preserving fields.
-import { readFileSync as rfs, writeFileSync as wfs, existsSync as exs, mkdirSync as mds } from 'node:fs';
-import { dirname as dn, join as jn } from 'node:path';
-import { cowcatHome as ch } from './config.js';
+// Persist (or clear, command=null) the statusLine state, preserving fields.
+import { writeState } from './config.js';
 
 export function saveStatusLine(command) {
-  const file = jn(ch(), 'config.json');
-  let existing = {};
-  if (exs(file)) { try { existing = JSON.parse(rfs(file, 'utf8')); } catch { existing = {}; } }
-  if (command) existing.statusLine = { command };
-  else delete existing.statusLine;
-  mds(dn(file), { recursive: true });
-  wfs(file, JSON.stringify(existing, null, 2));
-  return existing;
+  return writeState((state) => {
+    if (command) state.statusLine = { command };
+    else delete state.statusLine;
+    return state;
+  });
 }

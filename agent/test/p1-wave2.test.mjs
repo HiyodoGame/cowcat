@@ -75,8 +75,8 @@ test('P1-3: once hooks remove themselves from config after firing', async () => 
     const hooks = loadHooks(cfg);
     assert.equal(hooks.count, 1);
     await fireHooks(hooks, 'Stop', hookPayload('Stop', {}, { sessionFile: 'x', cwd: home }));
-    const after = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
-    assert.equal((after.hooks.Stop || []).length, 0, 'once hook auto-removed from config');
+    const after = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
+    assert.equal((after.hooks.Stop || []).length, 0, 'once hook auto-removed from state');
     assert.equal(hooks.count, 0);
   } finally {
     restore();
@@ -216,7 +216,7 @@ test('P1-4: config merge (project overrides user) and trust persistence', async 
     assert.deepEqual(mcpTrustedList(cfg), []);
     trustMcpServer(cfg, 'a');
     assert.deepEqual(mcpTrustedList(cfg), ['a']);
-    const onDisk = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    const onDisk = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
     assert.deepEqual(onDisk.mcpTrusted, ['a']);
   } finally {
     restore();

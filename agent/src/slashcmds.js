@@ -2,7 +2,7 @@
 // Pure-ish functions kept here so the REPL wiring in bin stays thin.
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { cowcatHome } from './config.js';
+import { writeState } from './config.js';
 import { estimateTokens } from './prompts/compact.js';
 
 // --- usage aggregation -------------------------------------------------------
@@ -121,15 +121,7 @@ export const THEMES = {
 };
 
 export function persistTheme(name) {
-  const file = join(cowcatHome(), 'config.json');
-  let existing = {};
-  if (existsSync(file)) {
-    try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch { existing = {}; }
-  }
-  const merged = { ...existing, theme: name };
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(merged, null, 2));
-  return merged;
+  return writeState((state) => { state.theme = name; return state; });
 }
 
 export function contextUsage(messages, maxContextTokens) {

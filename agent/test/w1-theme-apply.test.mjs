@@ -57,7 +57,7 @@ test('theme-apply: TuiUI constructor picks up getConfig().theme', () => {
   d.close();
 });
 
-test('theme-apply: TuiUI setTheme re-themes header/status/card border and dirties every entry', () => {
+test('theme-apply: TuiUI setTheme re-themes status/card border and dirties every entry', () => {
   const { tui, frames } = headlessTui();
   tui.print('hello');
   tui.toolCall('Bash', 'node -v');
@@ -66,17 +66,18 @@ test('theme-apply: TuiUI setTheme re-themes header/status/card border and dirtie
   assert.ok(tui.entries.every((e) => e._rendered !== null), 'entries cached after draw');
   tui._draw();
   const darkFrame = frames.at(-1).join('\n');
-  assert.ok(darkFrame.includes(DARK.success), 'dark header meter color');
-  assert.ok(darkFrame.includes(DARK.inactive), 'dark status/card-border gray');
+  assert.ok(darkFrame.includes(DARK.success), 'dark card status-icon color');
+  assert.ok(darkFrame.includes(DARK.inactive), 'dark status/composer gray');
   tui.screen.active = false; // observe the dirty marking without the immediate redraw
   assert.ok(tui.setTheme('light'));
   assert.ok(tui.entries.every((e) => e._rendered === null), 'all entries marked dirty for one-shot redraw');
+  tui._toasts.clear(); // the theme-switched toast is a transient overlay; keep the frame assertions about re-theming
   tui.screen.active = true;
   tui._draw();
   const lightFrame = frames.at(-1).join('\n');
-  assert.ok(lightFrame.includes(LIGHT.success), 'light header meter color after switch');
-  assert.ok(lightFrame.includes(LIGHT.inactive), 'light card border color after switch');
-  assert.ok(!lightFrame.includes(DARK.success), 'no stale dark header color');
+  assert.ok(lightFrame.includes(LIGHT.success), 'light card status-icon color after switch');
+  assert.ok(lightFrame.includes(LIGHT.inactive), 'light status/composer gray after switch');
+  assert.ok(!lightFrame.includes(DARK.success), 'no stale dark icon color');
   assert.equal(tui.setTheme('nope'), false);
   tui.close();
 });

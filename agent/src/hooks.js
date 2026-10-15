@@ -4,9 +4,7 @@
 // or non-zero exit = deny (first stdout line is the reason fed back to the
 // model). Hooks never prompt for approval. COWCAT_DISABLE_HOOKS=1 disables all.
 import { exec } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { cowcatHome } from './config.js';
+import { writeState } from './config.js';
 
 export const HOOK_EVENTS = [
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit',
@@ -34,17 +32,9 @@ export function loadHooks(cfg, env = process.env) {
   return { events, count, disabled: false };
 }
 
-// Persist config.json mutations (once-removal, enable/disable) preserving fields.
+// Persist state.json mutations (once-removal, enable/disable) preserving fields.
 export function updateHooksConfig(mutate) {
-  const file = join(cowcatHome(), 'config.json');
-  let existing = {};
-  if (existsSync(file)) {
-    try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch { existing = {}; }
-  }
-  const next = mutate(structuredClone(existing)) ?? existing;
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(next, null, 2));
-  return next;
+  return writeState((state) => mutate(state) ?? state);
 }
 
 function runCommandHook(hook, payload, timeoutMs) {

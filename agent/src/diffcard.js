@@ -118,31 +118,34 @@ export function highlightCode(line, colors) {
 const C = { red: '\x1b[38;5;167m', green: '\x1b[38;5;71m', gray: '\x1b[90m', reset: '\x1b[0m' };
 
 // preview: {path, isNew, items, added, removed}
-export function renderFileCard(preview, { colors = true, maxLines = 12, pad = '  ' } = {}) {
+// `gutter` (TUI only) adds old/new line-number columns and tints the hunk
+// header with the permission color; the line-mode UI keeps the plain layout.
+export function renderFileCard(preview, { colors = true, maxLines = 12, pad = '  ', gutter = false, theme = null } = {}) {
   const { items, collapsed } = foldItems(preview.items, maxLines);
   const mode = preview.isNew ? 'new file' : 'modified';
   const stat = `+${preview.added} -${preview.removed}`;
+  const hunkColor = gutter && theme?.permission ? theme.permission : C.gray;
+  const noColor = (n) => (n == null ? '   ' : String(n).padStart(3));
   const lines = [`${pad}┌─ ${preview.path}  (${mode}, ${stat})`];
   for (const it of items) {
     if (it.kind === 'hunk') {
-      lines.push(colors ? `${pad}│ ${C.gray}${it.header}${C.reset}` : `${pad}${it.header}`);
+      lines.push(colors ? `${pad}│ ${hunkColor}${it.header}${C.reset}` : `${pad}${it.header}`);
     } else if (it.kind === 'fold') {
       const m = `··· (${it.count} lines collapsed) ···`;
       lines.push(colors ? `${pad}│ ${C.gray}${m}${C.reset}` : `${pad}${m}`);
     } else {
-      const no = it.oldNo ?? it.newNo ?? '';
       const sign = it.sign;
       const body = highlightCode(it.text, colors);
+      const nums = gutter ? `${noColor(it.oldNo)} ${noColor(it.newNo)} ` : '';
       if (!colors) {
-        lines.push(`${pad}${sign} ${body}`);
+        lines.push(`${pad}${nums}${sign} ${body}`);
       } else if (sign === '+') {
-        lines.push(`${pad}│ ${C.green}+${C.reset} ${body}`);
+        lines.push(`${pad}│ ${nums}${C.green}+${C.reset} ${body}`);
       } else if (sign === '-') {
-        lines.push(`${pad}│ ${C.red}-${C.reset} ${body}`);
+        lines.push(`${pad}│ ${nums}${C.red}-${C.reset} ${body}`);
       } else {
-        lines.push(`${pad}│ ${C.gray} ${C.reset} ${body}`);
+        lines.push(`${pad}│ ${nums}${C.gray} ${C.reset} ${body}`);
       }
-      void no;
     }
   }
   lines.push(`${pad}└─`);
@@ -150,7 +153,7 @@ export function renderFileCard(preview, { colors = true, maxLines = 12, pad = ' 
 }
 
 // >3 files collapse to a file list; /diff expands individually.
-export function renderGroup(previews, { colors = true, maxFiles = 3, maxLines = 12 } = {}) {
+export function renderGroup(previews, { colors = true, maxFiles = 3, maxLines = 12, gutter = false, theme = null } = {}) {
   if (previews.length > maxFiles) {
     const lines = ['  ┌─ changes (4+ files) ─'];
     for (const p of previews) {
@@ -160,5 +163,5 @@ export function renderGroup(previews, { colors = true, maxFiles = 3, maxLines = 
     lines.push('  └─ /diff to expand each file');
     return lines;
   }
-  return previews.flatMap((p, i) => renderFileCard(p, { colors, maxLines, pad: '  ' }).concat(i < previews.length - 1 ? [''] : []));
+  return previews.flatMap((p, i) => renderFileCard(p, { colors, maxLines, pad: '  ', gutter, theme }).concat(i < previews.length - 1 ? [''] : []));
 }

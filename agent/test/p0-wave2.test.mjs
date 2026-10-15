@@ -185,7 +185,7 @@ test('P0-6: /fork copies the session file under a new id and keeps the original'
   assert.notEqual(fork.file, ctx.session.file);
 });
 
-test('P0-6: /theme switches the palette immediately and persists to config.json', () => {
+test('P0-6: /theme switches the palette immediately and persists to state.json', () => {
   const ctx = makeCtx();
   const ui = new UI({ colors: false });
   const cyanBefore = ui.color('\x1b[36m', 'x');
@@ -194,6 +194,6 @@ test('P0-6: /theme switches the palette immediately and persists to config.json'
   assert.equal(ui.themeName, 'light');
   assert.ok(ui.setTheme('dark'));
   persistTheme('light');
-  const onDisk = JSON.parse(readFileSync(join(ctx.home, 'config.json'), 'utf8'));
+  const onDisk = JSON.parse(readFileSync(join(ctx.home, 'state.json'), 'utf8'));
   assert.equal(onDisk.theme, 'light');
 });

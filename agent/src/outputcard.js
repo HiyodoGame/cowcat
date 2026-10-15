@@ -13,6 +13,7 @@ export function bashCardModel(output, { threshold = SHORT_THRESHOLD, tail = TAIL
     totalLines: lines.length,
     headLines: folded ? [] : lines,
     tailLines: folded ? lines.slice(-tail) : [],
+    allLines: lines, // full output, consumed by the TUI's own collapse algorithm
     exitCode: null, // filled by caller when known
   };
 }

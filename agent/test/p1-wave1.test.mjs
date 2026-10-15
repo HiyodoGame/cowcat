@@ -157,12 +157,12 @@ test('P1-2: /permissions persistence round-trip preserves other config fields', 
     saveRuleColumn('allow', ['Bash(npm run test:*)', 'Read']);
     saveRuleColumn('deny', ['Bash(rm -rf:*)']);
     // remove path: read back, drop #1, save
-    const onDisk = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    const onDisk = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
     assert.equal(onDisk.installId, 'keep-me');
     assert.deepEqual(onDisk.permissions.allow, ['Bash(npm run test:*)', 'Read']);
     const list = onDisk.permissions.allow.filter((_, i) => i !== 0);
     saveRuleColumn('allow', list);
-    const after = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    const after = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
     assert.deepEqual(after.permissions.allow, ['Read']);
     assert.equal(after.permissions.deny.length, 1);
 

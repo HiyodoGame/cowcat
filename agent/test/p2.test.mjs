@@ -19,14 +19,14 @@ function withHome(fn) {
     });
 }
 
-test('P2-1) install id: 32-hex, persisted to ~/.cowcat/config.json, stable across loads', () =>
+test('P2-1) install id: 32-hex, persisted to ~/.cowcat/state.json, stable across loads', () =>
   withHome(async () => {
     const { loadConfig, cowcatHome } = await import('../src/config.js');
     const cfg1 = loadConfig();
     assert.match(cfg1.installId, /^[0-9a-f]{32}$/);
-    const cfgFile = join(cowcatHome(), 'config.json');
-    assert.ok(existsSync(cfgFile), 'installId must be persisted');
-    assert.equal(JSON.parse(readFileSync(cfgFile, 'utf8')).installId, cfg1.installId);
+    const stateFile = join(cowcatHome(), 'state.json');
+    assert.ok(existsSync(stateFile), 'installId must be persisted');
+    assert.equal(JSON.parse(readFileSync(stateFile, 'utf8')).installId, cfg1.installId);
     const cfg2 = loadConfig();
     assert.equal(cfg2.installId, cfg1.installId, 'same install must reuse the id');
   }));

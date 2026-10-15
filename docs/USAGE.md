@@ -17,14 +17,72 @@ Windows 下 `bin/cowcat.cmd` 提供同款入口。
 
 ## 配置
 
-```bash
-cowcat setup     # 交互向导：provider / baseURL / apiKey（不回显）/ model，写入 ~/.cowcat/config.json
-cowcat doctor    # 逐项 ✓/✗ 检查配置完整性 + count_tokens 连通性探测
+CowCat 内置一份从 models.dev 蒸馏的预置目录（`agent/assets/providers.json`，209 个 provider / 907 个模型，仅保留 anthropic 与 openai 两种协议的 provider）。配置按层合并，后者覆盖前者：
+
+```
+默认值 < 预置目录 < ~/.cowcat/config.json < 项目 .cowcat/config.json（从 cwd 向上找最近一个）
+        < 环境变量（COWCAT_*，过渡期 CC_* 仍有效）< CLI 参数（-m/--model）
 ```
 
-也可用环境变量（`COWCAT_*` 优先，过渡期 `CC_*` 仍有效）：`COWCAT_PROVIDER`、`COWCAT_BASE_URL`、`COWCAT_API_KEY`、`COWCAT_MODEL`、`COWCAT_MAX_TOKENS`、`COWCAT_CACHE=off`。未配置 API key 时交互启动会跳过连通性探针并打印配置引导（状态栏显示"未配置"）。
+核心字段是复合模型引用 `model: "provider/model"`；provider 条目与预置同 id 时**深合并**（补丁式），新 id 则新增自定义 provider。
 
-Kimi Code 端点：`COWCAT_PROVIDER=anthropic COWCAT_BASE_URL=https://api.kimi.com/coding COWCAT_MODEL=kimi-for-coding`。
+```bash
+cowcat setup     # 预置目录驱动的交互向导：过滤选 provider → 选模型 → 读 key → 确认写入
+cowcat doctor    # 逐项 ✓/✗：model 引用可解析 / protocol / baseURL / API key（点名缺哪个 env 变量）/ 模型在目录内 / 连通性探测
+```
+
+向导里输入过滤词缩小列表、编号选择；`✓` 标记已配置的 provider（apiKey 已存或其环境变量已存在）；选 `custom` 走自定义端点流程（protocol 二选一 + 自由 baseURL）。非交互环境（stdin 无输入）自动按当前环境变量写入。`/setup` 在会话内重跑向导并热生效。
+
+### ~/.cowcat/config.json 示例
+
+```jsonc
+{
+  // 复合引用；切换模型也可在会话内 /model（TUI 弹窗）或直接改这里
+  "model": "deepseek/deepseek-chat",
+  "small_model": "deepseek/deepseek-flash",   // compact 摘要用的轻量模型（可选）
+
+  // provider 补丁：与预置同 id 深合并；apiKey 支持 {env:VAR} / {file:相对路径} 替换
+  "providers": {
+    "deepseek": {
+      "apiKey": "{env:DEEPSEEK_API_KEY}"
+    },
+    // 新 provider：protocol 必填（anthropic|openai），有 baseURL 时默认 openai
+    "my-gateway": {
+      "protocol": "openai",
+      "baseURL": "https://gw.example.com/v1",
+      "apiKey": "{file:creds.txt}",            // 相对本配置文件目录
+      "env": ["MYGW_KEY"]                       // 追加环境变量名到探测链
+    },
+    // canonical 别名：克隆 kimi-code-plan-cn 的定义再修补
+    "kimi-office": {
+      "canonical": "kimi-code-plan-cn",
+      "apiKey": "sk-..."
+    },
+    // 模型级补丁：扩充目录、覆盖显示名/上限、disabled 下架预置模型
+    "anthropic": {
+      "models": {
+        "claude-sonnet-5-5": { "disabled": true },
+        "my-fine-tune": { "name": "My Fine-tune", "limit": { "context": 200000, "output": 8192 } }
+      }
+    }
+  },
+
+  "maxTokens": 32000,           // 单次回复上限
+  "maxContextTokens": 100000    // 估算 token 超过即触发自动 compact（上下文分母优先用目录 limit.context）
+}
+```
+
+apiKey 解析顺序：`providers.<id>.apiKey` → 旧扁平 `apiKey`（自动迁移，见下）→ 该 provider 的环境变量链（预置 env 名 + 用户 `env` 追加）中第一个非空值。模型校验只在**无自定义 baseURL** 时强制——自建网关可服务任意模型名，目录管不着。
+
+环境变量（`COWCAT_*` 优先，`CC_*` 过渡兼容）：`COWCAT_PROVIDER`、`COWCAT_BASE_URL`、`COWCAT_API_KEY`、`COWCAT_MODEL`（接受 `"provider/model"` 复合引用，裸模型名按当前 provider 解析）、`COWCAT_SMALL_MODEL`、`COWCAT_MAX_TOKENS`、`COWCAT_CACHE=off`。未配置 API key 时交互启动跳过连通性探针并打印配置引导。Kimi Code 端点：`COWCAT_PROVIDER=anthropic COWCAT_BASE_URL=https://api.kimi.com/coding COWCAT_MODEL=kimi-for-coding`。
+
+项目级配置：在仓库任意层级放 `.cowcat/config.json`（如锁定团队统一模型），从 cwd 向上取最近一份；家目录那份是全局层，不会被误当项目配置。
+
+运行时状态（installId、trustedProjects、mcpTrusted、theme、statusLine、hooks、permissions）独立存放在 `~/.cowcat/state.json`——config.json 只放配置。
+
+### 从旧版本迁移
+
+旧扁平配置无需改动，加载时自动归一化：`{provider, baseURL, apiKey, model}` 中的端点字段会作为补丁打到对应 provider 条目上，裸模型名在其 provider 的目录内校验（不在目录会报清晰的 ConfigError 并提示可用模型）。下次 `cowcat setup` 写入时会落成新 schema（复合引用 + providers 补丁），残留的 state 字段自动搬进 state.json。想加目录里没有的 provider？在 `providers` 里新增条目（protocol + baseURL + apiKey）即可，`= 自建网关` 场景不受模型校验限制。
 
 ## 日常使用
 
@@ -56,6 +114,8 @@ cowcat --resume <file.jsonl>    # 恢复指定会话文件
 | `/fork [名称]` | 会话分叉：复制 session 为新会话，原会话不受影响 |
 | `/todos` | 查看当前 todo 列表 |
 | `/theme dark\|light` | 切换 ANSI 配色，立即生效并持久化 |
+| `/panel` | 开关右侧信息面板（Context 用量/模型/权限模式/MCP/todos；同 ctrl+b，<100 列自动隐藏） |
+| `/sandbox off\|light` | Bash 沙箱档位切换（默认 light：secret 脱敏 env + 命令分级 + `~/.cowcat/audit.log` 审计；护栏而非安全边界），持久化 |
 | `/plan` / `/act` | Plan（只读探索+出计划）与 Act（执行）模式切换 |
 | `/diff` | 展开本回合各文件的完整 diff |
 | `/output` | 查看最近一次 Bash 的完整输出 |
@@ -91,7 +151,7 @@ Edit(src/**)            # 路径工具支持 glob
 
 首次在某个目录启动时，CowCat 会询问 `Trust the files in <cwd>? [y/N]`：
 
-- **y**：cwd 写入 `~/.cowcat/config.json` 的 `trustedProjects`，以后该目录直接放行。
+- **y**：cwd 写入 `~/.cowcat/state.json` 的 `trustedProjects`，以后该目录直接放行。
 - **n / 回车**：不写入，本次会话进入只读 plan 模式（状态栏 `mode: plan [受限]`）；`/act` 需再确认一次"Trust this folder for this session?"才会放行（仅本次）。
 - `-p` 非交互：不提问，未信任目录一律按只读处理（写工具自动拒绝）；`-y` 不覆盖信任。
 
@@ -106,7 +166,7 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 
 ## hooks
 
-在 `~/.cowcat/config.json` 的 `hooks` 字段配置，8 个事件：`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`UserPromptSubmit`、`Stop`、`SessionStart`、`SessionEnd`、`PreCompact`。
+在 `~/.cowcat/state.json` 的 `hooks` 字段配置，8 个事件：`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`UserPromptSubmit`、`Stop`、`SessionStart`、`SessionEnd`、`PreCompact`。
 
 ```json
 {
@@ -136,7 +196,7 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 } }
 ```
 
-启动时并发连接（单 server 失败不拖垮整体）；工具动态注册为 `mcp__<server>__<tool>`；首次连接新 server 需交互批准（记忆在 config.json 的 `mcpTrusted`）；`/mcp` 查看状态与工具数，`/mcp reconnect <名>` 重连；`COWCAT_MCP_TIMEOUT` 控制单次调用超时（默认 60s）；CLI 退出时统一关闭所有 server 进程。
+启动时并发连接（单 server 失败不拖垮整体）；工具动态注册为 `mcp__<server>__<tool>`；首次连接新 server 需交互批准（记忆在 state.json 的 `mcpTrusted`）；`/mcp` 查看状态与工具数，`/mcp reconnect <名>` 重连；`COWCAT_MCP_TIMEOUT` 控制单次调用超时（默认 60s）；CLI 退出时统一关闭所有 server 进程。
 
 ## 自定义 commands / agents / skills
 
@@ -172,7 +232,7 @@ CLI 退出时未完成的后台任务全部强杀（Windows 下整树杀灭，�
 
 **output-styles**：`~/.cowcat/output-styles/<名>.md` 或项目 `.cowcat/output-styles/<名>.md`（项目覆盖同名），frontmatter 只写 `description`，正文是风格指令（如"先结论后细节"）。`/output-style` 列出（`*` 标注当前），`/output-style <名>` 热生效（下一 turn 即注入 system prompt 尾部）；默认无样式。
 
-**statusline**：config.json 加 `statusLine: { "command": "..." }`，状态栏右侧追加该命令的首行输出。命令经 shell 执行，stdin 收一行 JSON `{"model":"...","mode":"...","ctx_pct":42,"cwd":"..."}`，2s 超时静默跳过（绝卡不住 UI）。`/statusline` 查看、`/statusline set <命令>` 设置、`/statusline clear` 恢复默认。
+**statusline**：state.json 加 `statusLine: { "command": "..." }`，状态栏右侧追加该命令的首行输出。命令经 shell 执行，stdin 收一行 JSON `{"model":"...","mode":"...","ctx_pct":42,"cwd":"..."}`，2s 超时静默跳过（绝卡不住 UI）。`/statusline` 查看、`/statusline set <命令>` 设置、`/statusline clear` 恢复默认。
 
 ## REPL 键位
 
@@ -204,7 +264,8 @@ cowcat -p --max-turns 10 "..."                       # 回合上限，超限 exi
 
 在交互式真实终端（Git Bash / PowerShell / Windows Terminal / cmd）中直接运行 `cowcat` 即进入全屏界面：
 
-- **布局**：顶部 header（文本 banner 行 + context 用量条 + model/mode）；中部 transcript（帧 diff 增量重绘；工具块 ⏺ 三态 running/done/error + 回合页脚 ✻；用户消息右侧气泡；模型输出流式 markdown 渲染——标题/列表/引用/表格/行内样式，代码块六语言语法高亮 js/ts/python/sh/json/md；审批请求是内联卡片附 diff 预览，按 y/n/a 应答）；底部圆角输入框（空态 placeholder 提示；多行用 Ctrl+J 进入/再按插入换行，Enter 发送）；状态栏（版本/cwd + 状态文本 + 操作提示）。
-- **键位**：↑/↓ 历史、Tab 补全斜杠命令、`@` 文件补全、shift+tab 切 plan/act、Ctrl+A/E/K/U/W 与左右方向键等行编辑、shift+↑/↓ 与 PgUp/PgDn 滚动 transcript、**Esc 中断当前任务**。
+- **布局**：无顶部栏；中部 transcript（帧 diff 增量重绘；工具块 spinner → ✓ / ✗ / denied 删除线三态 + 可展开折叠体，输出按行数+字符数双预算折叠保留尾部；用户消息 brand 竖线气泡；模型输出流式 markdown 渲染，回合页脚 `✻ for Ns · model`；向上滚动时底部浮现 `↓ PgDn to jump to latest` 提示）；底部输入区（metadata 行 `model · mode`（mode warning 加粗）、**左边框 composer**（`▎` brand 竖线 + raised 背景，无上下横线/右边框，空态 placeholder 每 10s 轮换，多行 Ctrl+J/shift+enter，限高 max(6, 高/3) 超出滚动），补全菜单以**内容宽度**（≤60 列）浮层紧贴输入框上方）；状态栏（左 `~/dir:branch` 或流式 spinner+`esc interrupt`；右 `tokens (pct)` · 成本 · 键位提示，窄宽度自右向左裁剪——cwd/model 不重复出现）。
+- **审批**：工具请求以 PermissionPrompt 占据输入区——`△ Permission required` 头部 + 工具描述 + 编辑类工具内嵌可滚动 diff 预览 + pill 选项（Allow once / Allow always / Deny），`←→` 或 `h/l` 循环、`enter` 确认、`esc` 拒绝；同时保留一张可 ctrl+o 展开的 transcript 记录卡。
+- **键位**：↑/↓ 历史（空输入时含持久化历史）、Tab/`@` `/` 触发补全浮层（前缀×2 + frecency 打分，输入框上方浮出）、shift+tab 切 plan/act、Ctrl+A/E/K/U/W、alt+F/B 与 Ctrl+←/→ 按词移动、home/end、Ctrl+J 或 shift+enter 换行、Enter 发送、行首 `!` 进入本地 shell 模式、`←→/enter/esc` 操作审批 pill、shift+↑/↓ 与 PgUp/PgDn 滚动 transcript、ctrl+o 循环展开卡片、**Esc 二次确认中断**（5 秒内再按一次才生效）、**ctrl+p** 命令面板、**ctrl+g** 最近会话列表、**ctrl+b** 开关右侧面板、**?** 键位一览、`/theme` 打开主题选择弹窗（实时预览，esc 回滚）。
 - **主题**：`/theme dark|light` 语义色 token 双主题，TUI 全界面即时生效（含输入框边框、气泡、工具块配色）。
-- **降级**：管道/CI、`-p`、`--output-format stream-json`、`NO_COLOR` 自动使用原线性模式；`COWCAT_TUI=off` 可强制关闭全屏。
+- **降级**：管道/CI、`-p`、`--output-format stream-json`、`NO_COLOR` 自动使用原线性模式；`COWCAT_TUI=off` 可强制关闭全屏；`COWCAT_ANIMATIONS=off` 关闭 spinner 动画（静态帧、无周期重绘）。

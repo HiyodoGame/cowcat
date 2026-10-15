@@ -16,7 +16,9 @@ export class Screen {
     if (this.active) return;
     this.active = true;
     this.lastLines = null;
-    this.output.write('\x1b[?1049h\x1b[?25l\x1b[H'); // alt screen, hide cursor
+    // alt screen, hide cursor, static window title (keeps the tab stable —
+    // no percentages, no per-process names)
+    this.output.write('\x1b[?1049h\x1b[?25l\x1b[H\x1b]0;CowCat\x1b\\');
     process.once('exit', this._onExit);
     process.once('SIGINT', this._onExit);
   }

@@ -56,7 +56,7 @@ test('approval card: preview rows fold into the card, ctrl+o expands, frame is p
   assert.ok(expanded.includes('(modified, +1 -1)'), 'preview stat rendered after expand');
   assert.ok(expanded.includes('+ const a = 2;'), 'added line rendered after expand');
   assert.ok(expanded.includes('- const a = 1;'), 'removed line rendered after expand');
-  input.write('y');
+  input.write('\r'); // enter on the default pill (Allow once)
   assert.equal(await p, 'y');
   tui.close();
 });
@@ -73,15 +73,15 @@ test('approval card: group header when part of a multi-file batch', async () => 
   const text = flatText(tui);
   assert.ok(text.includes('change 1/2'), 'group position header rendered');
   assert.ok(text.includes('src/a.js'), 'current file preview rendered');
-  input.write('a');
+  input.write('\x1b[C\r'); // → Allow always, then confirm
   assert.equal(await p, 'always');
   tui.close();
 });
 
-test('approval card: n key resolves denial', async () => {
+test('approval card: esc denies (the safest option)', async () => {
   const { tui, input } = headlessTui();
   const p = tui.approve('Write', '/tmp/x', { preview: editPreview() });
-  setImmediate(() => input.write('n'));
+  setImmediate(() => input.write('\x1b'));
   assert.equal(await p, 'n');
   tui.close();
 });
@@ -95,7 +95,7 @@ test('approval card: scroll keys stay live while pending and do not resolve', as
   await new Promise((r) => setTimeout(r, 30));
   assert.equal(settled, false, 'scroll key must not resolve the approval');
   assert.ok(tui.scroll > 0, 'PgUp scrolled while pending');
-  input.write('n');
+  input.write('\x1b'); // esc denies
   assert.equal(await p, 'n');
   tui.close();
 });

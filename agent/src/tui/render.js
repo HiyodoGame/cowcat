@@ -185,6 +185,7 @@ const PERM_LABELS = {
   yolo: { zh: '全部自动允许', en: 'Bypass Permissions' },
   plan: { zh: '只读模式', en: 'Read Only' },
 };
+export { PERM_LABELS };
 
 export function renderStatus({ cost = '', permMode = '', mode = '', model = '', thinking = '', cwd = '', lang = 'en' }, width, theme = null) {
   const dim = theme?.inactive ?? '';
@@ -217,29 +218,48 @@ export function createCard(kind, title) {
 
 export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-// User bubble: bubble background across width-4 columns, subtle › prefix on the
-// first row, continuations indented to the text column.
+// User bubble: bubble background across width-4 columns, brand-colored ›
+// bar on the first row, continuations indented to the text column. Plain text
+// only — no markdown restyling of the user's own words.
 export function renderUserBubble(text, width, theme = null, colors = true) {
   if (!colors) return wrapText(String(text), width);
   const innerW = Math.max(10, width - 4);
   const bodyW = innerW - 2;
   const bg = theme?.userBubbleBg ?? '';
-  const subtle = theme?.inactive ?? '';
+  const bar = theme?.brand ?? '';
   const reset = '\x1b[0m';
   return wrapText(String(text), bodyW).map((row, k) => {
     const pad = row + ' '.repeat(Math.max(0, bodyW - visibleLen(row)));
-    return `${k === 0 ? `${subtle}› ${reset}` : '  '}${bg}${pad}${reset}`;
+    return `${k === 0 ? `${bar}› ${reset}` : '  '}${bg}${pad}${reset}`;
   });
 }
 
+// Tool card three-state machine (Open Code InlineTool/BlockTool states):
+// running = braille spinner, done = green ✓, error = red ✗, denied = red ✗
+// with the title struck through. The status icon always occupies a fixed
+// 2-column prefix (icon + space) so titles align across states.
 export function renderCard(card, { width, spinFrame = 0, colors = true, theme = null } = {}) {
   const C = theme
     ? { green: theme.success, red: theme.error, cyan: theme.permission, gray: theme.inactive, reset: '\x1b[0m' }
     : { green: '\x1b[32m', red: '\x1b[31m', cyan: '\x1b[36m', gray: '\x1b[90m', reset: '\x1b[0m' };
   const p = (c, s) => (colors ? `${c}${s}${C.reset}` : s);
-  // Tool cards carry a leading ●: it becomes the state-colored status dot
-  // (green on success, red on error); while running it is replaced by the
-  // spinner and the title keeps its plain shape.
+  const strike = (s) => (colors ? `\x1b[9m${s}\x1b[29m` : s);
+  const bodyRows = (pad) => {
+    const shown = card.expanded ? card.fullLines : card.summaryLines;
+    const rows = [];
+    for (const l of shown.filter((x) => String(x).trim() !== '').slice(0, card.expanded ? 30 : 3)) {
+      rows.push(padLine(`${pad}${p(C.gray, '│')} ${truncateAnsi(l, width - 4)}`, width));
+    }
+    if (!card.expanded && card.fullLines.length > 3) {
+      rows.push(padLine(`${pad}${p(C.gray, '│')} ⌄ (${card.fullLines.length - 3} more lines, ctrl+o to expand)`, width));
+    }
+    if (card.expanded || card.fullLines.length > 3) {
+      rows.push(padLine(`${pad}${p(C.gray, '· ctrl+o to expand/collapse')}`, width));
+    }
+    return rows;
+  };
+  // Tool cards carry a leading ●: it becomes the state icon (✓ done, ✗ error
+  // or denied, spinner while running); the title keeps its plain shape.
   const m = /^●/.exec(card.title);
   if (m) {
     const rest = card.title.slice(1);
@@ -248,18 +268,15 @@ export function renderCard(card, { width, spinFrame = 0, colors = true, theme = 
       const body = card.summaryLines.length ? card.summaryLines[0] : '';
       return [padLine(`${p(C.cyan, spin)}${rest}${body ? ` — ${truncateAnsi(body, Math.max(10, width - visibleLen(card.title) - 8))}` : ''}`, width)];
     }
+    if (card.status === 'denied') {
+      const lines = [padLine(`${p(C.red, '✗')}${strike(rest)}`, width)];
+      lines.push(...bodyRows('  '));
+      return lines;
+    }
     const col = card.status === 'error' ? C.red : C.green;
-    const lines = [padLine(`${p(col, '●')}${rest}`, width)];
-    const shown = card.expanded ? card.fullLines : card.summaryLines;
-    for (const l of shown.slice(0, card.expanded ? 30 : 3)) {
-      lines.push(padLine(`  ${p(C.gray, '│')} ${truncateAnsi(l, width - 4)}`, width));
-    }
-    if (!card.expanded && card.fullLines.length > 3) {
-      lines.push(padLine(`  ${p(C.gray, '│')} ⌄ (${card.fullLines.length - 3} more lines, ctrl+o to expand)`, width));
-    }
-    if (card.expanded || card.fullLines.length > 3) {
-      lines.push(padLine(`  ${p(C.gray, '· ctrl+o to expand/collapse')}`, width));
-    }
+    const icon = card.status === 'error' ? '✗' : '✓';
+    const lines = [padLine(`${p(col, icon)}${rest}`, width)];
+    lines.push(...bodyRows('  '));
     return lines;
   }
   if (card.status === 'running') {
@@ -267,49 +284,45 @@ export function renderCard(card, { width, spinFrame = 0, colors = true, theme = 
     const body = card.summaryLines.length ? card.summaryLines[0] : '';
     return [padLine(`${p(C.cyan, spin)} ${card.title}${body ? ` — ${truncateAnsi(body, Math.max(10, width - visibleLen(card.title) - 6))}` : ''}`, width)];
   }
-  const mark = card.status === 'error' ? p(C.red, '✗') : p(C.green, '✓');
-  const lines = [padLine(`${mark} ${card.title}`, width)];
-  const shown = card.expanded ? card.fullLines : card.summaryLines;
-  for (const l of shown.slice(0, card.expanded ? 30 : 3)) {
-    lines.push(padLine(`  ${p(C.gray, '│')} ${truncateAnsi(l, width - 4)}`, width));
-  }
-  if (!card.expanded && card.fullLines.length > 3) {
-    lines.push(padLine(`  ${p(C.gray, '│')} ··· (${card.fullLines.length} lines) ···`, width));
-  }
+  const denied = card.status === 'denied';
+  const mark = denied ? p(C.red, '✗') : card.status === 'error' ? p(C.red, '✗') : p(C.green, '✓');
+  const lines = [padLine(`${mark} ${denied ? strike(card.title) : card.title}`, width)];
+  lines.push(...bodyRows('  '));
   return lines;
 }
 
-// Minimal input box: a permission-tinted rule line, the draft prefixed with a
-// brand-bold `> ` (continuation rows indent by 2), and a closing rule line.
-// Empty drafts show the placeholder dimmed after the `> `; multiline keeps
-// every text line plus one spare editing row; `cursor` is the column in the
-// last line and scrolls the line horizontally so the cursor stays visible.
+// Composer box, Open Code style: ONLY a left border (▎, brand-colored), a
+// raised background, no top/bottom rules and no right edge. The first row
+// carries the brand-bold `› ` prefix (continuation rows indent by 2); empty
+// drafts show the placeholder dimmed. `cursor` is the caret's DISPLAY column
+// in the last row and left-scrolls the row so the caret stays visible.
 export function buildInputBox({ text = '', width, theme = null, placeholder = '', multiline = false, cursor = null }) {
   const w = Math.max(6, width);
-  const bodyW = w - 2; // '> ' prefix
-  const border = theme?.permission ?? '';
+  const pad = w < 44 ? 1 : 2; // OC: tighter padding on narrow terminals
+  const bodyW = w - pad - 2; // border + '› ' prefix
   const brand = theme?.brand ?? '';
   const dim = theme?.inactive ?? '';
+  const bg = theme?.userBubbleBg ?? '';
   const reset = '\x1b[0m';
-  const rule = border ? `${border}${'─'.repeat(w)}${reset}` : '─'.repeat(w);
-  const prompt = brand ? `${brand}\x1b[1m> ${reset}` : '> ';
+  const bar = brand ? `${brand}▎${reset}` : '▎';
+  const prompt = brand ? `${brand}\x1b[1m› ${reset}` : '› ';
 
   const draft = String(text);
   const isEmpty = draft === '';
-  let body = isEmpty ? [placeholder] : (multiline ? draft.split('\n') : [draft.split('\n')[0]]);
-  if (multiline && !isEmpty) body = [...body, ''];
-  const fit = (line) => {
-    if (visibleLen(line) <= bodyW) return line;
-    if (line.includes('\x1b[')) return truncateAnsi(line, bodyW);
-    let out = '', w = 0;
+  const body = isEmpty ? [placeholder] : (multiline ? draft.split('\n') : [draft.split('\n')[0]]);
+  const fitTo = (line, limit) => {
+    if (visibleLen(line) <= limit) return line;
+    if (line.includes('\x1b[')) return truncateAnsi(line, limit);
+    let out = '', cw = 0;
     for (const g of graphemes(line)) {
       const gw = charWidth(g);
-      if (w + gw > bodyW) break;
+      if (cw + gw > limit) break;
       out += g;
-      w += gw;
+      cw += gw;
     }
     return out;
   };
+  const fit = (line) => fitTo(line, bodyW);
   const rows = body.map((line, i) => {
     const isLast = i === body.length - 1;
     let shown = line;
@@ -318,9 +331,13 @@ export function buildInputBox({ text = '', width, theme = null, placeholder = ''
       shown = stripFirstChars(shown, Math.max(0, cursor - bodyW + 1));
     }
     const prefix = i === 0 ? prompt : '  ';
-    return padLine(`${prefix}${fit(shown)}`, w);
+    const content = `${prefix}${fit(shown)}`;
+    let inner = ' '.repeat(pad) + content;
+    inner = fitTo(inner, w - 1); // whole clusters may overflow by one col
+    const padded = inner + ' '.repeat(Math.max(0, w - 1 - visibleLen(inner)));
+    return bg ? `${bar}${bg}${padded}${reset}` : `${bar}${padded}`;
   });
-  return [rule, ...rows, rule];
+  return rows;
 }
 
 // Final screen assembly: fixed header, scrolling transcript window, input box,

@@ -108,7 +108,7 @@ test('trust: unit — persist merges and keeps installId; isTrusted reflects sta
     assert.equal(isTrustedProject(cfg, cwd), false);
     trustProject(cfg, cwd);
     assert.equal(isTrustedProject(cfg, cwd), true);
-    const onDisk = JSON.parse(readFileSync(join(process.env.COWCAT_HOME, 'config.json'), 'utf8'));
+    const onDisk = JSON.parse(readFileSync(join(process.env.COWCAT_HOME, 'state.json'), 'utf8'));
     assert.ok(onDisk.trustedProjects.includes(cwd));
     assert.equal(onDisk.installId, cfg.installId, 'installId must survive the trust write');
   } finally {
@@ -142,7 +142,7 @@ test('trust: accepting persists the cwd and starts in default mode', async () =>
     const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
     const res = await spawnCli([], ENV(port, home), 'y\n/exit\n');
     assert.equal(res.code, 0);
-    const cfg = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'));
+    const cfg = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
     assert.ok(cfg.trustedProjects.includes(res.cwd), 'y must persist trust');
     assert.match(res.out, /mode: default/);
   } finally {
@@ -168,8 +168,9 @@ test('/setup hot-reloads config: the next turn uses the new API key', async () =
   const { server, port, state } = await keyServer();
   try {
     const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
-    // trust the folder first (answer y), then /setup with the fake URL + new key, then chat
-    const input = `y\n/setup\n\nhttp://127.0.0.1:${port}\nbrand-new-key\n\nhello\n/exit\n`;
+    // trust the folder first (answer y), then /setup: pick the custom endpoint
+    // (the legacy four-question flow) with the fake URL + new key, then chat
+    const input = `y\n/setup\ncustom\nanthropic\nhttp://127.0.0.1:${port}\nbrand-new-key\nm\nhello\n/exit\n`;
     const res = await spawnCli([], ENV(port, home), input);
     assert.match(res.out, /已写入|saved to/, 'wizard saved config');
     assert.match(res.out, /✓ API connectivity/, 'doctor-style check ran with the new key');

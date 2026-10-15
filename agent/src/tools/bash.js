@@ -1,5 +1,7 @@
 // Bash tool: run shell commands with timeout limits and dangerous-command detection.
 import { exec } from 'node:child_process';
+import { decodeOutput } from '../textdecode.js';
+import { classifyCommand, auditRecord, sandboxFor, sandboxEnv, sandboxBlockMessage } from '../sandbox.js';
 
 export const DEFAULT_TIMEOUT = 60_000;
 export const MAX_TIMEOUT = 600_000;
@@ -36,8 +38,22 @@ Failure modes: timeouts mean the command was still running — rerun with a long
     required: ['command'],
   },
   execute(input, ctx) {
+    // P4 sandbox (light by default): static triage + secret-stripped env +
+    // audit trail. classifyCommand/audit/sandboxEnv are fail-open; only the
+    // dangerous gate fails closed. See src/sandbox.js for the threat model.
+    const sb = sandboxFor(ctx.config);
+    const classification = classifyCommand(input.command || '', { cwd: ctx.cwd });
+    if (sb.mode === 'light' && classification.risk === 'dangerous') {
+      auditRecord({ command: input.command, cwd: ctx.cwd, risk: 'dangerous', decision: 'blocked' });
+      return Promise.resolve({ ok: false, error: sandboxBlockMessage(classification) });
+    }
+    auditRecord({
+      command: input.command, cwd: ctx.cwd, risk: classification.risk,
+      decision: classification.risk === 'elevated' ? 'elevated-run' : 'run',
+    });
+    const childEnv = sandboxEnv({ ...process.env, ...ctx.env }, sb);
     if (input.run_in_background && ctx.background) {
-      const task = ctx.background.start(input.command, { cwd: ctx.cwd, timeout: resolveTimeout(input.timeout, { background: true }), env: ctx.env });
+      const task = ctx.background.start(input.command, { cwd: ctx.cwd, timeout: resolveTimeout(input.timeout, { background: true }), env: childEnv });
       return { ok: true, output: `已后台启动 ${task.id}，用 TaskOutput 查看` };
     }
     const timeout = resolveTimeout(input.timeout);
@@ -49,24 +65,27 @@ Failure modes: timeouts mean the command was still running — rerun with a long
           timeout,
           maxBuffer: 10 * 1024 * 1024,
           windowsHide: true,
-          env: { ...process.env, ...ctx.env },
+          encoding: 'buffer', // raw bytes: decodeOutput handles GBK codepages
+          env: childEnv,
         }, (err, stdout, stderr) => {
           if (err?.killed) {
             resolve({ ok: false, error: `Command timed out after ${timeout}ms` });
             return;
           }
           const code = err?.code ?? 0;
+          const outText = decodeOutput(stdout).trimEnd();
+          const errText = decodeOutput(stderr).trimEnd();
           const out = [
-            stdout ? stdout.trimEnd() : '',
-            stderr ? `stderr: ${stderr.trimEnd()}` : '',
+            outText,
+            errText ? `stderr: ${errText}` : '',
             code !== 0 ? `exit code: ${code}` : '',
           ].filter(Boolean).join('\n');
           resolve({
             ok: true,
             output: out || '(no output)',
             exitCode: code,
-            stdout: stdout || '',
-            stderr: stderr || '',
+            stdout: outText,
+            stderr: errText,
           });
         });
       } catch (e) {
