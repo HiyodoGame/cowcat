@@ -47,7 +47,7 @@
 | P1-6 | 后台任务 | TaskOutput/TaskStop + /tasks | Bash run_in_background + TaskOutput 取回、TaskStop 终止、/tasks 列表管理；TaskCreate 系列结构化任务工具未实现（后续批次，见 §4.5） ✅ |
 | P1-7 | 子代理体系扩展 | prompts README §2 | 内建角色增至 4 个（explore/plan/general-purpose/statusline-setup 等效物）；自定义 agent 定义生效（含 model 覆盖、只读工具集声明）；Task resume 续接子代理 transcript ✅ |
 | P1-8 | 输出样式 + statusline | §14/§13 | output-styles 目录加载 + /output-style 切换；statusline 自定义命令（stdin 收 JSON：model/cost/context） ✅ |
-| P1-9 | TUI 增强 | §16 | 键位：shift+tab 切权限模式、ctrl+t todos、上一条 prompt 召回（↑）；/vim 简化版（行编辑增强或后置）； prefersReducedMotion 尊重 ✅ |
+| P1-9 | TUI 增强 | §16 | 键位：shift+tab act ↔ plan（切换时记住上一个模式，回来时恢复；未信任目录不生效）、ctrl+t todos、上一条 prompt 召回（↑）；/vim 简化版（行编辑增强或后置）； prefersReducedMotion 尊重 ✅ |
 | P1-10 | 结构化输出 | minimax/codex 借鉴 | -p 增加 `--output-format stream-json`（NDJSON 事件流）与 `--output-schema`（JSON Schema 约束最终回答），CI 可用 ✅ |
 
 ## 4. P2 — 深度体验

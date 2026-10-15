@@ -28,6 +28,12 @@
 - **联调更正**：修复 #3（`notifications/initialized` 按通知发）在真实 SDK server 上属**规范正确性**而非阻塞缺陷——该 server 容忍旧「带 id 当请求发」的写法（`agent/test/live/notify-negative.mjs` 记录了实测）。
 - **测试**：新增 Windows shim 启动、孙进程无孤儿、stderr 诊断、缺失命令报错 3 项（`test/p4-mcp-hardening.test.mjs`）。全量 556 passed / 0 failed。
 
+### 第四轮（shift+tab 未接线）
+
+- **修复：`shift+tab` 生产从未接线**。`keybind.js:97` 把 `shift+tab` 绑到 `mode.switch`、`tui/ui.js:1027` 也正确地调 `this.onShiftTab?.()`，但 `onShiftTab` 全仓库只有声明（`src/ui.js:79`、`src/tui/ui.js:105`）**零处赋值**——按下去毫无反应，而 USAGE 与 ROADMAP P1-9 都写着「可用」。属「文档超前 / 测试绕开」的同类问题（此前 `diagnostic` 事件、`npx` 启动各一例）。
+- 语义按文档兑现为 act ↔ plan，并把「上一个模式」保留：`yolo` 没有其他运行时入口，`-y` 会话看一眼 plan 再切回来必须仍是 yolo；`acceptEdits`（ExitPlanMode 的档位）同样不会被静默丢弃。未信任目录下不生效，保持只读锁（唯一出口是有确认弹窗的 `/act`）。判定逻辑抽成可测的纯函数 `shiftTabModes()`（`src/permissions.js`），bin 只做接线。
+- **测试**：纯函数 5 项断言（`test/p3-planmode.test.mjs`）+ 接线回归（断言 bin 赋了 `tui.onShiftTab`、keybind 仍绑 shift+tab、dispatcher 仍路由 mode.switch）+ `\x1b[Z` 实际派发到回调（`test/tui.test.mjs`）。接线断言已用修复前的 bin 源验证过会失败（有牙）。全量 559 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
