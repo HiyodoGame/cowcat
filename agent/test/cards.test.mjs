@@ -158,13 +158,14 @@ test('loop integration: approvals receive previews, >3-file batches group, bash 
   for (const f of files) writeFileSync(f, 'old\n');
   const written = [];
   const session = { append: () => {}, writeOutput: (t) => { written.push(t); return join(cwd, 'o.log'); } };
-  const bigOutput = Array.from({ length: 30 }, (_, i) => `line${i}`).join('\n');
+  // cross-platform equivalent of `seq 1 30` (cmd.exe has no seq): exit 0,
+  // 30 lines, last line "30" — the folding assertions below depend on that.
   const script = [
     {
       message: {
         content: [
           ...files.map((f, i) => ({ type: 'tool_use', id: `e${i}`, name: 'Write', input: { file_path: f, content: 'new\n' } })),
-          { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'seq 1 30' } },
+          { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'node -e "for(let i=1;i<=30;i++)console.log(i)"' } },
         ],
         stopReason: 'tool_use',
       },
