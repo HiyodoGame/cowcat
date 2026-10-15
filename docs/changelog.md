@@ -34,6 +34,17 @@
 - 语义按文档兑现为 act ↔ plan，并把「上一个模式」保留：`yolo` 没有其他运行时入口，`-y` 会话看一眼 plan 再切回来必须仍是 yolo；`acceptEdits`（ExitPlanMode 的档位）同样不会被静默丢弃。未信任目录下不生效，保持只读锁（唯一出口是有确认弹窗的 `/act`）。判定逻辑抽成可测的纯函数 `shiftTabModes()`（`src/permissions.js`），bin 只做接线。
 - **测试**：纯函数 5 项断言（`test/p3-planmode.test.mjs`）+ 接线回归（断言 bin 赋了 `tui.onShiftTab`、keybind 仍绑 shift+tab、dispatcher 仍路由 mode.switch）+ `\x1b[Z` 实际派发到回调（`test/tui.test.mjs`）。接线断言已用修复前的 bin 源验证过会失败（有牙）。全量 559 passed / 0 failed。
 
+### 第五轮（接线通用检查，一次暴露三处）
+
+起因是第四轮暴露出「声明了回调但没人接」这个类别，于是把 `TuiUI` 的 host 回调与 bin 的接线做成通用配对断言，一次跑出三处问题：
+
+- **`ctrl+b` 的面板开关不持久化**：`TuiUI.togglePanel()` 通过 `onTogglePanel` 通知 host，但该回调从未赋值——`/panel` 会写 state.json、`ctrl+b` 不会，而文档承诺「切换状态持久化」。已接线（`tui.onTogglePanel` → `writeState`），并把 `/panel` 收敛到同一条路径（顺带删掉一个只写不读的 `sessionState.panel` 死赋值）。
+- **`writeState` 在 bin 里根本没 import**（更严重：不是静默失效而是直接崩）。bin 在 `/panel`、`/sandbox` 两处调用它，import 列表里从来没有——`/sandbox off` 会抛 `ReferenceError` 并让 CLI 进程退出（已用 piped REPL 实测复现）。已补 import。
+- **`src/ui.js` 的死声明**：`this.onShiftTab = null` 在 line 模式的 UI 里既无调用方也无接线（纯复制残留），删除。
+- **新增通用断言**（`test/tui.test.mjs`）：扫描 `src/tui/ui.js` 与 `src/ui.js` 的 `this.onXxx =` 声明与调用点，要求每个回调 ① 被调用（否则是死声明）② 在 bin 里被接线（构造函数选项或 `tui.onXxx =` 赋值），除非列进 `OPTIONAL_BY_DESIGN` 并写明理由与降级行为；同时冻结回调清单（新增回调必须显式决定接线方式），并反向校验 bin 的赋值目标确实存在（防拼错名字）。实测对 `6fad051` 报 `[onShiftTab, onTogglePanel]`、对 `b993d01` 报 `[onTogglePanel]`、对当前树报空——两处历史缺陷都能抓到。
+- **新增 REPL 斜杠命令冒烟测试**（`test/lifecycle.test.mjs`）：斜杠命令只能经 REPL 触达，此前单测全部绕开（这正是 `writeState` 漏网的原因）。用 piped stdin 跑一遍无网络依赖的 22 条命令，断言退出码 0、stderr 无 `ReferenceError/is not defined/TypeError`、且 `/sandbox light` 与 `/theme light` 真的落盘。
+- 全量 561 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。

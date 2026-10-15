@@ -114,7 +114,7 @@ cowcat --resume <file.jsonl>    # 恢复指定会话文件
 | `/fork [名称]` | 会话分叉：复制 session 为新会话，原会话不受影响 |
 | `/todos` | 查看当前 todo 列表 |
 | `/theme dark\|light` | 切换 ANSI 配色，立即生效并持久化 |
-| `/panel` | 开关右侧信息面板（Context 用量/模型/权限模式/MCP/todos；同 ctrl+b，<100 列自动隐藏） |
+| `/panel` | 开关右侧信息面板（Context 用量/模型/权限模式/MCP/todos；同 ctrl+b，<100 列自动隐藏），两条路径都会把开关状态持久化到 state.json |
 | `/sandbox off\|light` | Bash 沙箱档位切换（默认 light：secret 脱敏 env + 命令分级 + `~/.cowcat/audit.log` 审计；护栏而非安全边界），持久化 |
 | `/plan` / `/act` | Plan（只读探索+出计划）与 Act（执行）模式切换 |
 | `/diff` | 展开本回合各文件的完整 diff |
