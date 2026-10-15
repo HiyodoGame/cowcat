@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { GrepTool } from '../src/tools/grep.js';
@@ -16,7 +16,7 @@ import { OpenAIProvider } from '../src/llm/openai.js';
 import { estimateTokensLocal } from '../src/llm/tokapprox.js';
 import { createSubagentRunner } from '../src/subagent.js';
 import { compactConversation } from '../src/prompts/compact.js';
-import { MockProvider, text, toolUse } from './mock-provider.js';
+import { MockProvider, text } from './mock-provider.js';
 import { MockUI } from '../src/ui.js';
 import { ToolRegistry } from '../src/tools/registry.js';
 import { ReadTool } from '../src/tools/read.js';
@@ -152,6 +152,30 @@ const HTML = `<html><head><style>.x{}</style><title>Doc</title></head><body>
 <ul><li>First</li><li>Second</li></ul>
 <a href="https://example.com/deep">deep link</a>
 </body></html>`;
+
+test('P0-1: Glob resolves a relative `path` against ctx.cwd (regression — resolve was never imported)', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'cowcat-glob-'));
+  mkdirSync(join(cwd, 'sub', 'deep'), { recursive: true });
+  writeFileSync(join(cwd, 'sub', 'deep', 'a.js'), 'x');
+  writeFileSync(join(cwd, 'top.md'), 'y');
+  // before the fix `resolve` was undefined here and the tool threw a
+  // ReferenceError instead of returning a result
+  const rel = GlobTool.execute({ pattern: '**/*.js', path: 'sub' }, { cwd });
+  assert.equal(rel.ok, true, rel.error);
+  assert.match(rel.output, /a\.js/);
+  assert.ok(!rel.output.includes('top.md'), 'scoped to the given path');
+  // absolute paths and the default (ctx.cwd) keep working
+  const abs = GlobTool.execute({ pattern: '*.js', path: join(cwd, 'sub', 'deep') }, { cwd });
+  assert.equal(abs.ok, true, abs.error);
+  assert.match(abs.output, /a\.js/);
+  const def = GlobTool.execute({ pattern: '*.md' }, { cwd });
+  assert.equal(def.ok, true);
+  assert.match(def.output, /top\.md/);
+  // a missing directory is still a clean error, not a throw
+  const bad = GlobTool.execute({ pattern: '*', path: 'nope' }, { cwd });
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /Directory not found/);
+});
 
 test('P0-2: WebFetch converts HTML to text (scripts stripped, structure kept)', async () => {
   const mockFetch = async () => ({

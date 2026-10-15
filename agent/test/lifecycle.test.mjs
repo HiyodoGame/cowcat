@@ -201,8 +201,7 @@ function sseBashBackground(res) {
 test('-p with a run_in_background Bash exits promptly instead of hanging on the child', async () => {
   const state = { seen: 0 };
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    req.resume(); // drain the body so 'end' fires; the stub only reads the URL
     req.on('end', () => {
       if (req.url.startsWith('/v1/messages/count_tokens')) {
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -247,6 +246,8 @@ test('REPL: safe slash commands run to completion (regression — /sandbox hit a
     '/status', '/cost', '/context', '/todos', '/tasks', '/agents', '/skills',
     '/permissions', '/hooks', '/mcp', '/diff', '/output', '/model', '/thinking',
     '/panel',        // TUI-only: must degrade with a message, never crash
+    '/output-style', // both of these used to die on undefined outputStyles/currentStyle
+    '/output-style nope',
     '/sandbox off',  // both of these used to throw `writeState is not defined`
     '/sandbox light',
     '/theme light', '/clear', '/help', '/exit',
@@ -272,6 +273,28 @@ test('REPL: safe slash commands run to completion (regression — /sandbox hit a
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
   assert.equal(state.sandbox, 'light', '/sandbox persisted through writeState');
   assert.equal(state.theme, 'light', '/theme persisted through persistTheme');
+});
+
+test('output styles: /output-style <name> injects the style into the next turn', async () => {
+  const { server, port, state } = await keyServer();
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+    mkdirSync(join(home, 'output-styles'), { recursive: true });
+    writeFileSync(join(home, 'output-styles', 'terse.md'),
+      '---\ndescription: terse mode\n---\nSTYLE-BODY-MARKER: answer in one line\n');
+
+    // "y" trusts the throwaway cwd, then the switch, then one real turn
+    const res = await spawnCli([], ENV(port, home), 'y\n/output-style terse\nhello\n/exit\n', 30000);
+    assert.equal(res.code, 0, `exit code ${res.code}\nstderr: ${res.err}`);
+    assert.match(res.out, /output-style: terse/, 'the switch is reported');
+    assert.match(res.out, /ok-done/, 'the turn still answered');
+    assert.ok(
+      state.bodies.some((b) => b.includes('STYLE-BODY-MARKER')),
+      'the style body reached the system prompt of the next request',
+    );
+  } finally {
+    server.close();
+  }
 });
 
 test('-p fires due cron jobs before the user prompt; stdout keeps only the answer', async () => {

@@ -62,7 +62,7 @@ import { TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool } from '../sr
 import { ListMcpResourcesTool, ReadMcpResourceTool } from '../src/tools/mcpresources.js';
 import { generateCowcatMd } from '../src/init.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -324,9 +324,19 @@ async function main() {
     const index = Object.entries(custom.skills).map(([n, s]) => `- ${n}: ${s.description || '(no description)'}`).join('\n');
     baseSystem[1] += `\n\n# Skills index\n\nThe following skills are available. To use one, call the Agent tool with skill set to the skill name; the skill instructions are injected into the sub agent.\n${index}`;
   }
-  const system = () => (permissions.mode === 'plan'
-    ? [baseSystem[0], `${baseSystem[1]}\n\n${PLAN_MODE_ADDENDUM}`]
-    : baseSystem);
+  // Output styles: loaded once, activated by /output-style, injected into the
+  // per-turn system prompt tail (hence `system()` below reads the live value).
+  const outputStyles = loadOutputStyles(cwd);
+  for (const w of outputStyles.warnings) ui.print(w);
+  let activeStyle = null;
+  let activeStyleName = null;
+  const system = () => {
+    const blocks = permissions.mode === 'plan'
+      ? [baseSystem[0], `${baseSystem[1]}\n\n${PLAN_MODE_ADDENDUM}`]
+      : baseSystem;
+    if (!activeStyle) return blocks;
+    return [blocks[0], `${blocks[1]}\n\n${styleSection(activeStyle.body)}`];
+  };
   const session = new Session(cwd);
   const state = { todos: loadTodos(session.id) };
 
@@ -1089,19 +1099,18 @@ async function main() {
         const styles = outputStyles.styles;
         if (!args[0]) {
           for (const [name, def] of Object.entries(styles)) {
-            ui.print(`  ${name === currentStyleName() ? '* ' : '  '}${name} — ${def.description}`);
+            ui.print(`  ${name === activeStyleName ? '* ' : '  '}${name} — ${def.description}`);
           }
           if (!Object.keys(styles).length) ui.print(ui.lang === 'zh' ? '没有可用的 output styles。' : 'No output styles loaded.');
-          ui.print(ui.lang === 'zh' ? '用法: /output-style <名> 切换（热生效）' : 'usage: /output-style <name> to switch (hot)');
+          ui.print(ui.lang === 'zh' ? '用法: /output-style <名> 切换（下一个 turn 生效）' : 'usage: /output-style <name> to switch (next turn)');
         } else if (styles[args[0]]) {
-          currentStyle = styles[args[0]];
-          ui.print(`output-style: ${args[0]}`);
+          activeStyle = styles[args[0]];
+          activeStyleName = args[0];
+          ui.print(ui.lang === 'zh'
+            ? `output-style: ${args[0]}（下一个 turn 注入 system prompt）`
+            : `output-style: ${args[0]} (active from the next turn)`);
         } else {
           ui.print(ui.lang === 'zh' ? `未知样式 "${args[0]}"。` : `Unknown style "${args[0]}".`);
-        }
-        function currentStyleName() {
-          for (const [n, d] of Object.entries(styles)) if (d === currentStyle) return n;
-          return null;
         }
       } else if (cmd === 'statusline') {
         if (args[0] === 'clear') {

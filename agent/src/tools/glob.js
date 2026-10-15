@@ -1,6 +1,6 @@
 // Glob tool: minimal recursive glob matcher (no external deps). Supports **, *, ?, {a,b}, [chars].
 import { readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 export const MAX_RESULTS = 100;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn']);
