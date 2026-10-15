@@ -4,7 +4,7 @@ const MAX_WAIT = 600_000;
 export const TaskOutputTool = {
   name: 'TaskOutput',
   description: `Read the output of a background task started by Bash with run_in_background.
-Without block, returns immediately with whatever the task has produced so far (running: true while it is still going). With block: true, waits for completion or the given timeout before returning. Output is truncated at 20000 characters.`,
+Without block, returns immediately with whatever the task has produced so far (running: true while it is still going). With block: true, waits for completion or the given timeout before returning. Output is truncated to the last 20000 characters — the tail is kept, where build errors and test summaries live.`,
   input_schema: {
     type: 'object',
     properties: {

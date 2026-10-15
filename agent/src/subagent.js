@@ -43,7 +43,7 @@ export function resolveSubagentSpec({ subagent_type = null, customAgents = {}, s
 export function createSubagentRunner({ provider, registry, config, ui, cwd, customAgents = {}, getSkillBody = null } = {}) {
   return async function spawnAgent({
     prompt, maxTurns = 10, model = null, subagent_type = null, skill = null, resume = null,
-    isolation = null, depth = 0, effort = null,
+    isolation = null, depth = 0, effort = null, signal = null,
   } = {}) {
     const skillBody = skill && getSkillBody ? getSkillBody(skill) : null;
     const spec = resolveSubagentSpec({ subagent_type, customAgents, skill, skillBody });
@@ -94,6 +94,7 @@ export function createSubagentRunner({ provider, registry, config, ui, cwd, cust
       maxIterations: maxTurns,
       model: model ?? spec.model, // explicit param wins over role default
       toolFilter,
+      signal,
     });
     return res.finalText + isolationNote;
   };

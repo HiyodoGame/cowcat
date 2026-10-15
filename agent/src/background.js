@@ -44,9 +44,12 @@ export class BackgroundRegistry {
   // Run an async function as a background task (used by the Agent tool's
   // run_in_background). The record is shaped like a shell task — stdout holds
   // the resolved value, stderr the failure — so TaskOutput/TaskStop work
-  // against it unchanged.
+  // against it unchanged. The function receives an AbortSignal; stop() aborts
+  // it so an in-flight LLM stream can actually be cut (runLoop forwards the
+  // signal to the provider).
   startAsync(fn, { timeout = MAX_TIMEOUT, description = '' } = {}) {
     const taskId = `task_${Date.now().toString(36)}_${++seq}`;
+    const ac = new AbortController();
     const task = {
       id: taskId,
       command: description || '(async task)',
@@ -58,19 +61,23 @@ export class BackgroundRegistry {
       done: false,
       killed: false,
       child: null,
+      signal: ac.signal,
+      abort: () => ac.abort(),
     };
     const cap = Math.min(Math.max(timeout, 1000), MAX_TIMEOUT);
     task.timer = setTimeout(() => this.stop(taskId, { silent: true }), cap);
     if (task.timer.unref) task.timer.unref();
     Promise.resolve()
-      .then(fn)
+      .then(() => fn(ac.signal))
       .then((out) => {
+        if (ac.signal.aborted) return; // killed mid-flight: stop() already set the terminal state
         task.done = true;
         task.stdout = String(out ?? '');
         task.exitCode = 0;
         clearTimeout(task.timer);
       })
       .catch((e) => {
+        if (ac.signal.aborted) return;
         task.done = true;
         task.stderr = e?.message || String(e);
         task.exitCode = 1;
@@ -89,14 +96,23 @@ export class BackgroundRegistry {
     const task = this.tasks.get(id);
     if (!task) return null;
     task.killed = true;
-    try {
-      if (process.platform === 'win32') {
-        // kill the whole tree: cmd wrapper + grandchildren
-        exec(`taskkill /pid ${task.child.pid} /T /F`, () => {});
-      } else {
-        try { process.kill(-task.child.pid, 'SIGKILL'); } catch { task.child.kill('SIGKILL'); }
-      }
-    } catch { /* noop */ }
+    // Async tasks (Agent run_in_background) have no child process — abort the
+    // AbortSignal handed to their function so an in-flight LLM stream cuts.
+    // Before this existed, `task.child.pid` on a null child threw a TypeError
+    // that the catch below swallowed: /tasks kill looked successful while the
+    // sub agent kept running to completion.
+    task.abort?.();
+    const child = task.child;
+    if (child) {
+      try {
+        if (process.platform === 'win32') {
+          // kill the whole tree: cmd wrapper + grandchildren
+          exec(`taskkill /pid ${child.pid} /T /F`, () => {});
+        } else {
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+        }
+      } catch { /* noop */ }
+    }
     clearTimeout(task.timer);
     task.done = true;
     task.exitCode = task.exitCode ?? (silent ? null : 137);
@@ -111,7 +127,15 @@ export class BackgroundRegistry {
       task.exitCode != null ? `exit code: ${task.exitCode}` : '',
       task.killed ? '(killed)' : '',
     ].filter(Boolean).join('\n') || '(no output yet)';
-    return { running: !task.done, exitCode: task.exitCode, output: out.length > MAX_OUTPUT ? `${out.slice(0, MAX_OUTPUT)}\n[truncated]` : out };
+    // Keep the TAIL: for long logs the interesting part (stack traces, test
+    // summaries) is at the end. Truncating the head dumped exactly what the
+    // caller needed to see.
+    const capped = out.length > MAX_OUTPUT;
+    return {
+      running: !task.done,
+      exitCode: task.exitCode,
+      output: capped ? `[...earlier output dropped, showing last ${MAX_OUTPUT} of ${out.length} chars...]\n${out.slice(-MAX_OUTPUT)}` : out,
+    };
   }
 
   async wait(task, timeoutMs) {

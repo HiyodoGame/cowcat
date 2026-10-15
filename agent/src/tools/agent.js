@@ -42,7 +42,20 @@ Failure modes: a vague prompt yields a vague report — state what evidence you 
       if (!reg || typeof reg.startAsync !== 'function') {
         return { ok: false, error: 'Background execution is not available in this context; rerun with run_in_background false to run foreground' };
       }
-      const task = reg.startAsync(spawn, { description: `Agent: ${input.description || 'sub agent'}` });
+      // startAsync hands its AbortSignal to the function; TaskStop forwards it
+      // into the sub agent's runLoop so a background sub agent can be cancelled.
+      const task = reg.startAsync((signal) => ctx.spawnAgent({
+        description: input.description,
+        prompt: input.prompt,
+        model: input.model,
+        maxTurns: input.max_turns ?? 10,
+        subagent_type: input.subagent_type ?? null,
+        skill: input.skill ?? null,
+        resume: input.resume ?? null,
+        isolation: input.isolation ?? null,
+        effort,
+        signal,
+      }), { description: `Agent: ${input.description || 'sub agent'}` });
       return { ok: true, output: `Sub agent started in background: ${task.id}\nRetrieve the report with TaskOutput (task_id: "${task.id}").` };
     }
     try {
