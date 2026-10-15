@@ -15,7 +15,7 @@ import { Session } from '../src/session.js';
 import { createCheckpoint, listCheckpoints, restoreCheckpoint } from '../src/checkpoint.js';
 import { compactConversation } from '../src/prompts/compact.js';
 import {
-  emptyUsage, addUsage, formatCostReport, formatStatus, maskBaseURL,
+  emptyUsage, addUsage, formatCostReport, formatStatus,
   exportSessionToMarkdown, forkSessionFile, persistTheme, THEMES,
 } from '../src/slashcmds.js';
 import { UI, MockUI } from '../src/ui.js';
@@ -188,7 +188,6 @@ test('P0-6: /fork copies the session file under a new id and keeps the original'
 test('P0-6: /theme switches the palette immediately and persists to state.json', () => {
   const ctx = makeCtx();
   const ui = new UI({ colors: false });
-  const cyanBefore = ui.color('\x1b[36m', 'x');
   assert.ok(ui.setTheme('light'));
   assert.equal(THEMES.light.name, 'light');
   assert.equal(ui.themeName, 'light');

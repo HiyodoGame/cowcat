@@ -208,7 +208,6 @@ test('approval: card and prompt show the matched permission rule; y/a/n keys res
   });
   const p = tui.approve('Bash', 'npm run test', { input: { command: 'npm run test' } });
   await tick();
-  const entry = tui.entries[tui.entries.length - 1];
   assert.ok(strip(tui._flat().join('\n')).includes('命中规则: Bash(npm run test)'), 'rule on the transcript card');
   // prompt rows carry the rule too (input area while pending)
   const promptText = tui._permissionPrompt(tui._contentWidth()).map(strip).join('\n');

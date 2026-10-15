@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 
-import { Region, TextRegion, UserRegion, AssistantRegion, CardRegion, materializeWindow } from '../src/tui/region.js';
+import { Region, TextRegion, AssistantRegion, CardRegion, materializeWindow } from '../src/tui/region.js';
 import { createCard, wrapText } from '../src/tui/render.js';
 import { getTheme } from '../src/tui/theme.js';
 import { TuiUI } from '../src/tui/ui.js';

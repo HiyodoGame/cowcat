@@ -19,7 +19,7 @@ import { AgentTool } from '../src/tools/agent.js';
 import { Permissions } from '../src/permissions.js';
 import { MockUI } from '../src/ui.js';
 import { runLoop } from '../src/loop.js';
-import { MockProvider, text, toolUse } from './mock-provider.js';
+import { MockProvider, text } from './mock-provider.js';
 
 const AGENT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 

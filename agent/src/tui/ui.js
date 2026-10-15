@@ -1177,7 +1177,6 @@ export class TuiUI {
   // esc rolls back to the theme at open time (setTheme's cache invalidation
   // makes the preview/rollback immediate).
   _openThemePicker() {
-    const entryTheme = this.themeName;
     let confirmed = this.themeName;
     const ds = new DialogSelect({
       items: [

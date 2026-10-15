@@ -180,7 +180,7 @@ test('cron: CronCreate rejects an invalid cron expression through the loop', asy
 // --- due sweep (the REPL idle hook) ------------------------------------------------
 
 test('cron: takeDueCrons injects due prompts; one-shots are removed, recurring re-arm', () => {
-  const ctx = makeCtx();
+  makeCtx(); // side effect: temp COWCAT_HOME + cwd for crons.json
   const past = new Date(Date.now() - 60_000).toISOString();
   saveCrons([
     { id: 'w1', cron: null, prompt: 'wake up and continue', recurring: false, nextFireAt: past, createdAt: past },
@@ -205,7 +205,7 @@ test('cron: takeDueCrons injects due prompts; one-shots are removed, recurring r
 });
 
 test('cron: takeDueCrons with sessionId only fires this session\'s jobs; foreign jobs stay armed', () => {
-  const ctx = makeCtx();
+  makeCtx(); // side effect: temp COWCAT_HOME + cwd for crons.json
   const past = new Date(Date.now() - 60_000).toISOString();
   saveCrons([
     { id: 'mine', cron: null, prompt: 'mine', recurring: false, nextFireAt: past, createdAt: past, sessionId: 'sess-A' },
@@ -287,7 +287,7 @@ test('cron: CronList summarizes jobs with id/cron/nextFireAt/prompt/recurring', 
 
 test('cron: ScheduleWakeup creates a one-shot job firing after the delay', async () => {
   const before = Date.now();
-  const { messages, ctx } = await run([
+  const { messages } = await run([
     toolUse('tu_1', 'ScheduleWakeup', { delaySeconds: 120, prompt: 'resume the task', reason: 'waiting on build' }),
     text('wakeup scheduled'),
   ], { messages: SYS_MSGS('wake me later') });

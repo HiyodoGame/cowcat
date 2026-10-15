@@ -1,7 +1,7 @@
 // DialogSelect: the fzf-style picker primitive behind the command palette,
 // session list, theme picker, and help panel. Pure model + row renderers —
 // the UI frame paints the rows and feeds normalized chords into handleKey.
-import { visibleLen, padLine, truncateAnsi } from './render.js';
+import { visibleLen, truncateAnsi } from './render.js';
 
 // Subsequence fuzzy match. Weight: title matches count double (per the OC
 // scorer), contiguous runs and prefix starts score bonuses. Returns a score

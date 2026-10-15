@@ -4,7 +4,7 @@
 // record is appended to the session JSONL. /rewind restores file contents and
 // truncates the conversation back to the checkpoint.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { cowcatHome } from './config.js';
 
 export function checkpointsRoot(sessionId) {

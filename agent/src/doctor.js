@@ -1,7 +1,7 @@
 // setup wizard merge + doctor checks (pure logic, importable for tests).
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { cowcatHome, resolveModelConfig, ConfigError, STATE_KEYS, writeState } from './config.js';
+import { cowcatHome, resolveModelConfig, STATE_KEYS, writeState } from './config.js';
 
 // Merge wizard answers into the existing config file, preserving fields the
 // wizard does not touch. Two answer shapes:

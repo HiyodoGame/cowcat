@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { parseArgs } from '../src/cliargs.js';
 import { findProjectContext, PROJECT_SECTION } from '../src/project.js';
 import { Session } from '../src/session.js';
-import { runDoctorChecks, mergeSetupConfig, saveSetupConfig } from '../src/doctor.js';
+import { runDoctorChecks, mergeSetupConfig } from '../src/doctor.js';
 import { generateCowcatMd } from '../src/init.js';
 import { ToolRegistry } from '../src/tools/registry.js';
 import { ReadTool } from '../src/tools/read.js';

@@ -244,8 +244,7 @@ test('TUI app: shift+tab (CSI Z) reaches the host mode-switch callback', async (
 
 function fakeServer() {
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    req.resume(); // drain the body so 'end' fires; the stub only reads the URL
     req.on('end', () => {
       if (req.url.startsWith('/v1/messages/count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
       res.writeHead(200, { 'content-type': 'text/event-stream' });

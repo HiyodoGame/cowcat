@@ -16,7 +16,6 @@ const PH_EN = 'Type a message, / for commands, @ for files';
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 // the box is ONE row per draft line: `▎ <pad>› <content>` on a raised bg
-const barOf = (line) => line.slice(0, line.indexOf('▎') + 1);
 
 test('buildInputBox: left border bar only — placeholder behind the › prompt', () => {
   const lines = buildInputBox({ text: '', width: 40, theme, placeholder: PH_ZH });

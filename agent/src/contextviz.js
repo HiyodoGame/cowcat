@@ -3,7 +3,6 @@
 import { estimateTokens } from './prompts/compact.js';
 
 export function analyzeContext(messages, maxTokens, { systemBlocks = [] } = {}) {
-  const parts = [];
   let systemTokens = 0;
   for (const s of systemBlocks) systemTokens += Math.ceil(String(s).length / 4);
   let total = systemTokens;

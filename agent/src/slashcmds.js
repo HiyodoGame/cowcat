@@ -1,7 +1,7 @@
 // Slash-command helpers (P0-6): /cost /status /export /fork /todos /theme.
 // Pure-ish functions kept here so the REPL wiring in bin stays thin.
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { readFileSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { writeState } from './config.js';
 import { estimateTokens } from './prompts/compact.js';
 

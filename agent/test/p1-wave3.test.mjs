@@ -1,7 +1,7 @@
 // P1 wave 3: custom commands/agents/skills, background tasks, subagent roles.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -130,7 +130,7 @@ test('P1-7: runner filters tools per role and passes model; scout write rejected
 });
 
 test('P1-7: resume continues from the original transcript', async () => {
-  const { home, restore } = setupHome();
+  const { restore } = setupHome();
   try {
     const cwd = mkdtempSync(join(tmpdir(), 'cowcat-proj-'));
     const sess = new Session(cwd, 'sub1').ensure();

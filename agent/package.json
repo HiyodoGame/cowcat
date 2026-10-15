@@ -23,10 +23,14 @@
     "access": "public"
   },
   "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
     "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {}
+  "devDependencies": {
+    "eslint": "^10.12.0"
+  }
 }

@@ -258,8 +258,7 @@ test('transcript: line-mode UI and MockUI expose userMessage as a no-op (duck pa
 
 function fakeServer() {
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    req.resume(); // drain the body so 'end' fires; the stub only reads the URL
     req.on('end', () => {
       if (req.url.startsWith('/v1/messages/count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -312,8 +311,7 @@ test('transcript degrade: fake-SSE conversation over pipes stays linear — no a
 
 function toolCallServer() {
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    req.resume(); // drain the body so 'end' fires; the stub only reads the URL
     req.on('end', () => {
       if (req.url.startsWith('/v1/messages/count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
       res.writeHead(200, { 'content-type': 'text/event-stream' });

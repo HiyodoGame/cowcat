@@ -55,7 +55,7 @@ const NO_KEY_ENV = (home) => ({
 delete process.env.COWCAT_API_KEY;
 
 test('first run without API key: probe skipped, onboarding printed, status shows 未配置', async () => {
-  const { server, port, hits } = await countingServer();
+  const { server, hits } = await countingServer();
   try {
     const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
     const res = await runCli([], NO_KEY_ENV(home), '/exit\n');

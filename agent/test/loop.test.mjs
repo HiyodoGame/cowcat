@@ -20,7 +20,7 @@ import { Permissions } from '../src/permissions.js';
 import { MockUI } from '../src/ui.js';
 import { runLoop } from '../src/loop.js';
 import { Session } from '../src/session.js';
-import { MockProvider, text, toolUse, sseEvent, sseData } from './mock-provider.js';
+import { MockProvider, text, toolUse } from './mock-provider.js';
 
 const AGENT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,7 +79,7 @@ test('b) Read tool_use executes and tool_result is fed back with matching id', a
   assert.match(finalText, /cowcat/);
   // message sequence: user, assistant(tool_use), user(tool_result), assistant(text)
   assert.equal(messages.length, 4);
-  const [user0, asst1, user2, asst3] = messages;
+  const [, asst1, user2, asst3] = messages;
   assert.equal(asst1.role, 'assistant');
   assert.equal(asst1.content[0].type, 'tool_use');
   assert.equal(asst1.content[0].id, 'tu_1');
@@ -373,7 +373,7 @@ test('P1-8) large-file reminders injected for dropped big reads (char fallback)'
   const provider = new MockProvider([
     { respond: () => ({ content: [{ type: 'text', text: '<analysis>a</analysis>\n<summary>S</summary>' }] }) },
   ]);
-  const { messages: rebuilt, boundarySummary, compactedCount, keptRecent } = await compactConversation({ provider, messages, sessionFile: '/home/u/sess.jsonl' });
+  const { messages: rebuilt, compactedCount, keptRecent } = await compactConversation({ provider, messages, sessionFile: '/home/u/sess.jsonl' });
   assert.equal(compactedCount, 3, 'all three messages summarized in full mode');
   assert.equal(keptRecent, 0);
   assert.equal(rebuilt.length, 1);

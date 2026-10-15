@@ -4,7 +4,7 @@
 // mode. Trusted dirs are persisted in ~/.cowcat/state.json (merged, so
 // installId and other state fields survive; legacy config.json copies are
 // still honored on read).
-import { readState, writeState } from './config.js';
+import { writeState } from './config.js';
 
 export function trustedProjects(cfg) {
   return Array.isArray(cfg.trustedProjects) ? cfg.trustedProjects : [];

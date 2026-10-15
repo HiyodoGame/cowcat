@@ -2,7 +2,7 @@
 // (legacy ~/.ccagent/todos is read for compatibility; new writes go to ~/.cowcat).
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { cowcatHome, legacyHome, resolveStateFile } from '../config.js';
+import { cowcatHome, resolveStateFile } from '../config.js';
 
 const VALID_STATUS = ['pending', 'in_progress', 'completed'];
 

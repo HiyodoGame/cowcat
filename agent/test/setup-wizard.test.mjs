@@ -1,14 +1,14 @@
 // Phase C: preset-driven setup wizard, new-schema doctor checks, /model picker.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { mergeSetupConfig, runDoctorChecks, saveFixedConfig } from '../src/doctor.js';
 import { runSetupWizard } from '../src/setup.js';
-import { configuredProviders, readState } from '../src/config.js';
+import { configuredProviders } from '../src/config.js';
 import { TuiUI } from '../src/tui/ui.js';
 
 const ENV_KEYS = ['COWCAT_HOME', 'COWCAT_PROVIDER', 'COWCAT_BASE_URL', 'COWCAT_API_KEY', 'COWCAT_MODEL', 'DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY'];

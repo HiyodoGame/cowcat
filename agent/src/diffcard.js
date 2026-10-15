@@ -121,7 +121,7 @@ const C = { red: '\x1b[38;5;167m', green: '\x1b[38;5;71m', gray: '\x1b[90m', res
 // `gutter` (TUI only) adds old/new line-number columns and tints the hunk
 // header with the permission color; the line-mode UI keeps the plain layout.
 export function renderFileCard(preview, { colors = true, maxLines = 12, pad = '  ', gutter = false, theme = null } = {}) {
-  const { items, collapsed } = foldItems(preview.items, maxLines);
+  const { items } = foldItems(preview.items, maxLines);
   const mode = preview.isNew ? 'new file' : 'modified';
   const stat = `+${preview.added} -${preview.removed}`;
   const hunkColor = gutter && theme?.permission ? theme.permission : C.gray;

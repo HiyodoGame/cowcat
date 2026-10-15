@@ -142,7 +142,7 @@ export class AnthropicProvider {
   // request: {system, messages, tools, maxTokens, onText, stream, temperature}
   // returns {role:'assistant', content, stopReason, usage}
   async chat(request) {
-    const { system, messages, tools, onText, stream = true } = request;
+    const { onText, stream = true } = request;
     const body = buildAnthropicRequestBody(this.cfg, { ...request, stream, metadata: this.requestMetadata() });
     const res = await postJSON(`${this.cfg.baseURL}/v1/messages`, this.headers(), body, {
       timeoutMs: this.cfg.timeoutMs,

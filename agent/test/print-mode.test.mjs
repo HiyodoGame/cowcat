@@ -65,8 +65,7 @@ function fakeLLMServer({ withWriteTool }) {
     res.end();
   };
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    req.resume(); // drain the body so 'end' fires; the stub only reads the URL
     req.on('end', () => {
       if (req.url.startsWith('/v1/messages/count_tokens')) {
         res.writeHead(200, { 'content-type': 'application/json' });

@@ -80,7 +80,7 @@ test('dialog-select: ranking, grouping, and the visible window', () => {
   assert.equal(ds.filtered.length, 18);
   ds.setQuery('al');
   assert.deepEqual(ds.filtered.map((i) => i.title), ['alpha', 'alps'], 'prefix matches rank first');
-  const { start, rows } = ds.window();
+  const { rows } = ds.window();
   assert.equal(rows.length, 2);
 
   // paging: PgDn jumps a page, the window follows the selection

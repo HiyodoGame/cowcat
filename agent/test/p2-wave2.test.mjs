@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,7 +118,7 @@ test('P2-8: background run meta/log/result lifecycle and notify degrade', async 
   try {
     const id = makeRunId();
     assert.match(id, /^bg-/);
-    const meta = prepareBackgroundRun(id, 'do the thing');
+    prepareBackgroundRun(id, 'do the thing'); // setup: writes meta.json
     assert.ok(existsSync(join(home, 'background', id, 'meta.json')));
     const result = finishBackgroundRun(id, { finalText: 'all good', exitCode: 0, usage: { input: 1 } });
     assert.equal(result.exitCode, 0);
@@ -136,8 +136,7 @@ test('P2-8: background run meta/log/result lifecycle and notify degrade', async 
 test('P2-8: --background spawns a detached child that finishes and writes result', async () => {
   const { server, port } = await new Promise((resolve) => {
     const s = http.createServer((req, res) => {
-      let body = '';
-      req.on('data', (c) => { body += c; });
+      req.resume(); // drain the body so 'end' fires; the stub only reads the URL
       req.on('end', () => {
         if (req.url.startsWith('/v1/messages/count_tokens')) { res.end(JSON.stringify({ input_tokens: 1 })); return; }
         res.writeHead(200, { 'content-type': 'text/event-stream' });

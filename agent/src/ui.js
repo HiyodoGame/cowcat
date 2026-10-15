@@ -4,7 +4,6 @@ import { isDangerousCommand } from './permissions.js';
 import { renderGroup, renderFileCard } from './diffcard.js';
 import { renderBashCard } from './outputcard.js';
 import { THEMES } from './slashcmds.js';
-import { LineEditor } from './lineeditor.js';
 import { getTheme } from './tui/theme.js';
 
 // Shared palette derived from the semantic theme tokens; setTheme() re-parses
