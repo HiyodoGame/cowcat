@@ -41,7 +41,7 @@
 - **`ctrl+b` 的面板开关不持久化**：`TuiUI.togglePanel()` 通过 `onTogglePanel` 通知 host，但该回调从未赋值——`/panel` 会写 state.json、`ctrl+b` 不会，而文档承诺「切换状态持久化」。已接线（`tui.onTogglePanel` → `writeState`），并把 `/panel` 收敛到同一条路径（顺带删掉一个只写不读的 `sessionState.panel` 死赋值）。
 - **`writeState` 在 bin 里根本没 import**（更严重：不是静默失效而是直接崩）。bin 在 `/panel`、`/sandbox` 两处调用它，import 列表里从来没有——`/sandbox off` 会抛 `ReferenceError` 并让 CLI 进程退出（已用 piped REPL 实测复现）。已补 import。
 - **`src/ui.js` 的死声明**：`this.onShiftTab = null` 在 line 模式的 UI 里既无调用方也无接线（纯复制残留），删除。
-- **新增通用断言**（`test/tui.test.mjs`）：扫描 `src/tui/ui.js` 与 `src/ui.js` 的 `this.onXxx =` 声明与调用点，要求每个回调 ① 被调用（否则是死声明）② 在 bin 里被接线（构造函数选项或 `tui.onXxx =` 赋值），除非列进 `OPTIONAL_BY_DESIGN` 并写明理由与降级行为；同时冻结回调清单（新增回调必须显式决定接线方式），并反向校验 bin 的赋值目标确实存在（防拼错名字）。实测对 `6fad051` 报 `[onShiftTab, onTogglePanel]`、对 `b993d01` 报 `[onTogglePanel]`、对当前树报空——两处历史缺陷都能抓到。
+- **新增通用断言**（`test/tui.test.mjs`）：扫描 `src/tui/ui.js` 与 `src/ui.js` 的 `this.onXxx =` 声明与调用点，要求每个回调 ① 被调用（否则是死声明）② 在 bin 里被接线（构造函数选项或 `tui.onXxx =` 赋值），除非列进 `OPTIONAL_BY_DESIGN` 并写明理由与降级行为；同时冻结回调清单（新增回调必须显式决定接线方式），并反向校验 bin 的赋值目标确实存在（防拼错名字）。实测对 `79db96e` 报 `[onShiftTab, onTogglePanel]`、对 `81297c6` 报 `[onTogglePanel]`、对当前树报空——两处历史缺陷都能抓到。
 - **新增 REPL 斜杠命令冒烟测试**（`test/lifecycle.test.mjs`）：斜杠命令只能经 REPL 触达，此前单测全部绕开（这正是 `writeState` 漏网的原因）。用 piped stdin 跑一遍无网络依赖的 22 条命令，断言退出码 0、stderr 无 `ReferenceError/is not defined/TypeError`、且 `/sandbox light` 与 `/theme light` 真的落盘。
 - 全量 561 passed / 0 failed。
 
@@ -58,7 +58,7 @@
 
 **清理**：51 个 `no-unused-vars` 全部处理——12 处 src/bin 死导入与冗余解构、13 处测试死导入、其余为测试里的未使用局部量。其中 5 处「`let body = ''` + data 监听」是**排空请求体让 `end` 触发**的载荷代码（删掉会让 handler 挂起），改用语义等价的 `req.resume()`；`p3-cron` 两处 `makeCtx()` 是纯副作用调用（建临时 COWCAT_HOME），保留调用并注明理由。`p0-wave2` 有个 `cyanBefore` 探针从未参与断言（作者原先想做切换前后对比），按现状删除并在此记录，不臆造断言。
 
-**牙齿验证**：对 `7fda95b` 的 pre-fix 源跑门禁 → 7 errors（4× `no-undef`：`outputStyles`/`currentStyle`×2/`resolve`；3× `no-unused-vars`）。
+**牙齿验证**：对 `c4edf8d` 的 pre-fix 源跑门禁 → 7 errors（4× `no-undef`：`outputStyles`/`currentStyle`×2/`resolve`；3× `no-unused-vars`）。
 
 **代价（需知会）**：`npm test` 现在需要先 `npm install`（`agent/` 有了第一个 devDependency，锁定在 `package-lock.json`）。运行时依赖仍为零，发布 tarball 不含 devDependency。文档（`docs/PUBLISH.md` 发布清单、`docs/ROADMAP.md` 执行原则）已同步为 `cd agent && npm install && npm test`。
 
