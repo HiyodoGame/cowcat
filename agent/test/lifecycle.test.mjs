@@ -181,3 +181,58 @@ test('/setup hot-reloads config: the next turn uses the new API key', async () =
     server.close();
   }
 });
+
+// Model asks for a background Bash on turn 1, answers on turn 2. Before the
+// fix the print path returned without killAll(), and the detached exec child
+// kept the event loop alive until the command itself finished — a silent hang.
+function sseBashBackground(res) {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  for (const ev of [
+    { type: 'message_start', message: { usage: { input_tokens: 3 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name: 'Bash', input: {} } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"command":"node -e \\"setTimeout(()=>{},60000)\\"","run_in_background":true}' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+    { type: 'message_stop' },
+  ]) res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+  res.end();
+}
+
+test('-p with a run_in_background Bash exits promptly instead of hanging on the child', async () => {
+  const state = { seen: 0 };
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (req.url.startsWith('/v1/messages/count_tokens')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ input_tokens: 3 }));
+        return;
+      }
+      state.seen++;
+      if (state.seen === 1) return sseBashBackground(res);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      for (const ev of [
+        { type: 'message_start', message: { usage: { input_tokens: 3 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'bg-started' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+        { type: 'message_stop' },
+      ]) res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+    const port = server.address().port;
+    const started = Date.now();
+    const res = await spawnCli(['-p', '-y', 'start something in the background'], ENV(port, home), null, 15000);
+    assert.match(res.out, /bg-started/, 'final answer printed');
+    assert.equal(res.code, 0, `exit code ${res.code}, stderr: ${res.err}`);
+    assert.ok(Date.now() - started < 15000, 'must not wait for the 60s background child');
+  } finally {
+    server.close();
+  }
+});

@@ -265,9 +265,12 @@ async function main() {
   let provider = await createProvider(config);
   const registry = buildRegistry();
   // Permission rules engine: validated config rules; bad rules warn, never abort.
-  const knownTools = registry.list().map((t) => t.name);
+  // The known-tools list is read fresh at every applyRules() call — MCP tools
+  // (mcp__server__tool) only exist after connectMcp() runs below, so a startup
+  // snapshot would reject every pre-configured mcp rule as "unregistered".
+  const knownToolNames = () => registry.list().map((t) => t.name);
   const applyRules = () => {
-    const r = loadRules(config, knownTools);
+    const r = loadRules(config, knownToolNames());
     permissions.setRules(r);
     for (const w of r.warnings) ui.print(`⚠ ${w}`);
   };
@@ -378,11 +381,22 @@ async function main() {
       return (m ? m[1] : raw).trim();
     },
   });
-  // Ctrl-C forwards to any running Bash child before exiting.
+  // Ctrl-C forwards to any running Bash child before exiting. The full
+  // cleanup (background registry + MCP servers + TUI restore) lives in
+  // `shutdown`, assigned further down once everything it touches exists.
   const runningChildren = new Set();
+  let shutdown = null;
   process.on('SIGINT', () => {
     for (const c of runningChildren) { try { c.kill(); } catch { /* already dead */ } }
+    try { shutdown?.(); } catch { /* cleanup is best-effort on the way out */ }
     process.exit(130);
+  });
+  // SIGTERM (docker stop, CI runners, task managers) had no handler at all:
+  // Node default-killed the process and left detached children behind.
+  process.on('SIGTERM', () => {
+    for (const c of runningChildren) { try { c.kill(); } catch { /* already dead */ } }
+    try { shutdown?.(); } catch { /* cleanup is best-effort on the way out */ }
+    process.exit(143);
   });
   const baseCtx = { cwd, readSet: new Set(), state, ui, permissions, config, session, sessionId: session.id, spawnAgent, trackProcess: (child) => { runningChildren.add(child); child.on?.('exit', () => runningChildren.delete(child)); } };
   // IDE integration sink (P2-2): detection + JSONL event channel.
@@ -450,10 +464,20 @@ async function main() {
     }
   }
   if (Object.keys(mcpServers).length) await connectMcp();
+  // MCP tools are registered now — re-apply so pre-configured mcp__* rules
+  // (rejected as "unregistered" at startup) actually take effect this session.
+  if (mcpClients.size) applyRules();
   function mcpCleanup() {
     for (const client of mcpClients.values()) { try { client.stop(); } catch { /* noop */ } }
     mcpClients.clear();
   }
+  // Full child-process cleanup, shared by the signal handlers (above), the
+  // print-mode early return, and the REPL tail. Best-effort: each step is
+  // individually guarded so one failure never blocks the others.
+  shutdown = () => {
+    try { mcpCleanup(); } catch { /* noop */ }
+    try { background.killAll(); } catch { /* noop */ }
+  };
 
   const modeTag = () => {
     if (restricted) return ui.colors ? `${BRAND.plan}${ui.lang === 'zh' ? '[受限]' : '[restricted]'}\x1b[0m` : (ui.lang === 'zh' ? '[受限]' : '[restricted]');
@@ -600,71 +624,79 @@ async function main() {
   let usageTotals = { input: 0, output: 0, cache_read: 0, cache_creation: 0 };
 
   if (opts.prompt) {
-    const streamJson = opts.print && opts.outputFormat === 'stream-json';
-    let res;
-    if (streamJson) {
-      // pure NDJSON event stream: no onboarding, no decorations
-      writeEvent(process.stdout, { type: 'system', version: PKG_VERSION, provider: config.provider, model: config.model, cwd });
-      res = await runTurn(opts.prompt, {
-        onText: (d) => writeEvent(process.stdout, { type: 'assistant', delta: d }),
-        events: {
-          onToolStart: (name, input) => writeEvent(process.stdout, { type: 'tool_use', name, input }),
-          onToolResult: (name, r) => writeEvent(process.stdout, { type: 'tool_result', name, content: String(r.content).slice(0, 2000), is_error: !!r.is_error }),
-        },
-        maxTurns: opts.maxTurns || null,
-      });
-      writeEvent(process.stdout, { type: 'result', text: res.finalText, usage: res.usage, turns: res.iterations });
-    } else {
-      res = await runTurn(opts.prompt, { maxTurns: opts.maxTurns || null });
-      if (opts.print) console.log(res.finalText);
-    }
-    // --max-turns overrun
-    if (opts.maxTurns && res.iterations >= opts.maxTurns && /^\[stopped/.test(res.finalText)) {
-      if (streamJson) writeEvent(process.stdout, { type: 'error', message: 'max turns reached' });
-      process.exitCode = 4;
-      return;
-    }
-    if (opts.print && res.denials > 0) process.exitCode = 2; // permission-blocked in non-interactive mode
-    if (process.env.COWCAT_BG_ID) {
-      finishBackgroundRun(process.env.COWCAT_BG_ID, { finalText: res.finalText, exitCode: process.exitCode ?? 0, usage: res.usage });
-      if (process.env.COWCAT_NOTIFY_ON_DONE) {
-        await notify(process.exitCode ? 'CowCat 任务失败' : 'CowCat 任务完成', res.finalText.slice(0, 120));
+    // try/finally: every return path below (max-turns overrun, schema failure,
+    // plain done) must run the child-process cleanup. Without it an exec()
+    // child started via run_in_background keeps the event loop alive and the
+    // process hangs until the task's own timeout — a silent CI hang.
+    try {
+      const streamJson = opts.print && opts.outputFormat === 'stream-json';
+      let res;
+      if (streamJson) {
+        // pure NDJSON event stream: no onboarding, no decorations
+        writeEvent(process.stdout, { type: 'system', version: PKG_VERSION, provider: config.provider, model: config.model, cwd });
+        res = await runTurn(opts.prompt, {
+          onText: (d) => writeEvent(process.stdout, { type: 'assistant', delta: d }),
+          events: {
+            onToolStart: (name, input) => writeEvent(process.stdout, { type: 'tool_use', name, input }),
+            onToolResult: (name, r) => writeEvent(process.stdout, { type: 'tool_result', name, content: String(r.content).slice(0, 2000), is_error: !!r.is_error }),
+          },
+          maxTurns: opts.maxTurns || null,
+        });
+        writeEvent(process.stdout, { type: 'result', text: res.finalText, usage: res.usage, turns: res.iterations });
+      } else {
+        res = await runTurn(opts.prompt, { maxTurns: opts.maxTurns || null });
+        if (opts.print) console.log(res.finalText);
       }
-    }
-    // --output-schema: validate; retry once with errors fed back; exit 3 on failure
-    if (opts.outputSchema) {
-      let schema;
-      try { schema = JSON.parse(opts.outputSchema); } catch (e) {
-        console.error(`invalid --output-schema: ${e.message}`);
-        process.exitCode = 3;
+      // --max-turns overrun
+      if (opts.maxTurns && res.iterations >= opts.maxTurns && /^\[stopped/.test(res.finalText)) {
+        if (streamJson) writeEvent(process.stdout, { type: 'error', message: 'max turns reached' });
+        process.exitCode = 4;
         return;
       }
-      const run = (txt) => {
-        const { value } = extractJson(txt);
-        return value === null
-          ? { ok: false, errors: ['回答中未找到完整 JSON'] }
-          : validateSchema(schema, value);
-      };
-      let check = run(res.finalText);
-      let finalValue = extractJson(res.finalText).value;
-      if (!check.ok) {
-        const retryPrompt = `Your previous answer failed validation:\n${check.errors.join('\n')}\nRewrite the answer to match this JSON Schema, outputting only the JSON value:\n${opts.outputSchema}`;
-        const res2 = await runTurn(retryPrompt, { maxTurns: opts.maxTurns || null });
-        check = run(res2.finalText);
-        if (check.ok) {
-          finalValue = extractJson(res2.finalText).value;
-          res.finalText = JSON.stringify(finalValue);
-          if (streamJson) writeEvent(process.stdout, { type: 'result', text: res.finalText, retried: true });
-        } else {
-          if (streamJson) writeEvent(process.stdout, { type: 'error', message: `schema validation failed: ${check.errors.join('; ')}` });
-          else console.error(`schema validation failed: ${check.errors.join('; ')}`);
+      if (opts.print && res.denials > 0) process.exitCode = 2; // permission-blocked in non-interactive mode
+      if (process.env.COWCAT_BG_ID) {
+        finishBackgroundRun(process.env.COWCAT_BG_ID, { finalText: res.finalText, exitCode: process.exitCode ?? 0, usage: res.usage });
+        if (process.env.COWCAT_NOTIFY_ON_DONE) {
+          await notify(process.exitCode ? 'CowCat 任务失败' : 'CowCat 任务完成', res.finalText.slice(0, 120));
+        }
+      }
+      // --output-schema: validate; retry once with errors fed back; exit 3 on failure
+      if (opts.outputSchema) {
+        let schema;
+        try { schema = JSON.parse(opts.outputSchema); } catch (e) {
+          console.error(`invalid --output-schema: ${e.message}`);
           process.exitCode = 3;
           return;
         }
+        const run = (txt) => {
+          const { value } = extractJson(txt);
+          return value === null
+            ? { ok: false, errors: ['回答中未找到完整 JSON'] }
+            : validateSchema(schema, value);
+        };
+        let check = run(res.finalText);
+        let finalValue = extractJson(res.finalText).value;
+        if (!check.ok) {
+          const retryPrompt = `Your previous answer failed validation:\n${check.errors.join('\n')}\nRewrite the answer to match this JSON Schema, outputting only the JSON value:\n${opts.outputSchema}`;
+          const res2 = await runTurn(retryPrompt, { maxTurns: opts.maxTurns || null });
+          check = run(res2.finalText);
+          if (check.ok) {
+            finalValue = extractJson(res2.finalText).value;
+            res.finalText = JSON.stringify(finalValue);
+            if (streamJson) writeEvent(process.stdout, { type: 'result', text: res.finalText, retried: true });
+          } else {
+            if (streamJson) writeEvent(process.stdout, { type: 'error', message: `schema validation failed: ${check.errors.join('; ')}` });
+            else console.error(`schema validation failed: ${check.errors.join('; ')}`);
+            process.exitCode = 3;
+            return;
+          }
+        }
+        if (opts.print && !streamJson) console.log(JSON.stringify(finalValue, null, 2));
       }
-      if (opts.print && !streamJson) console.log(JSON.stringify(finalValue, null, 2));
+      return;
+    } finally {
+      shutdown?.();
     }
-    return;
   }
 
   while (true) {
@@ -672,7 +704,9 @@ async function main() {
     // fire any due scheduled prompts as new user turns. Recurring jobs re-arm
     // to their next fire time; one-shots (incl. ScheduleWakeup) are removed.
     try {
-      const due = takeDueCrons();
+      // Session-scoped: a cron created in another session stays armed there
+      // instead of firing as a user turn inside this one.
+      const due = takeDueCrons(new Date(), { sessionId: session.id });
       for (const job of due) {
         ui.print(`[cron] firing ${job.id}`);
         await runTurn(job.prompt);
@@ -851,7 +885,7 @@ async function main() {
           const column = args[1];
           const ruleStr = args.slice(2).join(' ').trim();
           if (!['allow', 'deny', 'ask'].includes(column) || !ruleStr) { ui.print('usage: /permissions add <allow|deny|ask> <规则>'); continue; }
-          const { rule, error } = validateRule(ruleStr, knownTools);
+          const { rule, error } = validateRule(ruleStr, knownToolNames());
           if (!rule) { ui.print(`✗ ${error}`); continue; }
           const current = (config.permissions?.[column]) || [];
           current.push(ruleStr);
