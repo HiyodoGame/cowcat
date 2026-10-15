@@ -196,7 +196,13 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 } }
 ```
 
-启动时依次连接（单 server 失败不拖垮整体）；工具动态注册为 `mcp__<server>__<tool>`，并可用权限规则预授权/预拒绝（如 `/permissions add allow mcp__filesystem__read_file`）。首次连接新 server 需交互批准，信任记录在 state.json 的 `mcpTrusted`——**按机器记、跨项目共享**（与目录信任不同，不绑定具体项目）；`-p` 等非交互模式不会弹出批准，未信任的 server 一律跳过（需预置 state.json 才能使用）。`/mcp` 查看状态与工具数，`/mcp reconnect <名>` 重连；CLI 退出时统一关闭所有 server 进程（SIGTERM，宽限期后 SIGKILL）。
+启动时依次连接（单 server 失败不拖垮整体）；工具动态注册为 `mcp__<server>__<tool>`，并可用权限规则预授权/预拒绝（如 `/permissions add allow mcp__filesystem__read_file`）。首次连接新 server 需交互批准，信任记录在 state.json 的 `mcpTrusted`——**按机器记、跨项目共享**（与目录信任不同，不绑定具体项目）；`-p` 等非交互模式不会弹出批准，未信任的 server 一律跳过（需预置 state.json 才能使用）。`/mcp` 查看状态与工具数，`/mcp reconnect <名>` 重连；CLI 退出时统一关闭所有 server 进程（POSIX：SIGTERM，宽限期后 SIGKILL；Windows：`taskkill /T` 回收整棵进程树）。
+
+**平台注意**
+
+- **Windows**：`"command": "npx"`（或 `npm`/`yarn` 等其他 `.cmd` shim）会被自动转交 `cmd.exe /c` 启动——Node 不能直接 spawn `.cmd`，直接调用会得到 `spawn npx ENOENT`。绝对路径与 `.exe` 仍走原路径，不受影响。这类启动方式下 server 是 `cmd → npx → node` 的孙进程，因此关闭时必须用 `taskkill /T`；直接用 `"command": "cmd", "args": ["/c", "npx", ...]` 写进配置也可以，同样会被整树回收。
+- server 启动即失败时，报错会带上它**最后一行 stderr**（例如 `Missing API key`、`unknown option`），不再只有 `server exited (code 1)`。
+- MCP 工具按**非只读**处理：未信任目录下 `-p` 会锁进只读 plan 模式，此时 MCP 工具调用会被拒绝（先信任目录，或交互 `/act`）。这是有意为之——MCP 工具是任意 RPC，可能写入。
 
 环境变量：
 
@@ -204,6 +210,9 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 |---|---|---|
 | `COWCAT_MCP_TIMEOUT` | 60000 | 单次请求超时（ms），连接与调用各自计时 |
 | `COWCAT_MCP_CONNECT_BUDGET` | 120000 | 整个连接阶段的总预算（ms）：预算用尽后剩余 server 直接跳过，单个挂死 server 也受剩余预算约束，不会各自等满单次超时 |
+| `COWCAT_MCP_KILL_GRACE` | 3000 | POSIX 下 SIGTERM 到 SIGKILL 的宽限期（ms），用于让 server 收尾 |
+
+**真实 server 联调**（可选，需要联网）：`agent/test/live/` 下有 4 个针对官方 server/SDK 的实测脚本（真实文件系统 server、真实 Streamable HTTP session、分页、CLI 端到端），不在 `npm test` 里，用法见 `agent/test/live/README.md`。
 
 ## 自定义 commands / agents / skills
 

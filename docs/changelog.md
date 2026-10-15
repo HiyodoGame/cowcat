@@ -17,6 +17,17 @@
 - **TUI cron 回合不再丢输入**：REPL 在 cron 扫描之前就打开 composer（TUI 的可打印键只在 read 激活时进编辑器，此前扫描期间敲的字被丢弃且随后 `readLine()` 重置编辑器）；行模式保持「先提示符后读」顺序（`bin/cowcat.mjs`）。
 - **测试**：修复 `cards.test.mjs` 的 Windows 平台失败（`seq 1 30` → 跨平台 `node -e`，此前该用例在 Windows 上恒失败）；新增 `test/p4-mcp-hardening.test.mjs` 9 项（分页、session 头、SSE 多帧、通知语义、SIGKILL 升级、死管道请求、配置类型守卫、整对象覆盖、连接预算）、`test/tui.test.mjs` 1 项（提前 readLine 保输入）、`test/lifecycle.test.mjs` 1 项（`-p` 触发 cron 的 E2E）。全量 553 passed / 0 failed。
 
+### 第三轮（真实第三方 server 联调）
+
+用官方 `@modelcontextprotocol/server-filesystem` 与官方 SDK 起的真实 Streamable HTTP server 实测，脚本固化在 `agent/test/live/`（不在 `npm test` 内，见该目录 README）。
+
+- **修复：Windows 下文档里的 `"command": "npx"` 完全起不来**（`src/mcp.js`）。Node 24 不能直接 spawn `.cmd`（`spawn npx` → `ENOENT`；`spawn npx.cmd` → 同步 `EINVAL`），而 USAGE 的示例正是 `npx`——Windows 用户照文档配置时 server 一个都连不上。现在直接启动失败后会自动经 `cmd.exe /c`（`windowsVerbatimArguments` 避免二次转义）重试一次；`.exe`/绝对路径仍走原路径，零影响。
+- **修复：shim 启动下的进程树回收**（`src/mcp.js`）。`cmd → npx → node` 时 `child.kill()` 只杀 `cmd.exe`，真实 server 变孤儿；Windows 下 `stop()` 改用 `taskkill /T /F` 回收整棵树（POSIX 仍是 SIGTERM → 宽限期 → SIGKILL）。
+- **改进：启动失败带上 server 最后一行 stderr**。此前 stderr 被丢弃，任何启动失败都只报 `server exited (code 1)`。
+- **联调验证（真实 server，非 fixture）**：`"command": "npx"` 配置连上真实 filesystem server（14 工具）；真实读/写/stat、越界路径拒绝、`isError` 映射全部正确；真实 stateful Streamable HTTP server 下发 `mcp-session-id`（无该头直接 400），SSE 响应逐帧解析正确；真实分页 `tools/list`（7 工具 3/页）拉全量；CLI 端到端：项目 `.cowcat/mcp.json` → 模型调用 `mcp__filesystem__list_directory` → 真实目录列表回传模型。
+- **联调更正**：修复 #3（`notifications/initialized` 按通知发）在真实 SDK server 上属**规范正确性**而非阻塞缺陷——该 server 容忍旧「带 id 当请求发」的写法（`agent/test/live/notify-negative.mjs` 记录了实测）。
+- **测试**：新增 Windows shim 启动、孙进程无孤儿、stderr 诊断、缺失命令报错 3 项（`test/p4-mcp-hardening.test.mjs`）。全量 556 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
