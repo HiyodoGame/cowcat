@@ -60,6 +60,23 @@ npm publish --access=public   # 首次发布（scoped 公开包；package.json �
 
 > **新 scope 首发会走 staged publishing**（2026 起 npm 默认安全机制）：CLI 显示成功后，包其实进了暂存区，registry 会先有 `0.0.0-stage` 占位版本。必须登录 npm 网页打开包页面，点 **Approve / Publish**（要 2FA）才真正上线；此前 `npm i` 会得到 404，且 registry 的 404 有 CDN 缓存，批准后可能还要等 1-2 分钟才能安装到。
 
+### 暂存期的三个实测坑（v0.12.0 发布时踩到）
+
+1. **对已暂存的同一版本再 publish → `E409 Conflict`**：`Cannot publish over previously staged version "0.12.0"`。这不是失败，是「同一个版本不能重复暂存」。处理：批准已暂存的那份，不要重发同一版本——
+   ```bash
+   npm stage list  --registry=https://registry.npmjs.org     # 拿 stage-id
+   npm stage view  <stage-id> --registry=https://registry.npmjs.org
+   npm stage approve <stage-id> --registry=https://registry.npmjs.org   # 等价于网页 Approve
+   ```
+   若暂存产物已经过期（例如批准前又改了代码），先 `npm stage reject <stage-id>`，再 bump 版本重新发布。
+   另可用 `npm stage download <stage-id>` 取回暂存 tarball 做校验。
+2. **`npm stage` 不吃 scope 级 registry 配置**：`agent/.npmrc` 里的 `@corescense:registry` 对 `npm stage list/view/approve` 不生效，实测会打到默认镜像（npmmirror）并报 `E422 … must match format "semver-spec"`。这几个子命令一律显式加 `--registry=https://registry.npmjs.org`。
+3. **发布后核对产物身份**：比较本地打包与 registry 上的 shasum，二者一致才算「发布的就是这棵树」——
+   ```bash
+   cd agent && npm pack --pack-destination "$TEMP"   # 记下 shasum
+   node -e "fetch('https://registry.npmjs.org/@corescense/cowcat/<版本>').then(r=>r.json()).then(j=>console.log(j.dist.shasum, j.dist.fileCount))"
+   ```
+
 后续版本迭代：
 
 ```bash
