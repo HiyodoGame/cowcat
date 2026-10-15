@@ -77,6 +77,18 @@ npm publish --access=public   # 首次发布（scoped 公开包；package.json �
    node -e "fetch('https://registry.npmjs.org/@corescense/cowcat/<版本>').then(r=>r.json()).then(j=>console.log(j.dist.shasum, j.dist.fileCount))"
    ```
 4. **`npm publish --dry-run` 会误报 `"bin[cowcat]" script name bin/cowcat.mjs was invalid and removed`**（v0.12.1 发布时踩到）。这是 npm 自身的措辞 bug：`@npmcli/package-json/lib/normalize.js:69-71` 在**只是把路径规范化**（`./bin/cowcat.mjs` → `bin/cowcat.mjs`）时也报 "invalid and removed"，而第 72 行紧接着把规范化后的值赋回去了——`bin` 并没有被删。两种验证方式都已实测：`npm pack` 解包后 `bin` 仍指向 `bin/cowcat.mjs`，隔离安装后 `node_modules/.bin/cowcat.cmd --version` 正常。把源头直接写成规范化后的形式（`"cowcat": "bin/cowcat.mjs"`）即可让这条警告消失，行为零变化。
+5. **发布成功是「已接受 + 异步处理」，registry 会晚一点才可见**（v0.12.1 发布时实测，npm 11.16）。日志顺序是：
+   ```
+   http fetch PUT 401 https://registry.npmjs.org/@corescense%2fcowcat   # 要 OTP
+   verbose web auth opening url pair                                    # 浏览器完成 2FA
+   http fetch PUT 202 https://registry.npmjs.org/@corescense%2fcowcat   # 已接受
+   notice Your package is being processed and may take a few minutes to become available.
+   verbose exit 0 / info ok
+   ```
+   此时查 registry **还看不到新版本**（实测约 1 分钟后出现，版本时间戳早于它变得可见的时刻）。所以：
+   - 判断发布是否成功看 `PUT 202` + `exit 0`（或 CLI 的 `+ @corescense/cowcat@<版本>`），**不要**立刻查 registry 就下结论，更**不要重发同一版本**（会 `E409`）。
+   - 等版本出现后再做 shasum 核对（本文件坑 3）与隔离安装验证。
+   - **`npm stage list` 为空不代表没发布**：`npm stage` 是「新包/新 scope 暂存」的另一套机制，与这里的异步处理无关。
 
 后续版本迭代：
 
