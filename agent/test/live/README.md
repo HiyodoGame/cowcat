@@ -1,0 +1,33 @@
+# Live MCP checks (opt-in, needs network)
+
+Real third-party MCP servers against CowCat's own `src/mcp.js`. These are **not**
+part of `npm test` (that glob is `test/*.test.mjs`): they download packages and
+spawn real servers, so they run on demand — after touching the MCP client, or
+before a release.
+
+```bash
+# one-time: official server + SDK used by the checks
+npm install --prefix agent/test/live
+
+node agent/test/live/stdio.mjs          # official filesystem server over stdio
+node agent/test/live/http.mjs           # official SDK Streamable HTTP (stateful) + pagination
+node agent/test/live/notify-negative.mjs # what the pre-fix initialized behaviour did
+node agent/test/live/cli-e2e.mjs        # full CLI: config -> trust -> model calls a real MCP tool
+```
+
+Each prints `PASS`/`FAIL` per check and exits non-zero on failure.
+
+What each one covers:
+
+| script | covers |
+|---|---|
+| `stdio.mjs` | launch via the documented `"command": "npx"` (Windows shim fallback), full tool chain on a real server, out-of-roots rejection, adapter error mapping, `stop()` reaping |
+| `http.mjs` | `mcp-session-id` capture + echo (the session-less request is rejected with 400), SSE response bodies, `notifications/initialized` as a notification, `tools/list` cursor loop against a real paginated server |
+| `notify-negative.mjs` | the old behaviour measured against a real server (documents that the SDK tolerates a request-shaped `initialized` — the fix is spec correctness, not a blocker) |
+| `cli-e2e.mjs` | project `.cowcat/mcp.json` → trust from `state.json` → real tool call → the tool output reaching the model. Note the pre-trust of the cwd: an untrusted dir locks `-p` to read-only plan mode, which denies MCP tool calls |
+
+`paged-server.mjs` is the SDK-based fixture server used by `http.mjs`.
+
+Env overrides: `MCP_LIVE_FS_ENTRY` (filesystem server entry) and
+`MCP_LIVE_SDK` are only needed when the packages live somewhere other than
+`agent/test/live/node_modules`.

@@ -1,0 +1,10 @@
+{
+  "name": "cowcat-live-mcp-checks",
+  "private": true,
+  "description": "Opt-in live MCP checks against real third-party servers (not part of npm test)",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  }
+}
