@@ -9,6 +9,14 @@
 - **cron 按会话隔离**：`takeDueCrons(now, { sessionId })`，A 会话创建的定时任务不再在 B 会话里作为用户消息触发；外来任务原样保留不删，无 sessionId 的历史任务保持全量触发（向后兼容）（`src/tools/cron.js`、`bin/cowcat.mjs`）。
 - **文档诚实化**：`diagnostic` IDE 事件自 0.7.0 起只存在于文档/注释，代码从未发射——`USAGE.md` 与 `src/ide.js` 注释改为只承诺实际发射的 `file_edited`（`docs/USAGE.md`、`agent/src/ide.js`）。
 
+### 第二轮（遗留事项）
+
+- **MCP 协议加固**（`src/mcp.js`）：① Streamable HTTP 的 `mcp-session-id` 在 initialize 响应头捕获、后续请求回传（此前要求 session 的 server 在第二步必然失败）；② SSE 响应逐条解析所有 `data:` 帧并挑出响应帧（此前只取第一条 `data:`，遇到前置通知帧即误解析）；③ `notifications/initialized` 改为真正的 JSON-RPC 通知（无 id、不等结果），此前被当请求发且依赖服务端容忍未匹配 id；④ `tools/list` 跟随 `nextCursor` 拉全量（此前只拿第一页，服务端分页时后续工具对模型隐形）；⑤ `stop()` 增加 SIGTERM → 宽限期（默认 3s，`COWCAT_MCP_KILL_GRACE` 可调）→ SIGKILL 升级；⑥ server 退出后 `request()` 立即以明确错误拒绝，不再写已销毁的 stdin 管道；⑦ `mcpServers` 非普通对象（数组/字符串）时忽略，不再把索引/字符展开成伪 server；⑧ 连接阶段总预算 `COWCAT_MCP_CONNECT_BUDGET`（默认 120s），剩余预算下传到传输层钳制单次超时——单个挂死 server 不再独占 60s、N 个也不再累加。
+- **`/mcp reconnect` 清理残留**：重连前先 `registry.unregister` 该 server 的旧适配器，失败时不再留下指向已停止 client 的 `mcp__server__tool`（`src/tools/registry.js` 新增 `unregister`、`bin/cowcat.mjs`）。
+- **cron 支持一次性模式**：`-p` 在用户 prompt 之前执行 due 定时任务（每个是一次完整回合），提示走 stderr，stdout 仍只有用户 prompt 的答案——CI/无 REPL 场景此前永远无法触发定时任务（`bin/cowcat.mjs`）。
+- **TUI cron 回合不再丢输入**：REPL 在 cron 扫描之前就打开 composer（TUI 的可打印键只在 read 激活时进编辑器，此前扫描期间敲的字被丢弃且随后 `readLine()` 重置编辑器）；行模式保持「先提示符后读」顺序（`bin/cowcat.mjs`）。
+- **测试**：修复 `cards.test.mjs` 的 Windows 平台失败（`seq 1 30` → 跨平台 `node -e`，此前该用例在 Windows 上恒失败）；新增 `test/p4-mcp-hardening.test.mjs` 9 项（分页、session 头、SSE 多帧、通知语义、SIGKILL 升级、死管道请求、配置类型守卫、整对象覆盖、连接预算）、`test/tui.test.mjs` 1 项（提前 readLine 保输入）、`test/lifecycle.test.mjs` 1 项（`-p` 触发 cron 的 E2E）。全量 553 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。

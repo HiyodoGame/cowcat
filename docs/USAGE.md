@@ -196,7 +196,14 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 } }
 ```
 
-启动时并发连接（单 server 失败不拖垮整体）；工具动态注册为 `mcp__<server>__<tool>`；首次连接新 server 需交互批准（记忆在 state.json 的 `mcpTrusted`）；`/mcp` 查看状态与工具数，`/mcp reconnect <名>` 重连；`COWCAT_MCP_TIMEOUT` 控制单次调用超时（默认 60s）；CLI 退出时统一关闭所有 server 进程。
+启动时依次连接（单 server 失败不拖垮整体）；工具动态注册为 `mcp__<server>__<tool>`，并可用权限规则预授权/预拒绝（如 `/permissions add allow mcp__filesystem__read_file`）。首次连接新 server 需交互批准，信任记录在 state.json 的 `mcpTrusted`——**按机器记、跨项目共享**（与目录信任不同，不绑定具体项目）；`-p` 等非交互模式不会弹出批准，未信任的 server 一律跳过（需预置 state.json 才能使用）。`/mcp` 查看状态与工具数，`/mcp reconnect <名>` 重连；CLI 退出时统一关闭所有 server 进程（SIGTERM，宽限期后 SIGKILL）。
+
+环境变量：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `COWCAT_MCP_TIMEOUT` | 60000 | 单次请求超时（ms），连接与调用各自计时 |
+| `COWCAT_MCP_CONNECT_BUDGET` | 120000 | 整个连接阶段的总预算（ms）：预算用尽后剩余 server 直接跳过，单个挂死 server 也受剩余预算约束，不会各自等满单次超时 |
 
 ## 自定义 commands / agents / skills
 
