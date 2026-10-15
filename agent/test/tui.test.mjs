@@ -144,6 +144,29 @@ test('TUI wiring: bin must start the TUI (regression — missing tui.start() exi
   assert.match(src, /\btui\.start\(\)/, 'bin/cowcat.mjs must call tui.start() after constructing TuiUI');
 });
 
+test('TUI wiring: bin must assign onShiftTab (regression — the key was bound and dispatched, never wired)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(join(AGENT_ROOT, 'bin', 'cowcat.mjs'), 'utf8');
+  assert.match(src, /tui\.onShiftTab\s*=/, 'bin/cowcat.mjs must assign tui.onShiftTab');
+  assert.match(src, /shiftTabModes\(/, 'the toggle must go through the tested helper');
+  // the UI side of the contract: keybind maps shift+tab to mode.switch, and the
+  // dispatcher routes mode.switch to onShiftTab
+  const kb = readFileSync(join(AGENT_ROOT, 'src', 'tui', 'keybind.js'), 'utf8');
+  assert.match(kb, /kb\('mode\.switch', \['shift\+tab'\]/, 'shift+tab stays bound to mode.switch');
+  const uiSrc = readFileSync(join(AGENT_ROOT, 'src', 'tui', 'ui.js'), 'utf8');
+  assert.match(uiSrc, /case 'mode\.switch':\s*this\.onShiftTab\?\.\(\)/, 'dispatcher routes mode.switch to onShiftTab');
+});
+
+test('TUI app: shift+tab (CSI Z) reaches the host mode-switch callback', async () => {
+  const { tui, input } = headlessTui();
+  let switches = 0;
+  tui.onShiftTab = () => { switches++; };
+  input.write('\x1b[Z');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(switches, 1, 'the host callback fires exactly once per press');
+  tui.close();
+});
+
 // --- degradation guarantees (spawn) --------------------------------------------
 
 function fakeServer() {

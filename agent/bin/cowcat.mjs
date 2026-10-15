@@ -17,7 +17,7 @@ import { AskUserQuestionTool } from '../src/tools/ask.js';
 import { AgentTool } from '../src/tools/agent.js';
 import { WebFetchTool } from '../src/tools/webfetch.js';
 import { WebSearchTool } from '../src/tools/websearch.js';
-import { Permissions } from '../src/permissions.js';
+import { Permissions, shiftTabModes } from '../src/permissions.js';
 import { UI, detectLang, BRAND } from '../src/ui.js';
 import { runLoop } from '../src/loop.js';
 import { Session } from '../src/session.js';
@@ -50,6 +50,7 @@ import { parseApiError, formatApiErrorLines } from '../src/errfmt.js';
 import { runInspect, renderInspect, runFix, doctorJson } from '../src/doctor.js';
 import { detectIde, makeIdeSink, ideStatus } from '../src/ide.js';
 import { TuiUI } from '../src/tui/ui.js';
+import { PERM_LABELS } from '../src/tui/render.js';
 import { createWorktree, listWorktrees, isGitRepo } from '../src/worktree.js';
 import { notify, makeRunId, prepareBackgroundRun, finishBackgroundRun } from '../src/notify.js';
 import { BackgroundRegistry } from '../src/background.js';
@@ -528,6 +529,27 @@ async function main() {
   const events = {};
   let currentAbort = null;
   if (tui) tui.onInterrupt = () => { currentAbort?.abort(); };
+  if (tui) {
+    // shift+tab: act <-> plan (the keybinding exists since the TUI redesign, but
+    // nothing ever assigned onShiftTab, so the key did nothing). Plan is a
+    // detour, not a tier: remember the mode we left so coming back restores it —
+    // yolo has no other runtime entry point, so a peek at plan mode must not
+    // strand a `-y` session in ask-on-write. An untrusted folder keeps its
+    // read-only lock; the only escape stays /act, which asks for confirmation.
+    let modeBeforePlan = null;
+    tui.onShiftTab = () => {
+      if (restricted) {
+        tui.toast('warning', 'Plan', ui.lang === 'zh' ? '目录未信任：用 /act 放行' : 'Folder not trusted: use /act');
+        return;
+      }
+      const t = shiftTabModes(permissions.mode, modeBeforePlan);
+      modeBeforePlan = t.remembered;
+      permissions.setMode(t.mode);
+      const labels = PERM_LABELS[permissions.mode];
+      tui.toast('info', ui.lang === 'zh' ? '权限模式' : 'Mode', labels?.[ui.lang === 'zh' ? 'zh' : 'en'] ?? permissions.mode);
+      refreshStatus();
+    };
+  }
 
   const streamJsonMode = opts.print && opts.outputFormat === 'stream-json';
   if (streamJsonMode) {

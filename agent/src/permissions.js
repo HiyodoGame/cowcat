@@ -20,6 +20,18 @@ const PLAN_BASH_ALLOW = [
 // allow > default behavior. Rules never apply in yolo mode.
 import { matchRule } from './perrules.js';
 
+// shift+tab toggles act <-> plan. Plan is a detour rather than a tier, so the
+// mode we left is handed back to the caller (and cleared on the way back):
+// 'yolo' has no other runtime entry point, so a session started with -y must not
+// be stranded in ask-on-write after a peek at plan mode. Coming back with no
+// remembered mode falls back to 'default' — e.g. plan was entered via /plan,
+// which has nothing to restore.
+export function shiftTabModes(mode, remembered = null) {
+  return mode === 'plan'
+    ? { mode: remembered ?? 'default', remembered: null }
+    : { mode: 'plan', remembered: mode };
+}
+
 export class Permissions {
   constructor(mode = 'default') {
     this.mode = MODES.has(mode) ? mode : 'default';

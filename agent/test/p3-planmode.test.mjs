@@ -8,11 +8,36 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Permissions } from '../src/permissions.js';
+import { Permissions, shiftTabModes } from '../src/permissions.js';
 import { validateRule } from '../src/perrules.js';
 
 const AGENT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const parsed = (str, tools = ['Read', 'Write', 'Edit', 'Bash']) => validateRule(str, tools).rule;
+
+// --- unit: shift+tab act <-> plan (the keybinding's mode toggle) ----------------
+
+test('P3: shift+tab toggles act <-> plan and restores the mode it left', () => {
+  // default -> plan -> default
+  let s = shiftTabModes('default');
+  assert.deepEqual(s, { mode: 'plan', remembered: 'default' });
+  assert.deepEqual(shiftTabModes(s.mode, s.remembered), { mode: 'default', remembered: null });
+  // a -y session must come back to yolo, not to ask-on-write: yolo has no other
+  // runtime entry point, so losing it here would need a restart
+  s = shiftTabModes('yolo');
+  assert.deepEqual(s, { mode: 'plan', remembered: 'yolo' });
+  assert.deepEqual(shiftTabModes(s.mode, s.remembered), { mode: 'yolo', remembered: null });
+  // plan entered via /plan has nothing to restore
+  assert.deepEqual(shiftTabModes('plan'), { mode: 'default', remembered: null });
+  // acceptEdits (ExitPlanMode's tier) round-trips too — never silently dropped
+  s = shiftTabModes('acceptEdits');
+  assert.deepEqual(shiftTabModes(s.mode, s.remembered), { mode: 'acceptEdits', remembered: null });
+  // the helper does not validate: it hands the memory back as-is, and
+  // Permissions.setMode() normalizes whatever comes out
+  assert.equal(shiftTabModes('plan', 'nope').mode, 'nope');
+  const p = new Permissions();
+  p.setMode('nope');
+  assert.equal(p.mode, 'default', 'setMode normalizes an unknown remembered mode');
+});
 
 // --- unit: acceptEdits tier -----------------------------------------------------
 
