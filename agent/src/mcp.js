@@ -15,6 +15,29 @@ const MAX_OUTPUT = 20_000;
 // overrides it (tests use a short grace).
 const KILL_GRACE_MS = 3_000;
 const getKillGrace = () => Number(process.env.COWCAT_MCP_KILL_GRACE) || KILL_GRACE_MS;
+// Errors that mean "the command could not be launched as given", not "the
+// server misbehaved": ENOENT (bare name with no .exe match), EINVAL (Node
+// refuses to spawn a .cmd/.bat without a shell).
+const LAUNCH_ERRORS = ['ENOENT', 'EINVAL', 'UNKNOWN'];
+
+// Quote one argv element for a `cmd.exe /c` command line. Needed because the
+// Windows shims (npx/npm/yarn…) are .cmd files: Node cannot spawn them directly
+// and `.cmd` reaches the child as a raw string passed through %*. Backslashes
+// before a closing quote must be doubled or they escape it.
+function winQuote(arg) {
+  const s = String(arg);
+  if (s === '') return '""';
+  if (!/[\s"&|<>^()]/.test(s)) return s;
+  let out = '"';
+  let backslashes = 0;
+  for (const ch of s) {
+    if (ch === '\\') { backslashes++; out += ch; continue; }
+    if (ch === '"') { out += `${'\\'.repeat(backslashes)}\\"`; backslashes = 0; continue; }
+    backslashes = 0;
+    out += ch;
+  }
+  return `${out + '\\'.repeat(backslashes)}"`;
+}
 
 // --- config ------------------------------------------------------------------
 
@@ -56,6 +79,7 @@ class StdioTransport {
     this.nextId = 1;
     this.pending = new Map();
     this.buf = '';
+    this.lastStderr = '';
   }
   // Per-call timeout, clamped to whatever is left of the connect budget so a
   // single hung server cannot outlast the budget.
@@ -66,27 +90,75 @@ class StdioTransport {
   }
   connect() {
     return new Promise((resolve, reject) => {
-      this.child = spawn(this.def.command, this.def.args || [], {
-        env: { ...process.env, ...(this.def.env || {}) },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      const to = setTimeout(() => reject(new Error('connect timeout')), this._timeout());
-      this.child.stdout.on('data', (chunk) => this._onData(chunk));
-      this.child.stderr.on('data', () => {});
-      this.child.on('error', (e) => { clearTimeout(to); reject(e); });
-      this.child.on('exit', (code) => {
-        for (const { reject: rj } of this.pending.values()) rj(new Error(`server exited (code ${code})`));
-        this.pending.clear();
-      });
-      this.request('initialize', {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: 'cowcat', version: '0.5.0' },
-      }).then((res) => {
-        clearTimeout(to);
-        this.notify('notifications/initialized', {});
-        resolve(res);
-      }).catch((e) => { clearTimeout(to); reject(e); });
+      this._launch().then((child) => {
+        this.child = child;
+        const to = setTimeout(() => reject(new Error('connect timeout')), this._timeout());
+        child.stdout.on('data', (chunk) => this._onData(chunk));
+        // Keep the last stderr line: when a server dies during startup that line
+        // is usually the actual reason ("Missing API key", "unknown option").
+        // Without it every failed launch reported only "server exited (code 1)".
+        child.stderr.on('data', (chunk) => {
+          const s = chunk.toString('utf8').replace(/\s+/g, ' ').trim();
+          if (s) this.lastStderr = s.length > 400 ? s.slice(-400) : s;
+        });
+        child.on('error', (e) => { clearTimeout(to); reject(e); });
+        child.on('exit', (code) => {
+          for (const { reject: rj } of this.pending.values()) rj(this._exitError(code));
+          this.pending.clear();
+        });
+        this.request('initialize', {
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: 'cowcat', version: '0.5.0' },
+        }).then((res) => {
+          clearTimeout(to);
+          this.notify('notifications/initialized', {});
+          resolve(res);
+        }).catch((e) => { clearTimeout(to); reject(e); });
+      }).catch(reject);
+    });
+  }
+  _exitError(code) {
+    return new Error(`server exited (code ${code})${this.lastStderr ? `: ${this.lastStderr}` : ''}`);
+  }
+  _spawnOnce(command, args, opts) {
+    return new Promise((resolve, reject) => {
+      let child;
+      try {
+        child = spawn(command, args, opts);
+      } catch (e) {
+        // Node throws synchronously (EINVAL) for a .cmd/.bat without a shell
+        reject(e);
+        return;
+      }
+      child.once('error', reject);
+      child.once('spawn', () => { child.removeListener('error', reject); resolve(child); });
+    });
+  }
+  // Windows cannot exec the .cmd shims directly, and the documented config says
+  // "command": "npx" — so a failed direct launch is retried once through
+  // cmd.exe. The direct attempt runs first, leaving .exe/absolute-path setups
+  // exactly as before; if the retry also fails the ORIGINAL error is reported
+  // (it names the missing command instead of cmd.exe's exit code).
+  _launch() {
+    const command = this.def.command;
+    const args = this.def.args || [];
+    const opts = { env: { ...process.env, ...(this.def.env || {}) }, stdio: ['pipe', 'pipe', 'pipe'] };
+    return this._spawnOnce(command, args, opts).catch(async (e) => {
+      if (process.platform !== 'win32' || !LAUNCH_ERRORS.includes(e.code)) throw e;
+      const line = [command, ...args].map(winQuote).join(' ');
+      const comspec = process.env.ComSpec || 'cmd.exe';
+      try {
+        // windowsVerbatimArguments: without it Node re-quotes the command string
+        // and cmd.exe ends up looking for a program literally named `"npx"`.
+        return await this._spawnOnce(
+          comspec,
+          ['/d', '/s', '/c', `"${line}"`],
+          { ...opts, windowsVerbatimArguments: true },
+        );
+      } catch {
+        throw e;
+      }
     });
   }
   _onData(chunk) {
@@ -112,7 +184,7 @@ class StdioTransport {
       // A server that already exited has a destroyed stdin pipe: writing to it
       // throws or emits an async 'error'. Surface a clear rejection instead.
       if (this.child.exitCode !== null || this.child.signalCode !== null || !this.child.stdin.writable) {
-        reject(new Error(`server exited (code ${this.child.exitCode ?? 'signal'})`));
+        reject(this._exitError(this.child.exitCode ?? 'signal'));
         return;
       }
       const to = setTimeout(() => {
@@ -135,6 +207,20 @@ class StdioTransport {
   stop() {
     const child = this.child;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    // Windows: child.kill() only terminates the direct child, so a shim launch
+    // (cmd.exe → npx.cmd → node) would leave the server itself orphaned.
+    // taskkill /T walks the process tree.
+    if (process.platform === 'win32') {
+      const exe = process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\taskkill.exe` : 'taskkill';
+      try {
+        const tk = spawn(exe, ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
+        // if taskkill is itself unavailable, fall back to a plain kill
+        tk.on('error', () => { try { child.kill(); } catch { /* noop */ } });
+      } catch {
+        try { child.kill(); } catch { /* noop */ }
+      }
+      return;
+    }
     try { child.kill(); } catch { /* noop */ }
     // escalate if it ignores SIGTERM; unref so the timer never holds the loop
     const t = setTimeout(() => {

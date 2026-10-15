@@ -2,7 +2,7 @@
 // notifications, SIGKILL escalation, dead-pipe requests, config type guards.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,52 @@ test('mcp: connect budget caps a hung server (deadline clamps the per-call timeo
   client.stop();
 });
 
+test('mcp: a failing server reports the last stderr line, not just an exit code', async () => {
+  const client = new McpClient('kaboom', stdio({ FAKE_MCP_STDERR: 'Missing API key for provider anthropic' }));
+  await assert.rejects(
+    () => client.connect(),
+    /server exited \(code 9\): Missing API key for provider anthropic/,
+  );
+});
+
+// Windows-only: the documented config says "command": "npx" but .cmd shims
+// cannot be spawned directly — the launcher retries through cmd.exe.
+const winOnly = { skip: process.platform !== 'win32' ? 'Windows shim behaviour' : false };
+
+test('mcp: a bare .cmd shim on PATH launches through cmd.exe', winOnly, async () => {
+  const shimDir = mkdtempSync(join(tmpdir(), 'cowcat-shim-'));
+  const pidFile = join(shimDir, 'server.pid');
+  writeFileSync(join(shimDir, 'fake-mcp.cmd'), `@echo off\r\n"${process.execPath}" "${FIXTURE}" %*\r\n`);
+
+  const client = new McpClient('shim', {
+    command: 'fake-mcp', // no extension, exactly like "npx" in the docs
+    args: [],
+    env: { PATH: `${shimDir};${process.env.PATH}`, FAKE_MCP_PIDFILE: pidFile },
+  });
+  await client.connect();
+  assert.equal(client.tools.length, 3, 'the shim launched the real server');
+  const child = client.transport.child;
+  assert.equal(child.spawnfile, process.env.ComSpec || 'cmd.exe', 'launched via the command processor');
+
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  assert.ok(pid > 0, 'fixture recorded its pid');
+  client.stop();
+
+  // the server is a grandchild (cmd.exe -> node): killing only cmd.exe would
+  // leave it orphaned, so wait for the pid to actually disappear
+  let alive = true;
+  for (let i = 0; i < 40 && alive; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    try { process.kill(pid, 0); } catch { alive = false; }
+  }
+  assert.equal(alive, false, `grandchild pid ${pid} must be reaped with the tree`);
+});
+
+test('mcp: a genuinely missing command still reports the original launch error', winOnly, async () => {
+  const client = new McpClient('nope', { command: 'definitely-missing-cowcat-9f', args: [] });
+  await assert.rejects(() => client.connect(), /server exited \(code \d+\)|ENOENT/);
+});
+
 test('mcp: tools/list follows nextCursor and collects every page', async () => {
   process.env.FAKE_MCP_PAGE = '2'; // 3 tools served 2 + 1
   const client = new McpClient('paged', stdio({ FAKE_MCP_PAGE: '2' }));
@@ -52,7 +98,12 @@ test('mcp: SIGTERM then SIGKILL for a server that ignores SIGTERM', async () => 
     await client.connect();
     const child = client.transport.child;
     client.stop();
-    await new Promise((r) => setTimeout(r, 800));
+    // Windows has no catchable SIGTERM (stop() goes through taskkill there), so
+    // poll rather than assume a fixed delay.
+    const started = Date.now();
+    while (child.exitCode === null && child.signalCode === null && Date.now() - started < 3000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     assert.ok(
       child.exitCode !== null || child.signalCode !== null,
       'the stubborn child is gone after the SIGKILL escalation',
@@ -67,7 +118,10 @@ test('mcp: a request after the server exited rejects cleanly instead of writing 
   await client.connect();
   const child = client.transport.child;
   client.stop();
-  await new Promise((r) => setTimeout(r, 200));
+  const started = Date.now();
+  while (child.exitCode === null && child.signalCode === null && Date.now() - started < 3000) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
   assert.ok(child.exitCode !== null || child.signalCode !== null, 'server really exited');
   await assert.rejects(() => client.callTool('echo', { text: 'hi' }), /server exited|failed to write|EPIPE/);
 });

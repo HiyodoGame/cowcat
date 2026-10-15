@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Fake stdio MCP server for tests: initialize / tools/list / tools/call
 // / resources/list / resources/read.
+import { writeFileSync } from 'node:fs';
+
 const TOOLS = [
   { name: 'echo', description: 'Echo back the input text', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
   { name: 'boom', description: 'Always fails', inputSchema: { type: 'object', properties: {} } },
@@ -14,8 +16,17 @@ const RESOURCES = [
 //   FAKE_MCP_PAGE=<n>        serve tools/list in pages of n with nextCursor
 //   FAKE_MCP_IGNORE_SIGTERM  stay alive on SIGTERM (exercises SIGKILL escalation)
 //   FAKE_MCP_HANG_INIT       never answer initialize (exercises the connect budget)
+//   FAKE_MCP_PIDFILE=<path>  write our pid there (orphan checks after shutdown)
+//   FAKE_MCP_STDERR=<text>   print this to stderr, then exit 9 (startup failure)
 const PAGE = Number(process.env.FAKE_MCP_PAGE) || 0;
 if (process.env.FAKE_MCP_IGNORE_SIGTERM) process.on('SIGTERM', () => {});
+if (process.env.FAKE_MCP_PIDFILE) {
+  try { writeFileSync(process.env.FAKE_MCP_PIDFILE, String(process.pid)); } catch { /* best effort */ }
+}
+if (process.env.FAKE_MCP_STDERR) {
+  process.stderr.write(`${process.env.FAKE_MCP_STDERR}\n`);
+  process.exit(9);
+}
 let buf = '';
 process.stdin.on('data', (chunk) => {
   buf += chunk.toString('utf8');
