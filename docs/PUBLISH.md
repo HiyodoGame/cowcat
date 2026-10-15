@@ -76,6 +76,7 @@ npm publish --access=public   # 首次发布（scoped 公开包；package.json �
    cd agent && npm pack --pack-destination "$TEMP"   # 记下 shasum
    node -e "fetch('https://registry.npmjs.org/@corescense/cowcat/<版本>').then(r=>r.json()).then(j=>console.log(j.dist.shasum, j.dist.fileCount))"
    ```
+4. **`npm publish --dry-run` 会误报 `"bin[cowcat]" script name bin/cowcat.mjs was invalid and removed`**（v0.12.1 发布时踩到）。这是 npm 自身的措辞 bug：`@npmcli/package-json/lib/normalize.js:69-71` 在**只是把路径规范化**（`./bin/cowcat.mjs` → `bin/cowcat.mjs`）时也报 "invalid and removed"，而第 72 行紧接着把规范化后的值赋回去了——`bin` 并没有被删。两种验证方式都已实测：`npm pack` 解包后 `bin` 仍指向 `bin/cowcat.mjs`，隔离安装后 `node_modules/.bin/cowcat.cmd --version` 正常。把源头直接写成规范化后的形式（`"cowcat": "bin/cowcat.mjs"`）即可让这条警告消失，行为零变化。
 
 后续版本迭代：
 

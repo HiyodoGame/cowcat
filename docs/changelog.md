@@ -1,5 +1,60 @@
 # CowCat changelog
 
+## 0.12.1（2026-10-16）— MCP 能力补齐与 server→client 通道
+
+本版把 MCP 客户端从「只有请求-响应」补齐到「能收服务端主动消息」，并修掉一个 P1 互操作缺陷。三个小节的详细记录见下（第七/八/九轮）。
+
+- **P1 互操作修复**：服务器保持 SSE 流打开时（规范允许，keep-alive 代理也常见），每个 MCP 调用都要等满 `COWCAT_MCP_TIMEOUT`（默认 60s）才失败 → 改为增量解析、拿到匹配帧即返回（第七轮 D9，实测 3005ms → 3ms）。
+- **resources 分页**：`resources/list` 缺 cursor 循环，服务器分页时第 2 页起的资源对模型隐形（与 tools/list 那次的漏网同类）。
+- **prompts / resource templates**：MCP prompt 暴露为 `/mcp__<server>__<prompt>` 斜杠命令（含必填参数校验与 `/help` 提示）；`ListMcpResources` 列出 `template <uriTemplate>`（第八轮）。
+- **server→client 通道**：GET SSE 长连接 + 断线重连与 `Last-Event-ID` 复播（404/405 只探一次）、`logging/setLevel` 与日志呈现、`*/list_changed` 自动刷新工具、`resources/updated` 只在订阅过时提示、`SubscribeMcpResource` / `UnsubscribeMcpResource`、对 server 发起的请求回 `-32601`（第九轮）。
+- **只读分类修正**：`ListMcpResources` / `ReadMcpResource` 现在是只读工具（此前 plan 模式与未信任目录的 `-p` 连读 MCP 资源都会被拒，而 `Read` 是允许的）。
+
+### 第七轮（联调未覆盖面：keep-alive / resources / prompts）
+
+- **修复（P1 互操作）：服务器保持 SSE 流打开时，每个请求都要卡到超时才失败**（`src/mcp.js`）。`HttpTransport` 原本先 `await res.text()` 把整个 body 缓冲完才解析，而 SSE 流**允许在应答后保持打开**（keep-alive 注释帧、后续通知——官方 SDK 的 `keepAliveMs` 与任何保持连接的代理都是这个行为），于是「等流结束」等于「等一个已经回答完的服务器」。实测：官方 web-standard transport 开 `keepAliveMs` 时不受影响（它在应答后关流）；但对手写「应答后不关流」的服务器，请求 **3005ms 后 abort**（`COWCAT_MCP_TIMEOUT` 默认 60s）。改为**增量读取**：拿到 `id` 匹配的帧即刻返回并 `reader.cancel()`。同一场景实测 **3ms** 返回。新增回归测试（ReadableStream 只应答不关闭，断言 <1s 内返回）。
+- **resources 真实 server 侧验证通过**：官方 `@modelcontextprotocol/server-everything`（实现 tools/resources/templates/prompts/subscriptions）→ `resources/list` 返回 7 个资源、`resources/read` 返回真实内容（1604 字符）。此前这条只有 filesystem server 的 `Method not found` 错误路径。
+- **修 `resources/list` 缺少 cursor 分页**（与 tools/list 同类缺陷）：`listResources()` 现在循环 `nextCursor`（上限 50 页防游标循环）；fixture 增加 resources 分页开关，新增测试。
+- **实测出三个缺口（均有证据；属「未实现」而非「未验证」）**：① resource templates —— server 暴露 2 个 `demo://resource/dynamic/.../{resourceId}`，客户端只有 `resources/list`，模板资源对模型完全不可见；② prompts —— server 暴露 4 个 prompt，客户端**零处 `prompts/` 代码**，无 `prompts/list`/`prompts/get`；③ server→client 通道 —— 客户端只发 POST，从不打开 GET SSE 流，因此 `resources/subscribe`、`logging`、`*_list_changed` 永远收不到（`notifications/initialized` 是唯一的单向消息）。
+- 联调脚本新增 `agent/test/live/everything.mjs`、`keepalive.mjs`；5 个脚本全部通过。全量 565 passed / 0 failed。
+
+### 第八轮（把三个缺口里的两个补上）
+
+按用户选择，先补 **prompts** 与 **resource templates**（server→client 通道仍留待评估）。
+
+- **MCP prompts → 斜杠命令**：`/mcp__<server>__<prompt>`（与工具的命名空间一致，用户已熟悉的 `mcp__server__name` 形状）。客户端侧：`connect()` 现在从 initialize 结果取 capabilities（两个 transport 都回传 initialize 结果，此前 HTTP 路径丢弃），随后 `_listAllPrompts()` 发现 prompts（分页 + 容错：没这个 capability 的 server 回 `Method not found`，只是发现为空、绝不让连接失败）；`getPrompt()` 把返回的多条 message 展平成一条 user 消息，**非 user 角色加 `[assistant]` 标签**（不冒充模型说过的话）。bin 侧：启动与 `/mcp reconnect` 后重建 prompt→命令索引，派发时按声明顺序位置映射参数、缺必填参数本地报错（不发请求）、`/help` 列出带参数提示的命令、斜杠补全包含它们、连接横幅显示 `N tool(s), M prompt(s)`。
+- **resource templates 可列出**：`listResourceTemplates()`（分页 + 容错）并在 `ListMcpResources` 输出里以 `template <uriTemplate>` 追加，工具描述同步说明「模板不可枚举，用具体 URI 交给 ReadMcpResource」。
+- **测试**：fixture 新增 prompts（一个带必填参数、一个无参数）与 resource template、`prompts/list` 的错误路径（`FAKE_MCP_NO_PROMPTS`）；单测 3 项（发现+取值+角色标签、模板列出+进入 ListMcpResources、无 capability 不失败）；**piped REPL E2E 1 项**（`/mcp__fake__greet` 缺参报错、`/mcp__fake__greet World` 的文本真的进了模型请求、`/help` 列出命令）。联调脚本 `everything.mjs` 从「记录缺口」升级为断言：官方 server 的 2 个模板出现在 ListMcpResources、4 个 prompt 被发现、`prompts/get` 无参与带参（city/state）两条都取回内容。
+- 全量 569 passed / 0 failed。
+
+### 第九轮（server→client 通道）
+
+按用户确认的方案（`docs/mcp-server-channel-plan.md`）实现 server→client 通道。
+
+- **SSE 解析器抽出**（`src/sse.js`）：按空行分帧、多行 `data:` 用 `\n` 拼接、`id:`/`retry:` 字段、注释帧（`:` keepalive）、CRLF、跨块切帧、`flush()` 保留末尾无空行的帧。POST 响应体与 GET 长连接共用它——原来手写的行扫描会把多行 data 读成截断 JSON，并且把复播用的 id 直接丢掉。
+- **入站分发**（`src/mcp.js`）：`transport.onMessage` → `McpClient._handleServerMessage` → `onNotification(method, params)`。此前无 `id` 的消息在 **stdio 被丢弃**、在 HTTP POST 流里被注释成「nothing to hand back」直接跳过。
+- **GET SSE 长连接**：`startStream()` 在 connect 后打开（带 `mcp-session-id`）；断线按退避重连（首次 `COWCAT_MCP_STREAM_RETRY_MS`=1s、指数增长、上限 30s、最多 `COWCAT_MCP_STREAM_ATTEMPTS`=5 次），带 `Last-Event-ID` 复播；**404/405 表示 server 不提供该端点 → 只探一次不重试**；`stop()` 中止。退避计数只在「真的收到过帧」或「连接存活 ≥5s」时重置——否则一个「接受连接后立刻断开」的 server 会把每次尝试都当成功、无限重连（实现时踩到并修掉）。
+- **server 发起的请求**：`{id, method}` → `sampling/elicitation/roots` 回 `-32601`、`ping` 回 `{}`（HTTP 用 POST 回，stdio 写回管道）。不回应会让 server 一直等。
+- **`logging/setLevel`**：连接时若 server 声明 logging 能力就发一次（级别 `COWCAT_MCP_LOG_LEVEL`，默认 info）。规范允许 server 在客户端未设级别时保持沉默——不发这个请求，日志往往永远收不到。
+- **资源订阅**（catalog §15/§16）：新增 `SubscribeMcpResource` / `UnsubscribeMcpResource` 工具与 `src/mcpsubs.js` 登记表（id 形如 `mcp:<server>:<uri>`，退订可按 server/uri/id 任一维度）。订阅**先登记再发请求**：server 可能在订阅后立刻推第一条更新，先登记才不会把它当成「没订阅过的更新」丢掉（E2E 实测命中这个竞态）。
+- **通知呈现**（`src/mcpnotify.js`，纯函数可单测）：logging → 一行；`*/list_changed` → 自动刷新该 server 的工具/prompt（先注销再注册，500ms 内合并）；`resources/updated` → 只对订阅过的 URI 提示（带 reason）；progress/cancelled/未知 → 显式忽略。
+- **只读分类修正**：`ListMcpResources` / `ReadMcpResource` 加入 `READ_ONLY`——此前 plan 模式与未信任目录的 `-p` 连「读 MCP 资源」都会被拒，而 `Read` 是允许的。订阅类工具保持需授权。
+- **测试**：新增 `test/p5-server-channel.test.mjs` 21 项（SSE 解析、stdio/POST 通知分发、GET 流重连+Last-Event-ID+405 不重试+放弃后只报一次、server 请求应答、订阅能力校验与三维度退订、通知分类与呈现、只读分类），piped REPL E2E 2 项（logging 通知进终端 + `tools/list_changed` 刷新后模型看到新工具；模型经工具订阅后第一条 `resources/updated` 被正确归属）。fixture 增加 notification/subscribe/logging/extra-tool 等开关。
+- **联调**：新增 `agent/test/live/stream-channel.mjs`，对官方 SDK 的 Streamable HTTP server（配 in-memory event store）验证：GET 流带 session id、`setLevel` + logging 到达、`resources/subscribe` + `resources/updated`、连接后新增工具触发 `tools/list_changed` 且 `refresh()` 能看到、**断开连接后重连带 `Last-Event-ID` 并补发断线期间的通知**、`stop()` 彻底结束通道。6 个联调脚本全部通过。
+- 全量 592 passed / 0 failed。
+
+- **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
+- **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
+- **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
+- **P5 并行工具执行**：同一回合内无依赖的多个工具调用并发执行，并发上限 `maxParallelTools`（默认 4，config/env 可调），结果按调用顺序回拼、transcript 不乱序；usage 与错误逐工具聚合（`src/loop.js` executeToolUses）。
+- **P5 启动模型引用校验**：启动时校验 `provider/model` 引用，未命中已知目录时 toast/行模式提示最接近的可用引用（`src/modelhint.js`，自定义 endpoint 跳过目录校验的场景同样兜底）。
+- **右侧信息面板**：ctrl+b 或 `/panel` 开关，26 列右栏显示 Context 用量条（本地 estimateTokens + analyzeContext 估值，非网络探测）、模型 + effort、权限模式、MCP 服务器列表（带状态点）、当前 todos；<100 列终端自动隐藏回单列；切换状态持久化到 state.json（`panel` 键）并在会话内镜像。纯渲染在 `src/tui/sidebar.js`（renderSidebar/stitchSidebar/sidebarWidth），TuiUI 唯一收窄点 `_contentWidth()`，transcript/输入区/状态栏同步缩窄后拼接侧栏（`src/tui/ui.js`、`src/tui/keybind.js`、`bin/cowcat.mjs`、`src/config.js` STATE_KEYS）。
+- **错误卡片化**：Bash 非零退出渲染红色错误卡（标题含失败命令、红色 `✗ exit N` 行、collapseToolOutput 折叠输出尾部，ctrl+o 展开全文），行模式非零退出同样走红色边框卡；`!` 本地 shell 失败路径不再 raw dump，改为同款错误卡；provider/API 错误经 `src/errfmt.js` 解析（HTTP 状态 + 内嵌 JSON 错误体如 `{"error":{"code":"1211","message":"Unknown Model..."}}`，容忍尾部脏数据），TUI 里渲染 `apiError` 红色卡片（ctrl+o 看 raw 响应体），行模式输出 summary + 可操作提示 + 原文；已知场景提示：unknown model → /model 切换、401/403 → 查 API key、429 → 稍后重试、5xx → 服务端错误、网络 → 查 base URL/代理。
+- **审批卡升级**：卡片与 PermissionPrompt 显示将命中的权限规则（perrules.findMatch，deny>ask>allow 优先级），无匹配时显示「无匹配规则（默认：询问）」；新增 y/a/n 裸键快捷选择（pills ←→/enter/esc 不变），pill 标签带键位字母；loop.js 向 approve 透传 tool input。approve 异步契约与 plan 门不变。
+- **测试**：新增 `test/panel.test.mjs` 14 项（sidebar 纯渲染/自动隐藏/拼接、布局缩窄与整帧宽度、错误解析与提示、bash/apiError 错误卡、审批规则展示与 y/a/n）；P1/P2 新增 `test/p1-wave{1-4}`、`test/p2*`、`tooldelta`、`msgstream`、`reasoning` 共 74 项（思考链聚合/流式回调、工具 delta 生命周期与 pending 卡取代）；P4/P5 新增 `test/sandbox.test.mjs` 12 项（脱敏/分级/审计/持久化）、`test/parallel.test.mjs` 6 项（并发上限/保序/错误聚合）、`test/modelhint.test.mjs` 7 项；全量 533 passed / 0 failed。
+- **进程级 E2E 冒烟**：stub OpenAI 兼容 SSE server（`test/fixtures/stub-openai-server.mjs`）驱动 `cowcat -p -y` 全链路——reasoning_content delta → transcript thinking 块、Bash 执行、二次请求 tool_calls/tool 正确配对（思考块不回传）、audit.log 落审计行、模型引用警告提示，`-p` 与 `--output-format stream-json` 双模式 exit 0。
+- **E2E 修复**：print/line 模式回合末折叠思考卡改为扫描本回合全部 assistant 消息（同回合早前迭代的思考不再丢失）；loop 的 usage 聚合兼容 OpenAI 字段名（`prompt_tokens`/`completion_tokens`/`prompt_cache_hit_tokens`），openai provider 的 /cost 与 stream-json usage 恢复真实数值（`test/loop.test.mjs` 新增用例）。
+
 ## 0.12.0（2026-10-16）— P1–P5：思考链流式 / 工具增量 / 右侧面板 / 轻量沙箱 / 并行执行
 
 - **稳定性修复（摸底深挖批次）**：`-p` 模式在所有 return 路径（含 `--max-turns` 超限、`--output-schema` 失败）经 try/finally 统一执行子进程清理——修复「模型开了 `run_in_background` 任务后 CLI 挂起直到任务超时」的 CI 静默挂起；新增 SIGTERM 处理器（原来只有 SIGINT，docker stop/CI runner 杀进程时留下孤儿）；MCP stdio server 与后台 registry 纳入信号清理范围（`bin/cowcat.mjs`）。
@@ -72,51 +127,6 @@
 - **底栏提示写错键位含义**：状态栏右侧显示 `shift+tab agents`，但键位表里 `shift+tab` 是 `mode.switch`（act ↔ plan）——改成 `shift+tab act/plan`，注释同步。`test/footerbar.test.mjs` 此前把这个错文案断言了进去，一并改正（这正是「测试把错误固化下来」的例子）。
 - **发布链路：`npm publish` 报 ENEEDAUTH**。本机默认 registry 是 `registry.npmmirror.com`（只读镜像，不提供发布），而包要发到官方 registry。新增 `agent/.npmrc` 把 `@corescense` scope 指向 `https://registry.npmjs.org/`（用户级默认镜像保持不变，只影响本 scope）；`docs/PUBLISH.md` 补登录命令与说明。`npm publish --dry-run` 实测已发往 npmjs。
 - **未改代码**：截图里输入框 placeholder 显示成 `《? ress 》`，用 `buildInputBox` 在 40/80/120 列复现输出均正常（`▎ › Press ? for all keybindings`），判定为终端字体/宽度渲染，非代码问题。
-
-### 第七轮（联调未覆盖面：keep-alive / resources / prompts）
-
-- **修复（P1 互操作）：服务器保持 SSE 流打开时，每个请求都要卡到超时才失败**（`src/mcp.js`）。`HttpTransport` 原本先 `await res.text()` 把整个 body 缓冲完才解析，而 SSE 流**允许在应答后保持打开**（keep-alive 注释帧、后续通知——官方 SDK 的 `keepAliveMs` 与任何保持连接的代理都是这个行为），于是「等流结束」等于「等一个已经回答完的服务器」。实测：官方 web-standard transport 开 `keepAliveMs` 时不受影响（它在应答后关流）；但对手写「应答后不关流」的服务器，请求 **3005ms 后 abort**（`COWCAT_MCP_TIMEOUT` 默认 60s）。改为**增量读取**：拿到 `id` 匹配的帧即刻返回并 `reader.cancel()`。同一场景实测 **3ms** 返回。新增回归测试（ReadableStream 只应答不关闭，断言 <1s 内返回）。
-- **resources 真实 server 侧验证通过**：官方 `@modelcontextprotocol/server-everything`（实现 tools/resources/templates/prompts/subscriptions）→ `resources/list` 返回 7 个资源、`resources/read` 返回真实内容（1604 字符）。此前这条只有 filesystem server 的 `Method not found` 错误路径。
-- **修 `resources/list` 缺少 cursor 分页**（与 tools/list 同类缺陷）：`listResources()` 现在循环 `nextCursor`（上限 50 页防游标循环）；fixture 增加 resources 分页开关，新增测试。
-- **实测出三个缺口（均有证据；属「未实现」而非「未验证」）**：① resource templates —— server 暴露 2 个 `demo://resource/dynamic/.../{resourceId}`，客户端只有 `resources/list`，模板资源对模型完全不可见；② prompts —— server 暴露 4 个 prompt，客户端**零处 `prompts/` 代码**，无 `prompts/list`/`prompts/get`；③ server→client 通道 —— 客户端只发 POST，从不打开 GET SSE 流，因此 `resources/subscribe`、`logging`、`*_list_changed` 永远收不到（`notifications/initialized` 是唯一的单向消息）。
-- 联调脚本新增 `agent/test/live/everything.mjs`、`keepalive.mjs`；5 个脚本全部通过。全量 565 passed / 0 failed。
-
-### 第八轮（把三个缺口里的两个补上）
-
-按用户选择，先补 **prompts** 与 **resource templates**（server→client 通道仍留待评估）。
-
-- **MCP prompts → 斜杠命令**：`/mcp__<server>__<prompt>`（与工具的命名空间一致，用户已熟悉的 `mcp__server__name` 形状）。客户端侧：`connect()` 现在从 initialize 结果取 capabilities（两个 transport 都回传 initialize 结果，此前 HTTP 路径丢弃），随后 `_listAllPrompts()` 发现 prompts（分页 + 容错：没这个 capability 的 server 回 `Method not found`，只是发现为空、绝不让连接失败）；`getPrompt()` 把返回的多条 message 展平成一条 user 消息，**非 user 角色加 `[assistant]` 标签**（不冒充模型说过的话）。bin 侧：启动与 `/mcp reconnect` 后重建 prompt→命令索引，派发时按声明顺序位置映射参数、缺必填参数本地报错（不发请求）、`/help` 列出带参数提示的命令、斜杠补全包含它们、连接横幅显示 `N tool(s), M prompt(s)`。
-- **resource templates 可列出**：`listResourceTemplates()`（分页 + 容错）并在 `ListMcpResources` 输出里以 `template <uriTemplate>` 追加，工具描述同步说明「模板不可枚举，用具体 URI 交给 ReadMcpResource」。
-- **测试**：fixture 新增 prompts（一个带必填参数、一个无参数）与 resource template、`prompts/list` 的错误路径（`FAKE_MCP_NO_PROMPTS`）；单测 3 项（发现+取值+角色标签、模板列出+进入 ListMcpResources、无 capability 不失败）；**piped REPL E2E 1 项**（`/mcp__fake__greet` 缺参报错、`/mcp__fake__greet World` 的文本真的进了模型请求、`/help` 列出命令）。联调脚本 `everything.mjs` 从「记录缺口」升级为断言：官方 server 的 2 个模板出现在 ListMcpResources、4 个 prompt 被发现、`prompts/get` 无参与带参（city/state）两条都取回内容。
-- 全量 569 passed / 0 failed。
-
-### 第九轮（server→client 通道）
-
-按用户确认的方案（`docs/mcp-server-channel-plan.md`）实现 server→client 通道。
-
-- **SSE 解析器抽出**（`src/sse.js`）：按空行分帧、多行 `data:` 用 `\n` 拼接、`id:`/`retry:` 字段、注释帧（`:` keepalive）、CRLF、跨块切帧、`flush()` 保留末尾无空行的帧。POST 响应体与 GET 长连接共用它——原来手写的行扫描会把多行 data 读成截断 JSON，并且把复播用的 id 直接丢掉。
-- **入站分发**（`src/mcp.js`）：`transport.onMessage` → `McpClient._handleServerMessage` → `onNotification(method, params)`。此前无 `id` 的消息在 **stdio 被丢弃**、在 HTTP POST 流里被注释成「nothing to hand back」直接跳过。
-- **GET SSE 长连接**：`startStream()` 在 connect 后打开（带 `mcp-session-id`）；断线按退避重连（首次 `COWCAT_MCP_STREAM_RETRY_MS`=1s、指数增长、上限 30s、最多 `COWCAT_MCP_STREAM_ATTEMPTS`=5 次），带 `Last-Event-ID` 复播；**404/405 表示 server 不提供该端点 → 只探一次不重试**；`stop()` 中止。退避计数只在「真的收到过帧」或「连接存活 ≥5s」时重置——否则一个「接受连接后立刻断开」的 server 会把每次尝试都当成功、无限重连（实现时踩到并修掉）。
-- **server 发起的请求**：`{id, method}` → `sampling/elicitation/roots` 回 `-32601`、`ping` 回 `{}`（HTTP 用 POST 回，stdio 写回管道）。不回应会让 server 一直等。
-- **`logging/setLevel`**：连接时若 server 声明 logging 能力就发一次（级别 `COWCAT_MCP_LOG_LEVEL`，默认 info）。规范允许 server 在客户端未设级别时保持沉默——不发这个请求，日志往往永远收不到。
-- **资源订阅**（catalog §15/§16）：新增 `SubscribeMcpResource` / `UnsubscribeMcpResource` 工具与 `src/mcpsubs.js` 登记表（id 形如 `mcp:<server>:<uri>`，退订可按 server/uri/id 任一维度）。订阅**先登记再发请求**：server 可能在订阅后立刻推第一条更新，先登记才不会把它当成「没订阅过的更新」丢掉（E2E 实测命中这个竞态）。
-- **通知呈现**（`src/mcpnotify.js`，纯函数可单测）：logging → 一行；`*/list_changed` → 自动刷新该 server 的工具/prompt（先注销再注册，500ms 内合并）；`resources/updated` → 只对订阅过的 URI 提示（带 reason）；progress/cancelled/未知 → 显式忽略。
-- **只读分类修正**：`ListMcpResources` / `ReadMcpResource` 加入 `READ_ONLY`——此前 plan 模式与未信任目录的 `-p` 连「读 MCP 资源」都会被拒，而 `Read` 是允许的。订阅类工具保持需授权。
-- **测试**：新增 `test/p5-server-channel.test.mjs` 21 项（SSE 解析、stdio/POST 通知分发、GET 流重连+Last-Event-ID+405 不重试+放弃后只报一次、server 请求应答、订阅能力校验与三维度退订、通知分类与呈现、只读分类），piped REPL E2E 2 项（logging 通知进终端 + `tools/list_changed` 刷新后模型看到新工具；模型经工具订阅后第一条 `resources/updated` 被正确归属）。fixture 增加 notification/subscribe/logging/extra-tool 等开关。
-- **联调**：新增 `agent/test/live/stream-channel.mjs`，对官方 SDK 的 Streamable HTTP server（配 in-memory event store）验证：GET 流带 session id、`setLevel` + logging 到达、`resources/subscribe` + `resources/updated`、连接后新增工具触发 `tools/list_changed` 且 `refresh()` 能看到、**断开连接后重连带 `Last-Event-ID` 并补发断线期间的通知**、`stop()` 彻底结束通道。6 个联调脚本全部通过。
-- 全量 592 passed / 0 failed。
-
-- **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
-- **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
-- **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。
-- **P5 并行工具执行**：同一回合内无依赖的多个工具调用并发执行，并发上限 `maxParallelTools`（默认 4，config/env 可调），结果按调用顺序回拼、transcript 不乱序；usage 与错误逐工具聚合（`src/loop.js` executeToolUses）。
-- **P5 启动模型引用校验**：启动时校验 `provider/model` 引用，未命中已知目录时 toast/行模式提示最接近的可用引用（`src/modelhint.js`，自定义 endpoint 跳过目录校验的场景同样兜底）。
-- **右侧信息面板**：ctrl+b 或 `/panel` 开关，26 列右栏显示 Context 用量条（本地 estimateTokens + analyzeContext 估值，非网络探测）、模型 + effort、权限模式、MCP 服务器列表（带状态点）、当前 todos；<100 列终端自动隐藏回单列；切换状态持久化到 state.json（`panel` 键）并在会话内镜像。纯渲染在 `src/tui/sidebar.js`（renderSidebar/stitchSidebar/sidebarWidth），TuiUI 唯一收窄点 `_contentWidth()`，transcript/输入区/状态栏同步缩窄后拼接侧栏（`src/tui/ui.js`、`src/tui/keybind.js`、`bin/cowcat.mjs`、`src/config.js` STATE_KEYS）。
-- **错误卡片化**：Bash 非零退出渲染红色错误卡（标题含失败命令、红色 `✗ exit N` 行、collapseToolOutput 折叠输出尾部，ctrl+o 展开全文），行模式非零退出同样走红色边框卡；`!` 本地 shell 失败路径不再 raw dump，改为同款错误卡；provider/API 错误经 `src/errfmt.js` 解析（HTTP 状态 + 内嵌 JSON 错误体如 `{"error":{"code":"1211","message":"Unknown Model..."}}`，容忍尾部脏数据），TUI 里渲染 `apiError` 红色卡片（ctrl+o 看 raw 响应体），行模式输出 summary + 可操作提示 + 原文；已知场景提示：unknown model → /model 切换、401/403 → 查 API key、429 → 稍后重试、5xx → 服务端错误、网络 → 查 base URL/代理。
-- **审批卡升级**：卡片与 PermissionPrompt 显示将命中的权限规则（perrules.findMatch，deny>ask>allow 优先级），无匹配时显示「无匹配规则（默认：询问）」；新增 y/a/n 裸键快捷选择（pills ←→/enter/esc 不变），pill 标签带键位字母；loop.js 向 approve 透传 tool input。approve 异步契约与 plan 门不变。
-- **测试**：新增 `test/panel.test.mjs` 14 项（sidebar 纯渲染/自动隐藏/拼接、布局缩窄与整帧宽度、错误解析与提示、bash/apiError 错误卡、审批规则展示与 y/a/n）；P1/P2 新增 `test/p1-wave{1-4}`、`test/p2*`、`tooldelta`、`msgstream`、`reasoning` 共 74 项（思考链聚合/流式回调、工具 delta 生命周期与 pending 卡取代）；P4/P5 新增 `test/sandbox.test.mjs` 12 项（脱敏/分级/审计/持久化）、`test/parallel.test.mjs` 6 项（并发上限/保序/错误聚合）、`test/modelhint.test.mjs` 7 项；全量 533 passed / 0 failed。
-- **进程级 E2E 冒烟**：stub OpenAI 兼容 SSE server（`test/fixtures/stub-openai-server.mjs`）驱动 `cowcat -p -y` 全链路——reasoning_content delta → transcript thinking 块、Bash 执行、二次请求 tool_calls/tool 正确配对（思考块不回传）、audit.log 落审计行、模型引用警告提示，`-p` 与 `--output-format stream-json` 双模式 exit 0。
-- **E2E 修复**：print/line 模式回合末折叠思考卡改为扫描本回合全部 assistant 消息（同回合早前迭代的思考不再丢失）；loop 的 usage 聚合兼容 OpenAI 字段名（`prompt_tokens`/`completion_tokens`/`prompt_cache_hit_tokens`），openai provider 的 /cost 与 stream-json usage 恢复真实数值（`test/loop.test.mjs` 新增用例）。
 
 ## 0.11.0（2026-10-15）— TUI 视觉改版：弹出式斜杠菜单、chips 状态栏、极简输入框、工具块新标题
 
