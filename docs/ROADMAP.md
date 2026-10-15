@@ -13,15 +13,15 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.12.0 已发布，563 tests 全绿 + ESLint 门禁）
+## 1. 现状快照（v0.12.1 已发布；0.13.0 未发布：655 tests 全绿 + ESLint 门禁）
 
 > v0.12.0 发布收尾过程中另修：MCP 握手的 `clientInfo.version` 从硬编码 `0.5.0` 改为读 `package.json`（单一版本源）；`Glob` 的 `path` 参数崩溃与 `/output-style` 未接线（见 `docs/fix-plan-2026-10-15.md` 第六轮）。
 
-**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（v0.10.0 全面翻新：字素宽度测量 CJK/emoji 对齐、终端能力探测、语义色 token 双主题 /theme 即时生效、帧 diff 渲染 + 条目缓存、流式 markdown 渲染、六语言语法高亮、用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻、审批卡 diff 预览、圆角输入框 + placeholder + 状态栏提示、LineEditor 完整编辑键、Tab/@ 补全；内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large、v0.12.0 新增：OpenAI 兼容 provider 思考链流式（reasoning_content/reasoning → 本地 thinking 块，不回传上游）、工具调用 delta 实时 pending 卡、右侧面板（ctrl+b / /panel）、错误卡片化 + API 错误提示（src/errfmt.js）、并行工具执行（maxParallelTools 默认 4、结果保序）、启动模型引用校验提示（src/modelhint.js）、轻量 Bash 沙箱（见下）。
+**已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、28 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（v0.10.0 全面翻新：字素宽度测量 CJK/emoji 对齐、终端能力探测、语义色 token 双主题 /theme 即时生效、帧 diff 渲染 + 条目缓存、流式 markdown 渲染、六语言语法高亮、用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻、审批卡 diff 预览、圆角输入框 + placeholder + 状态栏提示、LineEditor 完整编辑键、Tab/@ 补全；内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large 与多模态 Read（图片/PDF/notebook）+ NotebookEdit（0.13.0）、v0.12.0 新增：OpenAI 兼容 provider 思考链流式（reasoning_content/reasoning → 本地 thinking 块，不回传上游）、工具调用 delta 实时 pending 卡、右侧面板（ctrl+b / /panel）、错误卡片化 + API 错误提示（src/errfmt.js）、并行工具执行（maxParallelTools 默认 4、结果保序）、启动模型引用校验提示（src/modelhint.js）、轻量 Bash 沙箱（见下）。
 
 **沙箱（v0.12.0，light 档）**：secret 脱敏 env + 静态命令分级 + `~/.cowcat/audit.log` 审计追踪，`/sandbox off|light` 切换、Bash 卡 `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——无系统级隔离，不抵御恶意命令，只防误操作与留审计痕迹；系统级沙箱（容器/命名空间）仍未做。
 
-**整块缺失**（对照 2.1.55/2.1.296 功能面）：Read 多模态（图片/PDF/notebook 读取）、bypassPermissions 权限档、NotebookEdit、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）、系统级 Bash 沙箱（见上方威胁模型说明）。
+**整块缺失**（对照 2.1.55/2.1.296 功能面）：bypassPermissions 权限档、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）、系统级 Bash 沙箱（见上方威胁模型说明）。
 
 ## 2. P0 — 核心闭环补全（修 bug + 堵窟窿）
 
@@ -77,7 +77,8 @@
 | P3-3 | 定时唤醒 | CronCreate/CronDelete/CronList + ScheduleWakeup | 会话内定时任务与唤醒调度，支撑周期性检查与长任务轮询 | ✅ |
 | P3-4 | MCP resources | ListMcpResources/ReadMcpResource | 静态资源 list/read ✅ + resource templates 在 ListMcpResources 中列出 ✅ + prompts 作为 `/mcp__<server>__<prompt>` 斜杠命令 ✅（第八轮）+ 资源订阅 `SubscribeMcpResource`/`UnsubscribeMcpResource` ✅ + server→client 通道（GET SSE 长连接、logging、`*/list_changed` 自动刷新、`resources/updated`、断线重连与 `Last-Event-ID`）✅（第九轮）；sampling/elicitation/roots 仍只回 `-32601`，`SubscribePolling` 未做——见 `docs/fix-plan-2026-10-15.md` 第七至九轮 | ✅ |
 | P3-5 | Agent 异步与思考档位 | Agent 工具 run_in_background + effort 五档 | 子代理后台派发不阻塞主循环；低/中/高/极高思考档位透传 | ✅ |
-| P3-6 | Read 大文件/多模态 | Read allow_large、图片读取 | allow_large 大文件 opt-in 直读已完成；图片/PDF/notebook 多模态读取未做（低优先） | ◐ 部分 |
+| P3-6 | Read 大文件/多模态 | Read allow_large、图片/PDF/notebook 读取 | allow_large 大文件 opt-in 直读 ✅；图片（png/jpeg/gif/webp）作为图片块交给模型 ✅ + PDF（Anthropic 原生 `document` 块 / OpenAI 兼容 best-effort 文本抽取）✅ + `.ipynb` 按单元格渲染 ✅（0.13.0）；视觉门控用目录 `attachment` 标记 + `COWCAT_VISION` 覆盖 ✅；notebook output 内嵌图片仍只标注不上传（见 `docs/read-multimodal-plan.md` §1 后置项） | ✅ |
+| P3-7 | NotebookEdit | 原版 NotebookEdit | `.ipynb` 按 cell 索引 replace/insert/delete + cell_type 切换、保持原有格式、先读后写约束、审批卡渲染后 diff、checkpoint、plan 拒绝、acceptEdits 自动接受（0.13.0） | ✅ |
 
 ## 4.6 P4 — TUI 全面翻新
 

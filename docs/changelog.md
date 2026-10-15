@@ -1,5 +1,21 @@
 # CowCat changelog
 
+## 0.13.0（2026-10-16，未发布）— Read 多模态（图片 / PDF / notebook）+ NotebookEdit
+
+对标本轮 ROADMAP「整块缺失」里的 Read 多模态与 NotebookEdit。方案与取舍见 `docs/read-multimodal-plan.md`。
+
+- **`Read` 支持图片**：png/jpeg/gif/webp 经魔数嗅探后作为图片块交给模型（`src/imageinfo.js` 解析尺寸、`src/attach.js` 在**发请求那一刻**才读盘转 base64）。上限 5MB；bmp/tiff/ico/avif/heic 明确拒绝并提示转换；内容优先于扩展名（`.png` 里是文本→按文本读，二进制内容配图片名→拒绝并说明）。
+- **`Read` 支持 PDF**：Anthropic 协议走原生 `document` 块；OpenAI 兼容协议走新增的 `src/pdftext.js` best-effort 文本抽取（zlib inflate + 文本操作符扫描 + 质量门：抽出的可打印文本不足或乱码比例过高时，返回可操作报错而不是喂乱码）。上限 10MB。
+- **`Read` 支持 `.ipynb`**：`src/notebook.js` 按单元格渲染（`--- cell [n] type ---` + 编号源码 + `--- output [n.m] ---`）；输出里的图片只标注大小不上传（附件必须带文件路径，见下）。
+- **新增 `NotebookEdit`**：按 cell 索引 `replace`/`insert`/`delete`，可改 `cell_type`；保持文件原有缩进/换行/末尾换行（未变的单元格 deep-equal）；沿用 Edit 的「先 Read 后写」约束，纳入审批卡（diff 以渲染后的单元格呈现）/写前 checkpoint/plan 模式拒绝/acceptEdits 自动接受（`src/tools/notebookedit.js`、`src/notebook.js`、`src/loop.js`、`src/permissions.js`、`src/perrules.js`）。
+- **附件只存引用**：工具结果新增可选的 `attachments`（路径 + mediaType + bytes + token 估算），base64 永不进会话 JSONL / `/export` / compact 摘要 / `/context`；文件事后被删或变大则降级为一行占位文案，不让请求失败。恢复会话时引用随会话回放，重新读盘（`src/attach.js`、`src/llm/anthropic.js`、`src/llm/openai.js`）。
+- **视觉能力门控**：按 `assets/providers.json` 每模型已有的 `attachment` 标记判断（此前从未被消费）；`attachment: false` 的模型 Read 直接拒绝并给出两条出路，模型不在目录里则先尝试；上游报错经 `src/errfmt.js` 新增的 `visionUnsupported` hint 翻译成「该模型可能不支持图片输入」；`COWCAT_VISION=force|off` 可覆盖（`src/vision.js`）。
+- **修复（P1，既有缺陷）：OpenAI 兼容协议下用户输入根本没发给模型**。`toOpenAIMessages` 把 `content` 一律当块数组遍历，而用户 prompt、compact 续接消息、子代理 prompt 的 `content` 都是**字符串** —— 逐字符迭代后匹配不到任何块，整条消息被静默丢弃。用 stub OpenAI server 实测：请求体里只有 system + 日期 reminder，用户的 prompt 完全不出现（Kimi Code 走 Anthropic 协议，所以此前真实冒烟没暴露）。修复为字符串 content 原样透传，并加线级回归测试（`src/llm/openai.js`）。
+- **修复（P1，既有缺陷）：compact 摘要里用户的请求全部消失**。`renderForCompact` 有同样的「字符串当块数组」错误，`{role:'user',content:'请修复登录 bug'}` 被渲染成空的 `<user></user>` —— summarizer 看不到任何用户原话。修复为 `blocksOf()` 统一归一化，`collectReadFiles` 同步（`src/prompts/compact.js`）。
+- **小修**：OpenAI 线格式里同一轮的多个文本块改用 `join('\n')`，此前 reminder 与用户输入被粘成一行（`</system-reminder>用户输入`）；图片 token 估算改为先按 Anthropic 规则把长边缩到 1568px 再套 `w*h/750`（真实壁纸抽样的 3840x1200 截图原来高估到 6144，实际约 1025）。
+
+验证：`npm test` 655 passed / 0 failed（新增 63 项：`test/read-multimodal.test.mjs` 32、`test/llm-attachments.test.mjs` 16、`test/notebook.test.mjs` 15）；6 个 MCP 联调脚本全绿；端到端用 stub OpenAI server 复验修复前后行为。真实视觉模型/PDF 冒烟需凭据，未跑。
+
 ## 0.12.1（2026-10-16）— MCP 能力补齐与 server→client 通道
 
 本版把 MCP 客户端从「只有请求-响应」补齐到「能收服务端主动消息」，并修掉一个 P1 互操作缺陷。三个小节的详细记录见下（第七/八/九轮）。
