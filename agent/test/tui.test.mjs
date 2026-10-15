@@ -144,6 +144,79 @@ test('TUI wiring: bin must start the TUI (regression — missing tui.start() exi
   assert.match(src, /\btui\.start\(\)/, 'bin/cowcat.mjs must call tui.start() after constructing TuiUI');
 });
 
+test('TUI wiring: every host callback the UI invokes is wired in bin (or explicitly optional)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const tuiSrc = readFileSync(join(AGENT_ROOT, 'src', 'tui', 'ui.js'), 'utf8');
+  const plainSrc = readFileSync(join(AGENT_ROOT, 'src', 'ui.js'), 'utf8');
+  const binSrc = readFileSync(join(AGENT_ROOT, 'bin', 'cowcat.mjs'), 'utf8');
+
+  // Callbacks the host deliberately leaves unset. Every entry needs a reason and
+  // a fallback inside the UI, otherwise the user gets a dead key / dead hook.
+  const OPTIONAL_BY_DESIGN = {
+    onPickSession: 'TuiUI prints the "cowcat -r <id>" hint instead of taking the pick',
+  };
+  // Freeze the set: adding a callback must be a deliberate act (wire it, or list
+  // it above with a reason).
+  const EXPECTED = ['onInterrupt', 'onModelPick', 'onPickSession', 'onShiftTab', 'onTogglePanel'];
+
+  const declarations = (src) => new Set([...src.matchAll(/^\s*this\.(on[A-Z]\w*)\s*=/gm)].map((m) => m[1]));
+  const declarationsTui = declarations(tuiSrc);
+  const declarationsPlain = declarations(plainSrc);
+
+  assert.deepEqual(
+    [...declarationsTui].sort(),
+    EXPECTED,
+    'the TuiUI callback set changed — wire the new callback in bin and update this list',
+  );
+
+  // A declaration nobody calls is dead weight (or a half-finished feature).
+  const invocations = (src) => {
+    const called = new Set();
+    for (const re of [
+      /this\.(on[A-Z]\w*)\s*\?\.\s*\(/g,        // this.onX?.()
+      /typeof this\.(on[A-Z]\w*)\s*===/g,       // if (typeof this.onX === 'function') …
+      /this\.(on[A-Z]\w*)\(/g,                  // this.onX(arg)
+    ]) for (const m of src.matchAll(re)) called.add(m[1]);
+    return called;
+  };
+  const invokedTui = invocations(tuiSrc);
+  for (const name of declarationsTui) {
+    assert.ok(invokedTui.has(name), `${name} is declared but never invoked — remove it or call it`);
+  }
+  for (const name of declarationsPlain) {
+    assert.ok(invocations(plainSrc).has(name), `${name} is declared but never invoked in src/ui.js`);
+  }
+
+  // bin's side of the pairing: a constructor option, or a late assignment.
+  const tuiOptions = (() => {
+    const at = binSrc.indexOf('new TuiUI(');
+    assert.ok(at >= 0, 'new TuiUI( not found in bin/cowcat.mjs');
+    let i = binSrc.indexOf('{', at);
+    let depth = 0;
+    for (; i < binSrc.length; i++) {
+      if (binSrc[i] === '{') depth++;
+      else if (binSrc[i] === '}' && --depth === 0) break;
+    }
+    return binSrc.slice(at, i);
+  })();
+
+  const unwired = [...declarationsTui].filter((name) => {
+    if (OPTIONAL_BY_DESIGN[name]) return false;
+    const asOption = new RegExp(`(^|[\\s{,])${name}\\s*:`, 'm').test(tuiOptions);
+    const assigned = new RegExp(`\\btui\\.${name}\\s*=`).test(binSrc);
+    return !asOption && !assigned;
+  });
+  assert.deepEqual(unwired, [], `bin/cowcat.mjs never wires: ${unwired.join(', ')}`);
+
+  // the reverse direction: a typo'd assignment in bin must not go unnoticed
+  for (const m of binSrc.matchAll(/\btui\.(on[A-Z]\w*)\s*=/g)) {
+    assert.ok(declarationsTui.has(m[1]), `bin assigns tui.${m[1]}, which TuiUI does not declare`);
+  }
+  for (const m of binSrc.matchAll(/\bui\.(on[A-Z]\w*)\s*=/g)) {
+    assert.ok(declarationsPlain.has(m[1]), `bin assigns ui.${m[1]}, which src/ui.js does not declare`);
+  }
+});
+
 test('TUI wiring: bin must assign onShiftTab (regression — the key was bound and dispatched, never wired)', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(join(AGENT_ROOT, 'bin', 'cowcat.mjs'), 'utf8');

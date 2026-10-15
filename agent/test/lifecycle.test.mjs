@@ -237,6 +237,43 @@ test('-p with a run_in_background Bash exits promptly instead of hanging on the 
   }
 });
 
+// Slash commands are only reachable through the REPL, so no unit test touched
+// them — which is how `writeState` stayed an unimported identifier that bin
+// called from /panel and /sandbox (/sandbox off killed the CLI with a
+// ReferenceError). Drive the non-network commands through a piped session.
+test('REPL: safe slash commands run to completion (regression — /sandbox hit an undefined identifier)', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+  const cmds = [
+    '/status', '/cost', '/context', '/todos', '/tasks', '/agents', '/skills',
+    '/permissions', '/hooks', '/mcp', '/diff', '/output', '/model', '/thinking',
+    '/panel',        // TUI-only: must degrade with a message, never crash
+    '/sandbox off',  // both of these used to throw `writeState is not defined`
+    '/sandbox light',
+    '/theme light', '/clear', '/help', '/exit',
+  ];
+  const env = {
+    COWCAT_HOME: home,
+    COWCAT_PROVIDER: 'anthropic',
+    COWCAT_API_KEY: '',                     // no key: probe skipped, no network
+    COWCAT_BASE_URL: 'http://127.0.0.1:9',  // never contacted without a key
+    COWCAT_MODEL: 'fake-model',
+    COWCAT_ANIMATION: 'off',
+  };
+  // leading "y" answers the untrusted-dir prompt so it cannot eat a command line
+  const res = await spawnCli([], env, `y\n${cmds.join('\n')}\n`, 30000);
+
+  assert.equal(res.code, 0, `exit code ${res.code}\nstderr: ${res.err}`);
+  assert.doesNotMatch(res.err, /ReferenceError|is not defined|TypeError/,
+    'an undefined identifier must not reach the REPL');
+  assert.doesNotMatch(res.out, /ReferenceError|is not defined/);
+
+  assert.match(res.out, /sandbox: light/, '/sandbox reported the new mode');
+  assert.match(res.out, /panel/i, '/panel degraded with a message in line mode');
+  const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
+  assert.equal(state.sandbox, 'light', '/sandbox persisted through writeState');
+  assert.equal(state.theme, 'light', '/theme persisted through persistTheme');
+});
+
 test('-p fires due cron jobs before the user prompt; stdout keeps only the answer', async () => {
   const { server, port, state } = await keyServer();
   try {
