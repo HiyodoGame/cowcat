@@ -65,7 +65,7 @@ test('footerbar: promptFooterLayout keeps usage+shortcuts only within the budget
 
 test('footerbar: footerLine drops info segments right-to-left under width pressure', () => {
   const base = { left: '~/repo:main', chips: ['act'], right: '/repo' };
-  const info = ['12.3k (12%)', '$0.42', 'shift+tab agents · ctrl+p commands'];
+  const info = ['12.3k (12%)', '$0.42', 'shift+tab act/plan · ctrl+p commands'];
   const wide = footerLine({ width: 100, ...base, info });
   assert.equal(wide.dropped.length, 0);
   for (const seg of info) assert.ok(strip(wide.line).includes(seg), `wide row keeps ${seg}`);
@@ -126,7 +126,7 @@ test('footerbar: status bar — idle dir left, info right, hints degrade when na
   assert.ok(strip(tui._status()).includes('~/repo:main'), 'a resolved branch appends as :branch');
   tui._branch = '-';
   assert.ok(strip(tui._status()).includes('(0%)'), 'context usage segment shows the percentage');
-  assert.ok(s.includes('shift+tab') && s.includes('agents') && s.includes('ctrl+p') && s.includes('commands'), 'key hints present when wide');
+  assert.ok(s.includes('shift+tab') && s.includes('act/plan') && s.includes('ctrl+p') && s.includes('commands'), 'key hints present when wide');
   assert.ok(s.trimStart().startsWith('~/repo'), 'cwd cluster anchors the LEFT (dedup: no second cwd on the right)');
   assert.ok(!s.trimEnd().endsWith('/home/cat/repo'), 'cwd not repeated as the right anchor');
   tui.close();

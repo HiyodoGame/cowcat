@@ -1518,7 +1518,7 @@ export class TuiUI {
   // Status bar (the only status row, Open Code layout):
   //   left  = `~/dir:branch` (muted) — or the spinner + `esc interrupt` while
   //           the model is streaming (esc arms the double-press interrupt)
-  //   right = `tokens (pct)` · `$cost` · `shift+tab agents · ctrl+p commands`
+  //   right = `tokens (pct)` · `$cost` · `shift+tab act/plan · ctrl+p commands`
   //           (dropping right-to-left under width pressure; segments with no
   //           real data are omitted, never faked)
   // The model lives only in the metadata row; cwd only in the left cluster.
@@ -1540,7 +1540,7 @@ export class TuiUI {
     const costNum = Number(cost);
     if (cost && Number.isFinite(costNum)) info.push(dim(formatCost(costNum)));
     info.push(
-      `${this.color(this.theme.brand, 'shift+tab')} ${dim('agents')}`
+      `${this.color(this.theme.brand, 'shift+tab')} ${dim('act/plan')}`
       + ` · ${this.color(this.theme.brand, 'ctrl+p')} ${dim('commands')}`,
     );
 

@@ -64,6 +64,15 @@
 
 全量 563 passed / 0 failed（561 + Glob 1 + output-style 1）。
 
+### 截图复核修正（并入 v0.12.0，未发布前）
+
+用户运行 v0.12.0 的截图暴露两处界面与状态不一致，另修发布会话链路问题：
+
+- **`/status` 在 `/act` 放行后仍称 read-only**：`folder trusted: no (read-only)` 只看持久信任（`isTrustedProject`），而 `/act` 在未信任目录下是**会话级放行**（`restricted = false`）——刚提示「unblocked for this session only」紧接着又报只读，自相矛盾。`formatStatus` 增加 `restricted` 参数，未信任时区分 `no (read-only)` 与 `no (unblocked for this session)`；bin 传入实时标志。测试补三种情形（未信任只读 / 本会话放行 / 持久信任）。
+- **底栏提示写错键位含义**：状态栏右侧显示 `shift+tab agents`，但键位表里 `shift+tab` 是 `mode.switch`（act ↔ plan）——改成 `shift+tab act/plan`，注释同步。`test/footerbar.test.mjs` 此前把这个错文案断言了进去，一并改正（这正是「测试把错误固化下来」的例子）。
+- **发布链路：`npm publish` 报 ENEEDAUTH**。本机默认 registry 是 `registry.npmmirror.com`（只读镜像，不提供发布），而包要发到官方 registry。新增 `agent/.npmrc` 把 `@corescense` scope 指向 `https://registry.npmjs.org/`（用户级默认镜像保持不变，只影响本 scope）；`docs/PUBLISH.md` 补登录命令与说明。`npm publish --dry-run` 实测已发往 npmjs。
+- **未改代码**：截图里输入框 placeholder 显示成 `《? ress 》`，用 `buildInputBox` 在 40/80/120 列复现输出均正常（`▎ › Press ? for all keybindings`），判定为终端字体/宽度渲染，非代码问题。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。

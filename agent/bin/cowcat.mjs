@@ -881,6 +881,7 @@ async function main() {
           model: config.apiKey ? displayModel(config) : (ui.lang === 'zh' ? '未配置' : 'not configured'),
           mode: permissions.mode + (restricted ? ' (restricted)' : ''),
           trusted: isTrustedProject(config, cwd),
+          restricted,
           contextUsed: ctxUse.used, contextMax: ctxUse.max, startedAt: sessionStart,
         }));
       } else if (cmd === 'export') {

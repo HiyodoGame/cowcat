@@ -45,6 +45,19 @@ cd agent
 npm publish --access=public   # 首次发布（scoped 公开包；package.json 已配 publishConfig，可省略参数）
 ```
 
+> **本机默认 registry 是 npmmirror（只读镜像），不能发布**：直接 `npm publish` 会以
+> `npm error code ENEEDAUTH … requires you to be logged in to https://registry.npmmirror.com`
+> 失败。`agent/.npmrc` 已把 `@corescense` scope 指向官方 registry，因此 **npm 登录也要
+> 对官方 registry 做一次**：
+>
+> ```bash
+> npm login --registry=https://registry.npmjs.org
+> npm whoami --registry=https://registry.npmjs.org
+> cd agent && npm publish --access=public   # 由 agent/.npmrc 送到 npmjs
+> ```
+>
+> 不想用 .npmrc 时也可以临时指定：`npm publish --registry=https://registry.npmjs.org`。
+
 > **新 scope 首发会走 staged publishing**（2026 起 npm 默认安全机制）：CLI 显示成功后，包其实进了暂存区，registry 会先有 `0.0.0-stage` 占位版本。必须登录 npm 网页打开包页面，点 **Approve / Publish**（要 2FA）才真正上线；此前 `npm i` 会得到 404，且 registry 的 404 有 CDN 缓存，批准后可能还要等 1-2 分钟才能安装到。
 
 后续版本迭代：

@@ -150,14 +150,21 @@ test('P0-6: /cost report aggregates usage and labels the estimate', () => {
 });
 
 test('P0-6: /status masks the base URL and reports trust + context', () => {
-  const out = formatStatus({
+  const base = {
     version: '0.4.0', provider: 'anthropic', baseURL: 'https://api.kimi.com/coding',
     model: 'kimi-for-coding', mode: 'default', trusted: false,
     contextUsed: 5000, contextMax: 100000, startedAt: Date.now() - 3 * 60000,
-  });
+  };
+  const out = formatStatus(base);
   assert.match(out, /provider: anthropic  \(https:\/\/api\.kimi\.com\/coding\)/);
   assert.match(out, /folder trusted: no \(read-only\)/);
   assert.match(out, /context: ~5,000 \/ 100,000 est\. tokens \(5%\)/);
+  // /act on an untrusted folder unblocks the session without persisting trust:
+  // the status line must not keep claiming read-only
+  assert.match(formatStatus({ ...base, restricted: false }),
+    /folder trusted: no \(unblocked for this session\)/);
+  assert.match(formatStatus({ ...base, trusted: true, restricted: false }),
+    /folder trusted: yes/, 'a persistently trusted folder says so');
 });
 
 test('P0-6: /export renders a readable markdown transcript', () => {

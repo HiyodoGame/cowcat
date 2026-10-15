@@ -45,15 +45,22 @@ export function maskBaseURL(url) {
   } catch { return url.slice(0, 24) + '…'; }
 }
 
-export function formatStatus({ version, provider, baseURL, model, mode, trusted, contextUsed, contextMax, startedAt, now = Date.now() }) {
+export function formatStatus({ version, provider, baseURL, model, mode, trusted, restricted = true, contextUsed, contextMax, startedAt, now = Date.now() }) {
   const pct = contextMax ? Math.min(100, Math.round((contextUsed / contextMax) * 100)) : 0;
   const mins = Math.round((now - startedAt) / 60000);
+  // `trusted` is the persistent trust (state.json); `restricted` is this
+  // session's read-only lock. /act on an untrusted folder clears the lock for
+  // the session without persisting anything — saying "(read-only)" then would
+  // contradict the prompt that just said writes are unblocked.
+  const trustLine = trusted
+    ? 'yes'
+    : (restricted ? 'no (read-only)' : 'no (unblocked for this session)');
   return [
     `version: cowcat/${version}`,
     `provider: ${provider}  (${maskBaseURL(baseURL)})`,
     `model: ${model}`,
     `permissions: ${mode}`,
-    `folder trusted: ${trusted ? 'yes' : 'no (read-only)'}`,
+    `folder trusted: ${trustLine}`,
     `context: ~${contextUsed.toLocaleString()} / ${contextMax.toLocaleString()} est. tokens (${pct}%)`,
     `session: ${mins} min`,
   ].join('\n');
