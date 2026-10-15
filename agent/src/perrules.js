@@ -6,7 +6,13 @@
 import { writeState } from './config.js';
 import { globToRegExp } from './tools/glob.js';
 
-const RULE_RE = /^([A-Za-z][\w]*)\s*(?:\((.*)\))?$/s;
+const RULE_RE = /^([A-Za-z][\w.-]*)\s*(?:\((.*)\))?$/s;
+
+// MCP tools are registered as `mcp__<server>__<tool>` only after the server
+// connects — long after the permission rules were validated at startup. Their
+// names are dynamic, so they bypass the knownTools check (and may contain
+// '-' or '.', which plain builtin names never do).
+const MCP_TOOL_RE = /^mcp__[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+$/;
 
 // Parse + validate one rule string. Returns { rule } or { error } (Chinese).
 export function validateRule(str, knownTools) {
@@ -18,7 +24,8 @@ export function validateRule(str, knownTools) {
   const m = s.match(RULE_RE);
   if (!m) return { error: `格式无法解析（应为 Tool 或 Tool(pattern)）：${s}` };
   const [, tool, rawPattern] = m;
-  if (!knownTools.includes(tool)) {
+  const isMcpTool = MCP_TOOL_RE.test(tool);
+  if (!isMcpTool && !knownTools.includes(tool)) {
     return { error: `工具名 "${tool}" 未注册（可用：${knownTools.join(', ')}）` };
   }
   if (rawPattern === undefined) return { rule: { tool, pattern: null, prefix: false, raw: s } };

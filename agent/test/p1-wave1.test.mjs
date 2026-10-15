@@ -109,6 +109,39 @@ test('P1-2: rule parser validates syntax with Chinese errors', () => {
   assert.match(validateRule('Bash(npm * test)', KNOWN).error, /只能以/);
 });
 
+test('P1-2: mcp__server__tool rules validate without a live connection', () => {
+  // MCP tools only exist after connectMcp(); rules for them must pass
+  // validation against the pre-connection tool list (or every MCP call
+  // would fall through to a manual approval with no way to pre-authorize).
+  assert.deepEqual(validateRule('mcp__fake__echo', []).rule, { tool: 'mcp__fake__echo', pattern: null, prefix: false, raw: 'mcp__fake__echo' });
+  const dashed = validateRule('mcp__srv__get-issue', KNOWN).rule;
+  assert.equal(dashed.tool, 'mcp__srv__get-issue', 'tool names may contain "-" (RULE_RE widened)');
+  const withPattern = validateRule('mcp__fake__echo(x:*)', KNOWN).rule;
+  assert.equal(withPattern.prefix, true);
+  assert.equal(withPattern.pattern, 'x');
+
+  // malformed mcp names are still rejected (either at parse or at the
+  // known-tools check — what matters is that no rule comes out)
+  for (const bad of ['mcp__', 'mcp___x', 'mcp__a_b', 'mcp__a__']) {
+    const r = validateRule(bad, KNOWN);
+    assert.ok(!r.rule, `${bad} must not produce a rule`);
+    assert.match(r.error, /未注册|格式无法解析/);
+  }
+
+  // loadRules keeps them without warnings
+  const loaded = loadRules({ permissions: { allow: ['mcp__fake__echo'], deny: ['mcp__srv__get-issue'] } }, KNOWN);
+  assert.equal(loaded.warnings.length, 0);
+  assert.equal(loaded.allow.length, 1);
+  assert.equal(loaded.deny.length, 1);
+
+  // and they actually gate the decision — no approval prompt
+  const perms = new Permissions('default');
+  perms.setRules(loaded);
+  assert.equal(perms.decide('mcp__fake__echo', { msg: 'hi' }), 'allow');
+  assert.equal(perms.decide('mcp__srv__get-issue', { n: 1 }), 'deny');
+  assert.equal(perms.decide('mcp__other__tool', {}), 'ask', 'unruled mcp tool still asks');
+});
+
 test('P1-2: loadRules skips bad rules with positional warnings, startup survives', () => {
   const { warnings, deny, allow } = loadRules({ permissions: { deny: ['Bash(rm -rf:*)', 'Bad(', 'Nope(x)'], allow: ['Read'] } }, KNOWN);
   assert.equal(deny.length, 1);
