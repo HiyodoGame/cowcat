@@ -188,7 +188,7 @@ export const CronCreateTool = {
   name: 'CronCreate',
   description: `Create a scheduled task that injects a prompt into this session when it fires.
 
-Use this tool to schedule recurring or one-shot work: reminders, periodic checks, follow-ups. The schedule is checked while the REPL is idle; when a job fires, its prompt is injected as a new user message. Jobs persist across restarts in ~/.cowcat/crons.json.
+Use this tool to schedule recurring or one-shot work: reminders, periodic checks, follow-ups. The schedule is checked while the REPL is idle — and also at the start of a -p one-shot run, so a CI runner can drive scheduled jobs. When a job fires, its prompt is injected as a new user message. Jobs persist across restarts in ~/.cowcat/crons.json and fire only in the session that created them (jobs without a session id, i.e. older entries, fire anywhere).
 
 ## Cron syntax (5 fields, local time)
 

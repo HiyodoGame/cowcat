@@ -432,8 +432,20 @@ async function main() {
   let mcpResults = [];
   async function connectMcp(nameFilter = null) {
     const names = nameFilter ? [nameFilter] : Object.keys(mcpServers);
+    // Overall budget for the connect phase: per-server timeouts are independent
+    // (COWCAT_MCP_TIMEOUT, default 60s), so N hung servers used to block startup
+    // for N×60s with no upper bound. Past the budget the rest are skipped with a
+    // note instead of stalling the session.
+    const budgetMs = Number(process.env.COWCAT_MCP_CONNECT_BUDGET) || 120_000;
+    const deadline = Date.now() + budgetMs;
     for (const name of names) {
       if (!mcpServers[name]) { ui.print(`✗ MCP server "${name}" not configured`); continue; }
+      if (Date.now() > deadline) {
+        ui.print(ui.lang === 'zh'
+          ? `⊘ MCP 连接总预算 ${Math.round(budgetMs / 1000)}s 已用尽，跳过 "${name}"（可用 COWCAT_MCP_CONNECT_BUDGET 调整）`
+          : `⊘ MCP connect budget (${Math.round(budgetMs / 1000)}s) exhausted — skipping "${name}" (tune COWCAT_MCP_CONNECT_BUDGET)`);
+        continue;
+      }
       // first-connect trust prompt (remembered in config.mcpTrusted)
       if (!mcpTrustedList(config).includes(name)) {
         if (opts.print) { ui.print(`⊘ MCP server "${name}" not trusted — skipping (interactive session required to approve)`); continue; }
@@ -448,7 +460,7 @@ async function main() {
         if (a !== 'y' && a !== 'yes' && a !== 'always') { ui.print(ui.lang === 'zh' ? `已跳过 MCP server '${name}'。` : `Skipped MCP server '${name}'.`); continue; }
         trustMcpServer(config, name);
       }
-      const res = (await connectAll({ [name]: mcpServers[name] }))[0];
+      const res = (await connectAll({ [name]: mcpServers[name] }, { deadline }))[0];
       mcpResults = mcpResults.filter((r) => r.name !== name).concat(res);
       if (res.ok) {
         mcpClients.set(name, res.client);
@@ -460,6 +472,11 @@ async function main() {
       } else {
         if (tui) tui.toast('error', 'MCP', `${name}: ${res.error}`);
         else ui.print(`✗ MCP ${name}: ${res.error}`);
+        if (Date.now() >= deadline) {
+          ui.print(ui.lang === 'zh'
+            ? `  连接总预算 ${Math.round(budgetMs / 1000)}s 已用尽，剩余 server 将不再尝试（COWCAT_MCP_CONNECT_BUDGET 可调）`
+            : `  connect budget (${Math.round(budgetMs / 1000)}s) exhausted — later servers will be skipped (tune COWCAT_MCP_CONNECT_BUDGET)`);
+        }
       }
     }
   }
@@ -630,6 +647,16 @@ async function main() {
     // process hangs until the task's own timeout — a silent CI hang.
     try {
       const streamJson = opts.print && opts.outputFormat === 'stream-json';
+      // Scheduled jobs fire in one-shot mode too: a CI/cron runner has no REPL,
+      // so without this the only place a job could ever fire was an interactive
+      // session. Each job runs as a turn BEFORE the user prompt; turns are
+      // silent here (no streaming, no final-text print — that happens once
+      // below), and the banner goes to stderr so stdout stays the answer.
+      const dueCrons = takeDueCrons(new Date(), { sessionId: session.id });
+      for (const job of dueCrons) {
+        process.stderr.write(`[cron] firing ${job.id}\n`);
+        await runTurn(job.prompt);
+      }
       let res;
       if (streamJson) {
         // pure NDJSON event stream: no onboarding, no decorations
@@ -700,12 +727,18 @@ async function main() {
   }
 
   while (true) {
+    // TUI: open the composer BEFORE the cron sweep. Printable keys only reach
+    // the editor while a read is active (tui/ui.js _handleKey default branch),
+    // so anything typed during a scheduled turn was dropped — and the
+    // readLine() that followed reset the editor on top of that. Line mode keeps
+    // prompt-then-read order: the TTY input queue buffers keystrokes anyway.
+    const queuedInput = tui ? ui.readLine() : null;
     // Cron / wakeup scheduling: while the REPL is idle (before each prompt),
     // fire any due scheduled prompts as new user turns. Recurring jobs re-arm
     // to their next fire time; one-shots (incl. ScheduleWakeup) are removed.
+    // Session-scoped: a cron created in another session stays armed there
+    // instead of firing as a user turn inside this one.
     try {
-      // Session-scoped: a cron created in another session stays armed there
-      // instead of firing as a user turn inside this one.
       const due = takeDueCrons(new Date(), { sessionId: session.id });
       for (const job of due) {
         ui.print(`[cron] firing ${job.id}`);
@@ -714,8 +747,13 @@ async function main() {
     } catch (e) {
       ui.print(`cron check failed: ${e.message}`);
     }
-    if (!tui) ui.output.write(ui.colors ? '\x1b[1mcowcat>\x1b[0m ' : 'cowcat> '); // the TUI composer is the prompt
-    const rawLine = await ui.readLine();
+    let rawLine;
+    if (queuedInput) {
+      rawLine = await queuedInput;
+    } else {
+      ui.output.write(ui.colors ? '\x1b[1mcowcat>\x1b[0m ' : 'cowcat> '); // the TUI composer is the prompt
+      rawLine = await ui.readLine();
+    }
     if (rawLine === null) break; // stdin EOF — shut down cleanly
     const line = rawLine.trim();
     if (!line) continue;
@@ -950,6 +988,12 @@ async function main() {
           if (!args[1]) { ui.print('usage: /mcp reconnect <名>'); continue; }
           mcpClients.get(args[1])?.stop();
           mcpClients.delete(args[1]);
+          // drop the adapters bound to the stopped client first: re-registering
+          // would otherwise leave entries pointing at the dead transport when
+          // the reconnect fails
+          for (const t of registry.list()) {
+            if (t.name.startsWith(`mcp__${args[1]}__`)) registry.unregister(t.name);
+          }
           await connectMcp(args[1]);
         } else {
           if (!mcpResults.length) { ui.print(ui.lang === 'zh' ? '没有配置 MCP servers。写在 ~/.cowcat/mcp.json 或项目 .cowcat/mcp.json。' : 'No MCP servers configured (~/.cowcat/mcp.json or project .cowcat/mcp.json).'); continue; }

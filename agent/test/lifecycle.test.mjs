@@ -236,3 +236,34 @@ test('-p with a run_in_background Bash exits promptly instead of hanging on the 
     server.close();
   }
 });
+
+test('-p fires due cron jobs before the user prompt; stdout keeps only the answer', async () => {
+  const { server, port, state } = await keyServer();
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+    const past = new Date(Date.now() - 60_000).toISOString();
+    // No sessionId: a legacy job fires in any session (the CLI's session id is
+    // generated at runtime, so the test cannot know it up front).
+    writeFileSync(join(home, 'crons.json'), JSON.stringify([
+      { id: 'c1', cron: null, prompt: 'CRON-JOB-PROMPT', recurring: false, nextFireAt: past, createdAt: past },
+    ]));
+
+    const res = await spawnCli(['-p', 'USER-PROMPT-HERE'], ENV(port, home));
+    assert.equal(res.code, 0, `exit code ${res.code}, stderr: ${res.err}`);
+
+    const cronIdx = state.bodies.findIndex((b) => b.includes('CRON-JOB-PROMPT'));
+    const userIdx = state.bodies.findIndex((b) => b.includes('USER-PROMPT-HERE'));
+    assert.ok(cronIdx >= 0, 'the scheduled turn reached the model in one-shot mode');
+    assert.ok(userIdx >= 0, 'the user prompt still ran');
+    assert.ok(cronIdx < userIdx, 'cron turn fires before the user prompt');
+
+    assert.match(res.err, /\[cron\] firing c1/, 'cron banner goes to stderr, not stdout');
+    assert.ok(!res.out.includes('CRON-JOB-PROMPT'), 'cron prompt never leaks into the printed answer');
+    assert.match(res.out, /ok-done/, 'the user prompt answer is what stdout carries');
+
+    const remaining = JSON.parse(readFileSync(join(home, 'crons.json'), 'utf8'));
+    assert.equal(remaining.length, 0, 'one-shot job consumed and removed');
+  } finally {
+    server.close();
+  }
+});

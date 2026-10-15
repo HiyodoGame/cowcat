@@ -274,6 +274,27 @@ test('TUI app: ask() prompt text renders inside the input box', () => {
   tui.close();
 });
 
+test('TUI app: an early readLine preserves keys typed during a scheduled turn', async () => {
+  const { tui, input } = headlessTui();
+  const tick = () => new Promise((r) => setTimeout(r, 20));
+  // Invariant the REPL fix depends on: printable keys only reach the editor
+  // while a read is active. With no read open, typing is silently dropped —
+  // which is exactly what happened while a cron turn ran before readLine().
+  input.write('dropped');
+  await tick();
+  assert.equal(tui.editor.text, '', 'no active read: keys never reach the editor');
+
+  // The REPL now opens the read before the cron sweep; typing during the sweep
+  // lands in the editor and the submitted line survives.
+  const p = tui.readLine();
+  input.write('kept');
+  await tick();
+  assert.equal(tui.editor.text, 'kept', 'active read buffers the typed line');
+  input.write('\r');
+  assert.equal(await p, 'kept');
+  tui.close();
+});
+
 test('TUI app: double-Esc interrupts even mid-stream (no readLine active)', async () => {
   const { tui, input } = headlessTui();
   let hits = 0;
