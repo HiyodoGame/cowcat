@@ -6,6 +6,18 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cowcatHome, writeState, PKG_VERSION } from './config.js';
+import { SseParser } from './sse.js';
+
+// One SSE frame's data is a JSON-RPC message for MCP. Non-JSON frames (and the
+// SSE-level `[DONE]` sentinel) are ignored rather than failing the call.
+function parseFrame(data) {
+  const raw = String(data || '').trim();
+  if (!raw || raw === '[DONE]') return null;
+  try {
+    const msg = JSON.parse(raw);
+    return msg && typeof msg === 'object' ? msg : null;
+  } catch { return null; }
+}
 
 // Flatten one MCP content block to text. Prompts, tool results and resources all
 // carry the same shape; non-text parts are annotated so the model knows
@@ -27,6 +39,20 @@ function contentToText(c) {
 const PROTOCOL_VERSION = '2024-11-05';
 const getTimeout = () => Number(process.env.COWCAT_MCP_TIMEOUT) || 60_000;
 const MAX_OUTPUT = 20_000;
+// server->client channel (Streamable HTTP GET stream) reconnect policy: the
+// official SDK uses exponential backoff with these shapes, and honouring the
+// server's `retry:` field when it sends one. The knobs exist so tests do not
+// have to sit through real backoff.
+const STREAM_INITIAL_DELAY_MS = 1_000;
+const STREAM_MAX_DELAY_MS = 30_000;
+const STREAM_MAX_ATTEMPTS = 5;
+// A stream that held for this long before dropping counts as healthy: the next
+// drop is a new incident, not a retry of the same one. Without this a server
+// that accepts the connection and closes it immediately would reset the backoff
+// on every attempt and be hammered forever.
+const STREAM_HEALTHY_MS = 5_000;
+const getStreamInitialDelay = () => Number(process.env.COWCAT_MCP_STREAM_RETRY_MS) || STREAM_INITIAL_DELAY_MS;
+const getStreamMaxAttempts = () => Number(process.env.COWCAT_MCP_STREAM_ATTEMPTS) || STREAM_MAX_ATTEMPTS;
 // SIGTERM first (graceful), SIGKILL after this grace period — a server that
 // ignores SIGTERM would otherwise outlive the session. COWCAT_MCP_KILL_GRACE
 // overrides it (tests use a short grace).
@@ -97,6 +123,9 @@ class StdioTransport {
     this.pending = new Map();
     this.buf = '';
     this.lastStderr = '';
+    // Server->client messages (notifications, and requests like sampling): stdio
+    // delivers them on the same stream as responses, unsolicited.
+    this.onMessage = null;
   }
   // Per-call timeout, clamped to whatever is left of the connect budget so a
   // single hung server cannot outlast the budget.
@@ -192,6 +221,12 @@ class StdioTransport {
         this.pending.delete(msg.id);
         if (msg.error) rj(new Error(msg.error.message || JSON.stringify(msg.error)));
         else rs(msg.result);
+        continue;
+      }
+      // No matching id: a notification, or a request the server is making of us.
+      // Both used to be dropped on the floor.
+      if (msg.method) {
+        try { this.onMessage?.(msg); } catch { /* consumer blew up: not our problem */ }
       }
     }
   }
@@ -221,6 +256,15 @@ class StdioTransport {
   notify(method, params) {
     try { this.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`); } catch { /* dead */ }
   }
+  // Reply to a server-initiated request (sampling/elicitation/ping). Without a
+  // reply the server waits forever.
+  respond(id, result, error) {
+    const msg = error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result };
+    try { this.child.stdin.write(`${JSON.stringify(msg)}\n`); } catch { /* dead */ }
+  }
+  // stdio has no separate server->client channel: notifications arrive on the
+  // same pipe, so there is nothing to open.
+  startStream() {}
   stop() {
     const child = this.child;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -260,6 +304,16 @@ class HttpTransport {
     this.deadline = deadline;
     this.nextId = 1;
     this.sessionId = null; // assigned by the server on initialize (Streamable HTTP)
+    // server->client channel state (see startStream)
+    this.onMessage = null;
+    this.streamCtrl = null;
+    this.streamTimer = null;
+    this.streamStopped = true;
+    this.streamUnsupported = false; // server answered 404/405 to GET: never retry
+    this.streamAttempt = 0;
+    this.lastEventId = null; // resumption token from the last `id:` frame we saw
+    this.serverRetryMs = null; // server's `retry:` preference, in ms
+    this.streamOpenedAt = 0; // when the current stream was accepted
   }
   _timeout() {
     const base = getTimeout();
@@ -327,57 +381,54 @@ class HttpTransport {
     }
     const reader = body.getReader();
     const decoder = new TextDecoder();
-    let buf = '';
-    let sawData = false;
+    const parser = new SseParser();
+    let raw = '';
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).replace(/\r$/, '');
-          buf = buf.slice(nl + 1);
-          if (!line.startsWith('data:')) continue;
-          sawData = true;
-          const raw = line.slice(5).trim();
-          if (!raw || raw === '[DONE]') continue;
-          let msg;
-          try { msg = JSON.parse(raw); } catch { continue; } // non-JSON frame
-          if (msg && msg.id != null && (msg.result !== undefined || msg.error !== undefined)) {
+        const chunk = decoder.decode(value, { stream: true });
+        raw += chunk;
+        for (const ev of parser.feed(chunk)) {
+          const msg = parseFrame(ev.data);
+          if (!msg) continue;
+          if (msg.id != null && (msg.result !== undefined || msg.error !== undefined)) {
             if (msg.error) throw new Error(msg.error.message || JSON.stringify(msg.error));
             return msg.result;
           }
-          // server notification (no id): nothing to hand back, keep reading
+          // A notification (or a server->client request) arriving on the POST
+          // stream: hand it to the client instead of dropping it.
+          if (msg.method) this._dispatch(msg);
         }
         // a plain JSON body arrives whole and has no `data:` prefix
-        if (!sawData && !buf.startsWith('data:')) {
-          const t = buf.trim();
-          if (t.startsWith('{') && t.endsWith('}')) {
-            try { return this._parseBody(t); } catch { /* incomplete: keep reading */ }
-          }
+        const t = raw.trim();
+        if (t.startsWith('{') && t.endsWith('}')) {
+          try { return this._parseBody(t); } catch { /* incomplete: keep reading */ }
         }
       }
     } finally {
       // stop reading (and let the server close) — we already have our answer
       try { await reader.cancel(); } catch { /* stream already gone */ }
     }
-    return this._parseBody(buf);
+    return this._parseBody(raw);
   }
-  // Body is either a plain JSON-RPC object or an SSE stream. The stream may
-  // carry several `data:` frames (notifications interleaved with the answer),
-  // so scan them all and pick the response frame — taking the first `data:`
-  // line used to parse a notification and die.
+  // Notifications and server->client requests travel to whatever consumer was
+  // wired up (McpClient). Errors there must not break the transport loop.
+  _dispatch(msg) {
+    try { this.onMessage?.(msg); } catch { /* consumer blew up: not our problem */ }
+  }
+  // Body is either a plain JSON-RPC object or a whole SSE stream (fake fetches
+  // in unit tests hand us text). The stream may carry several frames
+  // (notifications interleaved with the answer), so collect them all and pick
+  // the response frame — taking the first `data:` line used to parse a
+  // notification and die.
   _parseBody(text) {
     if (text.includes('data:')) {
-      const frames = [];
-      for (const line of text.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        const raw = line.slice(5).trim();
-        if (!raw || raw === '[DONE]') continue;
-        try { frames.push(JSON.parse(raw)); } catch { /* skip non-JSON frame */ }
-      }
-      const msg = frames.find((f) => f && f.id != null && (f.result !== undefined || f.error !== undefined));
+      const parser = new SseParser();
+      const frames = [...parser.feed(text), ...parser.flush()]
+        .map((ev) => parseFrame(ev.data))
+        .filter(Boolean);
+      const msg = frames.find((f) => f.id != null && (f.result !== undefined || f.error !== undefined));
       if (!msg) throw new Error('no JSON-RPC response frame in event stream');
       if (msg.error) throw new Error(msg.error.message || JSON.stringify(msg.error));
       return msg.result;
@@ -386,7 +437,100 @@ class HttpTransport {
     if (msg.error) throw new Error(msg.error.message || JSON.stringify(msg.error));
     return msg.result;
   }
-  stop() { /* stateless */ }
+  // --- server->client channel (GET SSE) -------------------------------------
+  //
+  // Streamable HTTP servers MAY expose a long-lived GET stream for messages the
+  // client did not ask for (logging, list_changed, resources/updated) and for
+  // server-initiated requests. 405/404 means "this endpoint has no stream" —
+  // retrying is pointless, so it is remembered and never retried. A dropped
+  // stream is re-opened with exponential backoff and, when we saw an id, a
+  // Last-Event-ID header so a resumable server replays what we missed (the
+  // official SDK client behaves the same way).
+  startStream({ onError = null } = {}) {
+    this.streamStopped = false;
+    this._openStream(onError);
+  }
+  async _openStream(onError) {
+    if (this.streamStopped || this.streamUnsupported) return;
+    const ctrl = new AbortController();
+    this.streamCtrl = ctrl;
+    try {
+      const headers = { ...this._headers(), accept: 'text/event-stream' };
+      if (this.lastEventId) headers['last-event-id'] = this.lastEventId;
+      const res = await this.fetch(this.def.url, { method: 'GET', headers, signal: ctrl.signal });
+      if (res.status === 404 || res.status === 405) { this.streamUnsupported = true; return; }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const sid = res.headers?.get?.('mcp-session-id');
+      if (sid) this.sessionId = sid;
+      this.streamOpenedAt = Date.now();
+      await this._readStream(res);
+    } catch (e) {
+      if (!this.streamStopped && !this.streamUnsupported) this._scheduleReconnect(onError, e);
+      return;
+    }
+    // The server closed the stream (a reconnecting server, a proxy idle timeout):
+    // open it again unless the client is going away.
+    if (!this.streamStopped && !this.streamUnsupported) this._scheduleReconnect(onError);
+  }
+  async _readStream(res) {
+    const body = res.body;
+    if (!body || typeof body.getReader !== 'function') return;
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const parser = new SseParser();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        for (const ev of parser.feed(decoder.decode(value, { stream: true }))) {
+          if (ev.id) this.lastEventId = ev.id;
+          if (ev.retry != null) this.serverRetryMs = ev.retry;
+          const msg = parseFrame(ev.data);
+          if (msg) {
+            // The server actually talked to us: this stream was real, so the
+            // next drop starts over instead of continuing a retry streak.
+            this.streamAttempt = 0;
+            this._dispatch(msg);
+          }
+        }
+      }
+    } finally {
+      try { await reader.cancel(); } catch { /* stream already gone */ }
+    }
+  }
+  _scheduleReconnect(onError, err) {
+    // A stream that survived for a while died of something new, not of the same
+    // fault: give the backoff a fresh budget.
+    if (this.streamOpenedAt && Date.now() - this.streamOpenedAt >= STREAM_HEALTHY_MS) this.streamAttempt = 0;
+    const attempt = this.streamAttempt++;
+    if (attempt >= getStreamMaxAttempts()) {
+      // Give up (and say so once) instead of hammering a broken endpoint.
+      this.streamUnsupported = true;
+      try { onError?.(err || new Error(`server->client stream dropped (gave up after ${attempt} retries)`)); } catch { /* consumer */ }
+      return;
+    }
+    const base = this.serverRetryMs ?? getStreamInitialDelay();
+    const delay = Math.min(base * 2 ** attempt, STREAM_MAX_DELAY_MS);
+    this.streamTimer = setTimeout(() => {
+      this.streamTimer = null;
+      this._openStream(onError);
+    }, delay);
+    if (this.streamTimer.unref) this.streamTimer.unref();
+  }
+  // Reply to a server-initiated request by POSTing the response message, per the
+  // Streamable HTTP transport (the GET stream is server->client only).
+  async respond(id, result, error) {
+    const msg = error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result };
+    try {
+      await this.fetch(this.def.url, { method: 'POST', headers: this._headers(), body: JSON.stringify(msg) });
+    } catch { /* best effort: the server will time the request out */ }
+  }
+  stop() {
+    this.streamStopped = true;
+    if (this.streamTimer) { clearTimeout(this.streamTimer); this.streamTimer = null; }
+    try { this.streamCtrl?.abort(); } catch { /* already gone */ }
+    this.streamCtrl = null;
+  }
 }
 
 // --- client -------------------------------------------------------------------
@@ -401,6 +545,36 @@ export class McpClient {
     this.tools = [];
     this.prompts = [];
     this.capabilities = {};
+    // Server->client plumbing. `onNotification(method, params)` is set by the
+    // host (bin) before connect; `onChannelError(err)` reports a server->client
+    // stream that gave up. Both are optional — the client stays UI-free.
+    this.onNotification = null;
+    this.onChannelError = null;
+    this.transport.onMessage = (msg) => this._handleServerMessage(msg);
+  }
+  // A message with an id is a REQUEST from the server (sampling / elicitation /
+  // roots). None of those are implemented, so replying with Method-not-found is
+  // the correct behaviour — silence would leave the server waiting. `ping` is
+  // the one we can answer honestly.
+  _handleServerMessage(msg) {
+    if (msg.id != null && msg.method) {
+      if (msg.method === 'ping') this.transport.respond(msg.id, {});
+      else this.transport.respond(msg.id, null, { code: -32601, message: `Method not found: ${msg.method}` });
+      return;
+    }
+    if (!msg.method) return;
+    try { this.onNotification?.(msg.method, msg.params || {}); } catch { /* host blew up */ }
+  }
+  // Open the server->client channel where the transport needs to (HTTP GET SSE).
+  startChannel() {
+    this.transport.startStream?.({ onError: (e) => this.onChannelError?.(e) });
+  }
+  // Re-read the tool/prompt lists after a *_list_changed notification. The host
+  // is responsible for re-registering anything built from them.
+  async refresh() {
+    this.tools = await this._listAllTools();
+    this.prompts = await this._listAllPrompts();
+    return this.tools;
   }
   async connect() {
     // Capabilities decide what else we may ask for (prompts list is optional);
@@ -408,7 +582,19 @@ export class McpClient {
     this.capabilities = (await this.transport.connect()) || {};
     this.tools = await this._listAllTools();
     this.prompts = await this._listAllPrompts();
+    // Ask for log messages when the server offers them: a conforming server
+    // stays silent until a level has been chosen, so "logging never arrives" is
+    // usually this request missing, not the server misbehaving. A failure here
+    // must not fail the connection.
+    try { await this.setLogLevel(); } catch { /* logging stays off */ }
     return this;
+  }
+  // logging/setLevel is a REQUEST (the server answers), sent once after connect.
+  // COWCAT_MCP_LOG_LEVEL picks the level; without the capability nothing is sent.
+  async setLogLevel(level = process.env.COWCAT_MCP_LOG_LEVEL || 'info') {
+    if (!this.capabilities?.capabilities?.logging) return false;
+    await this.transport.request('logging/setLevel', { level });
+    return true;
   }
   // prompts/list is optional and paginated like tools/list: a server without the
   // capability answers Method not found, and a cursor hides the rest of the page
@@ -507,6 +693,27 @@ export class McpClient {
     });
     return { text: parts.join('\n') || '(empty resource)', isError: !!res.isError };
   }
+  // resources/subscribe + unsubscribe: updates arrive as
+  // notifications/resources/updated on the server->client channel. Servers
+  // advertise this separately (capabilities.resources.subscribe) and answering
+  // Method not found at call time is far less clear than refusing up front.
+  _assertSubscribable() {
+    // `capabilities` holds the initialize RESULT, so the advertised block sits
+    // one level down.
+    if (!this.capabilities?.capabilities?.resources?.subscribe) {
+      throw new Error(`${this.name} does not support resources/subscribe`);
+    }
+  }
+  async subscribe(uri) {
+    this._assertSubscribable();
+    await this.transport.request('resources/subscribe', { uri });
+    return true;
+  }
+  async unsubscribe(uri) {
+    this._assertSubscribable();
+    await this.transport.request('resources/unsubscribe', { uri });
+    return true;
+  }
   stop() { this.transport.stop(); }
 }
 
@@ -522,12 +729,17 @@ export function mcpToolAdapter(client, serverName, tool) {
   };
 }
 
-export async function connectAll(servers, { fetchImpl, deadline = null } = {}) {
+export async function connectAll(servers, { fetchImpl, deadline = null, onNotification = null, onChannelError = null } = {}) {
   const names = Object.keys(servers);
   const results = await Promise.all(names.map(async (name) => {
     const client = new McpClient(name, servers[name], { fetchImpl, deadline });
+    // Wired BEFORE connect so notifications emitted during/after initialize
+    // (logging, list_changed) are not lost.
+    if (onNotification) client.onNotification = (method, params) => onNotification(name, method, params, client);
+    if (onChannelError) client.onChannelError = (e) => onChannelError(name, e);
     try {
       await client.connect();
+      client.startChannel();
       return { name, client, ok: true, tools: client.tools };
     } catch (e) {
       client.stop();

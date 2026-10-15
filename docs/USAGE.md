@@ -202,7 +202,7 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 
 - **Windows**：`"command": "npx"`（或 `npm`/`yarn` 等其他 `.cmd` shim）会被自动转交 `cmd.exe /c` 启动——Node 不能直接 spawn `.cmd`，直接调用会得到 `spawn npx ENOENT`。绝对路径与 `.exe` 仍走原路径，不受影响。这类启动方式下 server 是 `cmd → npx → node` 的孙进程，因此关闭时必须用 `taskkill /T`；直接用 `"command": "cmd", "args": ["/c", "npx", ...]` 写进配置也可以，同样会被整树回收。
 - server 启动即失败时，报错会带上它**最后一行 stderr**（例如 `Missing API key`、`unknown option`），不再只有 `server exited (code 1)`。
-- MCP 工具按**非只读**处理：未信任目录下 `-p` 会锁进只读 plan 模式，此时 MCP 工具调用会被拒绝（先信任目录，或交互 `/act`）。这是有意为之——MCP 工具是任意 RPC，可能写入。
+- MCP 工具一般按**非只读**处理：未信任目录下 `-p` 会锁进只读 plan 模式，此时 MCP 工具调用会被拒绝（先信任目录，或交互 `/act`）。这是有意为之——MCP 工具是任意 RPC，可能写入。唯一的例外是**读取类**工具 `ListMcpResources` / `ReadMcpResource`（只读，plan 模式下照常可用）；`SubscribeMcpResource` / `UnsubscribeMcpResource` 会改 server 侧订阅状态，仍需授权。
 
 环境变量：
 
@@ -211,14 +211,25 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 | `COWCAT_MCP_TIMEOUT` | 60000 | 单次请求超时（ms），连接与调用各自计时 |
 | `COWCAT_MCP_CONNECT_BUDGET` | 120000 | 整个连接阶段的总预算（ms）：预算用尽后剩余 server 直接跳过，单个挂死 server 也受剩余预算约束，不会各自等满单次超时 |
 | `COWCAT_MCP_KILL_GRACE` | 3000 | POSIX 下 SIGTERM 到 SIGKILL 的宽限期（ms），用于让 server 收尾 |
+| `COWCAT_MCP_LOG_LEVEL` | info | 连接时向 server 请求的日志级别（`logging/setLevel`）；server 未声明 logging 能力则不发该请求 |
+| `COWCAT_MCP_STREAM_RETRY_MS` | 1000 | server→client 长连接断开后的首次重连延迟（ms），之后指数退避、上限 30s |
+| `COWCAT_MCP_STREAM_ATTEMPTS` | 5 | 长连接连续重连失败多少次后放弃（只报一次错误） |
 
-**真实 server 联调**（可选，需要联网）：`agent/test/live/` 下有 5 个针对官方 server/SDK 的实测脚本（真实文件系统 server、真实 Streamable HTTP session、keep-alive 与「应答后不关流」的服务器、resources/prompts 对照、CLI 端到端），不在 `npm test` 里，用法见 `agent/test/live/README.md`。
+**真实 server 联调**（可选，需要联网）：`agent/test/live/` 下有 6 个针对官方 server/SDK 的实测脚本（真实文件系统 server、真实 Streamable HTTP session、keep-alive 与「应答后不关流」的服务器、resources/prompts 对照、server→client 通道与断线复播、CLI 端到端），不在 `npm test` 里，用法见 `agent/test/live/README.md`。
 
-**当前支持的 MCP 能力**：tools（`mcp__<server>__<tool>`）、静态 resources（`ListMcpResources` + `ReadMcpResource` → `resources/list` + `resources/read`）、resource templates（`ListMcpResources` 里以 `template <uriTemplate>` 列出，模板本身不可枚举，用具体 URI 交给 `ReadMcpResource`）、prompts（作为斜杠命令暴露，见下）。
+**当前支持的 MCP 能力**：tools（`mcp__<server>__<tool>`）、静态 resources（`ListMcpResources` + `ReadMcpResource` → `resources/list` + `resources/read`）、resource templates（`ListMcpResources` 里以 `template <uriTemplate>` 列出，模板本身不可枚举，用具体 URI 交给 `ReadMcpResource`）、prompts（作为斜杠命令暴露，见下）、资源订阅（`SubscribeMcpResource` / `UnsubscribeMcpResource` → `resources/subscribe` / `resources/unsubscribe`）、server→client 通道（见下）。
 
 **MCP prompts 即斜杠命令**：连接的 server 若提供 prompts，启动时会发现并列成 `/mcp__<server>__<prompt>`，可在斜杠菜单里补全、在 `/help` 的「MCP prompts」段看到参数提示。参数按 `prompts/list` 里声明的顺序**位置对应**（`/mcp__fake__greet <name>` → `arguments.name`），缺必填参数会本地报错、不会发出请求。prompt 返回的多条 message 会展平成一条 user 消息（非 user 角色会加 `[assistant]` 之类的标签，不冒充模型说的）。
 
-**仍未支持**：server→client 通道（`resources/subscribe`、`logging`、`*_list_changed`，需要 GET SSE 长连接与断线重连）、OAuth 授权的 server。详见 `docs/fix-plan-2026-10-15.md` 第七、八轮。
+**server→client 通道**（Streamable HTTP 用 `GET` + SSE 长连接；stdio 本来就在同一条管道上收）：
+
+- **logging**：连接时若 server 声明 logging 能力，会发一次 `logging/setLevel`（级别取 `COWCAT_MCP_LOG_LEVEL`，默认 `info`）——规范允许 server 在客户端没设级别时保持沉默，不发这一请求往往就永远收不到日志。之后每条 `notifications/message` 打一行 `ⓘ [server] level: …`（TUI 走 toast）。
+- **`*/list_changed`**：自动重新拉取该 server 的 tools/prompts，**先注销旧 `mcp__<server>__*` 再注册**（否则 server 删掉的工具会一直留着、改了的 schema 不生效），并刷新 `/help` 与斜杠补全；短时间内的多次通知合并成一次刷新。
+- **`resources/updated`**：只对**订阅过**的 URI 提示一行（带上订阅时写的 `reason`），未订阅的更新静默——server 想发什么是它的事，不该变成噪声。
+- **断线重连**：长连接断开后按退避重连（首次 `COWCAT_MCP_STREAM_RETRY_MS`，之后指数增长、上限 30s、最多 `COWCAT_MCP_STREAM_ATTEMPTS` 次），并带上 `Last-Event-ID`，支持复播的 server 会补发断线期间的消息。server 回 404/405 表示它不提供该端点，客户端只探一次、不再重试。
+- **server 发起的请求**：`sampling/createMessage`、`elicitation/create`、`roots/list` 一律回 `-32601 Method not found`（`ping` 回空结果）。规范要求客户端给出回应，沉默会让 server 一直等。
+
+**仍未支持**：sampling / elicitation / roots（server 反向调用模型或终端，目前只回 error）、`SubscribePolling`（客户端定时轮询）、OAuth 授权的 server。详见 `docs/fix-plan-2026-10-15.md` 第七至九轮。
 
 ## 自定义 commands / agents / skills
 

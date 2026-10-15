@@ -90,6 +90,22 @@
 - **测试**：fixture 新增 prompts（一个带必填参数、一个无参数）与 resource template、`prompts/list` 的错误路径（`FAKE_MCP_NO_PROMPTS`）；单测 3 项（发现+取值+角色标签、模板列出+进入 ListMcpResources、无 capability 不失败）；**piped REPL E2E 1 项**（`/mcp__fake__greet` 缺参报错、`/mcp__fake__greet World` 的文本真的进了模型请求、`/help` 列出命令）。联调脚本 `everything.mjs` 从「记录缺口」升级为断言：官方 server 的 2 个模板出现在 ListMcpResources、4 个 prompt 被发现、`prompts/get` 无参与带参（city/state）两条都取回内容。
 - 全量 569 passed / 0 failed。
 
+### 第九轮（server→client 通道）
+
+按用户确认的方案（`docs/mcp-server-channel-plan.md`）实现 server→client 通道。
+
+- **SSE 解析器抽出**（`src/sse.js`）：按空行分帧、多行 `data:` 用 `\n` 拼接、`id:`/`retry:` 字段、注释帧（`:` keepalive）、CRLF、跨块切帧、`flush()` 保留末尾无空行的帧。POST 响应体与 GET 长连接共用它——原来手写的行扫描会把多行 data 读成截断 JSON，并且把复播用的 id 直接丢掉。
+- **入站分发**（`src/mcp.js`）：`transport.onMessage` → `McpClient._handleServerMessage` → `onNotification(method, params)`。此前无 `id` 的消息在 **stdio 被丢弃**、在 HTTP POST 流里被注释成「nothing to hand back」直接跳过。
+- **GET SSE 长连接**：`startStream()` 在 connect 后打开（带 `mcp-session-id`）；断线按退避重连（首次 `COWCAT_MCP_STREAM_RETRY_MS`=1s、指数增长、上限 30s、最多 `COWCAT_MCP_STREAM_ATTEMPTS`=5 次），带 `Last-Event-ID` 复播；**404/405 表示 server 不提供该端点 → 只探一次不重试**；`stop()` 中止。退避计数只在「真的收到过帧」或「连接存活 ≥5s」时重置——否则一个「接受连接后立刻断开」的 server 会把每次尝试都当成功、无限重连（实现时踩到并修掉）。
+- **server 发起的请求**：`{id, method}` → `sampling/elicitation/roots` 回 `-32601`、`ping` 回 `{}`（HTTP 用 POST 回，stdio 写回管道）。不回应会让 server 一直等。
+- **`logging/setLevel`**：连接时若 server 声明 logging 能力就发一次（级别 `COWCAT_MCP_LOG_LEVEL`，默认 info）。规范允许 server 在客户端未设级别时保持沉默——不发这个请求，日志往往永远收不到。
+- **资源订阅**（catalog §15/§16）：新增 `SubscribeMcpResource` / `UnsubscribeMcpResource` 工具与 `src/mcpsubs.js` 登记表（id 形如 `mcp:<server>:<uri>`，退订可按 server/uri/id 任一维度）。订阅**先登记再发请求**：server 可能在订阅后立刻推第一条更新，先登记才不会把它当成「没订阅过的更新」丢掉（E2E 实测命中这个竞态）。
+- **通知呈现**（`src/mcpnotify.js`，纯函数可单测）：logging → 一行；`*/list_changed` → 自动刷新该 server 的工具/prompt（先注销再注册，500ms 内合并）；`resources/updated` → 只对订阅过的 URI 提示（带 reason）；progress/cancelled/未知 → 显式忽略。
+- **只读分类修正**：`ListMcpResources` / `ReadMcpResource` 加入 `READ_ONLY`——此前 plan 模式与未信任目录的 `-p` 连「读 MCP 资源」都会被拒，而 `Read` 是允许的。订阅类工具保持需授权。
+- **测试**：新增 `test/p5-server-channel.test.mjs` 21 项（SSE 解析、stdio/POST 通知分发、GET 流重连+Last-Event-ID+405 不重试+放弃后只报一次、server 请求应答、订阅能力校验与三维度退订、通知分类与呈现、只读分类），piped REPL E2E 2 项（logging 通知进终端 + `tools/list_changed` 刷新后模型看到新工具；模型经工具订阅后第一条 `resources/updated` 被正确归属）。fixture 增加 notification/subscribe/logging/extra-tool 等开关。
+- **联调**：新增 `agent/test/live/stream-channel.mjs`，对官方 SDK 的 Streamable HTTP server（配 in-memory event store）验证：GET 流带 session id、`setLevel` + logging 到达、`resources/subscribe` + `resources/updated`、连接后新增工具触发 `tools/list_changed` 且 `refresh()` 能看到、**断开连接后重连带 `Last-Event-ID` 并补发断线期间的通知**、`stop()` 彻底结束通道。6 个联调脚本全部通过。
+- 全量 592 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。

@@ -38,6 +38,8 @@ import {
 import { loadRules, validateRule, saveRuleColumn } from '../src/perrules.js';
 import { loadHooks, fireHooks, hookPayload, updateHooksConfig, HOOK_EVENTS } from '../src/hooks.js';
 import { loadMcpConfigs, connectAll, mcpToolAdapter, mcpTrustedList, trustMcpServer } from '../src/mcp.js';
+import { McpSubscriptions } from '../src/mcpsubs.js';
+import { handleMcpNotification as handleMcpNotificationImpl } from '../src/mcpnotify.js';
 import { loadCustom, expandCommand, customHelpLines } from '../src/custom.js';
 import { loadOutputStyles, styleSection } from '../src/outputstyles.js';
 import { runStatusLine, statuslinePayload, saveStatusLine } from '../src/statusline.js';
@@ -59,7 +61,7 @@ import { TaskStopTool } from '../src/tools/taskstop.js';
 import { EnterPlanModeTool, ExitPlanModeTool } from '../src/tools/planmode.js';
 import { CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, takeDueCrons } from '../src/tools/cron.js';
 import { TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool } from '../src/tools/tasktools.js';
-import { ListMcpResourcesTool, ReadMcpResourceTool } from '../src/tools/mcpresources.js';
+import { ListMcpResourcesTool, ReadMcpResourceTool, SubscribeMcpResourceTool, UnsubscribeMcpResourceTool } from '../src/tools/mcpresources.js';
 import { generateCowcatMd } from '../src/init.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -165,7 +167,7 @@ async function cmdDoctor(ui, opts = {}) {
 
 function buildRegistry() {
   const reg = new ToolRegistry();
-  for (const t of [ReadTool, EditTool, WriteTool, GlobTool, GrepTool, BashTool, TodoWriteTool, AskUserQuestionTool, AgentTool, WebFetchTool, WebSearchTool, TaskOutputTool, TaskStopTool, EnterPlanModeTool, ExitPlanModeTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool, ListMcpResourcesTool, ReadMcpResourceTool]) {
+  for (const t of [ReadTool, EditTool, WriteTool, GlobTool, GrepTool, BashTool, TodoWriteTool, AskUserQuestionTool, AgentTool, WebFetchTool, WebSearchTool, TaskOutputTool, TaskStopTool, EnterPlanModeTool, ExitPlanModeTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool, ListMcpResourcesTool, ReadMcpResourceTool, SubscribeMcpResourceTool, UnsubscribeMcpResourceTool]) {
     reg.register(t);
   }
   return reg;
@@ -443,7 +445,72 @@ async function main() {
   const mcpServers = loadMcpConfigs(cwd);
   const mcpClients = new Map();
   baseCtx.mcpClients = mcpClients;
+  // Resource subscriptions (tool-catalog §15/§16) live for the session; the two
+  // tools read the registry through ctx.
+  const mcpSubs = new McpSubscriptions();
+  baseCtx.mcpSubs = mcpSubs;
   let mcpResults = [];
+  // server->client notifications: logging is shown as a line, *_list_changed
+  // refreshes that server's tools/prompts (a stale tool list is worse than a
+  // missing one), resources/updated is only interesting for subscribed URIs.
+  // Refreshes are coalesced so a server that changes several things at once does
+  // not re-register its tools several times.
+  let lastMcpRefresh = 0;
+  const mcpRefreshTimers = new Map();
+  async function refreshMcpServer(server, clientHint = null) {
+    // The notification can arrive while connect() is still running, i.e. before
+    // the client is in mcpClients — hence the hint.
+    const client = clientHint || mcpClients.get(server);
+    if (!client) return;
+    const wait = 500 - (Date.now() - lastMcpRefresh);
+    if (wait > 0) {
+      // A server that changes several things at once sends several
+      // list_changed notifications: coalesce them into one trailing refresh
+      // instead of re-registering the tool set repeatedly.
+      if (!mcpRefreshTimers.has(server)) {
+        const t = setTimeout(() => {
+          mcpRefreshTimers.delete(server);
+          refreshMcpServer(server).catch(() => {});
+        }, wait);
+        if (t.unref) t.unref();
+        mcpRefreshTimers.set(server, t);
+      }
+      return;
+    }
+    lastMcpRefresh = Date.now();
+    try {
+      await client.refresh();
+    } catch (e) {
+      ui.print(`✗ MCP ${server}: refresh failed: ${e.message}`);
+      return;
+    }
+    // Replace rather than add: a tool the server dropped would otherwise stay
+    // registered forever, and a changed schema would not take effect.
+    for (const t of registry.list()) {
+      if (t.name.startsWith(`mcp__${server}__`)) registry.unregister(t.name);
+    }
+    for (const tool of client.tools) {
+      if (!registry.get(tool.name)) registry.register(mcpToolAdapter(client, server, tool));
+    }
+    indexMcpPrompts();
+    if (tui) tui.toast('info', 'MCP', `${server}: ${client.tools.length} tool(s)`);
+    else {
+      ui.print(ui.lang === 'zh'
+        ? `↻ MCP ${server}: 工具 ${client.tools.length} 个，prompt ${client.prompts.length} 个`
+        : `↻ MCP ${server}: ${client.tools.length} tool(s), ${client.prompts.length} prompt(s)`);
+    }
+  }
+  function handleMcpNotification(server, method, params, clientHint = null) {
+    return handleMcpNotificationImpl({
+      server,
+      method,
+      params,
+      subs: mcpSubs,
+      refresh: (s) => refreshMcpServer(s, clientHint),
+      print: (text) => ui.print(text),
+      toast: tui ? (variant, title, message) => tui.toast(variant, title, message) : null,
+    }).catch(() => {});
+  }
   async function connectMcp(nameFilter = null) {
     const names = nameFilter ? [nameFilter] : Object.keys(mcpServers);
     // Overall budget for the connect phase: per-server timeouts are independent
@@ -474,7 +541,16 @@ async function main() {
         if (a !== 'y' && a !== 'yes' && a !== 'always') { ui.print(ui.lang === 'zh' ? `已跳过 MCP server '${name}'。` : `Skipped MCP server '${name}'.`); continue; }
         trustMcpServer(config, name);
       }
-      const res = (await connectAll({ [name]: mcpServers[name] }, { deadline }))[0];
+      const res = (await connectAll({ [name]: mcpServers[name] }, {
+        deadline,
+        onNotification: handleMcpNotification,
+        onChannelError: (server, e) => {
+          // Only worth a line when it is not the "server has no such endpoint"
+          // case (which is decided inside the transport and reported nowhere).
+          if (tui) tui.toast('warning', 'MCP', `${server}: server->client stream: ${e.message}`);
+          else ui.print(`⚠ MCP ${server}: server->client stream: ${e.message}`);
+        },
+      }))[0];
       mcpResults = mcpResults.filter((r) => r.name !== name).concat(res);
       if (res.ok) {
         mcpClients.set(name, res.client);

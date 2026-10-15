@@ -1,7 +1,7 @@
 // Permission modes: 'default' (ask for writes/commands) | 'yolo' (allow all)
 // | 'plan' (read-only exploration; writes and mutating commands are rejected)
 // | 'acceptEdits' (plan approved: file writes auto-accepted, Bash still asks).
-const READ_ONLY = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup']);
+const READ_ONLY = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'ListMcpResources', 'ReadMcpResource']);
 const AUTO_EDIT_TOOLS = new Set(['Write', 'Edit']);
 const MODES = new Set(['default', 'yolo', 'plan', 'acceptEdits']);
 

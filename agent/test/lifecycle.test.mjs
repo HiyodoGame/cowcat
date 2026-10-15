@@ -30,7 +30,7 @@ function spawnCli(args, env, input, timeoutMs = 20000) {
   });
 }
 
-function keyServer({ withWriteTool } = {}) {
+function keyServer({ withWriteTool, withTool } = {}) {
   const state = { seen: 0, chatKeys: [], bodies: [] };
   const sseText = (res, text) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -56,6 +56,18 @@ function keyServer({ withWriteTool } = {}) {
     ]) res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
     res.end();
   };
+  const sseTool = (res, name, input) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    for (const ev of [
+      { type: 'message_start', message: { usage: { input_tokens: 3 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 't1', name, input: {} } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+      { type: 'message_stop' },
+    ]) res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+    res.end();
+  };
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -69,6 +81,7 @@ function keyServer({ withWriteTool } = {}) {
       state.bodies.push(body);
       state.seen++;
       if (withWriteTool && state.seen === 1) return sseWriteTool(res);
+      if (withTool && state.seen === 1) return sseTool(res, withTool.name, withTool.input);
       return sseText(res, 'ok-done');
     });
   });
@@ -295,6 +308,64 @@ test('MCP prompts run as slash commands (/mcp__<server>__<prompt>)', async () =>
     assert.match(res.out, /Missing required argument\(s\): name/, 'a missing required argument is reported locally');
     assert.ok(state.bodies.some((b) => b.includes('Hello World!')), 'the prompt body reached the model');
     assert.ok(!state.bodies.some((b) => b.includes('Missing required')), 'the invalid invocation never became a turn');
+  } finally {
+    server.close();
+  }
+});
+
+test('MCP server->client: notifications are shown and list_changed refreshes the tools', async () => {
+  const { server, port, state } = await keyServer();
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+    writeFileSync(join(home, 'mcp.json'), JSON.stringify({
+      mcpServers: {
+        fake: {
+          command: process.execPath,
+          args: [join(AGENT_ROOT, 'test', 'fixtures', 'fake-mcp.mjs')],
+          env: { FAKE_MCP_LOG: 'server says hi', FAKE_MCP_EXTRA_TOOL: 'late_tool' },
+        },
+      },
+    }));
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ mcpTrusted: ['fake'] }));
+
+    const res = await spawnCli([], ENV(port, home), 'y\nhello\n/exit\n', 30000);
+    assert.equal(res.code, 0, `exit ${res.code}\n${res.err}`);
+    // The notification is emitted while connect() is still running (right after
+    // initialized), i.e. before the client is registered — it must still land.
+    assert.match(res.out, /\[fake\] info: server says hi/, 'a logging notification reaches the terminal');
+    assert.match(res.out, /↻ MCP fake: \d+ tool\(s\)/, 'tools/list_changed triggers a refresh');
+    assert.ok(state.bodies.some((b) => b.includes('late_tool')), 'the model sees the refreshed tool set');
+  } finally {
+    server.close();
+  }
+});
+
+test('MCP server->client: an update for a subscribed resource is reported', async () => {
+  const { server, port } = await keyServer({
+    withTool: { name: 'SubscribeMcpResource', input: { uri: 'memo://welcome', reason: 'watching the memo' } },
+  });
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
+    writeFileSync(join(home, 'mcp.json'), JSON.stringify({
+      mcpServers: {
+        fake: {
+          command: process.execPath,
+          args: [join(AGENT_ROOT, 'test', 'fixtures', 'fake-mcp.mjs')],
+          env: { FAKE_MCP_UPDATE_ON_SUB: '1' },
+        },
+      },
+    }));
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ mcpTrusted: ['fake'] }));
+
+    // -y: the subscribe tool is not read-only, so without it the tool call waits
+    // for an approval that a piped session cannot give.
+    const res = await spawnCli(['-y'], ENV(port, home), 'y\nwatch the memo\n/exit\n', 30000);
+    assert.equal(res.code, 0, `exit ${res.code}\n${res.err}`);
+    // The CLI prints the invocation, not the tool's text output — the update
+    // line below is the proof the subscription really reached the server.
+    assert.match(res.out, /SubscribeMcpResource[^\n]*memo:\/\/welcome/, 'the model subscribed through the tool');
+    assert.match(res.out, /\[fake\] resource updated: memo:\/\/welcome \(watching the memo\)/,
+      'the first update arrives right after subscribing and must still be attributed');
   } finally {
     server.close();
   }
