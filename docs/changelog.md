@@ -73,6 +73,14 @@
 - **发布链路：`npm publish` 报 ENEEDAUTH**。本机默认 registry 是 `registry.npmmirror.com`（只读镜像，不提供发布），而包要发到官方 registry。新增 `agent/.npmrc` 把 `@corescense` scope 指向 `https://registry.npmjs.org/`（用户级默认镜像保持不变，只影响本 scope）；`docs/PUBLISH.md` 补登录命令与说明。`npm publish --dry-run` 实测已发往 npmjs。
 - **未改代码**：截图里输入框 placeholder 显示成 `《? ress 》`，用 `buildInputBox` 在 40/80/120 列复现输出均正常（`▎ › Press ? for all keybindings`），判定为终端字体/宽度渲染，非代码问题。
 
+### 第七轮（联调未覆盖面：keep-alive / resources / prompts）
+
+- **修复（P1 互操作）：服务器保持 SSE 流打开时，每个请求都要卡到超时才失败**（`src/mcp.js`）。`HttpTransport` 原本先 `await res.text()` 把整个 body 缓冲完才解析，而 SSE 流**允许在应答后保持打开**（keep-alive 注释帧、后续通知——官方 SDK 的 `keepAliveMs` 与任何保持连接的代理都是这个行为），于是「等流结束」等于「等一个已经回答完的服务器」。实测：官方 web-standard transport 开 `keepAliveMs` 时不受影响（它在应答后关流）；但对手写「应答后不关流」的服务器，请求 **3005ms 后 abort**（`COWCAT_MCP_TIMEOUT` 默认 60s）。改为**增量读取**：拿到 `id` 匹配的帧即刻返回并 `reader.cancel()`。同一场景实测 **3ms** 返回。新增回归测试（ReadableStream 只应答不关闭，断言 <1s 内返回）。
+- **resources 真实 server 侧验证通过**：官方 `@modelcontextprotocol/server-everything`（实现 tools/resources/templates/prompts/subscriptions）→ `resources/list` 返回 7 个资源、`resources/read` 返回真实内容（1604 字符）。此前这条只有 filesystem server 的 `Method not found` 错误路径。
+- **修 `resources/list` 缺少 cursor 分页**（与 tools/list 同类缺陷）：`listResources()` 现在循环 `nextCursor`（上限 50 页防游标循环）；fixture 增加 resources 分页开关，新增测试。
+- **实测出三个缺口（均有证据；属「未实现」而非「未验证」）**：① resource templates —— server 暴露 2 个 `demo://resource/dynamic/.../{resourceId}`，客户端只有 `resources/list`，模板资源对模型完全不可见；② prompts —— server 暴露 4 个 prompt，客户端**零处 `prompts/` 代码**，无 `prompts/list`/`prompts/get`；③ server→client 通道 —— 客户端只发 POST，从不打开 GET SSE 流，因此 `resources/subscribe`、`logging`、`*_list_changed` 永远收不到（`notifications/initialized` 是唯一的单向消息）。
+- 联调脚本新增 `agent/test/live/everything.mjs`、`keepalive.mjs`；5 个脚本全部通过。全量 565 passed / 0 failed。
+
 - **P1 思考链流式（OpenAI 兼容 provider）**：`delta.reasoning_content`（DeepSeek/Moonshot 等）与 o-series `delta.reasoning` 逐 delta 聚合为本地 `thinking` 块并经 `onThinking` → `ui.thinkingChunk` 流式渲染；聚合出的思考块只进 transcript/UI、永不回传上游（`src/llm/openai.js`，非流式响应的顶层 `reasoning_content`/`reasoning` 字段同样识别）。
 - **P2 工具调用增量**：流式 `tool_calls` delta 经 `onToolDelta` 实时透出（`{index, id?, name?, argsDelta}` + 每个工具完成时一次 `{argsComplete, done}`），TUI 上呈现为逐字生长的 pending 卡片、参数拼完后被正式工具卡原地取代（`src/llm/openai.js`、`src/llm/anthropic.js`、`src/loop.js`、`src/tui/ui.js`；print/line 模式维持原有一次性展示）。
 - **P4 轻量 Bash 沙箱**：默认 `light` 档——secret 脱敏 env + 静态命令分级 + 审计追踪，`/sandbox off|light` 在线切换并持久化（state.json `sandbox` 键）；每次分级执行追加 JSON 行到 `~/.cowcat/audit.log`（ts/tool/cwd/risk/decision/command，best-effort 永不抛错）；TUI Bash 卡 light 档显示 dim `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不提供系统级隔离，别用它抵御恶意命令（`src/sandbox.js`、`src/config.js`、`src/tools/bash.js`、`src/tui/ui.js`）。

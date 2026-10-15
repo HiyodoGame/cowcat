@@ -48,7 +48,15 @@ process.stdin.on('data', (chunk) => {
       const next = start + PAGE;
       respond(msg.id, next < TOOLS.length ? { tools: slice, nextCursor: String(next) } : { tools: slice });
     } else if (msg.method === 'resources/list') {
-      respond(msg.id, { resources: RESOURCES });
+      // FAKE_MCP_PAGE also paginates resources so the client's cursor loop is
+      // covered (2 resources -> 2 pages of 1)
+      if (!PAGE) { respond(msg.id, { resources: RESOURCES }); continue; }
+      const start = msg.params?.cursor ? Number(msg.params.cursor) : 0;
+      const slice = RESOURCES.slice(start, start + PAGE);
+      const next = start + PAGE;
+      respond(msg.id, next < RESOURCES.length
+        ? { resources: slice, nextCursor: String(next) }
+        : { resources: slice });
     } else if (msg.method === 'resources/read') {
       if (msg.params.uri === 'memo://welcome') {
         respond(msg.id, { contents: [{ uri: msg.params.uri, mimeType: 'text/plain', text: 'hello resource' }] });

@@ -212,7 +212,9 @@ bash tools/run-ccagent-kimi.sh "..."           # 走日志代理的 live 冒烟�
 | `COWCAT_MCP_CONNECT_BUDGET` | 120000 | 整个连接阶段的总预算（ms）：预算用尽后剩余 server 直接跳过，单个挂死 server 也受剩余预算约束，不会各自等满单次超时 |
 | `COWCAT_MCP_KILL_GRACE` | 3000 | POSIX 下 SIGTERM 到 SIGKILL 的宽限期（ms），用于让 server 收尾 |
 
-**真实 server 联调**（可选，需要联网）：`agent/test/live/` 下有 4 个针对官方 server/SDK 的实测脚本（真实文件系统 server、真实 Streamable HTTP session、分页、CLI 端到端），不在 `npm test` 里，用法见 `agent/test/live/README.md`。
+**真实 server 联调**（可选，需要联网）：`agent/test/live/` 下有 5 个针对官方 server/SDK 的实测脚本（真实文件系统 server、真实 Streamable HTTP session、keep-alive 与「应答后不关流」的服务器、resources/prompts 对照、CLI 端到端），不在 `npm test` 里，用法见 `agent/test/live/README.md`。
+
+**当前只 surface 静态 resources**（`ListMcpResources` + `ReadMcpResource` → `resources/list` + `resources/read`）。MCP 的 resource templates（`resources/templates/list`）、prompts（`prompts/list` / `prompts/get`）与 server→client 通知（`resources/subscribe`、`logging`、`*_list_changed`，需要 GET SSE 长连接）均未支持，详见 `docs/fix-plan-2026-10-15.md` 第七轮。
 
 ## 自定义 commands / agents / skills
 

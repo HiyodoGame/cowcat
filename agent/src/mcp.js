@@ -289,12 +289,63 @@ class HttpTransport {
       // server that mints one requires it on every later request.
       const sid = res.headers?.get?.('mcp-session-id');
       if (sid) this.sessionId = sid;
-      const text = await res.text();
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return this._parseBody(text);
+      return await this._readResult(res);
     } finally {
       clearTimeout(to);
     }
+  }
+  // Read the response and resolve the moment the matching JSON-RPC frame shows
+  // up. Buffering the whole body first (`await res.text()`) stalled every call
+  // until the timeout: an SSE stream is allowed to stay OPEN after the response
+  // (keep-alive comment frames, further notifications — the official SDK's
+  // keep-alive and any holding proxy do exactly that), so waiting for the stream
+  // to end waits for a server that has already answered.
+  async _readResult(res) {
+    const body = res.body;
+    // Fake fetches (unit tests) and empty bodies have no stream: read it all.
+    if (!body || typeof body.getReader !== 'function') {
+      const text = typeof res.text === 'function' ? await res.text() : '';
+      return this._parseBody(text);
+    }
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let sawData = false;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).replace(/\r$/, '');
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          sawData = true;
+          const raw = line.slice(5).trim();
+          if (!raw || raw === '[DONE]') continue;
+          let msg;
+          try { msg = JSON.parse(raw); } catch { continue; } // non-JSON frame
+          if (msg && msg.id != null && (msg.result !== undefined || msg.error !== undefined)) {
+            if (msg.error) throw new Error(msg.error.message || JSON.stringify(msg.error));
+            return msg.result;
+          }
+          // server notification (no id): nothing to hand back, keep reading
+        }
+        // a plain JSON body arrives whole and has no `data:` prefix
+        if (!sawData && !buf.startsWith('data:')) {
+          const t = buf.trim();
+          if (t.startsWith('{') && t.endsWith('}')) {
+            try { return this._parseBody(t); } catch { /* incomplete: keep reading */ }
+          }
+        }
+      }
+    } finally {
+      // stop reading (and let the server close) — we already have our answer
+      try { await reader.cancel(); } catch { /* stream already gone */ }
+    }
+    return this._parseBody(buf);
   }
   // Body is either a plain JSON-RPC object or an SSE stream. The stream may
   // carry several `data:` frames (notifications interleaved with the answer),
@@ -365,9 +416,18 @@ export class McpClient {
   }
   // MCP resources (docs/tools/tool-catalog.md): resources/list + resources/read
   // over whichever transport is in use; errors surface to the caller.
+  // resources/list is paginated like tools/list: a server that hands back a
+  // cursor hides every resource past the first page.
   async listResources() {
-    const res = await this.transport.request('resources/list', {});
-    return res.resources || [];
+    const all = [];
+    let cursor;
+    for (let page = 0; page < 50; page++) { // hard stop against a cursor loop
+      const res = await this.transport.request('resources/list', cursor ? { cursor } : {});
+      all.push(...(res.resources || []));
+      cursor = res.nextCursor;
+      if (!cursor) break;
+    }
+    return all;
   }
   async readResource(uri) {
     const res = await this.transport.request('resources/read', { uri });

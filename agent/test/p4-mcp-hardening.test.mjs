@@ -78,6 +78,51 @@ test('mcp: a genuinely missing command still reports the original launch error',
   await assert.rejects(() => client.connect(), /server exited \(code \d+\)|ENOENT/);
 });
 
+test('mcp: an SSE stream that stays open after the response does not stall the call', async () => {
+  // The spec allows a server to keep the response stream open (keep-alive
+  // comment frames, further notifications) — the official SDK's keep-alive and
+  // any holding proxy do that. Buffering the whole body first (await res.text())
+  // made every call hang until COWCAT_MCP_TIMEOUT even though the answer had
+  // already arrived.
+  let ticker;
+  const fetchImpl = async (url, opts) => {
+    const req = JSON.parse(opts.body);
+    const enc = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(enc.encode(
+          `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { tools: [{ name: 'webtool', description: 'x', inputSchema: { type: 'object', properties: {} } }] } })}\n\n`,
+        ));
+        // answer delivered — keep the stream open instead of ending it
+        ticker = setInterval(() => {
+          try { controller.enqueue(enc.encode(': keepalive\n\n')); } catch { clearInterval(ticker); }
+        }, 25);
+        ticker.unref?.();
+      },
+      cancel() { clearInterval(ticker); },
+    });
+    return { ok: true, status: 200, headers: { get: () => null }, body: stream };
+  };
+  const client = new McpClient('holding', { url: 'https://mcp.example/sse' }, { fetchImpl });
+  const started = Date.now();
+  const res = await client.transport.request('tools/list', {});
+  const ms = Date.now() - started;
+  assert.equal(res.tools.length, 1, 'the frame that arrived first is the answer');
+  assert.ok(ms < 1000, `must resolve without waiting for the stream to end (took ${ms}ms)`);
+  clearInterval(ticker);
+});
+
+test('mcp: resources/list follows nextCursor too (a cursor hides resources past page 1)', async () => {
+  const client = new McpClient('paged-res', stdio({ FAKE_MCP_PAGE: '1' }));
+  try {
+    await client.connect();
+    const res = await client.listResources();
+    assert.deepEqual(res.map((r) => r.uri), ['memo://welcome', 'blob://logo'], 'both pages merged');
+  } finally {
+    client.stop();
+  }
+});
+
 test('mcp: tools/list follows nextCursor and collects every page', async () => {
   process.env.FAKE_MCP_PAGE = '2'; // 3 tools served 2 + 1
   const client = new McpClient('paged', stdio({ FAKE_MCP_PAGE: '2' }));

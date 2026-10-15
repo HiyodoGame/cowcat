@@ -75,7 +75,7 @@
 | P3-1 | plan mode 工具对 | EnterPlanMode/ExitPlanMode | 模型可主动进入/退出只读规划态，配合 plan 权限档形成"先规划后执行"闭环 | ✅ |
 | P3-2 | 结构化任务工具 | TaskCreate/TaskGet/TaskUpdate/TaskList | 与 Bash run_in_background 分层：后台进程归 TaskOutput/TaskStop，结构化待办归 TaskCreate 系列 | ✅ |
 | P3-3 | 定时唤醒 | CronCreate/CronDelete/CronList + ScheduleWakeup | 会话内定时任务与唤醒调度，支撑周期性检查与长任务轮询 | ✅ |
-| P3-4 | MCP resources | ListMcpResources/ReadMcpResource | 在现有 tools/list + tools/call 之上补 resources 支持 | ✅ |
+| P3-4 | MCP resources | ListMcpResources/ReadMcpResource | 在现有 tools/list + tools/call 之上补 resources 支持（静态资源 list/read ✅；`resources/templates/list` 动态模板资源未做，prompts 与 subscriptions 亦未做——见 `docs/fix-plan-2026-10-15.md` 第七轮缺口表） | ◐ 部分 |
 | P3-5 | Agent 异步与思考档位 | Agent 工具 run_in_background + effort 五档 | 子代理后台派发不阻塞主循环；低/中/高/极高思考档位透传 | ✅ |
 | P3-6 | Read 大文件/多模态 | Read allow_large、图片读取 | allow_large 大文件 opt-in 直读已完成；图片/PDF/notebook 多模态读取未做（低优先） | ◐ 部分 |
 
