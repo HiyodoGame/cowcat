@@ -13,7 +13,9 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.12.0 未发布，533 tests 全绿）
+## 1. 现状快照（v0.12.0 已发布，563 tests 全绿 + ESLint 门禁）
+
+> v0.12.0 发布收尾过程中另修：MCP 握手的 `clientInfo.version` 从硬编码 `0.5.0` 改为读 `package.json`（单一版本源）；`Glob` 的 `path` 参数崩溃与 `/output-style` 未接线（见 `docs/fix-plan-2026-10-15.md` 第六轮）。
 
 **已完整且健康**：双协议 LLM 层（含 cache_control、count_tokens、installId 元数据）、25 内置工具 + 动态 MCP 工具注册、default/plan/acceptEdits/yolo 四权限模式 + 危险命令启发式 + always-allow 记忆 + 结构化权限规则引擎（`permissions.allow/deny/ask` + `Tool(pattern)` 语法 + /permissions）、hooks 8 事件（PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact）、MCP 客户端（stdio + http 流式传输 + resources list/read）、文件 checkpoint + /rewind、记忆系统完整层级、自动 compact（summarizer 全结构）、JSONL 会话三态续接、子代理（4+ 内建角色 + 自定义 agent 定义 + effort 五档 + run_in_background）、目录信任、setup/doctor 向导、审批卡/diff 卡/输出卡、启动一行文本 banner 与纯文本状态栏（猫咪视觉形象已移除）、17+ 斜杠命令、项目上下文（COWCAT.md/AGENTS.md/CLAUDE.md 向上查找）、自定义 agents/commands/skills 目录加载、输出样式 + statusline 自定义命令、全屏 TUI（v0.10.0 全面翻新：字素宽度测量 CJK/emoji 对齐、终端能力探测、语义色 token 双主题 /theme 即时生效、帧 diff 渲染 + 条目缓存、流式 markdown 渲染、六语言语法高亮、用户消息气泡、工具块 ⏺ 三态 + 回合页脚 ✻、审批卡 diff 预览、圆角输入框 + placeholder + 状态栏提示、LineEditor 完整编辑键、Tab/@ 补全；内联审批卡/Esc 中断/可滚动 transcript）、结构化输出（`--output-format stream-json` + `--output-schema`）、后台任务（Bash run_in_background 1800s 分层 + TaskOutput/TaskStop + /tasks）、plan mode 工具对（EnterPlanMode/ExitPlanMode 审批闭环）、结构化任务工具（TaskCreate 系列）、定时唤醒（CronCreate 系列 + ScheduleWakeup，~/.cowcat/crons.json 持久化）、Read allow_large、v0.12.0 新增：OpenAI 兼容 provider 思考链流式（reasoning_content/reasoning → 本地 thinking 块，不回传上游）、工具调用 delta 实时 pending 卡、右侧面板（ctrl+b / /panel）、错误卡片化 + API 错误提示（src/errfmt.js）、并行工具执行（maxParallelTools 默认 4、结果保序）、启动模型引用校验提示（src/modelhint.js）、轻量 Bash 沙箱（见下）。
 

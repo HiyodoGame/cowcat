@@ -5,7 +5,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cowcatHome, writeState } from './config.js';
+import { cowcatHome, writeState, PKG_VERSION } from './config.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const getTimeout = () => Number(process.env.COWCAT_MCP_TIMEOUT) || 60_000;
@@ -109,7 +109,7 @@ class StdioTransport {
         this.request('initialize', {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: {},
-          clientInfo: { name: 'cowcat', version: '0.5.0' },
+          clientInfo: { name: 'cowcat', version: PKG_VERSION },
         }).then((res) => {
           clearTimeout(to);
           this.notify('notifications/initialized', {});
@@ -253,7 +253,7 @@ class HttpTransport {
     await this.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'cowcat', version: '0.5.0' },
+      clientInfo: { name: 'cowcat', version: PKG_VERSION },
     });
     // Per spec this is a notification: POST it without an id and never wait for
     // a JSON-RPC result (servers answer 202 with an empty body). Sending it as

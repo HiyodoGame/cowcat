@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 0.12.0（未发布）— P1–P5：思考链流式 / 工具增量 / 右侧面板 / 轻量沙箱 / 并行执行
+## 0.12.0（2026-10-16）— P1–P5：思考链流式 / 工具增量 / 右侧面板 / 轻量沙箱 / 并行执行
 
 - **稳定性修复（摸底深挖批次）**：`-p` 模式在所有 return 路径（含 `--max-turns` 超限、`--output-schema` 失败）经 try/finally 统一执行子进程清理——修复「模型开了 `run_in_background` 任务后 CLI 挂起直到任务超时」的 CI 静默挂起；新增 SIGTERM 处理器（原来只有 SIGINT，docker stop/CI runner 杀进程时留下孤儿）；MCP stdio server 与后台 registry 纳入信号清理范围（`bin/cowcat.mjs`）。
 - **权限规则覆盖 MCP 工具**：`mcp__<server>__<tool>` 名跳过 knownTools 启动快照校验（工具在连接后才注册，预置规则此前全被跳过并告警），规则名允许 `-`/`.`（`get-issue` 这类 MCP 工具名原来连解析都过不了）；MCP 连接后重跑 applyRules，`/permissions add` 用实时工具列表（`src/perrules.js`、`bin/cowcat.mjs`）。

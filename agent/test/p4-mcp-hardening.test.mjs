@@ -130,7 +130,7 @@ test('mcp: http transport carries the mcp-session-id header on later requests', 
   const seen = [];
   const fetchImpl = async (url, opts) => {
     const body = JSON.parse(opts.body);
-    seen.push({ method: body.method, sid: opts.headers['mcp-session-id'], hasId: body.id != null });
+    seen.push({ method: body.method, sid: opts.headers['mcp-session-id'], hasId: body.id != null, clientInfo: body.params?.clientInfo });
     // the session minting server rejects any request without the header
     if (body.method !== 'initialize' && !opts.headers['mcp-session-id']) {
       return { ok: false, status: 400, headers: { get: () => null }, text: async () => 'missing session' };
@@ -152,6 +152,10 @@ test('mcp: http transport carries the mcp-session-id header on later requests', 
   assert.equal(listCall.sid, 'sess-42', 'session id echoed on the follow-up request');
   const initCall = seen.find((s) => s.method === 'initialize');
   assert.equal(initCall.sid, undefined, 'initialize itself has no session header yet');
+  // the handshake version must not drift from package.json (it was hardcoded to
+  // an old release once)
+  const pkgVersion = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
+  assert.equal(initCall.clientInfo.version, pkgVersion, 'clientInfo reports the real package version');
   // notifications/initialized must be a real notification: no id, not awaited
   const note = seen.find((s) => s.method === 'notifications/initialized');
   assert.ok(note, 'notification was sent');

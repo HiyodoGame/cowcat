@@ -19,7 +19,9 @@ import { createRequire } from 'node:module';
 import { getProvider as getPresetProvider, listProviders } from './llm/presets.js';
 
 const require = createRequire(import.meta.url);
-let PKG_VERSION = '0.0.0';
+// Single source of truth for the version we report (CLI banner, structured
+// output, and the MCP clientInfo handshake all read this).
+export let PKG_VERSION = '0.0.0';
 try { PKG_VERSION = require('../package.json').version; } catch { /* stay unknown */ }
 
 export class ConfigError extends Error {
