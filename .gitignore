@@ -1,7 +1,12 @@
 logs/
 analysis/*.pretty.js
-artifacts/*.js
 node_modules/
 *.tgz
 .keys.env
 sandbox/
+
+# 逆向 / 打包产物：只保留在本地，不进仓库（发布 tarball 亦不含）
+artifacts/
+tools/patch/runtime/cli.patched.js
+analysis/sdk-reference/
+analysis/tmp/
