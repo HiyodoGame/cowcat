@@ -1,6 +1,7 @@
 // OpenAI-compatible chat/completions provider, normalized to the internal message format.
 import { postJSON, parseSSE } from './client.js';
 import { estimateTokensLocal } from './tokapprox.js';
+import { materializeAll, attachmentLabel } from '../attach.js';
 
 // Reasoning field names across OpenAI-compatible endpoints: DeepSeek/GLM/Kimi
 // stream `reasoning_content`; OpenAI o-series uses `reasoning`. Either may be a
@@ -135,6 +136,34 @@ export class OpenAIProvider {
   }
 }
 
+// A tool result in this protocol is a plain string, so attached images cannot
+// ride inside it: they are returned separately and emitted as a follow-up user
+// message with data-URL parts. The tool message itself gets one label line per
+// attachment so the model knows what the images are.
+function toolResultParts(tr) {
+  const attachments = Array.isArray(tr.attachments) ? tr.attachments : [];
+  const text = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
+  if (attachments.length === 0) return { content: text, images: [] };
+  const { blocks, notes } = materializeAll(attachments);
+  const lines = [text, ...attachments.map(attachmentLabel), ...notes];
+  const images = [];
+  for (const blk of blocks) {
+    if (blk.type === 'image') {
+      images.push({ type: 'image_url', image_url: { url: `data:${blk.mediaType};base64,${blk.data}` } });
+    } else {
+      lines.push(`[${blk.type} attachments are not supported by this protocol: ${blk.mediaType}]`);
+    }
+  }
+  return { content: lines.filter(Boolean).join('\n'), images };
+}
+
+function imageUserMessage(images) {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: `[${images.length} image${images.length === 1 ? '' : 's'} attached]` }, ...images],
+  };
+}
+
 // Internal -> OpenAI wire format.
 export function toOpenAIMessages(system, messages) {
   const out = [];
@@ -145,7 +174,17 @@ export function toOpenAIMessages(system, messages) {
   for (const m of messages) {
     if (m.role === 'tool') {
       // internal tool_result pseudo-role
-      out.push({ role: 'tool', tool_call_id: m.tool_use_id, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) });
+      const p = toolResultParts(m);
+      out.push({ role: 'tool', tool_call_id: m.tool_use_id, content: p.content });
+      if (p.images.length) out.push(imageUserMessage(p.images));
+      continue;
+    }
+    if (typeof m.content === 'string') {
+      // Plain-text messages (the user's prompt, the compacted-summary wrapper)
+      // must be passed through as-is. Iterating a string as if it were a block
+      // array silently dropped the whole message — which meant an
+      // OpenAI-compatible request carried no user prompt at all.
+      out.push({ role: m.role, content: m.content });
       continue;
     }
     const texts = [];
@@ -171,15 +210,17 @@ export function toOpenAIMessages(system, messages) {
       });
     } else {
       // tool responses must immediately follow the assistant tool_calls message,
-      // so emit them before any text (e.g. reminder blocks) from the same turn
+      // so emit them (and any images they carry) before the text of the turn
+      const images = [];
       for (const tr of toolResults) {
-        out.push({
-          role: 'tool',
-          tool_call_id: tr.tool_use_id,
-          content: typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content),
-        });
+        const p = toolResultParts(tr);
+        out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: p.content });
+        images.push(...p.images);
       }
-      if (texts.length) out.push({ role: 'user', content: texts.join('') });
+      if (images.length) out.push(imageUserMessage(images));
+      // Separate text blocks of one turn keep their own line: a reminder riding
+      // in front of the user's prompt must not be glued onto it.
+      if (texts.length) out.push({ role: 'user', content: texts.join('\n') });
     }
   }
   return out;

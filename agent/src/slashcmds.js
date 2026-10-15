@@ -4,6 +4,7 @@ import { readFileSync, existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeState } from './config.js';
 import { estimateTokens } from './prompts/compact.js';
+import { attachmentLabel } from './attach.js';
 
 // --- usage aggregation -------------------------------------------------------
 
@@ -86,7 +87,7 @@ export function exportSessionToMarkdown(sessionFile) {
     for (const b of m.content || []) {
       if (b.type === 'text') parts.push(b.text);
       else if (b.type === 'tool_use') parts.push(`\`${b.name}\` ${JSON.stringify(b.input).slice(0, 200)}`);
-      else if (b.type === 'tool_result') parts.push(`→ ${String(b.content).slice(0, 400)}${b.is_error ? ' (error)' : ''}`);
+      else if (b.type === 'tool_result') parts.push(`→ ${String(b.content).slice(0, 400)}${b.is_error ? ' (error)' : ''}${(b.attachments || []).map((a) => ` ${attachmentLabel(a)}`).join('')}`);
     }
     const body = typeof m.content === 'string' ? m.content : parts.join('\n\n');
     lines.push(`## ${role}${ts}`, '', body || '_(empty)_', '');

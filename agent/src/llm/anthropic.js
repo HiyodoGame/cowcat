@@ -1,5 +1,6 @@
 // Anthropic Messages API provider (native protocol + SSE normalization).
 import { postJSON, parseSSE, LLMError } from './client.js';
+import { materializeAll } from '../attach.js';
 
 const API_VERSION = '2023-06-01';
 // Declared capabilities (P2): token counting and interleaved thinking blocks.
@@ -220,19 +221,68 @@ export function buildAnthropicRequestBody(cfg, { system, messages, tools, maxTok
   };
 }
 
+// One internal tool_result -> the wire content plus any sibling blocks that are
+// not allowed inside a tool_result. Attachments are materialized HERE: the
+// transcript only ever holds references (path + metadata), so the base64 exists
+// for the duration of one request. See docs/read-multimodal-plan.md §3.1/§3.3.
+function wireToolResult(b) {
+  const attachments = Array.isArray(b.attachments) ? b.attachments : [];
+  if (attachments.length === 0) return { content: b.content, siblings: [] };
+  const { blocks, notes } = materializeAll(attachments);
+  const parts = [];
+  if (b.content) parts.push({ type: 'text', text: String(b.content) });
+  for (const n of notes) parts.push({ type: 'text', text: n });
+  const siblings = [];
+  for (const blk of blocks) {
+    if (blk.type === 'image') {
+      parts.push({ type: 'image', source: { type: 'base64', media_type: blk.mediaType, data: blk.data } });
+    } else if (blk.type === 'document') {
+      // tool_result content is documented for text/image blocks only, so a PDF
+      // rides as a sibling block of the same user message (after the results).
+      siblings.push({ type: 'document', source: { type: 'base64', media_type: blk.mediaType, data: blk.data } });
+    }
+  }
+  return { content: parts, siblings };
+}
+
 // Convert internal messages to Anthropic wire format.
 export function toAnthropicMessages(messages) {
-  return messages.map((m) => {
+  const out = [];
+  for (const m of messages) {
     if (m.role === 'tool') {
       // internal tool_result pseudo-role -> user message with tool_result block
-      return { role: 'user', content: [{ type: 'tool_result', tool_use_id: m.tool_use_id, content: m.content, is_error: m.is_error }] };
+      const w = wireToolResult(m);
+      out.push({
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: m.tool_use_id, content: w.content, is_error: m.is_error }, ...w.siblings],
+      });
+      continue;
+    }
+    if (m.role === 'user' && Array.isArray(m.content)) {
+      // tool_result blocks must lead the message (converters such as Kimi's
+      // require it), so everything else is appended after them.
+      const results = [];
+      const trailing = [];
+      const documents = [];
+      for (const b of m.content) {
+        if (b.type === 'tool_result') {
+          const w = wireToolResult(b);
+          results.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: w.content, is_error: b.is_error });
+          documents.push(...w.siblings);
+        } else if (b.type !== 'thinking') { // thinking is output-only: never echoed upstream
+          trailing.push(b);
+        }
+      }
+      out.push({ role: 'user', content: [...results, ...documents, ...trailing] });
+      continue;
     }
     // thinking blocks are output-only in the Messages API; never echo them back upstream
     const content = Array.isArray(m.content)
       ? m.content.filter((b) => b.type !== 'thinking')
       : m.content;
-    return { role: m.role, content };
-  });
+    out.push({ role: m.role, content });
+  }
+  return out;
 }
 
 export function toAnthropicTool(tool) {

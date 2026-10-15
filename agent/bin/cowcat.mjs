@@ -9,6 +9,7 @@ import { ToolRegistry } from '../src/tools/registry.js';
 import { ReadTool } from '../src/tools/read.js';
 import { EditTool } from '../src/tools/edit.js';
 import { WriteTool } from '../src/tools/write.js';
+import { NotebookEditTool } from '../src/tools/notebookedit.js';
 import { GlobTool } from '../src/tools/glob.js';
 import { GrepTool } from '../src/tools/grep.js';
 import { BashTool } from '../src/tools/bash.js';
@@ -167,7 +168,7 @@ async function cmdDoctor(ui, opts = {}) {
 
 function buildRegistry() {
   const reg = new ToolRegistry();
-  for (const t of [ReadTool, EditTool, WriteTool, GlobTool, GrepTool, BashTool, TodoWriteTool, AskUserQuestionTool, AgentTool, WebFetchTool, WebSearchTool, TaskOutputTool, TaskStopTool, EnterPlanModeTool, ExitPlanModeTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool, ListMcpResourcesTool, ReadMcpResourceTool, SubscribeMcpResourceTool, UnsubscribeMcpResourceTool]) {
+  for (const t of [ReadTool, EditTool, WriteTool, NotebookEditTool, GlobTool, GrepTool, BashTool, TodoWriteTool, AskUserQuestionTool, AgentTool, WebFetchTool, WebSearchTool, TaskOutputTool, TaskStopTool, EnterPlanModeTool, ExitPlanModeTool, CronCreateTool, CronDeleteTool, CronListTool, ScheduleWakeupTool, TaskCreateTool, TaskGetTool, TaskUpdateTool, TaskListTool, ListMcpResourcesTool, ReadMcpResourceTool, SubscribeMcpResourceTool, UnsubscribeMcpResourceTool]) {
     reg.register(t);
   }
   return reg;

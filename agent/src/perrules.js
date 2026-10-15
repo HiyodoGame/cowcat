@@ -31,7 +31,7 @@ export function validateRule(str, knownTools) {
   if (rawPattern === undefined) return { rule: { tool, pattern: null, prefix: false, raw: s } };
   const pattern = rawPattern.trim();
   if (!pattern) return { error: `模式为空：${s}` };
-  const isPathTool = ['Read', 'Edit', 'Write', 'Glob', 'Grep'].includes(tool);
+  const isPathTool = ['Read', 'Edit', 'Write', 'NotebookEdit', 'Glob', 'Grep'].includes(tool);
   if (pattern.includes('*') && !pattern.endsWith(':*') && !(isPathTool && /^[\w./{}*-]+$/.test(pattern))) {
     return { error: `* 只能以 ":*" 结尾（前缀匹配），路径工具可用 glob（如 src/**）：${s}` };
   }
@@ -60,6 +60,7 @@ export function loadRules(cfg, knownTools) {
 function subjectFor(toolName, input = {}) {
   if (toolName === 'Bash') return String(input.command || '').trim();
   if (toolName === 'Write' || toolName === 'Edit') return String(input.file_path || '');
+  if (toolName === 'NotebookEdit') return String(input.notebook_path || '');
   return String(input.file_path || input.pattern || input.command || JSON.stringify(input));
 }
 

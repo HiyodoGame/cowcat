@@ -98,7 +98,34 @@ cowcat --resume <file.jsonl>    # 恢复指定会话文件
 
 - 会话保存在 `~/.cowcat/projects/<项目slug>/<时间戳>.jsonl`，文件头部记录 cwd。
 - 启动时自动从 cwd 向上查找 `COWCAT.md` → `AGENTS.md` → `CLAUDE.md`（第一个命中），作为项目指令注入 system prompt。
-- 内置 11 个工具：Read / Edit / Write / Glob / Grep / Bash / TodoWrite / AskUserQuestion / Agent / **WebFetch**（抓 URL，HTML 转可读文本）/ **WebSearch**（DuckDuckGo 免费搜索，支持域名过滤）。
+- 内置 28 个工具：Read（文本/**图片/PDF/notebook**）/ Edit / **NotebookEdit** / Write / Glob / Grep / Bash / TodoWrite / AskUserQuestion / Agent / **WebFetch**（抓 URL，HTML 转可读文本）/ **WebSearch**（DuckDuckGo 免费搜索，支持域名过滤）等，另有 MCP 动态注册的工具。
+
+## 读图 / PDF / Notebook
+
+`Read` 不只读文本：
+
+| 文件 | 行为 |
+|---|---|
+| 图片（png/jpeg/gif/webp） | 作为图片块交给模型，返回 `[image] a.png — image/png, 1200x800, 234.5 KB (attached for the model)`；上限 5MB |
+| PDF | Anthropic 协议走原生 `document` 块；OpenAI 兼容协议走 best-effort 文本抽取（带质量门，抽不出可读文本时明确报错而不是喂乱码）；上限 10MB |
+| `.ipynb` | 按单元格渲染（`--- cell [n] type ---` + 编号源码 + `--- output [n.m] ---`）；输出里的图片只标注大小，不上传 |
+| bmp / tiff / ico / avif / heic | 明确拒绝，提示先转换 |
+
+- **图片字节不进会话文件**：Read 只登记「引用（绝对路径 + 媒体类型 + 大小 + token 估算）」，真正读盘发生在发请求那一刻。这样会话 JSONL、`/export`、compact 摘要、`/context` 都不会被 base64 撑爆；文件事后被删或变大，该附件自动降级成一行文字占位（`[image unavailable: …]`），不会让整个请求失败。
+- **视觉能力门控**：按 `assets/providers.json` 里模型的 `attachment` 标记判断。目录标记 `attachment: false` 的模型，Read 直接拒绝并说明两条出路（`/model` 换视觉模型 / `COWCAT_VISION=force` 强制尝试）；模型不在目录里则先尝试，上游报错会被翻译成「该模型可能不支持图片输入」的提示；也可用 `COWCAT_VISION=off` 主动关闭。**注意**：抽不出的 PDF、被拒绝的图片都以 tool_result 报错回给模型，模型可以据此换路径。
+- 图片按 Anthropic 的 `宽×高/750` 估算 token 并计入 `/context`（**长边先按 Anthropic 规则缩到 1568px 再计**，否则 4K 截图会被高估数倍）；PDF 按页数估算。
+- 图片、PDF、notebook 都是**整份读**，`offset`/`limit` 对它们无效（返回里会注明）。
+
+`NotebookEdit` 按 cell 索引修改 notebook：
+
+```
+NotebookEdit(notebook_path, cell_index, edit_mode=replace|insert|delete, new_source?, cell_type?)
+```
+
+- `insert` 把新单元格放在 `cell_index` 处（原单元格顺延），`cell_index` 等于单元格总数时追加到末尾；`delete` 删除该索引。
+- insert/delete 之后后续索引会移动，工具返回里会提示「re-Read the notebook」。
+- 改 `cell_type` 为 code 会保留一个空 `outputs`（重新运行是模型/内核的事），改成非 code 会丢弃过期的 outputs/execution_count。
+- 与 Edit 一样要求「先 Read 后写」；走审批卡（diff 以**渲染后的单元格**形式展示）、写前 checkpoint、plan 模式拒绝、acceptEdits 档自动接受。
 
 ## REPL 斜杠命令
 

@@ -2,6 +2,8 @@
 // (dynamic-findings §4.2): one-line summarizer identity, <analysis> instruction,
 // temperature=1 / max_tokens=20000 / Read-only tools, large-file reminders, and a
 // single-message resume wrapper pointing at the session transcript.
+import { attachmentTokens, attachmentLabel } from '../attach.js';
+
 export const SUMMARIZER_IDENTITY = 'You are a helpful AI assistant tasked with summarizing conversations.';
 
 export const COMPACT_SYSTEM = `Read the transcript below and produce a handoff summary that lets the work continue without re-reading the history.
@@ -28,17 +30,36 @@ Please continue the conversation from where we left off without asking the user 
 export const LARGE_FILE_REMINDER = (path) =>
   `<system-reminder>${path} was read before the last conversation was summarized, but the contents are too large to include. Use Read tool if you need to access it.</system-reminder>`;
 
-// Render one internal message for the compact transcript.
+// Content is either a plain string (the user's prompt, the compact wrapper) or an
+// array of blocks. Both shapes must survive: iterating a string as if it were a
+// block array silently renders an empty <user></user>, which used to erase every
+// plain prompt from the summary.
+export function blocksOf(m) {
+  if (typeof m.content === 'string') return [{ type: 'text', text: m.content }];
+  return Array.isArray(m.content) ? m.content : [];
+}
+
+// Render one internal message for the compact transcript. Attachments are
+// summarized by their label — the bytes are not in the transcript at all.
 export function renderForCompact(m) {
-  if (m.role === 'tool') return `<tool_result id="${m.tool_use_id}">${m.content}</tool_result>`;
+  const blocks = blocksOf(m);
+  if (m.role === 'tool') return `<tool_result id="${m.tool_use_id}">${m.content}${attachmentNotes(blocks)}</tool_result>`;
   const parts = [];
-  for (const b of m.content || []) {
+  for (const b of blocks) {
     if (b.type === 'text') parts.push(b.text);
     else if (b.type === 'thinking') parts.push(`<thinking>${b.thinking}</thinking>`);
     else if (b.type === 'tool_use') parts.push(`<tool_use name="${b.name}" id="${b.id}">${JSON.stringify(b.input)}</tool_use>`);
-    else if (b.type === 'tool_result') parts.push(`<tool_result id="${b.tool_use_id}"${b.is_error ? ' error' : ''}>${b.content}</tool_result>`);
+    else if (b.type === 'tool_result') parts.push(`<tool_result id="${b.tool_use_id}"${b.is_error ? ' error' : ''}>${b.content}${attachmentNotes([b])}</tool_result>`);
   }
   return `<${m.role}>${parts.join('\n')}</${m.role}>`;
+}
+
+function attachmentNotes(blocks) {
+  const labels = [];
+  for (const b of blocks) {
+    if (Array.isArray(b.attachments)) labels.push(...b.attachments.map(attachmentLabel));
+  }
+  return labels.length ? `\n${labels.join('\n')}` : '';
 }
 
 // Collect files that were read in the transcript together with the text that
@@ -47,8 +68,7 @@ export function collectReadFiles(messages) {
   const out = [];              // [{path, text}]
   let pendingRead = null;
   for (const m of messages) {
-    if (!Array.isArray(m.content)) continue;
-    for (const b of m.content) {
+    for (const b of blocksOf(m)) {
       if (b.type === 'tool_use' && b.name === 'Read' && typeof b.input?.file_path === 'string') {
         pendingRead = b.input.file_path;
       } else if (b.type === 'tool_result' && typeof b.content === 'string' && pendingRead) {
@@ -135,8 +155,10 @@ export async function compactConversation({
 }
 
 // Rough token estimate: ~4 chars per token over the serialized message list.
+// Attached images/PDFs are the exception — their cost is carried as an estimate
+// on the attachment reference (the bytes themselves are never in the message).
 export function estimateTokens(messages) {
   let chars = 0;
   for (const m of messages) chars += JSON.stringify(m).length;
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / 4) + attachmentTokens(messages);
 }

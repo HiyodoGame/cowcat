@@ -2,7 +2,7 @@
 // | 'plan' (read-only exploration; writes and mutating commands are rejected)
 // | 'acceptEdits' (plan approved: file writes auto-accepted, Bash still asks).
 const READ_ONLY = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'ListMcpResources', 'ReadMcpResource']);
-const AUTO_EDIT_TOOLS = new Set(['Write', 'Edit']);
+const AUTO_EDIT_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit']);
 const MODES = new Set(['default', 'yolo', 'plan', 'acceptEdits']);
 
 // Bash subcommands allowed while in plan mode — pure inspection, no mutation.
@@ -96,6 +96,7 @@ export class Permissions {
 
 function pickKeyInput(toolName, input) {
   if (toolName === 'Write' || toolName === 'Edit') return { file_path: input.file_path };
+  if (toolName === 'NotebookEdit') return { notebook_path: input.notebook_path };
   if (toolName === 'Bash') return { command: input.command };
   return input;
 }

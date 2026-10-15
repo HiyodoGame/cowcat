@@ -3,6 +3,7 @@
 //   {"error":{"code":"1211","message":"Unknown Model: ..."}}
 // fetch/network failures, and plain strings — into a readable summary plus an
 // actionable hint. Pure functions; the UIs decide how to paint/expand them.
+import { looksLikeVisionUnsupported } from './vision.js';
 
 export const ERR_HINTS = {
   unknownModel: {
@@ -24,6 +25,10 @@ export const ERR_HINTS = {
   network: {
     zh: '网络不通：检查 base URL / 代理设置',
     en: 'Network unreachable: check the base URL / proxy',
+  },
+  visionUnsupported: {
+    zh: '该模型可能不接受图片输入：用 /model 换视觉模型，或设 COWCAT_VISION=off 让 Read 提前拒绝并给出提示',
+    en: 'This model may not accept image input — switch to a vision-capable model with /model, or set COWCAT_VISION=off so Read refuses early',
   },
 };
 
@@ -63,6 +68,7 @@ export function parseApiError(raw) {
 
   let hint = null;
   if (code === '1211' || UNKNOWN_MODEL_RE.test(`${code ?? ''} ${message}`)) hint = 'unknownModel';
+  else if (looksLikeVisionUnsupported(`${code ?? ''} ${message}`)) hint = 'visionUnsupported';
   else if (status === 401 || status === 403) hint = 'auth';
   else if (status === 429) hint = 'rateLimit';
   else if (status !== null && status >= 500) hint = 'server';

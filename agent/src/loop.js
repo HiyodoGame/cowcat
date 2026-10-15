@@ -8,15 +8,39 @@ import { unifiedDiff } from './diffcard.js';
 import { bashCardModel } from './outputcard.js';
 import { createCheckpoint, persistCheckpointRecord } from './checkpoint.js';
 import { fireHooks, hookPayload } from './hooks.js';
+import { editNotebook, parseNotebook, renderNotebook } from './notebook.js';
 
 export const MAX_ITERATIONS = 200;
+
+// Tools that mutate a file on disk: they get a checkpoint before running, a diff
+// preview while awaiting approval, and the auto-accept treatment in acceptEdits.
+export const FILE_WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit']);
 
 // Prospective diff for Edit/Write approvals: replay the edit against the file
 // on disk to show the user exactly what would change before approving.
 export function buildWritePreview(toolName, input, ctx) {
   try {
-    const filePath = resolve(ctx.cwd, input.file_path);
+    const filePath = resolve(ctx.cwd, input.file_path ?? input.notebook_path);
     const oldText = existsSync(filePath) ? readFileSync(filePath, 'utf8') : null;
+    if (toolName === 'NotebookEdit') {
+      // Diff the RENDERED notebooks so the card talks in cells, not JSON, and
+      // refuse to preview an edit that would not apply (the tool reports that).
+      if (oldText == null) return null;
+      const edited = editNotebook(oldText, {
+        cell_index: input.cell_index,
+        edit_mode: input.edit_mode,
+        new_source: input.new_source,
+        cell_type: input.cell_type,
+      });
+      if (!edited.ok) return null;
+      const before = parseNotebook(oldText);
+      if (!before.ok) return null;
+      const { items, added, removed } = unifiedDiff(
+        renderNotebook(before.nb, { path: filePath }),
+        renderNotebook(edited.nb, { path: filePath }),
+      );
+      return { path: filePath, isNew: false, items, added, removed };
+    }
     let newText;
     if (toolName === 'Write') {
       newText = input.content;
@@ -57,7 +81,7 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
 
   // Batch previews for Edit/Write in this assistant message: grouped diff cards,
   // collapsing to a file list when more than 3 files change at once.
-  const writeOps = blocks.filter((b) => b.name === 'Edit' || b.name === 'Write');
+  const writeOps = blocks.filter((b) => FILE_WRITE_TOOLS.has(b.name));
   const previews = new Map();
   for (const b of writeOps) previews.set(b.id, buildWritePreview(b.name, b.input, ctx));
   const group = writeOps.length
@@ -138,8 +162,8 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
     }
 
     // Checkpoint the pre-edit state of every file this write batch touches.
-    if (block.name === 'Edit' || block.name === 'Write') {
-      const cp = createCheckpoint(ctx, [{ file_path: block.input.file_path, tool: block.name }], null);
+    if (FILE_WRITE_TOOLS.has(block.name)) {
+      const cp = createCheckpoint(ctx, [{ file_path: block.input.file_path ?? block.input.notebook_path, tool: block.name }], null);
       persistCheckpointRecord(ctx, cp);
     }
     sessionArtifacts.toolCalls++;
@@ -167,6 +191,9 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
         });
       }
       const r = { type: 'tool_result', tool_use_id: block.id, content: res.output ?? '' };
+      // Binary payloads (images/PDFs) travel as references on the result; the
+      // bytes are materialized per request by the provider (src/attach.js).
+      if (Array.isArray(res.attachments) && res.attachments.length) r.attachments = res.attachments;
       results[i] = r;
       pushResult(block, r);
     } else {
@@ -244,6 +271,7 @@ function summarizeCall(name, input) {
   if (name === 'Bash') return input.command || '';
   if (name === 'Read') return input.file_path || '';
   if (name === 'Write' || name === 'Edit') return input.file_path || '';
+  if (name === 'NotebookEdit') return `${input.notebook_path || ''} [cell ${input.cell_index ?? '?'} ${input.edit_mode || 'replace'}]`;
   if (name === 'Glob') return input.pattern || '';
   if (name === 'Grep') return input.pattern || '';
   if (name === 'Agent') return input.description || '';
@@ -271,7 +299,9 @@ export async function runLoop({
     let probe = est > threshold * 0.7;
     if (!probe) {
       probe = messages.some((m) => Array.isArray(m.content)
-        && m.content.some((b) => b.type === 'tool_result' && typeof b.content === 'string' && b.content.length > 8000));
+        && m.content.some((b) => b.type === 'tool_result'
+          && ((typeof b.content === 'string' && b.content.length > 8000)
+            || (Array.isArray(b.attachments) && b.attachments.length > 0))));
     }
     if (probe) {
       let real = null;
