@@ -67,4 +67,4 @@ CowCat 是 npm 分发的产品。用户通过 `npm i -g` 安装，**不能要求
 | 网络出口控制 | 需沙箱外代理（P后期） | 需沙箱外代理（P后期） | 同左 | — | 未调研 |
 | shell | zsh / bash | bash | bash | Git Bash → PowerShell | 未调研 |
 | 进程树终止 | 进程组 | 进程组 | 进程组 | `taskkill /T /F` | 未调研 |
-| CI 验证 | `macos-15`（按需） | `ubuntu-latest`（PR 必过） | 未覆盖 | `windows-latest`（main） | — |
+| CI 验证 | `macos-15`（按需） | `ubuntu-24.04`（PR 必过） | 未覆盖 | `windows-latest`（main） | — |

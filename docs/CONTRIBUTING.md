@@ -69,6 +69,8 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 
 live 脚本（`agent/test/live/*`）**不进 CI**：它们需要真实 API key 或真实 MCP server，属于发布前手工跑的验证。
 
+**Linux 腿钉 `ubuntu-24.04`**（2026-10-17 起）：`ubuntu-latest` 于 2026-10-19 起逐步迁移到 Ubuntu 26.04，至 11-19 完成（[runner-images#14748](https://github.com/actions/runner-images/issues/14748)），迁移期内同一个提交可能落到两个不同镜像上。这在这里是实质风险：门禁会在 Ubuntu 上装 `bubblewrap` + AppArmor profile，而装不上时沙箱测试是 **skip 而不是 fail** —— 镜像漂移能让覆盖静默关闭而必过检查保持绿色。所以钉住镜像，理由与 `ci-macos.yml` 钉 `macos-15` 相同。注意 job **name** 仍写作 `ubuntu-latest`：required check 按 job name 匹配，改名必须与分支保护的 contexts 在同一窗口一起改，详见 `ci.yml` 头部注释。
+
 ## 4. 发布批次
 
 发布走同一个流程，只是多几步（详见 `docs/PUBLISH.md`）：
