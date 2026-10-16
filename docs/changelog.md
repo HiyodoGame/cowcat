@@ -9,7 +9,7 @@
 - **修复（P3）：测试把「非法字节的解码结果」当成了固定值**。`chrome.test.mjs` 里那条 GBK 用例最后断言「两种编码都无效的字节 → 保持 UTF-8 结果」，但 GBK 解码器对非法字节的处理**随 ICU 版本变化**（Node 20 保留替换字符、Node 24 会产出一个不含替换字符的结果从而胜出），于是同一条断言只在部分 Node 版本成立。改为断言契约（不抛错、总是返回字符串），并把「运行时可不可以解 GBK」抽成 `hasGbkSupport()` 能力探测（small-ICU 构建下跳过正向断言）。
   - **诚实记录一次误判**：这条最初被我诊断为「node 20 的 TextDecoder 不支持 GBK」，据此加了能力跳过；重新读日志后发现 `hasGbkSupport()` 在该 runtime 返回 **true**（GBK 是好的），真正失败的是上面那条 junk 断言 —— 误判已更正，能力探测仍保留（它让 small-ICU 环境的行为显式化）。
 
-验证：`npm test` 675 passed / 0 failed；CI（node 20/22/24 on Linux + node 22 on Windows + 打包守卫）以实际运行结果为准。
+验证：`npm test` 675 passed / 0 failed；**CI 实跑全绿**（run `38859121693` / sha `94fc198`，5 个 job：node 20/22/24 on Linux + node 22 on Windows + 打包白名单守卫）。
 
 ## 0.14.0（2026-10-16）— PDF：ToUnicode CMap 解析（含 0.13.1 的真机抽取修正）
 
