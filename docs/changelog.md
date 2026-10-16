@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 0.14.0（未发布）— PDF：ToUnicode CMap 解析（含 0.13.1 的真机抽取修正）
+## 0.14.0（2026-10-16）— PDF：ToUnicode CMap 解析（含 0.13.1 的真机抽取修正）
 
 0.13.0 发布后做了真实多模态冒烟（新增 `agent/test/live/multimodal.mjs`、`agent/test/live/multimodal-cli.mjs`）。
 图片与 notebook 两条路径真机通过；**PDF 在 OpenAI 兼容协议上实测基本不可用**（本机 4 份真实 PDF 4/4 被拒），先修了三处抽取缺陷，随后补上 **ToUnicode CMap 解析**——真实 PDF 从 0/4 变为 2/4 可抽取（含一份 11.7MB 中文国标）。0.13.1 未发布过，其内容并入本版一次记档。
