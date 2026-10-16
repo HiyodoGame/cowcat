@@ -20,6 +20,7 @@ import { extractPdfText } from '../src/pdftext.js';
 import { renderNotebook, parseNotebook } from '../src/notebook.js';
 import { ReadTool } from '../src/tools/read.js';
 import { makePng, makeJpeg, makeGif, makeWebp, makePdf, makeNotebookBuffer } from './fixtures/media.mjs';
+import { deflateSync } from 'node:zlib';
 
 // Vision-capable / non-vision models from the shipped catalog (assets/providers.json).
 const VISION_MODEL = 'XiaomiMiMo/MiMo-V2.6-Pro';
@@ -40,6 +41,17 @@ function ctxFor(dir, config = {}) {
 }
 
 // --- imageinfo ---------------------------------------------------------------
+
+// Minimal PDF assembled from raw (already-encoded) stream bodies, so tests can
+// plant a specific dictionary next to a specific stream.
+function pdfFixture(objects) {
+  let out = '%PDF-1.4\n';
+  objects.forEach((o, i) => {
+    out += `${i + 1} 0 obj\n<< /Length ${o.body.length}${o.extra || ''} >>\nstream\n${o.body.toString('latin1')}\nendstream\nendobj\n`;
+  });
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
 
 test('sniff: a real PNG parses its dimensions', () => {
   const info = sniffBuffer(makePng(3, 2));
@@ -336,6 +348,33 @@ test('pdftext: inflates FlateDecode streams and reports quality failures', () =>
   const empty = extractPdfText(makePdf(['x']));
   assert.equal(empty.ok, false);
   assert.match(empty.reason, /only 1 characters/);
+});
+
+// Found by running the extractor against real PDFs on a dev machine: inflating
+// every Flate stream also decoded embedded font programs, which polluted the
+// extracted text (an English spec with zero CID fonts still measured 33%
+// non-printable).
+test('pdftext: font/image/metadata streams are skipped, page text still read', () => {
+  const PAGE = 'The quick brown fox jumps over the lazy dog, and this sentence is long enough.';
+  const pdf = pdfFixture([
+    { extra: ' /Subtype /Type1C', body: deflateSync(Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x80, 0x81, 0x00, 0x7f, 0x10, 0x11])) },
+    { extra: ' /Filter /FlateDecode', body: deflateSync(Buffer.from(`BT /F1 12 Tf 72 720 Td (${PAGE}) Tj ET`, 'latin1')) },
+    { extra: ' /Type /Metadata /Subtype /XML', body: deflateSync(Buffer.from('<x:xmpmeta>metadata noise</x:xmpmeta>', 'latin1')) },
+  ]);
+  const r = extractPdfText(pdf);
+  assert.equal(r.ok, true);
+  assert.match(r.text, /The quick brown fox/);
+  assert.equal(/metadata noise/.test(r.text), false, 'metadata streams are not page text');
+});
+
+test('pdftext: CID fonts without a ToUnicode map are refused up front', () => {
+  const pdf = pdfFixture([
+    { extra: ' /Subtype /Type0 /Encoding /Identity-H', body: deflateSync(Buffer.from('nope', 'latin1')) },
+    { extra: ' /Filter /FlateDecode', body: deflateSync(Buffer.from('BT /F1 12 Tf 72 720 Td (ignored anyway because the encoding is unknown) Tj ET', 'latin1')) },
+  ]);
+  const r = extractPdfText(pdf);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /glyph ids instead of characters/);
 });
 
 // --- Read: notebooks ---------------------------------------------------------

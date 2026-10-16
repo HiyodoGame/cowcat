@@ -134,8 +134,21 @@ export function scanContentStream(s) {
   return pieces.join('');
 }
 
+// Stream dictionaries that never hold page text: embedded font programs, ICC
+// profiles, images, metadata, object streams. Inflating those produced binary
+// junk that polluted the extracted text (found by running against real PDFs —
+// an English 1MB spec had zero CID fonts yet 33% non-printable output).
+// `/Form` is deliberately NOT skipped: page text legitimately lives in form
+// XObjects.
+const NON_CONTENT_STREAM_RE = new RegExp([
+  '/Subtype\\s*/(Type1C|CIDFontType0C|CIDFontType2|OpenType|TrueType|Type0|Type3|XML|Image)',
+  '/Type\\s*/(Metadata|ObjStm|XRef|EmbeddedFile)',
+  '/FontFile[0-9]?',
+  '/Subtype\\s*/Image',
+].join('|'));
+
 // Every `stream ... endstream` body, inflated when the enclosing dictionary says
-// FlateDecode (the overwhelmingly common case).
+// FlateDecode (the overwhelmingly common case). Non-content streams are skipped.
 export function extractStreams(buf) {
   const raw = buf.toString('latin1');
   const out = [];
@@ -148,8 +161,12 @@ export function extractStreams(buf) {
     let body = raw.slice(start, end);
     if (body.endsWith('\r\n')) body = body.slice(0, -2);
     else if (body.endsWith('\n') || body.endsWith('\r')) body = body.slice(0, -1);
-    const dictStart = Math.max(0, m.index - 600);
-    const dict = raw.slice(dictStart, m.index);
+    // Only THIS object's dictionary decides: a fixed-size window backwards would
+    // also capture the previous object (a font program's /Subtype /Type1C sitting
+    // right before a page stream used to get the page stream skipped).
+    const objStart = raw.lastIndexOf('obj', m.index);
+    const dict = objStart === -1 ? '' : raw.slice(objStart, m.index);
+    if (NON_CONTENT_STREAM_RE.test(dict)) continue;
     if (/\/FlateDecode/.test(dict)) {
       const bytes = Buffer.from(body, 'latin1');
       try { out.push(inflateSync(bytes).toString('latin1')); continue; } catch { /* try raw deflate */ }
@@ -158,6 +175,17 @@ export function extractStreams(buf) {
     out.push(body);
   }
   return out;
+}
+
+// CID-keyed fonts (Type0) address glyphs, not characters, so a literal/hex string
+// carries glyph ids that only a ToUnicode CMap could translate — and this
+// extractor does not read CMaps. When that combination is detectable up front,
+// refusing is more honest than guessing. (When it is not detectable, the
+// printable-ratio gate below is the backstop.)
+export function usesCidFontsWithoutUnicode(buf) {
+  const raw = buf.toString('latin1');
+  if (!/\/Type0\b/.test(raw)) return false;
+  return !/\/ToUnicode\b/.test(raw);
 }
 
 function tidy(text) {
@@ -180,6 +208,9 @@ function printableRatio(text) {
 
 // -> { ok:true, text, chars, truncated } | { ok:false, reason }
 export function extractPdfText(buf, { minChars = MIN_CHARS, maxChars = MAX_CHARS } = {}) {
+  if (usesCidFontsWithoutUnicode(buf)) {
+    return { ok: false, reason: 'this PDF stores glyph ids instead of characters (CID fonts without a ToUnicode map), which needs a real PDF parser to decode' };
+  }
   let text = '';
   try {
     for (const stream of extractStreams(buf)) text += `${scanContentStream(stream)}\n`;
@@ -192,7 +223,7 @@ export function extractPdfText(buf, { minChars = MIN_CHARS, maxChars = MAX_CHARS
   }
   const ratio = printableRatio(cleaned);
   if (ratio < MIN_PRINTABLE_RATIO) {
-    return { ok: false, reason: `extracted text is ${Math.round((1 - ratio) * 100)}% non-printable (glyph-encoded fonts without a ToUnicode map)` };
+    return { ok: false, reason: `extracted text is ${Math.round((1 - ratio) * 100)}% non-printable — this PDF encodes its text in a way that needs a real PDF parser (embedded font encodings / CMaps); convert it to text first` };
   }
   const truncated = cleaned.length > maxChars;
   return { ok: true, text: truncated ? cleaned.slice(0, maxChars) : cleaned, chars: cleaned.length, truncated };

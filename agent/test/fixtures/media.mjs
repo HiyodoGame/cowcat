@@ -29,20 +29,34 @@ function pngChunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crc]);
 }
 
-// A valid 8-bit RGB PNG of the requested size (all pixels black).
-export function makePng(width, height) {
+// A valid 8-bit RGB PNG of the requested size, painted by `pixelFn(x, y)` ->
+// [r, g, b]. Default is all black.
+export function makePngRgb(width, height, pixelFn = () => [0, 0, 0]) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8;  // bit depth
   ihdr[9] = 2;  // colour type: truecolour
   const raw = Buffer.alloc(height * (1 + width * 3)); // filter byte 0 + RGB triples
+  for (let y = 0; y < height; y++) {
+    let o = y * (1 + width * 3) + 1;
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = pixelFn(x, y);
+      raw[o++] = r;
+      raw[o++] = g;
+      raw[o++] = b;
+    }
+  }
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk('IHDR', ihdr),
     pngChunk('IDAT', deflateSync(raw)),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
+}
+
+export function makePng(width, height) {
+  return makePngRgb(width, height);
 }
 
 export function makeJpeg(width, height) {

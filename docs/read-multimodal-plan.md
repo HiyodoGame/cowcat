@@ -174,7 +174,7 @@ visionSupport(config) -> 'yes' | 'no' | 'unknown'
 | resume 后图片语义断裂 | 引用回放 + 重新 materialize；文件变了就降级为占位，不静默发错图 |
 | Anthropic-compatible 第三方端点不认 `document` 块 | 交由上游报错 + errfmt 提示；不做事前探测（探测成本 > 收益） |
 | 缓存断点被附件打乱 | `buildAnthropicRequestBody` 的尾部 breakpoint 逻辑不变；附件走 tool_result/user 消息，仍在同一条消息内被标记 |
-| PDF 抽取在 CJK/CMap 场景失真 | 质量门拦截最差情况；局限写进代码注释与 USAGE |
+| PDF 抽取在 CJK/CMap 场景失真 | 质量门拦截最差情况；局限写进代码注释与 USAGE。**实测结论**：这不是"最差情况"，而是常态——本机 4 份真实 PDF 4/4 被拒，只有简单编码的 PDF 能抽；已在 USAGE/changelog 如实说明，并把 ToUnicode CMap 解析列为后续主要项 |
 | 二进制嗅探误判（UTF-16 / 含 NUL 的文本 / 超大 SVG） | 先看魔数再看扩展名；嗅探不出且含 NUL → 维持现状报 binary；SVG 归文本 |
 | Windows 路径在 JSON 里的反斜杠 | 一律 `JSON.stringify`/`resolve` 处理，测试用 Windows 路径样本覆盖 |
 
@@ -187,6 +187,23 @@ visionSupport(config) -> 'yes' | 'no' | 'unknown'
 ## 7. 后续可选项（不阻塞本批次）
 
 - notebook output 内嵌图片回传（需给附件加 base64 兜底 + 大小预算）。
-- PDF 抽取增强（ToUnicode CMap 解析）或引入可选的本地 `pdftotext` 调用。
+- PDF 抽取增强（ToUnicode CMap 解析）或引入可选的本地 `pdftotext` 调用。**实测这已是 PDF 支持的主要缺口**：真实 PDF（现代生成器、CJK、扫描件）基本都靠 CMap 把字节映射成字符，不解析就只能拒绝——本机 4 份真实 PDF 4/4 拒绝。
+
+## 真机验证（0.13.0 发布后补做 → 0.13.1）
+
+新增两个 live 脚本（不进 `npm test`，需要已配置的 provider + 真实 key）：
+
+- `agent/test/live/multimodal.mjs`：走 Read → 附件 → provider 的真实通路，跑「图片 / PDF / notebook」三例，断言模型答出**只有看到内容才可能知道**的答案（三色条的颜色顺序、PDF 里的项目代号、单元格函数名），并打印 token 估算 vs 上游 `prompt_tokens`；上游拒绝时渲染 errfmt 的提示。
+- `agent/test/live/multimodal-cli.mjs`：CLI 端到端——未信任目录（只读 plan）下读图；已信任目录 `-y` 下让模型调用 `NotebookEdit` 落盘，并校验该目录本身未被写入。
+
+结果（`zai-coding-plan` / `glm-5.3-flash`，OpenAI 协议）：图片 ✅（估算 160 vs 上游 `prompt_tokens` 336）、notebook ✅、合成简单 PDF ✅、**真实 PDF 4/4 拒绝**、CLI 端到端 ✅。
+
+**PDF 的实测结论比 §3.5 的预期悲观，因此实现与文案都改了**（详见 `docs/fix-plan-2026-10-15.md` 第十一轮）：
+
+1. 抽取器原本 inflate 每一个 Flate 流，连嵌入字体程序/ICC/XMP 元数据一起扫 → 二进制垃圾混入正文、可打印比例被拉低（一份 1MB 英文规范 `Type0`=0 却量出 33% 非可打印）。改为按**当前对象**的字典跳过字体/图片/元数据/对象流；`/Form` 故意不跳过（页面文本可以存在于 form XObject）。
+2. 新增 CID 字体（`/Type0` 且无 `/ToUnicode`）的**结构性前置拒绝**，提示更准确（扫描件由此命中）。
+3. 质量门文案删掉「without a ToUnicode map」这种在 ToUnicode 存在时就错误的断言；`Read` 描述写明 OpenAI 兼容协议下 PDF 基本等于「先转文本」。
+
+修正后的准确说法：**简单编码的 PDF 可以抽文本；其余明确拒绝并建议转文本；要原生读 PDF 用 Anthropic 协议端点**。
 - 图片自动压缩/缩放（若引入可选依赖，走 opt-in）。
 - `Read` 支持音频/视频（无上游支持，暂列观察）。

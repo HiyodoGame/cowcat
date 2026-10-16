@@ -107,14 +107,14 @@ cowcat --resume <file.jsonl>    # 恢复指定会话文件
 | 文件 | 行为 |
 |---|---|
 | 图片（png/jpeg/gif/webp） | 作为图片块交给模型，返回 `[image] a.png — image/png, 1200x800, 234.5 KB (attached for the model)`；上限 5MB |
-| PDF | Anthropic 协议走原生 `document` 块；OpenAI 兼容协议走 best-effort 文本抽取（带质量门，抽不出可读文本时明确报错而不是喂乱码）；上限 10MB |
+| PDF | Anthropic 协议走原生 `document` 块；OpenAI 兼容协议走 best-effort 文本抽取——**只对简单编码的 PDF 有效**，现代 PDF（CID/内嵌字体编码、扫描件）会被明确拒绝并给出理由，需先转文本。上限 10MB（Anthropic 端点仍是最可靠的读 PDF 方式） |
 | `.ipynb` | 按单元格渲染（`--- cell [n] type ---` + 编号源码 + `--- output [n.m] ---`）；输出里的图片只标注大小，不上传 |
 | bmp / tiff / ico / avif / heic | 明确拒绝，提示先转换 |
 
 - **图片字节不进会话文件**：Read 只登记「引用（绝对路径 + 媒体类型 + 大小 + token 估算）」，真正读盘发生在发请求那一刻。这样会话 JSONL、`/export`、compact 摘要、`/context` 都不会被 base64 撑爆；文件事后被删或变大，该附件自动降级成一行文字占位（`[image unavailable: …]`），不会让整个请求失败。
 - **视觉能力门控**：按 `assets/providers.json` 里模型的 `attachment` 标记判断。目录标记 `attachment: false` 的模型，Read 直接拒绝并说明两条出路（`/model` 换视觉模型 / `COWCAT_VISION=force` 强制尝试）；模型不在目录里则先尝试，上游报错会被翻译成「该模型可能不支持图片输入」的提示；也可用 `COWCAT_VISION=off` 主动关闭。**注意**：抽不出的 PDF、被拒绝的图片都以 tool_result 报错回给模型，模型可以据此换路径。
-- 图片按 Anthropic 的 `宽×高/750` 估算 token 并计入 `/context`（**长边先按 Anthropic 规则缩到 1568px 再计**，否则 4K 截图会被高估数倍）；PDF 按页数估算。
-- 图片、PDF、notebook 都是**整份读**，`offset`/`limit` 对它们无效（返回里会注明）。
+- 图片按 Anthropic 的 `宽×高/750` 估算 token 并计入 `/context`（**长边先按 Anthropic 规则缩到 1568px 再计**，否则 4K 截图会被高估数倍）；PDF 按页数估算。真机校准：一张 600x200 的图 + system/文本，上游报 `prompt_tokens` 336，我方附件估算 160，同量级。
+- 图片、PDF、notebook 都是**整份读**，`offset`/`limit` 对它们无效（返回里会注明）。读图是只读操作，因此在未信任目录的只读 plan 模式下也能用（实测）。
 
 `NotebookEdit` 按 cell 索引修改 notebook：
 

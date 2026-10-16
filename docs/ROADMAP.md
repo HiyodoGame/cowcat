@@ -13,7 +13,7 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.13.0 已发布，2026-10-16；656 tests 全绿 + ESLint 门禁）
+## 1. 现状快照（v0.13.0 已发布 2026-10-16；0.13.1 未发布：658 tests 全绿 + ESLint 门禁）
 
 > v0.12.0 发布收尾过程中另修：MCP 握手的 `clientInfo.version` 从硬编码 `0.5.0` 改为读 `package.json`（单一版本源）；`Glob` 的 `path` 参数崩溃与 `/output-style` 未接线（见 `docs/fix-plan-2026-10-15.md` 第六轮）。
 
@@ -77,7 +77,7 @@
 | P3-3 | 定时唤醒 | CronCreate/CronDelete/CronList + ScheduleWakeup | 会话内定时任务与唤醒调度，支撑周期性检查与长任务轮询 | ✅ |
 | P3-4 | MCP resources | ListMcpResources/ReadMcpResource | 静态资源 list/read ✅ + resource templates 在 ListMcpResources 中列出 ✅ + prompts 作为 `/mcp__<server>__<prompt>` 斜杠命令 ✅（第八轮）+ 资源订阅 `SubscribeMcpResource`/`UnsubscribeMcpResource` ✅ + server→client 通道（GET SSE 长连接、logging、`*/list_changed` 自动刷新、`resources/updated`、断线重连与 `Last-Event-ID`）✅（第九轮）；sampling/elicitation/roots 仍只回 `-32601`，`SubscribePolling` 未做——见 `docs/fix-plan-2026-10-15.md` 第七至九轮 | ✅ |
 | P3-5 | Agent 异步与思考档位 | Agent 工具 run_in_background + effort 五档 | 子代理后台派发不阻塞主循环；低/中/高/极高思考档位透传 | ✅ |
-| P3-6 | Read 大文件/多模态 | Read allow_large、图片/PDF/notebook 读取 | allow_large 大文件 opt-in 直读 ✅；图片（png/jpeg/gif/webp）作为图片块交给模型 ✅ + PDF（Anthropic 原生 `document` 块 / OpenAI 兼容 best-effort 文本抽取）✅ + `.ipynb` 按单元格渲染 ✅（0.13.0）；视觉门控用目录 `attachment` 标记 + `COWCAT_VISION` 覆盖 ✅；notebook output 内嵌图片仍只标注不上传（见 `docs/read-multimodal-plan.md` §1 后置项） | ✅ |
+| P3-6 | Read 大文件/多模态 | Read allow_large、图片/PDF/notebook 读取 | allow_large 大文件 opt-in 直读 ✅；图片（png/jpeg/gif/webp）作为图片块交给模型 ✅ + PDF（Anthropic 原生 `document` 块 / OpenAI 兼容 best-effort 文本抽取）✅ + `.ipynb` 按单元格渲染 ✅（0.13.0）；视觉门控用目录 `attachment` 标记 + `COWCAT_VISION` 覆盖 ✅；真机验证见 `agent/test/live/multimodal*.mjs`（图片/notebook/CLI 端到端 ✅；**PDF 在 OpenAI 兼容协议下实测只对简单编码有效**——本机 4 份真实 PDF 4/4 被拒并给出准确理由，ToUnicode CMap 解析列后续，原生读 PDF 用 Anthropic 协议端点）✅；notebook output 内嵌图片仍只标注不上传（见 `docs/read-multimodal-plan.md` §1 后置项） | ✅ |
 | P3-7 | NotebookEdit | 原版 NotebookEdit | `.ipynb` 按 cell 索引 replace/insert/delete + cell_type 切换、保持原有格式、先读后写约束、审批卡渲染后 diff、checkpoint、plan 拒绝、acceptEdits 自动接受（0.13.0） | ✅ |
 
 ## 4.6 P4 — TUI 全面翻新
