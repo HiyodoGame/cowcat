@@ -16,8 +16,9 @@ git switch main && git pull
 git switch -c fix/hook-epipe
 
 # 2) 改、测、提交（pretest 会跑 ESLint）
-cd agent && npm test
-cd ..
+cd agent && npm test                  # 旧版 CLI（P8 前仍在）
+cd ../packages/cowcat && npm test     # v2 内核
+cd ../..
 git add -A && git commit -m "fix(hooks): 修 hook 子进程提前退出时的 EPIPE 崩溃"
 
 # 3) 推分支并开 PR（PR 模板会自动带出自检清单）
@@ -43,10 +44,16 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 
 | job | 内容 | 何时 | 必过 |
 |---|---|---|---|
-| `test · node 22 · ubuntu-latest` | `npm ci` → `npm test`（`pretest` 含 ESLint）+ bubblewrap/AppArmor | 每个**非草稿** PR + 每次合入 main | ✅ |
+| `packages/cowcat · node 22 · ubuntu-latest` | v2 内核：`npm test`（build + ESLint + 测试） | 每个**非草稿** PR + 每次合入 main | ✅ |
 | `package whitelist` | `node tools/check-tarball.mjs`：`npm publish` 会传的东西是否越界 | 同上 | ✅ |
-| `test · node 22 · windows-latest` | 同上（产品在 Windows 上使用，`.cmd` shim / 路径 / MCP stdio 依赖平台行为） | **只在合入 main 时** | ❌ |
-| `test · node 24 · ubuntu-latest` | Node 版本兼容 | **只在合入 main 时** | ❌ |
+| `test · node 22 · ubuntu-latest` | 旧版 `agent/`：`npm test` + bubblewrap/AppArmor | **仅当 `agent/` 或 `ci.yml` 有改动**（见下） | ✅ |
+| `packages/cowcat · node 22 · windows-latest` | v2 内核在 Windows 上 | **只在合入 main 时** | ❌ |
+| `test · node 22 · windows-latest` | 旧版在 Windows 上（`.cmd` shim / 路径 / MCP stdio 依赖平台行为） | **只在合入 main 且 `agent/` 有改动时** | ❌ |
+| `test · node 24 · ubuntu-latest` | 旧版 Node 24 兼容 | **只在合入 main 且 `agent/` 有改动时** | ❌ |
+
+**旧套件按需运行**：`scope` 作业比较 PR 基准与当前提交，只有 `agent/` 或 `.github/workflows/ci.yml` 有变化才跑旧套件。作业名不变，所以分支保护不需要改；未跑时作业保留并以成功结束（内部步骤跳过）。无法比较时（手动触发、新分支、基准提交缺失）一律运行——宁可多跑，不靠猜测跳过。P8 删除旧 `agent/` 时，这些作业一并删除。
+
+**v2 内核的 Windows 腿只在 main 跑**：它的测试在本机只需几秒，单次成本主要是 checkout 与 setup。先保守放 main，等实测耗时后再决定是否上 PR。
 
 **草稿 PR 不跑任何检查**：草稿本来就不可合并，而 `ready_for_review` 会触发一次完整运行（`types` 里显式列了它，否则转正式稿就永远拿不到门禁）。迭代循环（提交 → 看结果 → 改 → 再推）是运行次数的主要来源，这是单项最大的节省。
 
@@ -89,13 +96,13 @@ git config core.hooksPath .githooks
 | 项 | 值 |
 |---|---|
 | 必须走 PR | ✅（直推 main 会被服务端拒绝） |
-| 必须通过的检查 | `package whitelist`、`test · node 22 · ubuntu-latest`（2026-10-16 从 5 个收敛到 3 个，再到 2 个：Node 版本扫描与 Windows 腿改为 main-only；Node 20 已 EOL 删除，见 §3 的配额账） |
+| 必须通过的检查 | `package whitelist`、`test · node 22 · ubuntu-latest`、`packages/cowcat · node 22 · ubuntu-latest`（2026-10-17 加入第三项，v2 内核进入门禁；旧套件的收敛过程与配额账见 §3） |
 | 要求分支基于最新 main（strict） | ✅ |
 | 需要批准数 | 0（单人开发；PR 是流程载体，不强制他人批准） |
 | 强制管理员同上 | ✅（对自己也生效） |
 | 允许强推 / 删除分支 | ❌ / ❌ |
 
-实测证据（绕过本地钩子直推 main）：
+实测证据（2026-10-16 绕过本地钩子直推 main；当时必过检查为 2 项，现为 3 项，同样的拒绝现在会显示 `3 of 3`）：
 
 ```
 remote: error: GH006: Protected branch update failed for refs/heads/main.
