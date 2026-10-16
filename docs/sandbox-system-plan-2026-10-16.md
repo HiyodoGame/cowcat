@@ -395,4 +395,9 @@ agent/src/sandbox/
 - **验证状态**：已在 CI 的**真实 Linux**（ubuntu-latest，node 20/22/24）通过全部 6 条拦截断言——G1（项目外写不落到宿主）、G2（宿主 home 与宿主 /tmp 的文件都不可达，且错误里点明是沙箱）、G3（Node 的 fetch 也被拦，证明网络控制不依赖代理环境变量）、凭据路径隐藏、审计字段。本机 Windows 上同一套断言按分类 skip（`no bwrap backend on win32`）。
 - **CI 首跑抓到两个真问题**（这就是"CI 作为权威验证"的收益，本地 6 条断言全 skip 时它们是看不见的）：① 默认写集含宿主临时目录，在私有 `--tmpfs /tmp` 之后又把宿主 `/tmp` 绑回来，于是宿主 `/tmp` 重新可见可写；② G1 的断言口径写错了——沙箱必须在空根里合成 `/home/<user>` 才能挂载允许的 home 文件，"在沙箱内写 home 必失败"这个前提本身不成立，正确的不变量是"宿主文件系统未被改动"。两处均已修，并补了单测（策略默认写集**不含**宿主 tmpdir）。
 - **已知抖动**：两条 TUI 定时测试（`toast` 15–60ms 窗口、`chrome` 的 15ms 等待）在高负载 runner 上会偶发失败，与本功能无关（重跑即过）；顺带把 Bash 角标改成 probe-free（light/off 不再触发探测），避免在帧渲染里同步 spawn 进程。
-- 仍未做：`network: 'ask'` 的按命令审批（Phase 1b；当前 `ask` 等同 `off` 并在 limitations 中说明）、macOS Seatbelt（Phase 2）、Windows 原生（不支持 + 引导）、glob 路径规则（收集进 `unsupported` 并提示）。
+- 仍未做：macOS Seatbelt（Phase 2）、Windows 原生（Phase 4：不支持 + 引导，或评估 `@anthropic-ai/sandbox-runtime` / `@microsoft/mxc-sdk`）、glob 路径规则（收集进 `unsupported` 并提示）。
+
+**2026-10-16 更新（Phase 1b 与 0.15.0 发布）**：
+
+- Phase 1b 已落地：`network: 'ask'` 现在是**按命令审批**——只有用户在这次审批里点头的那条命令拿到网络命名空间，且只对该次调用生效；粘性只来自权限层的显式 `always`；**yolo 下 `ask` 等同 `off`**（不问 = 不给）。卡片对需要联网的命令标注 `[needs network: sandbox]`，审计记录该次实际网络态。端到端断言已在 CI 真实 Linux 通过（未批准的 fetch 失败、批准的 fetch 得到 200、审计连续 `off`/`on`）。
+- **0.15.0 已发布（2026-10-16）**：Phase 0/1a/1b 随 `v0.15.0` 上线（tag `v0.15.0` → `9ff23ae`；registry `dist.shasum = 7c6fc55d042effdaeb24c496a36448202387b9ad`、`fileCount = 107`）。发布前演练与发布后核对（官方源隔离安装、包内 probe 平台判定、CMap 自检）全部通过，记录见 `docs/fix-plan-2026-10-15.md` 第十八轮的「发布结果」。
