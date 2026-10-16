@@ -3,13 +3,18 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { cowcatHome, legacyHome } from './config.js';
+import { canonicalPath } from './canonical.js';
 
 export function cwdSlug(cwd) {
   return cwd.replace(/^[a-zA-Z]:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'root';
 }
 
+// Canonicalized because the slug IS the session's identity: on macOS the same
+// project reached as `/var/folders/…` and as `/private/var/folders/…` produced
+// two slugs and therefore two unresumable, unlistable sessions. See
+// src/canonical.js and docs/fix-plan-2026-10-15.md 第十九轮.
 function sessionDir(base, cwd) {
-  return resolve(base, 'projects', cwdSlug(cwd));
+  return resolve(base, 'projects', cwdSlug(canonicalPath(cwd)));
 }
 
 export class Session {

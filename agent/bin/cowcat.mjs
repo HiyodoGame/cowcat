@@ -28,6 +28,7 @@ import { findProjectContext, PROJECT_SECTION } from '../src/project.js';
 import { runDoctorChecks, saveFixedConfig } from '../src/doctor.js';
 import { runSetupWizard, runSetupDialog } from '../src/setup.js';
 import { isTrustedProject, trustProject } from '../src/trust.js';
+import { canonicalPath } from '../src/canonical.js';
 import { listCheckpoints, restoreCheckpoint, checkpointSummaryLine } from '../src/checkpoint.js';
 import {
   formatCostReport, formatStatus, exportSessionToMarkdown, forkSessionFile,
@@ -201,7 +202,14 @@ async function main() {
   if (opts.command === 'setup') { await cmdSetup(new UI({ colors: false })); return; }
   if (opts.command === 'doctor') { await cmdDoctor(new UI({ colors: false }), opts); return; }
 
-  const cwd = process.cwd();
+  // ONE cwd for the whole process, canonicalized. getcwd() never returns a
+  // symlink component, so on macOS `process.cwd()` is `/private/var/...` while
+  // anything the user or a test handed us is `/var/...` — the same directory with
+  // two identities, which made trust checks fail and split a session's slug in
+  // two. Everything downstream (trust key, session slug, sandbox policy, audit
+  // line) keys off this value, so the fix belongs here rather than in each of
+  // them. See src/canonical.js.
+  const cwd = canonicalPath(process.cwd());
   const config = loadConfig(opts.model ? { model: opts.model } : {});
   const lang = detectLang(opts.prompt);
   const tuiWanted = !opts.print && opts.outputFormat !== 'stream-json' && process.env.COWCAT_TUI !== 'off'
@@ -1008,13 +1016,13 @@ async function main() {
         }
       } else if (cmd === 'sandbox') {
         const arg = (args[0] || '').toLowerCase();
-        const eff = effectiveSandbox(config, { cwd: process.cwd() });
+        const eff = effectiveSandbox(config, { cwd: cwd });
         if (['off', 'light', 'system'].includes(arg)) {
           // Switching to system mode is gated on a live backend check: accepting
           // the setting and silently running bare is the failure mode this whole
           // feature exists to avoid.
-          if (arg === 'system' && !effectiveSandbox({ sandbox: 'system' }, { cwd: process.cwd() }).active) {
-            const probe = effectiveSandbox({ sandbox: 'system' }, { cwd: process.cwd() });
+          if (arg === 'system' && !effectiveSandbox({ sandbox: 'system' }, { cwd: cwd }).active) {
+            const probe = effectiveSandbox({ sandbox: 'system' }, { cwd: cwd });
             ui.print(ui.lang === 'zh'
               ? `sandbox: system 在本机不可用 [${probe.reason}] ${probe.detail || ''}${probe.fix ? `\n  修复：${probe.fix}` : ''}\n  未切换，仍为 ${eff.label}`
               : `sandbox: system is unavailable here [${probe.reason}] ${probe.detail || ''}${probe.fix ? `\n  fix: ${probe.fix}` : ''}\n  not switched, still ${eff.label}`);
@@ -1024,8 +1032,8 @@ async function main() {
           writeState((s) => { s.sandbox = arg; return s; });
           // Mode changes are audited: the sandbox must never be turned off (or on)
           // without a trace, whoever asked (plan §5.7).
-          auditRecord({ command: `/sandbox ${arg}`, cwd: process.cwd(), risk: 'low', decision: 'mode-change', mode: arg });
-          const after = effectiveSandbox(config, { cwd: process.cwd() });
+          auditRecord({ command: `/sandbox ${arg}`, cwd: cwd, risk: 'low', decision: 'mode-change', mode: arg });
+          const after = effectiveSandbox(config, { cwd: cwd });
           ui.print(`sandbox: ${after.label}${after.active && after.limitations?.length ? `\n  注意：${after.limitations[0]}` : ''}`);
         } else {
           const lines = [`sandbox: ${eff.label}`];

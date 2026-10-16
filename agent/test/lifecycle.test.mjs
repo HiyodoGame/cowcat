@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 
 import { isTrustedProject, trustProject } from '../src/trust.js';
+import { canonicalPath, samePath } from '../src/canonical.js';
 import { loadConfig } from '../src/config.js';
 
 const AGENT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -117,7 +118,11 @@ test('trust: unit — persist merges and keeps installId; isTrusted reflects sta
   process.env.COWCAT_HOME = mkdtempSync(join(tmpdir(), 'cowcat-home-'));
   try {
     const cfg = loadConfig(); // creates installId
-    const cwd = mkdtempSync(join(tmpdir(), 'cowcat-proj-'));
+    // Canonical: the product stores the canonical spelling, and on the Windows
+    // runner os.tmpdir() hands out an 8.3 SHORT name while realpath hands out
+    // the long one. Building the fixture canonically keeps every assertion below
+    // a strict equality instead of weakening them to identity checks.
+    const cwd = canonicalPath(mkdtempSync(join(tmpdir(), 'cowcat-proj-')));
     assert.equal(isTrustedProject(cfg, cwd), false);
     trustProject(cfg, cwd);
     assert.equal(isTrustedProject(cfg, cwd), true);
@@ -142,7 +147,7 @@ test('trust: declining the dialog keeps the session read-only and writes nothing
     const cfgFile = join(home, 'config.json');
     if (existsSync(cfgFile)) {
       const cfg = JSON.parse(readFileSync(cfgFile, 'utf8'));
-      assert.ok(!(cfg.trustedProjects || []).includes(res.cwd), 'declining must not persist trust');
+      assert.ok(!(cfg.trustedProjects || []).some((p) => samePath(p, res.cwd)), 'declining must not persist trust');
     }
   } finally {
     server.close();
@@ -156,7 +161,11 @@ test('trust: accepting persists the cwd and starts in default mode', async () =>
     const res = await spawnCli([], ENV(port, home), 'y\n/exit\n');
     assert.equal(res.code, 0);
     const cfg = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
-    assert.ok(cfg.trustedProjects.includes(res.cwd), 'y must persist trust');
+    // Compared by IDENTITY, not by spelling: the CLI stores the canonical path,
+    // and on macOS mkdtemp's answer (/var/folders/…) is a symlinked spelling of
+    // what the kernel reports (/private/var/folders/…). An `includes(res.cwd)`
+    // here was a real macOS test failure (docs/fix-plan-2026-10-15.md 第十九轮).
+    assert.ok(cfg.trustedProjects.some((p) => samePath(p, res.cwd)), 'y must persist trust');
     assert.match(res.out, /mode: default/);
   } finally {
     server.close();

@@ -20,10 +20,17 @@
 // collected into `unsupported` and surfaced instead of being silently dropped —
 // a policy that pretends to deny `**/.env` while doing nothing is worse than no
 // policy at all.
+//
+// Every entry goes out canonicalized (see ../canonical.js), which on macOS is the
+// difference between a working policy and a silently useless one: Seatbelt's
+// `(subpath …)` filters are matched against the path the kernel reports, so
+// `/var/folders/x` in write.allow would not grant `/private/var/folders/x` —
+// i.e. the sandbox would refuse to write the project itself.
 
 import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { canonicalPath } from '../canonical.js';
 
 export const MODES = ['off', 'light', 'system'];
 export const NETWORK_MODES = ['off', 'ask', 'on'];
@@ -51,10 +58,10 @@ export const DEFAULT_WRITE_DENY = ['.env', '.git/hooks'];
 export function expandPath(entry, cwd) {
   if (typeof entry !== 'string' || !entry.trim()) return null;
   const p = entry.trim();
-  if (p === '~') return resolve(homedir());
-  if (p.startsWith('~/') || p.startsWith('~\\')) return resolve(join(homedir(), p.slice(2)));
-  if (!isAbsolute(p)) return resolve(cwd, p);
-  return resolve(p);
+  if (p === '~') return canonicalPath(resolve(homedir()));
+  if (p.startsWith('~/') || p.startsWith('~\\')) return canonicalPath(resolve(join(homedir(), p.slice(2))));
+  if (!isAbsolute(p)) return canonicalPath(resolve(cwd, p));
+  return canonicalPath(resolve(p));
 }
 
 const isGlob = (entry) => /[*?[\]{}]/.test(String(entry || ''));

@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { canonicalPath } from '../src/canonical.js';
 import { normalizeSandbox, expandPath, worktreeSiblings } from '../src/sandbox/policy.js';
 import { buildBwrapCommand, bwrapLimitations, WORKSPACE_READ_PATHS, BWRAP_SHELL } from '../src/sandbox/backends/bwrap.js';
 import { planBashCommand, shellQuote, toShellCommand, effectiveSandbox } from '../src/sandbox/exec.js';
@@ -25,8 +26,11 @@ const probeWith = (name, usable = true) => ({
   notes: [],
 });
 
+// Fixtures are CANONICAL because the product is. See the note above.
+const TMP = canonicalPath(tmpdir());
+
 const tempProject = (siblings = []) => {
-  const parent = mkdtempSync(join(tmpdir(), 'cowcat-pol-'));
+  const parent = canonicalPath(mkdtempSync(join(TMP, 'cowcat-pol-')));
   const cwd = join(parent, 'proj');
   mkdirSync(cwd);
   for (const s of siblings) mkdirSync(join(parent, s));
@@ -56,14 +60,14 @@ test('normalizeSandbox: defaults deny credentials, allow the project, and keep t
   const { cwd, cleanup } = tempProject();
   try {
     const p = normalizeSandbox({ sandbox: 'system' }, { cwd });
-    assert.ok(p.read.deny.includes(join(homedir(), '.ssh')));
-    assert.ok(p.read.deny.includes(join(homedir(), '.cowcat')));
+    assert.ok(p.read.deny.includes(canonicalPath(join(homedir(), '.ssh'))));
+    assert.ok(p.read.deny.includes(canonicalPath(join(homedir(), '.cowcat'))));
     assert.ok(p.read.allow.includes(cwd));
     assert.ok(p.write.allow.includes(cwd));
     // The sandbox gets a private /tmp from the backend instead: binding the
     // host's temp dir back in would expose every other process's scratch files
     // (and silently undo the private tmpfs). Caught by CI on the first run.
-    assert.ok(!p.write.allow.includes(tmpdir()), 'the host temp directory is not writable by default');
+    assert.ok(!p.write.allow.includes(TMP), 'the host temp directory is not writable by default');
     assert.equal(p.network, 'off');
     assert.equal(p.read.profile, 'workspace');
     assert.equal(p.failOpen, true);
@@ -99,9 +103,13 @@ test('worktreeSiblings: sibling worktrees become writable (found in src/worktree
 
 test('expandPath: ~, ~/x and relative entries all resolve', () => {
   const cwd = '/tmp/base';
-  assert.equal(expandPath('~', cwd), resolve(homedir()));
-  assert.equal(expandPath('~/.ssh', cwd), resolve(join(homedir(), '.ssh')));
-  assert.equal(expandPath('sub/dir', cwd), resolve(cwd, 'sub/dir'));
+  assert.equal(expandPath('~', cwd), canonicalPath(resolve(homedir())));
+  assert.equal(expandPath('~/.ssh', cwd), canonicalPath(resolve(join(homedir(), '.ssh'))));
+  // Relative entries come out canonical too, which on macOS is visible right
+  // here: `/tmp` is a symlink to `/private/tmp`, so the answer is
+  // `/private/tmp/base/sub/dir`. That is the whole point — Seatbelt matches the
+  // path the kernel reports, not the one the user typed.
+  assert.equal(expandPath('sub/dir', cwd), canonicalPath(resolve(cwd, 'sub/dir')));
   assert.equal(expandPath('', cwd), null);
   assert.equal(expandPath(null, cwd), null);
 });
@@ -122,7 +130,7 @@ const fakeFs = ({ dirs = [], files = [] } = {}) => ({
 test('buildBwrapCommand: network off is a namespace flag, not an env var', () => {
   const { cwd, cleanup } = tempProject();
   try {
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir()] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP] });
     const off = buildBwrapCommand(policyFor(cwd), { command: 'echo hi', cwd, fs });
     assert.ok(off.args.includes('--unshare-net'));
     const on = buildBwrapCommand(policyFor(cwd, { network: 'on' }), { command: 'echo hi', cwd, fs });
@@ -133,7 +141,7 @@ test('buildBwrapCommand: network off is a namespace flag, not an env var', () =>
 test('buildBwrapCommand: workspace profile binds only the read surface (no --ro-bind / /)', () => {
   const { cwd, cleanup } = tempProject();
   try {
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir()] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP] });
     const { file, args } = buildBwrapCommand(policyFor(cwd), { command: 'ls', cwd, fs });
     assert.equal(file, 'bwrap');
     assert.ok(!args.includes('/'), 'the whole root is never bound in workspace mode');
@@ -148,7 +156,7 @@ test('buildBwrapCommand: denied reads are hidden (dir → tmpfs, file → /dev/n
     const secretDir = join(parent, 'secretdir');
     const secretFile = join(parent, 'secretfile');
     const absent = join(parent, 'absent');
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir(), secretDir], files: [secretFile] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP, secretDir], files: [secretFile] });
     const p = policyFor(cwd, { read: { deny: [secretDir, secretFile, absent] } });
     const { args } = buildBwrapCommand(p, { command: 'ls', cwd, fs });
     const i = args.indexOf(secretDir);
@@ -164,7 +172,7 @@ test('buildBwrapCommand: writes are allow-only, and write-deny rebinds read-only
   const { cwd, cleanup } = tempProject();
   try {
     const hooks = join(cwd, '.git', 'hooks');
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir(), hooks] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP, hooks] });
     const p = policyFor(cwd, { write: { deny: [hooks] } });
     const { args } = buildBwrapCommand(p, { command: 'ls', cwd, fs });
     assert.ok(args.includes('--bind'), 'allowed paths are bound read-write');
@@ -179,7 +187,7 @@ test('buildBwrapCommand: writes are allow-only, and write-deny rebinds read-only
 test('buildBwrapCommand: the sandbox always gets its own /tmp (both read profiles)', () => {
   const { cwd, cleanup } = tempProject();
   try {
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir()] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP] });
     for (const profile of ['workspace', 'hide']) {
       const { args } = buildBwrapCommand(policyFor(cwd, { read: { profile } }), { command: 'ls', cwd, fs });
       const i = args.indexOf('/tmp');
@@ -187,15 +195,15 @@ test('buildBwrapCommand: the sandbox always gets its own /tmp (both read profile
     }
     // A user who explicitly asks for the host temp directory gets it bound over
     // the tmpfs (the documented escape) — but only by asking.
-    const { args } = buildBwrapCommand(policyFor(cwd, { write: { allow: [tmpdir()] } }), { command: 'ls', cwd, fs });
-    assert.ok(args.includes('--bind') && args.includes(tmpdir()), 'explicit host tmp grant is honoured');
+    const { args } = buildBwrapCommand(policyFor(cwd, { write: { allow: [TMP] } }), { command: 'ls', cwd, fs });
+    assert.ok(args.includes('--bind') && args.includes(TMP), 'explicit host tmp grant is honoured');
   } finally { cleanup(); }
 });
 
 test('buildBwrapCommand: hide profile keeps the open-read behaviour behind an opt-out', () => {
   const { cwd, cleanup } = tempProject();
   try {
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir()] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP] });
     const { args } = buildBwrapCommand(policyFor(cwd, { read: { profile: 'hide' } }), { command: 'ls', cwd, fs });
     const i = args.indexOf('--ro-bind');
     assert.equal(args[i + 1], '/');
@@ -206,7 +214,7 @@ test('buildBwrapCommand: hide profile keeps the open-read behaviour behind an op
 test('buildBwrapCommand: always ends with the shell invocation, detached and non-interactive', () => {
   const { cwd, cleanup } = tempProject();
   try {
-    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, tmpdir()] });
+    const fs = fakeFs({ dirs: [...WORKSPACE_READ_PATHS, cwd, TMP] });
     const { args } = buildBwrapCommand(policyFor(cwd), { command: 'echo hi', cwd, fs });
     assert.deepEqual(args.slice(-6), ['--chdir', cwd, '--', BWRAP_SHELL, '-c', 'echo hi']);
     assert.ok(args.includes('--die-with-parent'));

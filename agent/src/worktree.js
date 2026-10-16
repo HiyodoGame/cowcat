@@ -1,23 +1,20 @@
 // git worktree isolation (P2-4): create a worktree for the session or a
 // sub agent task, so changes live on a branch in a sibling directory.
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-}
+import { canonicalPath } from './canonical.js';
 
 // Path identity matters here: the path we build with join() and the path git
 // prints in `worktree list --porcelain` can differ textually (drive-letter case,
 // 8.3 short names, a symlinked tmpdir) — CI on Windows showed exactly that. Both
 // sides go through realpath so comparisons (and later worktree removal) agree.
-export function canonicalPath(p) {
-  try {
-    return realpathSync.native(p);
-  } catch {
-    return resolve(p);
-  }
+// The helper now lives in src/canonical.js: the macOS leg found the same class of
+// bug in trust/session keys (/var vs /private/var), and one implementation of
+// "what is this directory's real name" is the only way to keep them consistent.
+export { canonicalPath };
+
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 }
 
 export function isGitRepo(cwd) {
