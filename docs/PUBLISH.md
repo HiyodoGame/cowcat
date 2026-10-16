@@ -21,6 +21,8 @@
 
 ## ③ 发布前 checklist
 
+> 分支与 PR 约定见 `docs/CONTRIBUTING.md`：`main` 只通过 PR 合入，发布同样走 PR（版本号 + changelog 在一个 PR 里，摘「未发布」标记另起一个小 PR）。
+
 - [ ] `git status` 干净；发布 commit 已打 tag。
 - [ ] **确认密钥从未进过 git 历史**：
   ```bash
