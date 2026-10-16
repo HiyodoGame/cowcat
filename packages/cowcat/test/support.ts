@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import type { ModelChunk, ModelPort, ModelRequest, EventStore, Clock, IdSource, ToolPort, ToolSpec, ToolResult, SessionDeps } from '../src/index.js';
+import { LockHeldError, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type LockPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -29,10 +29,49 @@ export function sequentialIds(): IdSource {
   };
 }
 
-// One place to build SessionDeps: it grows with each P1 task (cowcatVersion now,
-// lock and snapshots later), and tests should not each carry the whole shape.
-export function sessionDeps(store: EventStore, cowcatVersion = '0.0.0-test'): SessionDeps {
-  return { store, clock: fixedClock(), ids: sequentialIds(), cowcatVersion };
+// A session in a test rarely contends with anyone, so the default lock never
+// refuses. exclusiveLock() is the one that mirrors real EEXIST behaviour.
+export function noopLock(): LockPort {
+  return { acquire: () => Promise.resolve({ release: () => Promise.resolve() }) };
+}
+
+// In-process stand-in for the file lock: the second acquire of the same session id
+// fails the way EEXIST does, so LockHeldError paths need no disk.
+export function exclusiveLock(): LockPort {
+  const held = new Set<string>();
+  return {
+    acquire: (sessionId) => {
+      if (held.has(sessionId)) {
+        return Promise.reject(
+          new LockHeldError(sessionId, `<memory>/${sessionId}.jsonl.lock`, null, 'held by this process'),
+        );
+      }
+      held.add(sessionId);
+      return Promise.resolve({
+        release: () => {
+          held.delete(sessionId);
+          return Promise.resolve();
+        },
+      });
+    },
+  };
+}
+
+export interface SessionDepsOptions {
+  readonly cowcatVersion?: string;
+  readonly lock?: LockPort;
+}
+
+// One place to build SessionDeps: it grows with each P1 task (cowcatVersion, then
+// the lock, snapshots later) and tests should not each carry the whole shape.
+export function sessionDeps(store: EventStore, options: SessionDepsOptions = {}): SessionDeps {
+  return {
+    store,
+    clock: fixedClock(),
+    ids: sequentialIds(),
+    lock: options.lock ?? noopLock(),
+    cowcatVersion: options.cowcatVersion ?? '0.0.0-test',
+  };
 }
 
 // Each entry is what one model call yields. The requests it received are kept

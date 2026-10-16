@@ -13,16 +13,19 @@ export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDel
 export type { Message, ToolCall } from './kernel/messages.js';
 export { decide, type ActionRequest, type Decision, type Rule, type Verdict } from './policy/decide.js';
 export { DEFAULT_RULES } from './policy/defaults.js';
-export type {
-  ToolPort,
-  ToolSpec,
-  ToolResult,
-  ToolRisk,
-  ModelPort,
-  ModelChunk,
-  ModelRequest,
-  EventStore,
-  Clock,
-  IdSource,
+export {
+  LockHeldError,
+  type LockPort,
+  type SessionLock,
+  type ToolPort,
+  type ToolSpec,
+  type ToolResult,
+  type ToolRisk,
+  type ModelPort,
+  type ModelChunk,
+  type ModelRequest,
+  type EventStore,
+  type Clock,
+  type IdSource,
 } from './ports/index.js';
-export { JsonlEventStore, systemClock, randomIds } from './adapters/node.js';
+export { JsonlEventStore, FileLockPort, systemClock, randomIds } from './adapters/node.js';

@@ -40,7 +40,7 @@ function aHeader(overrides: Partial<Extract<KernelEvent, { type: 'session.opened
 
 test('create writes the session header as the first event', async () => {
   const store = new MemoryEventStore();
-  await Session.create(sessionDeps(store, '9.9.9'), 'sess_h');
+  await Session.create(sessionDeps(store, { cowcatVersion: '9.9.9' }), 'sess_h');
 
   assert.equal(store.events.length, 1);
   const header = headerOf(store.events);
@@ -53,7 +53,7 @@ test('create writes the session header as the first event', async () => {
 test('the header survives a round trip through disk', async () => {
   const dir = tempDir();
   try {
-    const deps = sessionDeps(new JsonlEventStore(dir), '9.9.9');
+    const deps = sessionDeps(new JsonlEventStore(dir), { cowcatVersion: '9.9.9' });
     const created = await Session.create(deps, 'sess_round');
     const reopened = await Session.open(deps, 'sess_round');
 

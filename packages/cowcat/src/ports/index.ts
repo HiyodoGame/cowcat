@@ -44,3 +44,33 @@ export interface Clock {
 export interface IdSource {
   next(prefix: string): string;
 }
+
+// A session is single-writer, and the lock is held for the whole life of the
+// Session — not for the duration of a single append (ADR-010). `EventStore` stays
+// unaware of it: the lock is a separate port so a memory store need not fake it.
+export interface SessionLock {
+  release(): Promise<void>;
+}
+
+export interface LockPort {
+  acquire(sessionId: string): Promise<SessionLock>;
+}
+
+// Thrown when acquire() cannot claim the session. The fields let a frontend render
+// recovery guidance without parsing the message. Ports deliberately expose no
+// "is it locked?" query: callers must go through acquire, not around it.
+export class LockHeldError extends Error {
+  readonly sessionId: string;
+  readonly pid: number | null;
+  readonly lockPath: string;
+  readonly guidance: string;
+
+  constructor(sessionId: string, lockPath: string, pid: number | null, guidance: string) {
+    super(`session ${sessionId} is locked: ${guidance}`);
+    this.name = 'LockHeldError';
+    this.sessionId = sessionId;
+    this.pid = pid;
+    this.lockPath = lockPath;
+    this.guidance = guidance;
+  }
+}
