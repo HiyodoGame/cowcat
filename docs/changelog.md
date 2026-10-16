@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 0.13.0（2026-10-16，未发布）— Read 多模态（图片 / PDF / notebook）+ NotebookEdit
+## 0.13.0（2026-10-16）— Read 多模态（图片 / PDF / notebook）+ NotebookEdit
 
 对标本轮 ROADMAP「整块缺失」里的 Read 多模态与 NotebookEdit。方案与取舍见 `docs/read-multimodal-plan.md`。
 
