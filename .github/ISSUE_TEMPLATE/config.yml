@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞（请勿开公开 issue）
+    url: https://github.com/HiyodoGame/cowcat/security/advisories/new
+    about: 通过私密通道报告，细节不会被公开。
+  - name: 用法与配置问题
+    url: https://github.com/HiyodoGame/cowcat/blob/main/docs/USAGE.md
+    about: 先看用法文档与 FAQ 式的常见问题，多数「怎么用」类问题在那里有答案。
