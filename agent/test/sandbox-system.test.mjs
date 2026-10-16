@@ -262,10 +262,14 @@ test('planBashCommand: no usable backend → unavailable, carrying the fix for t
 });
 
 test('planBashCommand: a capable-but-unimplemented backend must NOT run unsandboxed', () => {
+  // `seatbelt` used to be this fixture (Phase 2 had not landed). It is
+  // implemented now, so the contract is pinned with a backend that does not
+  // exist: the point is "capable but not driven by this build", not a name.
   const policy = normalizeSandbox({ sandbox: 'system' });
-  const plan = planBashCommand({ policy, probe: probeWith('seatbelt'), command: 'ls', cwd: '/tmp' });
+  const plan = planBashCommand({ policy, probe: probeWith('mxc'), command: 'ls', cwd: '/tmp' });
   assert.equal(plan.kind, 'unavailable');
-  assert.equal(plan.reason, 'backend-not-implemented', 'macOS seatbelt is Phase 2, not a silent pass-through');
+  assert.equal(plan.reason, 'backend-not-implemented', 'a backend we cannot drive is not a silent pass-through');
+  assert.match(plan.detail, /does not drive it yet/);
 });
 
 test('planBashCommand: forcing a backend that cannot run must fail instead of degrading quietly', () => {

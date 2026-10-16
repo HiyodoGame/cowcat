@@ -22,11 +22,11 @@
 **沙箱（v0.12.0 起，2026-10-16 的 0.15.0 补齐系统级档）**：三档 `/sandbox off|light|system`。
 
 - `light`（默认）：secret 脱敏 env + 静态命令分级 + `~/.cowcat/audit.log` 审计、Bash 卡 `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不抵御恶意命令，只防误操作与留审计痕迹。
-- `system`（0.15.0 新增，**Linux/WSL2，需本机 `bubblewrap`**）：OS 级隔离——读只限项目 + 系统目录（凭据路径硬拒绝）、写只限项目（含 worktree 同级目录）与**沙箱私有 `/tmp`**、**网络默认关**；`network: 'ask'` 时按命令审批（卡片标注 `[needs network: sandbox]`），`failOpen` 默认 true（后端不可用时降级 light **并在卡片上标注未生效**）。G1/G2/G3 已在 CI 真实 Linux 逐条验证；macOS 走 Seatbelt（Phase 2，未做）、Windows 原生不支持（引导 WSL2 / Docker Sandboxes）。
+- `system`（0.15.0 新增，**Linux/WSL2 需 `bubblewrap`**；0.16.0 补齐 **macOS**，用系统自带 `sandbox-exec`）：OS 级隔离——读只限项目 + 系统目录（凭据路径硬拒绝）、写只限项目（含 worktree 同级目录）与**每次调用独立的私有临时目录**、**网络默认关**；`network: 'ask'` 时按命令审批（卡片标注 `[needs network: sandbox]`），`failOpen` 默认 true（后端不可用时降级 light **并在卡片上标注未生效**）。G1/G2/G3 已在 CI 真实 Linux 与真实 macOS（`macos-15`）逐条验证；Windows 原生不支持（引导 WSL2 / Docker Sandboxes）。
 
 调研与设计：`docs/sandbox-research-2026-10-16.md`（技术调研）+ `docs/sandbox-system-plan-2026-10-16.md`（威胁模型与方案）；实施与 CI 抓到的缺陷见 `docs/fix-plan-2026-10-15.md` 第十六～十八轮。
 
-**整块缺失**（对照 2.1.55/2.1.296 功能面）：bypassPermissions 权限档、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）、系统级沙箱的 macOS 后端（Seatbelt，Phase 2）与 Windows 原生路线（Phase 4）。
+**整块缺失**（对照 2.1.55/2.1.296 功能面）：bypassPermissions 权限档、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）、沙箱的**按域名网络白名单**（Phase 3，沙箱外代理；Seatbelt 本身做不到）与 Windows 原生路线（Phase 4）。
 
 ## 2. P0 — 核心闭环补全（修 bug + 堵窟窿）
 

@@ -11,7 +11,11 @@ export class BackgroundRegistry {
     this.tasks = new Map();
   }
 
-  start(command, { cwd, timeout = 1_800_000, env } = {}) {
+  // `onExit` runs once, after the child's output has been collected. The Bash
+  // tool uses it to remove the sandbox's private scratch directory: a background
+  // task outlives the tool call that started it, so that directory cannot be
+  // cleaned up when execute() returns.
+  start(command, { cwd, timeout = 1_800_000, env, onExit = null } = {}) {
     const taskId = `task_${Date.now().toString(36)}_${++seq}`;
     const task = {
       id: taskId,
@@ -34,6 +38,7 @@ export class BackgroundRegistry {
       task.stdout = stdout || '';
       task.stderr = stderr || '';
       clearTimeout(task.timer);
+      try { onExit?.(); } catch { /* cleanup is best-effort */ }
     });
     this.tasks.set(taskId, task);
     return task;

@@ -1,5 +1,8 @@
 // Bash tool: run shell commands with timeout limits and dangerous-command detection.
 import { exec, execFile } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { decodeOutput } from '../textdecode.js';
 import {
   classifyCommand, auditRecord, sandboxFor, sandboxEnv, sandboxBlockMessage,
@@ -8,6 +11,7 @@ import {
 import { planBashCommand, toShellCommand } from '../sandbox/exec.js';
 import { sandboxProbe } from '../sandbox/probe.js';
 import { detectViolations, sandboxNote } from '../sandbox/violations.js';
+import { canonicalPath } from '../canonical.js';
 
 export const DEFAULT_TIMEOUT = 60_000;
 export const MAX_TIMEOUT = 600_000;
@@ -58,20 +62,52 @@ Failure modes: timeouts mean the command was still running — rerun with a long
       return Promise.resolve({ ok: false, error: sandboxBlockMessage(classification) });
     }
 
+    // macOS has no mount namespaces, so there is no way to hand the sandbox a
+    // private /tmp the way bubblewrap's `--tmpfs /tmp` does. The faithful
+    // equivalent is an empty directory that belongs to this one call: the
+    // backend grants write access to exactly it, TMPDIR points at it, and it is
+    // removed when the command is done. The host's per-user temp area stays
+    // outside the sandbox — the same property the Linux side gets from the
+    // tmpfs, and the same reason that side refused to bind the host tmpdir back.
+    const probe = sandboxProbe();
+    const needsPrivateTmp = sb.mode === 'system'
+      && (sb.backend === 'seatbelt' || (sb.backend === 'auto' && probe.usable === 'seatbelt'));
+    let privateTmpDir = null;
+    if (needsPrivateTmp) {
+      try {
+        privateTmpDir = canonicalPath(mkdtempSync(join(tmpdir(), 'cowcat-sbx-')));
+      } catch {
+        privateTmpDir = null; // degrade: the command still runs, just without scratch space
+      }
+    }
+    const dropTmp = () => {
+      if (!privateTmpDir) return;
+      try { rmSync(privateTmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      privateTmpDir = null;
+    };
+
     const plan = planBashCommand({
-      policy: sb, probe: sandboxProbe(), command: input.command || '', cwd: ctx.cwd,
+      policy: sb, probe, command: input.command || '', cwd: ctx.cwd,
       // The loop sets this for a single approved call (Phase 1b): in `network:
       // 'ask'` mode the prompt is where the network namespace comes from.
       networkGranted: ctx.networkApproved === true,
+      tmpDir: privateTmpDir,
     });
+    if (plan.kind !== 'wrapped') dropTmp();
     // A system run without a usable backend: fall back (and SAY SO) or refuse.
     // The degrade note is what separates us from agents that silently run
     // unsandboxed while their UI still claims a sandbox (research §7.8).
     const degraded = plan.kind === 'unavailable' ? plan : null;
-    if (degraded && !sb.failOpen) {
+    // `degradable: false` means falling back would be WORSE than refusing: it is
+    // a configuration this backend cannot honour (macOS + network "on"), and
+    // light mode would drop the filesystem isolation while keeping the network —
+    // strictly more access than the user asked for. Refuse and say why.
+    if (degraded && (!sb.failOpen || degraded.degradable === false)) {
+      dropTmp();
       auditRecord({
         command: input.command, cwd: ctx.cwd, risk: classification.risk,
         decision: 'blocked', mode: sb.mode, network: sb.network,
+        ...(degraded.backend ? { backend: degraded.backend } : {}),
       });
       return Promise.resolve({ ok: false, error: sandboxUnavailableMessage(degraded, sb) });
     }
@@ -83,7 +119,10 @@ Failure modes: timeouts mean the command was still running — rerun with a long
       ...(sb.mode === 'system' ? { mode: sb.mode, network: runNetwork } : {}),
       ...(plan.kind === 'wrapped' ? { backend: plan.backend } : {}),
     });
-    const childEnv = sandboxEnv({ ...process.env, ...ctx.env }, sb);
+    // The backend's own env (TMPDIR → the private scratch dir) is merged LAST, so a
+    // stray TMPDIR inherited from the parent process cannot point the sandboxed
+    // toolchain at the host temp area we just kept out of the profile.
+    const childEnv = { ...sandboxEnv({ ...process.env, ...ctx.env }, sb), ...(plan.env || {}) };
     const wrapped = plan.kind === 'wrapped';
     const degradeNote = degraded ? `\n${sandboxDegradedNote(degraded, sb)}` : '';
 
@@ -91,13 +130,16 @@ Failure modes: timeouts mean the command was still running — rerun with a long
       // Background tasks are handed to a shell (src/background.js uses exec), so
       // the wrapped argv has to be quoted back into a command string.
       const cmd = wrapped ? toShellCommand(plan.file, plan.args) : input.command;
-      const task = ctx.background.start(cmd, { cwd: ctx.cwd, timeout: resolveTimeout(input.timeout, { background: true }), env: childEnv });
+      // The private scratch dir has to outlive this call — the task is still
+      // running — so it is cleaned up when the task exits, not here.
+      const task = ctx.background.start(cmd, { cwd: ctx.cwd, timeout: resolveTimeout(input.timeout, { background: true }), env: childEnv, onExit: dropTmp });
       return { ok: true, output: `已后台启动 ${task.id}，用 TaskOutput 查看${degradeNote}` };
     }
     const timeout = resolveTimeout(input.timeout);
     return new Promise((resolve) => {
       let child;
       const onDone = (err, stdout, stderr) => {
+        dropTmp();
         if (err?.killed) {
           resolve({ ok: false, error: `Command timed out after ${timeout}ms` });
           return;

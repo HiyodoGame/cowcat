@@ -395,7 +395,15 @@ agent/src/sandbox/
 - **验证状态**：已在 CI 的**真实 Linux**（ubuntu-latest，node 20/22/24）通过全部 6 条拦截断言——G1（项目外写不落到宿主）、G2（宿主 home 与宿主 /tmp 的文件都不可达，且错误里点明是沙箱）、G3（Node 的 fetch 也被拦，证明网络控制不依赖代理环境变量）、凭据路径隐藏、审计字段。本机 Windows 上同一套断言按分类 skip（`no bwrap backend on win32`）。
 - **CI 首跑抓到两个真问题**（这就是"CI 作为权威验证"的收益，本地 6 条断言全 skip 时它们是看不见的）：① 默认写集含宿主临时目录，在私有 `--tmpfs /tmp` 之后又把宿主 `/tmp` 绑回来，于是宿主 `/tmp` 重新可见可写；② G1 的断言口径写错了——沙箱必须在空根里合成 `/home/<user>` 才能挂载允许的 home 文件，"在沙箱内写 home 必失败"这个前提本身不成立，正确的不变量是"宿主文件系统未被改动"。两处均已修，并补了单测（策略默认写集**不含**宿主 tmpdir）。
 - **已知抖动**：两条 TUI 定时测试（`toast` 15–60ms 窗口、`chrome` 的 15ms 等待）在高负载 runner 上会偶发失败，与本功能无关（重跑即过）；顺带把 Bash 角标改成 probe-free（light/off 不再触发探测），避免在帧渲染里同步 spawn 进程。
-- 仍未做：macOS Seatbelt（Phase 2）、Windows 原生（Phase 4：不支持 + 引导，或评估 `@anthropic-ai/sandbox-runtime` / `@microsoft/mxc-sdk`）、glob 路径规则（收集进 `unsupported` 并提示）。
+- 仍未做：glob 路径规则（收集进 `unsupported` 并提示）、按域名网络白名单（Phase 3：Seatbelt 做不到，必须沙箱外代理）、macOS 违规日志归因（`(with message …)` 写 sandbox violation log store，Phase 3）、MCP server 可选沙箱化（Phase 3）、Windows 原生（Phase 4：不支持 + 引导，或评估 `@anthropic-ai/sandbox-runtime` / `@microsoft/mxc-sdk`）。
+
+**2026-10-16 更新（Phase 2 已落地）**：
+
+- **Phase 2 已实现**：`src/sandbox/backends/seatbelt.js`（纯 profile 生成，可在任何平台单测）+ `exec.js` 的后端分发（`IMPLEMENTED` 增加 `seatbelt`，builder 与 limitations 成对注册）+ `bash.js` 的**每次调用私有临时目录**（macOS 无挂载命名空间，给不了私有 `/tmp`；改为 `mkdtemp` 一个空目录、profile 只放行它、`TMPDIR` 指过去、调用结束删除，后台任务用新增的 `onExit` 钩子延迟清理）。
+- **Seatbelt 的语义全部抄自参考实现**（`@anthropic-ai/sandbox-runtime`，Apache-2.0），没有自己推：**last-match-wins**（凭据 deny 必须在所有 read allow 之后）、**specific deny 压过 wildcard allow**（所以要为写根显式重新放行 unlink/create，否则项目里 `rm` 不了）、**`realpath()` 需要目录 metadata**（`(allow file-read-metadata (vnode-type DIRECTORY))`，且放在 deny 之后）、**`mv` 能绕过路径 deny**（对被拒路径及其祖先封锁 `file-write-unlink/create`，并对"落在写根内部的被拒路径"在 profile 末尾再拒一次）、**单个 SBPL 字符串上限 1025 字节**（超了整个 profile 作废）、**`(deny default)` 会让 dyld 在 exec 前就 abort**（所以有那套 sysctl / mach-lookup / ipc-posix 的运行时地板）。
+- **前置修复（第十九轮）**：路径身份统一。macOS 上 `/var` → `/private/var`、`/tmp` → `/private/tmp`，`os.tmpdir()` 给符号链接写法而 `process.cwd()` 给物理路径，而 `trust.js` 用 `===` 比较 —— 同一个目录两个身份，会话被静默判为未信任。**这也直接决定 Seatbelt 能不能工作**：`(subpath …)` 匹配的是内核报告的路径，`write.allow` 里写 `/var/…` 会匹配不到 `/private/var/…`，沙箱会拒绝写项目目录本身。新增 `src/canonical.js`，接到 CLI 边界 / trust / session slug / 策略路径四处。
+- **验证路径**：新增 `.github/workflows/ci-macos.yml`（pin `macos-15`，**按路径过滤**、不进必过检查——macOS runner 按 10 倍计费而本仓库是私有 Pro，54 次 CI 已用掉约 696 计费分钟，"每个 PR 都跑"会一周烧穿配额）；同时把 node 20/24 的兼容扫描从 PR 门禁下沉到 main 推送，为它腾出 Linux 分钟。真实拦截断言在 `test/sandbox-macos.test.mjs`。
+- **仍未做**：`network: 'on'` 在 macOS 上是**全部出网**（Seatbelt 不能按域名过滤），这一点如实写进 `seatbeltLimitations()` 与 USAGE；Windows 原生不支持 + 引导。
 
 **2026-10-16 更新（Phase 1b 与 0.15.0 发布）**：
 

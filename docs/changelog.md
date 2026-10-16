@@ -1,5 +1,46 @@
 # CowCat changelog
 
+## 0.16.0（未发布）—— macOS 系统级 Bash 沙箱（Phase 2）+ macOS 路径身份修复 + macOS CI 腿
+
+系统级沙箱的 v1 平台范围按拍板是 **Linux + macOS**；0.15.0 只交付了 Linux 后端。这个版本补齐 macOS，并把"怎么验证"这件事本身补上——因为本机没有 Mac，而没有真机的断言等于没有断言。
+
+### 新增：macOS Seatbelt 后端（`src/sandbox/backends/seatbelt.js`）
+
+- **纯 profile 生成**（不 spawn 子进程），与 `bwrap.js` 同一形态：策略 → argv 是可在任何平台单测的纯函数。调用形态是 `/usr/bin/sandbox-exec -p <profile> /bin/bash -c <command>`——模型给的命令作为 profile **之后**的 argv 直接 exec，不经过第二次 shell 解析。macOS 无需安装任何东西，`sandbox-exec` 系统自带。
+- **Seatbelt 语义全部抄自参考实现**（`@anthropic-ai/sandbox-runtime`，Apache-2.0，Claude Code 沙箱的开源实现），不自己推——这几条猜错任何一条，profile 就"看着对、什么都不拦"：
+  - **last match wins**：凭据 deny 必须排在所有 read allow **之后**，否则被后面的 allow 覆盖。
+  - **specific deny 压过 wildcard allow**：`(deny file-write-unlink …)` 不会被后面的 `(allow file-write*)` 覆盖，所以必须为写根显式重新放行 unlink/create，否则**项目里 `rm` 都用不了**。
+  - **`realpath()` 需要目录 metadata**：`(allow file-read-metadata (vnode-type DIRECTORY))`，且必须排在 deny 之后，否则每个跨过被拒区域的路径都解析失败；被重新打开的只有目录元数据，不是内容。
+  - **`mv` 能绕过路径 deny**（`mv .env x` 就绕过了）：对被拒路径**及其祖先目录**封锁 `file-write-unlink/create`；对落在写根内部的被拒路径，profile 末尾再拒一次。
+  - **单个 SBPL 字符串上限 1025 字节**：超了整个 profile 作废（"Error reading string"）。
+  - **`(deny default)` 会让 dyld 在 exec 之前就 abort**：因此有一份显式的运行时地板（sysctl 白名单、 handful mach-lookup、ipc-posix-shm/sem、device file-ioctl）。macOS 26 有报告说 shell 会因读到未白名单的 `hw.*` sysctl 而起不来（Cursor 论坛 zsh 5.9）——这是照抄 srt 的原因。
+- **每次调用一个私有临时目录**：macOS 没有挂载命名空间，给不了 Linux 那样的私有 tmpfs。改为每次 Bash 调用 `mkdtemp` 一个空目录、profile 只放行它、`TMPDIR` 指过去、**调用结束即删除**（后台任务通过 `background.start()` 新增的 `onExit` 钩子延迟清理）。效果与 Linux 侧一致：宿主临时目录对沙箱不可见。
+
+### 修复：macOS 路径身份 —— 一个目录不能有两个名字（前置件）
+
+macOS 上 `/var` → `/private/var`、`/tmp` → `/private/tmp` 是符号链接。`os.tmpdir()` 返回**符号链接写法**，而 `process.cwd()` 走内核 getcwd()、**永远不返回符号链接分量**。`src/trust.js` 用 `===` 比较两者，于是同一个目录有两个身份 → 被信任的写法匹配不上 → **会话被静默判为未信任并降级成 plan mode**。
+
+这不只是体验问题，它**直接决定 Seatbelt 能不能工作**：`(subpath …)` 匹配的是内核报告的路径，`write.allow` 里写 `/var/…` 匹配不到 `/private/var/…`，沙箱会拒绝写项目目录本身。
+
+新增 `src/canonical.js`（`canonicalPath()` / `samePath()`；永不抛；对尚不存在的路径回退到"解析最深的**已存在**祖先再接回剩余分量"；带上限 256 的缓存），接到所有承担身份语义的地方：`bin/cowcat.mjs` 的单一 cwd 入口、`trust.js`（两侧规范化再比较、按身份去重，旧 state.json 无需迁移）、`session.js`（slug 就是 session 身份，不规范化会把一个项目拆成两个无法 `--resume` 的 session）、`sandbox/policy.js` 的 `expandPath()`（Phase 2 的前置件）。
+
+**这个缺陷是新增的 macOS CI 腿第一次运行就抓出来的**：724 tests / 705 pass / **7 fail**，7 条失败全是这一个问题（日志里能直接看到 `print-mode` 那条拿到的是 `mode: plan [restricted]` 而不是它要测的审批拒绝）。
+
+### 工程基建：macOS CI 腿 + 主矩阵瘦身
+
+- **新增 `.github/workflows/ci-macos.yml`**：pin `macos-15`（arm64），跑完整 `npm test`，先打印 `doctor inspect` 的 `[sandbox]` 节。**按路径过滤**（`src/sandbox.js`、`src/sandbox/**`、`src/tools/bash.js`、`src/trust.js`、`src/session.js`、`bin/cowcat.mjs`、`test/sandbox*.test.mjs`）＋ `workflow_dispatch`。**不进必过检查**：一个只是有时才上报的 required check 会把所有没触发它的 PR 卡死。
+- **为什么不能每次 PR 都跑**：本仓库是**私有 Pro**（3000 分钟/月），macOS runner 按 **10 倍**计费。用 Actions API 把 54 次 CI 的每个 job 时长按倍率折算：当天一次密集 PR 工作就烧掉约 **696 计费分钟**，按此节奏约 13 天见底；再加一条每次 PR 都跑的 macOS 腿会放大到约 5 倍。
+- **主矩阵瘦身**：PR 门禁收敛为 node 22 Linux + node 22 Windows + 打包白名单（必过检查 5 个 → 3 个）；node 20 / 24 的兼容扫描移到新的 `test-versions` job，**只在合入 main 时**跑——每次合入仍拿到版本结论，不再为每个中间提交付两次 Linux 分钟，省下的正好是 macOS 腿的预算。分支保护已同步收敛并实测服务端拒绝（`3 of 3 required status checks are expected`）。
+
+### 测试
+
+- `test/sandbox-seatbelt.test.mjs` 18 条（纯逻辑，各平台都跑）：profile 文本形态、**规则顺序**（last-match-wins 的每一条顺序断言）、`network: off` 不发出任何 allow、私有临时目录可读可写、`ask` 逐次授权、SBPL 单串长度上限、limitations 如实说明。
+- `test/sandbox-macos.test.mjs` 10 条（真实内核，仅 macOS 跑）：G1 项目外写不到宿主、G2 宿主文件不可达 + 凭据路径不可读 + 拒绝被解释为沙箱、**私有临时目录存在/可写/不越界/调用后已删除**、**项目里 `rm` 仍然可用**、G3 无网络（不靠代理环境变量）、`ask` 逐次授权、审计记录 `backend: seatbelt`。
+- `test/canonical-paths.test.mjs` 6 条：真造符号链接验证（造不出就带原因 skip）。
+
+### 版本
+
+- 版本升 **0.16.0**。
 ## 0.15.0（2026-10-16）— 系统级 Bash 沙箱：Phase 0 探测 + Phase 1（Linux 后端与按命令网络审批）
 
 大件的第一步（**Phase 0，零行为变化**）：先能量化"现在能拿到什么"，再谈怎么拦。调研与方案见 `docs/sandbox-research-2026-10-16.md`、`docs/sandbox-system-plan-2026-10-16.md`。

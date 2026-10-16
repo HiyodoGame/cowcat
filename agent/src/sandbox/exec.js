@@ -11,6 +11,7 @@
 // agents, research §7.8).
 
 import { buildBwrapCommand, bwrapLimitations } from './backends/bwrap.js';
+import { buildSeatbeltCommand, seatbeltLimitations } from './backends/seatbelt.js';
 import { normalizeSandbox } from './policy.js';
 import { sandboxProbe } from './probe.js';
 
@@ -31,8 +32,15 @@ export function toShellCommand(file, args) {
 // Which backends this build can actually drive. A machine may be CAPABLE of a
 // backend (probe says so) while we have not implemented it yet — the two must
 // stay distinct, or macOS would silently run unsandboxed while the badge claims
-// otherwise. Seatbelt is Phase 2 per docs/sandbox-system-plan-2026-10-16.md §6.
-const IMPLEMENTED = new Set(['bwrap']);
+// otherwise.
+const IMPLEMENTED = new Set(['bwrap', 'seatbelt']);
+
+// Backend → (argv builder, limitations). Keeping the pair together means a new
+// backend cannot be wired in with one half of its story missing.
+const BUILDERS = {
+  bwrap: { build: (policy, opts) => buildBwrapCommand(policy, opts), limits: bwrapLimitations },
+  seatbelt: { build: (policy, opts) => buildSeatbeltCommand(policy, opts), limits: seatbeltLimitations },
+};
 
 /**
  * @param {object} args
@@ -42,10 +50,14 @@ const IMPLEMENTED = new Set(['bwrap']);
  * @param {string} args.cwd
  * @param {boolean} args.networkGranted  the user approved THIS call and the policy
  *        is `network: 'ask'` — the one thing that can turn the network namespace off
- * @returns {{kind:'plain'}|{kind:'wrapped',file:string,args:string[],backend:string,network:string,limitations:string[]}
- *          |{kind:'unavailable',backend:string|null,reason:string,detail:string,fix:string|null,limitations:string[]}}
+ * @param {string} [args.tmpDir]  a private, empty scratch directory the backend
+ *        grants write access to. macOS has no mount namespaces, so there is no way
+ *        to hand the sandbox a private /tmp the way bubblewrap's tmpfs does; the
+ *        caller creates one and points TMPDIR at it instead.
+ * @returns {{kind:'plain'}|{kind:'wrapped',file:string,args:string[],backend:string,network:string,limitations:string[],env?:object}
+ *          |{kind:'unavailable',backend:string|null,reason:string,detail:string,fix:string|null,limitations:string[],degradable?:boolean}}
  */
-export function planBashCommand({ policy, probe, command, cwd, networkGranted = false }) {
+export function planBashCommand({ policy, probe, command, cwd, networkGranted = false, tmpDir = null }) {
   if (policy.mode !== 'system') return { kind: 'plain' };
 
   const backend = pickBackend(policy, probe);
@@ -58,7 +70,39 @@ export function planBashCommand({ policy, probe, command, cwd, networkGranted = 
     ? { ...policy, network: 'on' }
     : (policy.network === 'ask' ? { ...policy, network: 'off' } : policy);
 
-  const built = buildBwrapCommand(effective, { command, cwd });
+  // macOS cannot be given a working network inside the sandbox — MEASURED, not
+  // assumed (tools/seatbelt-smoke.mjs --net on a real macOS 15 host):
+  //
+  //   (allow network*)                                        → ENOTFOUND
+  //   + com.apple.discoveryd                                  → ENOTFOUND
+  //   + /private/var/run/mdnsd unix socket                    → ENOTFOUND
+  //   + ALL mach-lookup services                              → ENOTFOUND
+  //   + ALL unix sockets                                      → ENOTFOUND
+  //   numeric IP literal, no DNS at all                       → ENOTFOUND
+  //
+  // macOS resolves every name through getaddrinfo inside the sandbox, and that
+  // path does not come back up however much is allowed. This is why Claude Code,
+  // Codex and srt all put the proxy OUTSIDE the sandbox: the proxy resolves,
+  // the sandbox only reaches the proxy's localhost port. That is Phase 3.
+  //
+  // So `network: 'on'` on seatbelt is refused rather than granted-and-broken:
+  // "authorized but no network" reads as a broken sandbox and sends the agent
+  // looking for a way around it. `degradable: false` is the important part —
+  // falling back to light mode would drop the filesystem isolation AND keep the
+  // network, which is strictly worse than what the user asked for.
+  if (effective.network === 'on' && backend.name === 'seatbelt') {
+    return {
+      kind: 'unavailable',
+      backend: 'seatbelt',
+      reason: 'network-not-supported',
+      detail: 'name resolution does not work inside a Seatbelt sandbox on macOS, so "on" would grant nothing',
+      fix: 'use network: "off" (the default) or "ask"; per-domain egress needs the sandbox-external proxy of Phase 3',
+      limitations: backend.limitations,
+      degradable: false,
+    };
+  }
+
+  const built = BUILDERS[backend.name].build(effective, { command, cwd, tmpDir });
   return {
     kind: 'wrapped',
     file: built.file,
@@ -66,6 +110,10 @@ export function planBashCommand({ policy, probe, command, cwd, networkGranted = 
     backend: backend.name,
     network: effective.network,
     limitations: backend.limitations,
+    // TMPDIR is what every macOS toolchain (libSystem, cmake, npm, compilers)
+    // reads for scratch space. Pointing it at the private dir is what keeps the
+    // host's per-user temp area outside the sandbox.
+    ...(tmpDir ? { env: { TMPDIR: tmpDir } } : {}),
   };
 }
 
@@ -120,7 +168,7 @@ function pickBackend(policy, probe) {
   return {
     ok: true,
     name: entry.name,
-    limitations: entry.name === 'bwrap' ? bwrapLimitations(policy) : [],
+    limitations: BUILDERS[entry.name].limits(policy),
   };
 }
 

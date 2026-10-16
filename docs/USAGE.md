@@ -38,11 +38,17 @@ cowcat doctor inspect   # 深度报告：[config] / [permission rules] / [hooks]
 |---|---|---|
 | `off` | 原样执行 | 都别管 |
 | `light`（默认） | 脱敏 env（凭据形状变量）+ 静态命令分级（危险命令不再执行）+ 审计 `~/.cowcat/audit.log` | **护栏，不是安全边界** |
-| `system` | 之上再加 OS 级隔离（Linux: bubblewrap）：读只限项目 + 系统目录、写只限项目（含 worktree 同级目录）与私有 `/tmp`、**网络默认关** | 边界（仅覆盖 Bash 及其子进程） |
+| `system` | 之上再加 OS 级隔离（Linux: bubblewrap；macOS: `sandbox-exec`/Seatbelt）：读只限项目 + 系统目录、写只限项目（含 worktree 同级目录）与**每次调用独立的私有临时目录**、**网络默认关** | 边界（仅覆盖 Bash 及其子进程） |
 
 网络三态（`sandbox.network`）：`off`（默认，沙箱内无网络）/ `ask`（**按命令审批**：需要联网的命令（curl/wget/ssh/scp/rsync、`npm|pip|… install`、`git push`）在卡片上带 `[needs network: sandbox]`，用户在审批里点头才拿到网络，且只管这一次）/ `on`（沙箱内始终有网络，等价于不要网络隔离）。注意 `ask` 在 **yolo 模式**下等同 `off`——yolo 不弹任何对话框，没有"点头"的地方。
 
-`system` 需要本机可用后端（Linux/WSL2 需 `bubblewrap`）；不可用时**默认退回 `light` 并在卡片上标注未生效**（`sandbox.failOpen: false` 则直接拒绝执行）。Bash 卡角标永远显示**实际生效**的档位。
+`system` 需要本机可用后端（Linux/WSL2 需 `bubblewrap`；macOS 用系统自带的 `/usr/bin/sandbox-exec`，无需安装；Windows 原生不支持，会引导到 WSL2 / Docker Sandboxes）；不可用时**默认退回 `light` 并在卡片上标注未生效**（`sandbox.failOpen: false` 则直接拒绝执行）。Bash 卡角标永远显示**实际生效**的档位。
+
+平台差异（都如实报在 `/sandbox` 与 `doctor inspect` 的 `[sandbox]` 节里）：
+
+- **临时目录**：Linux 侧是挂载命名空间里的私有 tmpfs；macOS 没有挂载命名空间，改为**每次调用新建一个空目录**并把 `TMPDIR` 指过去，调用结束即删除。效果一致（宿主临时目录里的东西对沙箱不可见），代价是每次调用一次 mkdir/rmdir。
+- **网络**：Seatbelt 不能按域名过滤，所以 macOS 上的 `network: 'on'` 是**全部出网**，不是白名单；`off` / `ask` 与 Linux 一样可靠（按 profile 拒绝，不靠代理环境变量）。按域名白名单是 Phase 3（沙箱外代理）。
+- **Unix socket**：两档都默认拒绝（`ssh-agent`、`docker.sock` 都在外）。
 
 ```jsonc
 // ~/.cowcat/state.json（sandbox 键；字符串与对象两种写法都支持）
@@ -173,7 +179,7 @@ NotebookEdit(notebook_path, cell_index, edit_mode=replace|insert|delete, new_sou
 | `/todos` | 查看当前 todo 列表 |
 | `/theme dark\|light` | 切换 ANSI 配色，立即生效并持久化 |
 | `/panel` | 开关右侧信息面板（Context 用量/模型/权限模式/MCP/todos；同 ctrl+b，<100 列自动隐藏），两条路径都会把开关状态持久化到 state.json |
-| `/sandbox off\|light` | Bash 沙箱档位切换（默认 light：secret 脱敏 env + 命令分级 + `~/.cowcat/audit.log` 审计；护栏而非安全边界），持久化 |
+| `/sandbox off\|light\|system` | Bash 沙箱档位切换（默认 light：secret 脱敏 env + 命令分级 + `~/.cowcat/audit.log` 审计；护栏而非安全边界；system 为 Linux bubblewrap / macOS Seatbelt 的 OS 级边界），持久化 |
 | `/plan` / `/act` | Plan（只读探索+出计划）与 Act（执行）模式切换 |
 | `/diff` | 展开本回合各文件的完整 diff |
 | `/output` | 查看最近一次 Bash 的完整输出 |

@@ -228,9 +228,15 @@ export function sandboxBlockMessage(classification) {
 // so the two outcomes cannot be confused with "the sandbox is on".
 export function sandboxUnavailableMessage(plan, policy) {
   const fix = plan?.fix ? ` Fix: ${plan.fix}` : '';
-  return `Blocked: sandbox "${policy?.mode}" is not available here [${plan?.reason || 'unknown'}]`
-    + `${plan?.detail ? ` — ${plan.detail}` : ''}.${fix} `
-    + 'Set sandbox.failOpen to true to run as light mode instead, or switch with /sandbox light.';
+  const head = `Blocked: sandbox "${policy?.mode}" is not available here [${plan?.reason || 'unknown'}]`
+    + `${plan?.detail ? ` — ${plan.detail}` : ''}.${fix} `;
+  // A non-degradable refusal must not suggest failOpen: turning it on cannot
+  // make an unsupported configuration work, and light mode would grant MORE
+  // access than the user asked for. Tell them what actually changes the answer.
+  if (plan?.degradable === false) {
+    return `${head}This configuration cannot be honoured by this backend, so it was refused rather than run with weaker isolation. Change the setting above, or switch with /sandbox light.`;
+  }
+  return head + 'Set sandbox.failOpen to true to run as light mode instead, or switch with /sandbox light.';
 }
 
 export function sandboxDegradedNote(plan, policy) {

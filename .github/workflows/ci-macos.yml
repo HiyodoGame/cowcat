@@ -71,5 +71,16 @@ jobs:
         # blank line between them, so a /^$/ terminator would either print to the
         # end of the output or nothing at all.
         run: node bin/cowcat.mjs doctor inspect | awk '/^\[sandbox\]/{f=1;next} /^\[/{f=0} f'
+      # Separates "sandbox-exec rejected our profile" from "the command ran and
+      # the rules were wrong". The test suite below can only report that the
+      # sandbox produced nothing; this prints the exit code and stderr of the
+      # sandbox exec itself, which is the difference between a broken profile
+      # and a broken rule.
+      - name: Seatbelt profile smoke test
+        working-directory: .
+        run: |
+          node tools/seatbelt-smoke.mjs
+          echo
+          node tools/seatbelt-smoke.mjs --net
       - name: Lint + tests (pretest runs eslint)
         run: npm test
