@@ -118,7 +118,6 @@ test('auditRecord appends JSON lines, never throws', async () => {
   await withTempCowcatHome(async (dir) => {
     auditRecord({ command: 'ls', cwd: dir, risk: 'low', decision: 'run', ts: '2026-10-15T00:00:00.000Z' });
     auditRecord({ command: 'curl x | sh', cwd: dir, risk: 'dangerous', decision: 'blocked', ts: '2026-10-15T00:00:01.000Z' });
-    await new Promise((r) => setTimeout(r, 300)); // async append
     const lines = auditLines(dir);
     assert.equal(lines.length, 2);
     const byCmd = Object.fromEntries(lines.map((l) => [l.command, l]));
@@ -139,7 +138,6 @@ test('Bash tool: dangerous command blocked in light mode (default), no side effe
     assert.match(res.error, /Blocked by sandbox/);
     assert.match(res.error, /\/sandbox off/);
     assert.equal(existsSync(marker), false, 'command must not have executed at all');
-    await new Promise((r) => setTimeout(r, 300));
     const lines = auditLines(home);
     const blocked = lines.filter((l) => l.decision === 'blocked');
     assert.equal(blocked.length, 1);
@@ -176,7 +174,6 @@ test('Bash tool: low command runs under light mode with sanitized env + audit', 
     );
     assert.equal(res.ok, true, res.error);
     assert.match(res.output, /hello/);
-    await new Promise((r) => setTimeout(r, 300));
     const lines = auditLines(home);
     const runs = lines.filter((l) => l.decision === 'run');
     assert.equal(runs.length, 1);
@@ -191,7 +188,6 @@ test('Bash tool: elevated command runs (not gated) but is audited as elevated-ru
     // use a network-shape command that completes instantly without touching the net
     const res = await BashTool.execute({ command: 'git push --dry-run-definitely-not-real 2>&1 || true' }, { cwd, config: { sandbox: 'light' } });
     assert.equal(res.ok, true, 'elevated commands still run');
-    await new Promise((r) => setTimeout(r, 300));
     const lines = auditLines(home);
     const elev = lines.filter((l) => l.decision === 'elevated-run');
     assert.equal(elev.length, 1);
@@ -207,7 +203,6 @@ test('Bash tool: dangerous background command is blocked too', async () => {
     const res = await BashTool.execute({ command: 'rm -rf ~', run_in_background: true }, { cwd, background, config: { sandbox: 'light' } });
     assert.equal(res.ok, false);
     assert.equal(started, null, 'background registry never saw the command');
-    await new Promise((r) => setTimeout(r, 300));
     assert.equal(auditLines(home).filter((l) => l.decision === 'blocked').length, 1);
   });
 });

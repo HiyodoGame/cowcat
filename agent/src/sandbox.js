@@ -31,7 +31,7 @@
 // sandbox must never throw into the tool execution path — a broken sandbox
 // degrades to "no sandbox", not to "agent cannot run commands".
 
-import { appendFile, mkdir } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isDangerousCommand } from './permissions.js';
 import { cowcatHome } from './config.js';
@@ -137,9 +137,15 @@ export function classifyCommand(command, { cwd } = {}) {
 // --- audit trail ----------------------------------------------------------------
 
 // Append one JSON line describing a classified Bash execution to
-// ~/.cowcat/audit.log. Never throws and never rejects: audit failure must
-// not break the tool path (fail-open, the run itself already happened or was
-// blocked by the classifier, not by this write).
+// ~/.cowcat/audit.log. Never throws: audit failure must not break the tool path
+// (fail-open, the run itself already happened or was blocked by the classifier,
+// not by this write).
+//
+// Written SYNCHRONOUSLY on purpose. The async mkdir+append version could lose the
+// final line when the process exited right after a blocked/run command — and it
+// made the audit tests racy on a loaded Windows CI runner (they slept 300ms and
+// sometimes read an unfinished file). One line appended by a tool that just ran a
+// whole subprocess is not a meaningful cost.
 export function auditRecord(rec = {}) {
   try {
     const { command, cwd, risk, decision, ts = new Date().toISOString() } = rec || {};
@@ -152,10 +158,8 @@ export function auditRecord(rec = {}) {
       command: String(command ?? '').slice(0, 500),
     }) + '\n';
     const file = join(cowcatHome(), 'audit.log');
-    mkdir(dirname(file), { recursive: true }, (mkErr) => {
-      if (mkErr) return;
-      appendFile(file, line, () => {});
-    });
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, line);
   } catch { /* audit is best-effort, always */ }
 }
 
