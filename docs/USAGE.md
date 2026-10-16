@@ -29,6 +29,7 @@ CowCat 内置一份从 models.dev 蒸馏的预置目录（`agent/assets/provider
 ```bash
 cowcat setup     # 预置目录驱动的交互向导：过滤选 provider → 选模型 → 读 key → 确认写入
 cowcat doctor    # 逐项 ✓/✗：model 引用可解析 / protocol / baseURL / API key（点名缺哪个 env 变量）/ 模型在目录内 / 连通性探测
+cowcat doctor inspect   # 深度报告：[config] / [permission rules] / [hooks] / [state] / [sandbox]（后端探测：本平台能不能用系统级沙箱、不能用是为什么、修复命令）
 ```
 
 向导里输入过滤词缩小列表、编号选择；`✓` 标记已配置的 provider（apiKey 已存或其环境变量已存在）；选 `custom` 走自定义端点流程（protocol 二选一 + 自由 baseURL）。非交互环境（stdin 无输入）自动按当前环境变量写入。`/setup` 在会话内重跑向导并热生效。

@@ -362,6 +362,8 @@ agent/src/sandbox/
 
 ## 11. 需要拍板的决策点
 
+> **2026-10-16 已拍板：六项全部按推荐。** 即：档位名 `system`（默认仍 `light`）／v1 覆盖 Linux+macOS、Windows 明确不支持并给指引／网络 v1 默认关 + 按命令审批／第三方后端 Phase 4 再定（先跑验证项）／Windows 终局先评估 srt → 再 MXC → 都不成就长期"不支持 + 引导"／违规信息进上下文（只进类别 + 目标路径 + 一句建议）。
+
 | # | 决策 | 推荐 | 备选 | 影响面 |
 |---|---|---|---|---|
 | 1 | 第三档命名与默认 | **`system`**，默认仍 `light` | `strict`（易与 permissions 的 strict 混淆） | 配置/文档/UI |
@@ -376,3 +378,10 @@ agent/src/sandbox/
 ## 12. 下一步
 
 拍板 §11 后，从 **Phase 0** 开始（零行为变化、可立刻验证）：探针基线 + preflight + `cowcat doctor` 诊断节。Phase 0 的产出同时就是 §8.1-1/2/3/4 的实测数据来源，做完再回到 §11-4/5 做后端决策。
+
+**2026-10-16 更新（Phase 0 已落地）**：
+
+- 交付物：`agent/src/sandbox/probe.js`（后端探测与失败分类）、`cowcat doctor inspect` 新增 `[sandbox]` 节、`agent/test/live/sandbox-probe.mjs`（走真实 `BashTool` 的只读基线）、单测 `agent/test/sandbox-probe.test.mjs`（注入式，不依赖宿主装没装 bwrap）。
+- **本机（Windows）基线数据**：`~/.ssh`（10 项条目）与 `gh` 令牌文件（88 字节）在 `off`/`light` **两档都可读**；外网可达（`example.com` → 200）；`~/.cowcat` 可写（意味着沙箱内进程能改我们自己的配置与审计 —— §5.7 要防的正是这个）；`light` 档唯一拦住的一项是 env 中 TOKEN 形状的变量。→ Phase 1 的验收就按"这三项必须被拦"来定。
+- 平台结论：本机 `win32` → `unsupported-platform`，探测给出的替代路径是 WSL2 / Docker Sandboxes（与 §4.3 一致）。
+- 仍未做：§8.1 的 1/2/3/4 项（srt 与 MXC 的可用性实测）留待 Phase 4 决策前跑；本机没有 WSL2 环境，bwrap 的真实探测需在 Linux/WSL2 上执行。

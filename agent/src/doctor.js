@@ -2,6 +2,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { cowcatHome, resolveModelConfig, STATE_KEYS, writeState } from './config.js';
+import { sandboxProbe, formatSandboxProbe } from './sandbox/probe.js';
 
 // Merge wizard answers into the existing config file, preserving fields the
 // wizard does not touch. Two answer shapes:
@@ -119,6 +120,16 @@ function maskKey(k) {
   return k.length <= 8 ? '••••' : `${k.slice(0, 4)}…${k.slice(-4)}`;
 }
 
+// `sandbox` is a mode string today, but src/sandbox.js already accepts the
+// object form ({ envDeny, ... }) and the plan adds more keys to it (§3.2).
+// Doctor only needs a readable label, so keep this dumb rather than resolving
+// policy here.
+function sandboxModeLabel(sandbox) {
+  if (typeof sandbox === 'string' && sandbox) return sandbox;
+  if (sandbox && typeof sandbox === 'object') return String(sandbox.mode || 'light (object form)');
+  return 'light';
+}
+
 // Deep report: everything doctor knows, grouped into sections.
 export function runInspect(cfg, info = {}) {
   const sections = [];
@@ -144,6 +155,15 @@ export function runInspect(cfg, info = {}) {
     `mcp trusted: ${(cfg.mcpTrusted || []).length}`,
     `sessions: ${info.sessionCount ?? '?'}`,
     `tools registered: ${info.toolCount ?? '?'}`,
+  ]);
+  // System-level sandbox preflight (Phase 0 of the sandbox plan). Reported here
+  // rather than as a runDoctorChecks item on purpose: the system backend is an
+  // OPTIONAL upgrade (light mode stays the default), so a machine without
+  // bubblewrap is not a broken install and must not turn `cowcat doctor` into a
+  // failure. See docs/sandbox-system-plan-2026-10-16.md §4.2.
+  add('sandbox', [
+    `mode: ${sandboxModeLabel(cfg.sandbox)} (configured)`,
+    ...formatSandboxProbe(sandboxProbe()),
   ]);
   if (info.extra?.length) add('extras', info.extra);
   return sections;
