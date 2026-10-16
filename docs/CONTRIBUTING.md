@@ -81,17 +81,21 @@ live 脚本（`agent/test/live/*`）**不进 CI**：它们需要真实 API key �
 4. `npm publish`（需要 2FA）→ 核对 registry 的 `dist.shasum` 与本地 `npm pack` 一致；
 5. 用 `docs/PUBLISH.md` 的 checklist 收尾（CI 绿、白名单守卫、隔离安装演练）。
 
-## 5. 本地的 pre-push 守卫（可选，推荐）
+## 5. 本地的 git 钩子（可选，推荐）
 
-服务端的分支保护在**私有免费仓库上不可用**（见 §6），所以仓库自带一个客户端守卫：
+服务端的分支保护已经启用（见 §6），本地钩子是**更早的一道防线**：它在错误的动作发生时就给出提示，而不必等到推送被服务端拒绝。仓库自带两个：
 
 ```bash
 # 一次性启用（把 hooks 指向仓库里的 .githooks/）
 git config core.hooksPath .githooks
 ```
 
-启用后，`git push` 到 `main` 会被拦下并提示走 PR；确实需要直推时用 `git push --no-verify`（故意绕过，自己负责）。
-它只拦分支推送，**不拦 tag 推送**，所以发布流程不受影响。
+| 钩子 | 拦什么 | 故意绕过 |
+|---|---|---|
+| `pre-commit` | 在 `main` 上**提交**。常见成因：`gh pr merge --delete-branch` 会把工作区切回 `main`，接着直接改文件提交 | `git commit --no-verify` |
+| `pre-push` | 向 `main` **推送**（含删除该分支） | `git push --no-verify` |
+
+`pre-commit` 允许 detached HEAD（rebase / bisect 就是那个样子，都不等于「在 main 上提交」）。`pre-push` 只拦分支推送，**不拦 tag 推送**，所以发布流程不受影响。
 
 ## 6. 服务端强制保护：已启用（GitHub Pro）
 

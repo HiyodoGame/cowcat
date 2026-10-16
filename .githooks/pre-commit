@@ -1,0 +1,29 @@
+#!/bin/sh
+# Client-side guard: refuse to *commit* while on main, so a feature branch gets created
+# before the work rather than after the push is rejected.
+#
+# Why this exists on top of pre-push: committing to main by accident is easy — merging a
+# PR with `gh pr merge --delete-branch` switches the working tree back to main, and the
+# next edit-and-commit lands on main without any signal. pre-push catches that at push
+# time; this catches it at commit time, which is the point at which re-homing the commit
+# is still cheap.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Deliberate override:     git commit --no-verify
+#
+# Detached HEAD is allowed on purpose: that is what a rebase or a bisect looks like, and
+# neither is "committing to main".
+set -eu
+
+protected="main"
+current="$(git symbolic-ref --quiet --short HEAD || true)"
+
+if [ "$current" = "$protected" ]; then
+  echo "pre-commit: '$protected' only takes changes through a pull request." >&2
+  echo "            create a branch first (see docs/CONTRIBUTING.md §1):" >&2
+  echo "              git switch -c <type>/<topic>" >&2
+  echo "            deliberate override: git commit --no-verify" >&2
+  exit 1
+fi
+
+exit 0

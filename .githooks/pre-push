@@ -4,10 +4,10 @@
 # Enable once per clone:   git config core.hooksPath .githooks
 # Deliberate override:     git push --no-verify
 #
-# Why client-side: GitHub branch protection / rulesets are unavailable on private
-# repositories on the free plan (the API answers 403 "Upgrade to GitHub Pro or
-# make this repository public"), so this is the enforceable half of the policy —
-# see docs/CONTRIBUTING.md §6. Tag pushes are not branch pushes and stay allowed.
+# Why client-side as well as server-side: branch protection is enabled on this repo
+# (docs/CONTRIBUTING.md §6), so this is not the only line of defence — it is the earlier
+# one. It fires offline, it explains what to do instead of just refusing, and it costs
+# nothing when used as intended. Tag pushes are not branch pushes and stay allowed.
 set -eu
 
 protected="main"
