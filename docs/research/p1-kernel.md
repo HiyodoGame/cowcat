@@ -398,7 +398,7 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 
 ## 7. 待验证清单（汇总）
 
-1. ~~Linux / macOS 上重跑锁实验 A、B、C、E、I~~ **部分已解决（P1 T3）**：A（`wx` 的 `EEXIST`）、B（`kill(pid, 0)` 判活）、C（删除活锁对持有者不可见）与「默认不自动接管」已由 `test/lock.test.ts` 在 CI 的 **Linux 腿**（Node 22 · ubuntu-24.04）上真实执行，不是本机 Windows 的结论外推。实验 I 的构造式反例针对的是**自动接管**，本实现不实现自动接管，故无对应测试。**macOS 未覆盖。**
+1. ~~Linux / macOS 上重跑锁实验 A、B、C、E、I~~ **大部分已解决（P1 T3）**：A（`wx` 的 `EEXIST`，含 8 个进程同时争抢）、B（`kill(pid, 0)` 判活）、C（删除活锁对持有者不可见）、「默认不自动接管」，以及**持有者被硬杀后的恢复指引**，都由 `test/lock.test.ts` 与 `test/lock-cross-process.test.ts` 在 CI 的 **Linux 腿**（Node 22 · ubuntu-24.04）上真实执行，不再是本机 Windows 结论的外推。实验 I 的构造式反例针对的是**自动接管**，本实现不实现自动接管，故无对应测试。**macOS 仍未覆盖。**
 2. 会话目录位于 NFS / SMB / 同步盘时的锁行为。
 3. 三个 schema 库在本仓库真实 schema 上的对比（§2.7）。
 4. zod 引入后对 `tsc` 编译耗时的影响。
@@ -419,11 +419,13 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 | T3 单写者锁 | `LockHeldError` 增加 `sessionId` 字段（§3.4 的字段集合是 `pid` / `lockPath` / `guidance`） | 消息里要点名是哪个会话，捕获方也不必自带 id |
 | T3 单写者锁 | 新增「`close()` 之后禁止 `emit`」 | §3.4 只要求 `close()` 释放锁。但锁是「同一会话只有一个写入者」这条不变量的实现，若关锁后仍可写，不变量就废了；理由与「锁归 `Session` 所有而非组合根」是同一条 |
 | T3 单写者锁 | §3.3 第 5 条「校验 nonce 后 `unlink`」实现为：nonce 不匹配、或锁文件内容读不出时**静默不删** | 删掉无法证明归属的锁会把会话交给两个写入者；且「释放」不该以副作用失败告终 |
-| T3 单写者锁 | 「持有者已死」分支的测试用超大 pid（`2147483647`）而不是 spawn 一个子进程 | 本机实测该 pid 返回 `ESRCH`，与崩溃进程留下的 pid 走同一条分类路径；避免为一条测试给 `packages/cowcat` 引入子进程（`ci.yml` 头部把「no child processes」列为该作业便宜的原因之一） |
+| T3 单写者锁 | 「持有者已死」在 `test/lock.test.ts` 里用超大 pid（`2147483647`）近似，真实崩溃路径另由 `test/lock-cross-process.test.ts`（子进程认领后 `SIGKILL`）覆盖 | 两条路径的判活分类相同（都走 `ESRCH`）；保留超大 pid 那条是为了让**不 spawn** 的测试文件也能覆盖该分支 |
+| T3 单写者锁 | 为跨进程争抢引入子进程测试（`test/lock-cross-process.test.ts`），并同步改掉 `ci.yml` 里「no child processes」那句注释 | 锁是跨进程原语，只在单进程内测等于没测核心场景。代价：`packages/cowcat` 不再是零子进程的套件，单次运行多约 0.3s |
+| T3 单写者锁 | 跨进程争抢用**两阶段信号文件**（`GO` → 全部尝试完毕 → `RELEASE`）同步，而不是固定 sleep | 若赢家一拿到锁就释放，晚到的竞争者可能在释放之后才尝试，于是出现两个 `ACQUIRED`——靠 sleep 赌余量会变成随机失败。信号文件把顺序变成确定的 |
 
 **T1 的验证证据**：`packages/cowcat` 的 `npm test` 由 22 项增至 **30** 项（build + ESLint + 测试全通过，本机 Windows / Node `v24.18.0`）。新增 `test/header.test.ts` 覆盖：头作为首条事件写入、磁盘往返后头仍在、`create` 重复被拒、`open` 不存在被拒、无头日志被拒、未知 `schemaVersion` 报错（含 `found` 与 `supported` 字段）、空文件判损坏、同一日志里的第二个头判损坏。
 
-**T3 的验证证据**：`npm test` 由 30 项增至 **41** 项（同上环境全通过）。新增 `test/lock.test.ts`（11 项）覆盖：锁文件内容（`pid` / `nonce` / `hostname` / `startedAt`）、同进程二次认领被拒（断言 `pid` 与 `lockPath` 而非文案）、死锁被拒且指引与活锁可区分、内容无法解读的锁被拒且不猜持有人、释放可重复且真正释放、不删不属于自己的锁、删除活锁对持有者不可见、同一会话不能开两次、失败的 `open` 不泄漏锁、`close()` 后拒绝写入、`exclusiveLock` 替身。**这些测试在 CI 的 Linux 腿上真实执行**，因此 §7 第 1 条的一部分由本任务的 CI 运行给出结论。
+**T3 的验证证据**：`npm test` 由 30 项增至 **43** 项（同上环境全通过）。单进程内的协议分支由 `test/lock.test.ts`（11 项）覆盖：锁文件内容（`pid` / `nonce` / `hostname` / `startedAt`）、同进程二次认领被拒（断言 `pid` 与 `lockPath` 而非文案）、死锁被拒且指引与活锁可区分、内容无法解读的锁被拒且不猜持有人、释放可重复且真正释放、不删不属于自己的锁、删除活锁对持有者不可见、同一会话不能开两次、失败的 `open` 不泄漏锁、`close()` 后拒绝写入、`exclusiveLock` 替身。跨进程场景由 `test/lock-cross-process.test.ts`（2 项）覆盖：8 个进程两阶段信号同步争抢（恰好 1 个认领成功、7 个被拒、赢家释放后锁文件消失），以及**子进程认领后被 `SIGKILL` 硬杀**后重新认领的指引（真实崩溃路径）。**这些测试在 CI 的 Linux 腿上真实执行**，因此 §7 第 1 条由本任务的 CI 运行给出结论。
 
 ---
 

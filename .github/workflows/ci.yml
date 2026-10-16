@@ -208,8 +208,11 @@ jobs:
         run: npm test
 
   cowcat:
-    # The v2 kernel. Cheap by construction: no sandbox, no child processes, no
-    # network — the suite finishes in seconds, so the cost is checkout and setup.
+    # The v2 kernel. Cheap by construction: no sandbox, no network, and the suite
+    # finishes in seconds, so the cost is checkout and setup. The single exception
+    # to "no child processes" is test/lock-cross-process.test.ts, which spawns real
+    # node processes on purpose: the session lock is a cross-process primitive, and
+    # testing it in one process would not test the thing that matters.
     name: packages/cowcat · node 22 · ubuntu-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 10

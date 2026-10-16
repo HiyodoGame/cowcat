@@ -86,6 +86,8 @@ loop:
 
 **组合根的一条约束**：`JsonlEventStore` 与 `FileLockPort` 必须指向**同一个目录**，否则锁保护的不是那份日志。目前靠调用方遵守，P6 的组合根会把它固定下来。
 
+**测试落点**：单进程内的协议分支在 `test/lock.test.ts`；跨进程争抢（8 个进程同时认领）与「持有者被硬杀后的恢复指引」在 `test/lock-cross-process.test.ts`。后者是 `packages/cowcat` 里唯一 spawn 子进程的文件——锁本来就是跨进程原语，只在单进程内测等于没测核心场景。
+
 ## 会话头与 schema 版本
 
 > ADR-012。以下裁决已落地并有测试（`test/header.test.ts`）；逐行的结构校验（zod）仍待做。
