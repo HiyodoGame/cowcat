@@ -1,8 +1,8 @@
 # CowCat changelog
 
-## 0.14.1（未发布）— CI 首跑暴露的两处缺陷 + 工程基建
+## 0.14.1（2026-10-16）— CI 与 PR 流程暴露的四类缺陷 + 工程基建
 
-补齐仓库基建（`.github/workflows/ci.yml`、`tools/check-tarball.mjs`、dependabot，详见 `docs/fix-plan-2026-10-15.md` 第十三轮）。**CI 第一跑就抓到两个本机（Windows + 现有 git 配置）掩盖着的问题**：
+本版主体是工程基建（CI 矩阵、打包白名单守卫、dependabot、PR 流程与分支保护，见 `docs/fix-plan-2026-10-15.md` 第十三～十五轮），以及由它们暴露的四类缺陷——**都是本机（Windows + 现有 git 配置）跑绿时掩盖着的**：
 
 - **修复（P1）：hook 子进程提前退出会让整个 CLI 崩溃**。`src/hooks.js` 把 payload 写进 hook 的 stdin 时没有流级错误处理：hook 若不读 stdin 就退出（`exit 0` 这类、或超时被 SIGKILL），写入以 **EPIPE 异步抛错**，未捕获 → 进程直接挂掉。Linux 上必现（CI 三个 node 版本全崩在同一处），Windows 未暴露，所以一直没被发现。修复：新增 `src/childio.js`（`guardStdin` / `writeStdinOnce`），`hooks.js` 改用它，并加回归测试（`test/p1-wave2.test.mjs`）。
   - **同一类缺陷的第二处**（PR 的 CI 复跑时在 node 20 上抓到）：`src/statusline.js` 也往子进程 stdin 写 payload，同样没挂错误处理 —— 自定义 statusline 命令若立即返回/被超时杀掉，`write EPIPE` 同样是未捕获异常（CI 日志指向 `statusline.js:26`）。已改用同一个 helper；`src/mcp.js` 在 spawn 成功后也顺手 `guardStdin()`（MCP server 刚死时写入同一风险）。既有的 statusline 测试里加了一条「命令不读 stdin 立即退出 → 返回 null 且不崩」的断言。
