@@ -1,5 +1,6 @@
 import type { KernelEvent } from '../kernel/events.js';
 import type { Message, ToolCall } from '../kernel/messages.js';
+import type { SessionState } from '../kernel/state.js';
 
 export type ToolRisk = 'read' | 'write' | 'exec' | 'network';
 
@@ -54,6 +55,20 @@ export interface SessionLock {
 
 export interface LockPort {
   acquire(sessionId: string): Promise<SessionLock>;
+}
+
+// Snapshots accelerate replay; they are never a source of truth. `load` answers null
+// when there is no snapshot *or* when it cannot be used, because both mean the same
+// thing to the caller: replay the log (ADR-013).
+export interface SessionSnapshot {
+  readonly schemaVersion: number;
+  readonly lastSeq: number;
+  readonly state: SessionState;
+}
+
+export interface SnapshotPort {
+  load(sessionId: string): Promise<SessionSnapshot | null>;
+  save(sessionId: string, snapshot: SessionSnapshot): Promise<void>;
 }
 
 // Thrown when acquire() cannot claim the session. The fields let a frontend render

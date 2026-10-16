@@ -35,6 +35,7 @@
 | `IdSource` | 已实现（Node 适配器） | 回合与调用 ID |
 | `EventStore` | 已实现（JSONL 适配器） | 追加与读取会话日志 |
 | `LockPort` | 已实现（Node 文件锁） | 会话单写者锁，见 [02-kernel.md](02-kernel.md#单写者锁) |
+| `SnapshotPort` | 已实现（JSON 文件快照） | 回放加速；缺失或损坏一律回退全量回放，见 [02-kernel.md](02-kernel.md#快照) |
 | `ModelPort` | 接口已定，适配器 P4 | 流式模型调用，带 `AbortSignal` |
 | `ToolPort` | 接口已定，工具 P5 | 工具规格 + 执行 |
 | `ProcessPort` | P2 | 进程启动网关（见下） |

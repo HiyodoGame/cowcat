@@ -1,10 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, unlink, type FileHandle } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rename, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { KernelEvent } from '../kernel/events.js';
-import { LockHeldError, type Clock, type EventStore, type IdSource, type LockPort, type SessionLock } from '../ports/index.js';
-import { decodeEventLine } from './schema.js';
+import {
+  LockHeldError,
+  type Clock,
+  type EventStore,
+  type IdSource,
+  type LockPort,
+  type SessionLock,
+  type SessionSnapshot,
+  type SnapshotPort,
+} from '../ports/index.js';
+import { decodeEventLine, decodeSnapshot } from './schema.js';
 
 export const systemClock: Clock = { now: () => Date.now() };
 
@@ -222,5 +231,40 @@ async function releaseIfOurs(lockPath: string, nonce: string): Promise<void> {
     await unlink(lockPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+// Snapshots sit beside the log as `<sessionId>.snapshot.json`. Swap in through a
+// temporary file and rename: rename replaces atomically, so a reader never sees a
+// half-written snapshot, and a crash mid-save leaves the previous one intact (ADR-013).
+export class FileSnapshotPort implements SnapshotPort {
+  readonly #dir: string;
+
+  constructor(dir: string) {
+    this.#dir = dir;
+  }
+
+  #file(sessionId: string): string {
+    if (!SESSION_ID.test(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
+    return join(this.#dir, `${sessionId}.snapshot.json`);
+  }
+
+  async load(sessionId: string): Promise<SessionSnapshot | null> {
+    let raw: string;
+    try {
+      raw = await readFile(this.#file(sessionId), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    return decodeSnapshot(raw, sessionId);
+  }
+
+  async save(sessionId: string, snapshot: SessionSnapshot): Promise<void> {
+    const file = this.#file(sessionId);
+    const temp = `${file}.tmp`;
+    await mkdir(this.#dir, { recursive: true });
+    await writeFile(temp, `${JSON.stringify(snapshot)}\n`, 'utf8');
+    await rename(temp, file);
   }
 }

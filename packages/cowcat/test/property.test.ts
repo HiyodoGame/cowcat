@@ -1,25 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import fc from 'fast-check';
 import {
   canTransition,
   DEFAULT_RULES,
+  FileSnapshotPort,
   JsonlEventStore,
   reduce,
+  replay,
   runTurn,
+  SCHEMA_VERSION,
   Session,
   type ActionRequest,
   type KernelEvent,
   type Rule,
+  type SessionSnapshot,
   type SessionState,
   type ToolPort,
   type TurnState,
 } from '../src/index.js';
-import { ScriptedModel, sessionDeps, sequentialIds, tool } from './support.js';
+import { ScriptedModel, sessionDeps, sequentialIds, snapshotsReturning, tool } from './support.js';
 
 // Fixed so any failure can be reproduced exactly; override with COWCAT_PROPERTY_SEED
 // to explore other cases. fast-check prints the seed and the shrinking path in its
@@ -58,7 +62,15 @@ const jsonValue: fc.Arbitrary<unknown> = fc.oneof(
 
 const toolNames = ['echo_file', 'boom_file', 'write_file', 'missing_tool'] as const;
 
-const script = fc.record({
+interface GeneratedScript {
+  readonly steps: ReadonlyArray<{ readonly toolName: (typeof toolNames)[number]; readonly input: unknown }>;
+  readonly finalText: string;
+  readonly approve: boolean;
+  readonly denyBoom: boolean;
+  readonly abort: boolean;
+}
+
+const script: fc.Arbitrary<GeneratedScript> = fc.record({
   steps: fc.array(
     fc.record({
       toolName: fc.constantFrom(...toolNames),
@@ -87,6 +99,45 @@ const tools = new Map<string, ToolPort>([
   ['write_file', tool({ name: 'write_file', description: 'writes', risk: 'write' }, () => ({ ok: true, output: 'written' }))],
 ]);
 
+// Drives one generated script against a real log and returns the live state, so a
+// caller can compare it with whatever reopening the session produces.
+async function runScript(
+  store: JsonlEventStore,
+  generated: GeneratedScript,
+): Promise<{ sessionId: string; state: SessionState }> {
+  const sessionId = `sess_${randomUUID()}`;
+  const session = await Session.create(sessionDeps(store), sessionId);
+
+  const model = new ScriptedModel([
+    ...generated.steps.map((step) => [
+      {
+        type: 'tool_call' as const,
+        call: { callId: `call_${randomUUID()}`, name: step.toolName, input: step.input },
+      },
+    ]),
+    [{ type: 'text' as const, text: generated.finalText }],
+  ]);
+
+  const controller = new AbortController();
+  if (generated.abort) controller.abort();
+  await runTurn(
+    {
+      session,
+      model,
+      tools,
+      rules: generated.denyBoom ? [...DEFAULT_RULES, DENY_BOOM] : DEFAULT_RULES,
+      approve: () => Promise.resolve(generated.approve),
+      ids: sequentialIds(),
+    },
+    'go',
+    controller.signal,
+  );
+
+  const state = session.state;
+  await session.close();
+  return { sessionId, state };
+}
+
 test('replaying the log equals the live state, for any turn script', async () => {
   const dir = tempDir();
   try {
@@ -94,43 +145,68 @@ test('replaying the log equals the live state, for any turn script', async () =>
 
     await fc.assert(
       fc.asyncProperty(script, async (generated) => {
-        const sessionId = `sess_${randomUUID()}`;
-        const deps = sessionDeps(store);
-        const session = await Session.create(deps, sessionId);
-
-        const model = new ScriptedModel([
-          ...generated.steps.map((step) => [
-            {
-              type: 'tool_call' as const,
-              call: { callId: `call_${randomUUID()}`, name: step.toolName, input: step.input },
-            },
-          ]),
-          [{ type: 'text' as const, text: generated.finalText }],
-        ]);
-
-        const controller = new AbortController();
-        if (generated.abort) controller.abort();
-        await runTurn(
-          {
-            session,
-            model,
-            tools,
-            rules: generated.denyBoom ? [...DEFAULT_RULES, DENY_BOOM] : DEFAULT_RULES,
-            approve: () => Promise.resolve(generated.approve),
-            ids: sequentialIds(),
-          },
-          'go',
-          controller.signal,
-        );
+        const { sessionId, state } = await runScript(store, generated);
 
         // Reopen through the real store, which decodes every line with the schema
         // (T2), so this also proves the kernel never writes an event its own decoder
         // would reject.
-        await session.close();
+        const reopened = await Session.open(sessionDeps(store), sessionId);
+
+        assert.deepEqual(reopened.state, state);
+        assert.equal(reopened.state.lastSeq, (await store.readAll(sessionId)).length);
+        await reopened.close();
+      }),
+      { seed: SEED, numRuns: RUNS },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a snapshot at any point of the log replays to the same state', async () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonlEventStore(dir);
+
+    await fc.assert(
+      fc.asyncProperty(script, fc.nat(), async (generated, rawPoint) => {
+        const { sessionId, state } = await runScript(store, generated);
+        const events = await store.readAll(sessionId);
+        // Anywhere in the log, including both ends; a point of 0 means "no events yet".
+        const point = rawPoint % (events.length + 1);
+
+        const snapshot: SessionSnapshot = {
+          schemaVersion: SCHEMA_VERSION,
+          lastSeq: point,
+          state: replay(sessionId, events.slice(0, point)),
+        };
+        const deps = sessionDeps(store, { snapshots: snapshotsReturning(snapshot) });
         const reopened = await Session.open(deps, sessionId);
 
-        assert.deepEqual(reopened.state, session.state);
-        assert.equal(reopened.state.lastSeq, (await store.readAll(sessionId)).length);
+        assert.deepEqual(reopened.state, state);
+        await reopened.close();
+      }),
+      { seed: SEED, numRuns: RUNS },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a damaged snapshot never changes what the log alone says', async () => {
+  const dir = tempDir();
+  try {
+    const store = new JsonlEventStore(dir);
+
+    await fc.assert(
+      fc.asyncProperty(script, fc.string(), async (generated, garbage) => {
+        const { sessionId, state } = await runScript(store, generated);
+        writeFileSync(join(dir, `${sessionId}.snapshot.json`), garbage, 'utf8');
+
+        const deps = sessionDeps(store, { snapshots: new FileSnapshotPort(dir) });
+        const reopened = await Session.open(deps, sessionId);
+
+        assert.deepEqual(reopened.state, state);
         await reopened.close();
       }),
       { seed: SEED, numRuns: RUNS },

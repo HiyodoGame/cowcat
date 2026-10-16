@@ -1,6 +1,6 @@
-import type { Clock, EventStore, IdSource, LockPort, SessionLock } from '../ports/index.js';
+import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SnapshotPort } from '../ports/index.js';
 import type { EventInput, KernelEvent, SessionUpdate } from './events.js';
-import { assertSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
+import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
 import { initialState, reduce, replay, type SessionState } from './state.js';
 import { canTransition, IllegalTransitionError, isTerminal, type TurnState } from './turn.js';
 
@@ -12,6 +12,9 @@ export interface SessionDeps {
   // close(); a lock scoped to a single append could not protect the
   // replay → read seq → append window (ADR-010).
   readonly lock: LockPort;
+  // Replay acceleration only: a snapshot that cannot be trusted is ignored, and the
+  // log alone decides the state (ADR-013).
+  readonly snapshots: SnapshotPort;
   // Supplied by the composition root (from package.json). The kernel cannot read
   // the filesystem, so its own version has to be handed to it — see ADR-012.
   readonly cowcatVersion: string;
@@ -46,7 +49,8 @@ export class Session {
         throw new Error(`session ${sessionId} has no session header; the log starts with ${header.type}`);
       }
       assertSupportedSchemaVersion(header.schemaVersion, sessionId);
-      return new Session(deps, replay(sessionId, events), lock);
+      const snapshot = await deps.snapshots.load(sessionId);
+      return new Session(deps, stateFrom(sessionId, events, snapshot), lock);
     } catch (error) {
       // A failed open must not keep the lock: our own pid is alive, so this very
       // process would be refused on the next attempt.
@@ -82,6 +86,17 @@ export class Session {
   async close(): Promise<void> {
     this.#closed = true;
     await this.#lock.release();
+  }
+
+  // Explicit by design: when to snapshot depends on how long sessions really get, and
+  // P1 has no data for that, so a threshold now would be a guess. Not blocked after
+  // close(): it writes derived data, not a log fact (ADR-013).
+  async saveSnapshot(): Promise<void> {
+    await this.#deps.snapshots.save(this.#state.sessionId, {
+      schemaVersion: SCHEMA_VERSION,
+      lastSeq: this.#state.lastSeq,
+      state: this.#state,
+    });
   }
 
   get state(): SessionState {
@@ -137,4 +152,21 @@ export class Session {
     if (!canTransition(turn.state, to)) throw new IllegalTransitionError(turn.state, to);
     await this.emit({ type: 'turn.transitioned', turnId: turn.id, from: turn.state, to, reason });
   }
+}
+
+// A snapshot is an accelerator, never a source of truth: it is used only when it still
+// describes this log, and otherwise the log alone decides the state. Every rejection
+// here costs replay time, never correctness (ADR-013).
+function stateFrom(
+  sessionId: string,
+  events: readonly KernelEvent[],
+  snapshot: SessionSnapshot | null,
+): SessionState {
+  if (snapshot === null) return replay(sessionId, events);
+  if (!isSupportedSchemaVersion(snapshot.schemaVersion)) return replay(sessionId, events);
+  // Covered events are a prefix of the log, and `seq` runs 1..n in step with the line
+  // number, so a snapshot that claims more events than the log holds is stale or from
+  // another file. The store is append-only, so a prefix can never be rewritten underneath.
+  if (snapshot.lastSeq > events.length) return replay(sessionId, events);
+  return events.slice(snapshot.lastSeq).reduce(reduce, snapshot.state);
 }

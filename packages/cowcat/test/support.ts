@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type LockPort } from '../src/index.js';
+import { LockHeldError, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type LockPort, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -60,16 +60,36 @@ export function exclusiveLock(): LockPort {
 export interface SessionDepsOptions {
   readonly cowcatVersion?: string;
   readonly lock?: LockPort;
+  readonly snapshots?: SnapshotPort;
 }
 
-// One place to build SessionDeps: it grows with each P1 task (cowcatVersion, then
-// the lock, snapshots later) and tests should not each carry the whole shape.
+// Snapshots are an accelerator, so the default double simply has none: sessions in
+// tests replay in full, exactly as before T4.
+export function noopSnapshots(): SnapshotPort {
+  return {
+    load: () => Promise.resolve(null),
+    save: () => Promise.resolve(),
+  };
+}
+
+// Hands back exactly the snapshot it was given, for tests about the *decision* to use
+// one rather than about the file format.
+export function snapshotsReturning(snapshot: SessionSnapshot | null): SnapshotPort {
+  return {
+    load: () => Promise.resolve(snapshot),
+    save: () => Promise.resolve(),
+  };
+}
+
+// One place to build SessionDeps: it grows with each P1 task (cowcatVersion, then the
+// lock, then snapshots) and tests should not each carry the whole shape.
 export function sessionDeps(store: EventStore, options: SessionDepsOptions = {}): SessionDeps {
   return {
     store,
     clock: fixedClock(),
     ids: sequentialIds(),
     lock: options.lock ?? noopLock(),
+    snapshots: options.snapshots ?? noopSnapshots(),
     cowcatVersion: options.cowcatVersion ?? '0.0.0-test',
   };
 }

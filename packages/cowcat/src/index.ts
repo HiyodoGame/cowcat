@@ -17,6 +17,8 @@ export {
   LockHeldError,
   type LockPort,
   type SessionLock,
+  type SessionSnapshot,
+  type SnapshotPort,
   type ToolPort,
   type ToolSpec,
   type ToolResult,
@@ -28,4 +30,4 @@ export {
   type Clock,
   type IdSource,
 } from './ports/index.js';
-export { JsonlEventStore, FileLockPort, systemClock, randomIds } from './adapters/node.js';
+export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';

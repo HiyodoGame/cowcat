@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { KernelEvent } from '../kernel/events.js';
+import type { SessionSnapshot } from '../ports/index.js';
 
 // Decoding lives in the adapter layer, next to the store that needs it: the kernel
 // works on typed events and must not know how bytes became them (ADR-009).
@@ -67,6 +68,54 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
   z.object({ ...base, type: z.literal('tool.finished'), callId: z.string(), ok: z.boolean(), output: z.string() }),
 ]);
+
+const messageSchema = z.discriminatedUnion('role', [
+  z.object({ role: z.literal('user'), text: z.string() }),
+  z.object({
+    role: z.literal('assistant'),
+    text: z.string(),
+    toolCalls: z.readonly(z.array(toolCallSchema)),
+  }),
+  z.object({ role: z.literal('tool'), callId: z.string(), ok: z.boolean(), output: z.string() }),
+]);
+
+const turnViewSchema = z.object({ id: z.string(), state: turnStateSchema });
+
+const sessionStateSchema = z.object({
+  sessionId: z.string().min(1),
+  lastSeq: z.number().int().nonnegative(),
+  turn: turnViewSchema.nullable(),
+  messages: z.readonly(z.array(messageSchema)),
+});
+
+// A snapshot is derived data, so it gets the same rigour as the log it accelerates:
+// a half-understood state would be *silently* wrong, and a wrong session state is far
+// worse than a slow one.
+export const sessionSnapshotSchema = z.object({
+  schemaVersion: z.number().int().positive(),
+  lastSeq: z.number().int().nonnegative(),
+  state: sessionStateSchema,
+});
+
+// A snapshot that cannot be understood is treated exactly like one that is absent: the
+// caller replays instead, so this resolves to null rather than throwing. Two invariants
+// are cheap enough to check and fatal enough to matter — the state must belong to the
+// requested session, and the envelope must agree with the state it carries.
+export function decodeSnapshot(raw: string, sessionId: string): SessionSnapshot | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const decoded = sessionSnapshotSchema.safeParse(parsed);
+  if (!decoded.success) return null;
+
+  const snapshot = decoded.data;
+  if (snapshot.state.sessionId !== sessionId) return null;
+  if (snapshot.state.lastSeq !== snapshot.lastSeq) return null;
+  return snapshot;
+}
 
 // `toolCalls[0].callId` rather than `toolCalls.0.callId`: the field path is part of
 // the reported error, so it is worth rendering for a human (P1 exit standard).

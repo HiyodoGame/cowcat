@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { describeIssues, kernelEventSchema } from '../src/adapters/schema.js';
-import { SCHEMA_VERSION, type KernelEvent } from '../src/index.js';
+import { describeIssues, kernelEventSchema, sessionSnapshotSchema } from '../src/adapters/schema.js';
+import { SCHEMA_VERSION, type KernelEvent, type SessionSnapshot } from '../src/index.js';
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
@@ -10,6 +10,10 @@ type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 // format. Drift between them must fail the build here, not surface later as a
 // "corrupt log" on a log the kernel itself wrote.
 const schemaMatchesKernel: Equals<z.infer<typeof kernelEventSchema>, KernelEvent> = true;
+
+// Same protection for the snapshot: it is derived data, but a half-understood state
+// would be silently wrong rather than merely slow.
+const snapshotMatchesPort: Equals<z.infer<typeof sessionSnapshotSchema>, SessionSnapshot> = true;
 
 const header: KernelEvent = {
   seq: 1,
@@ -78,6 +82,10 @@ const everyEvent: readonly KernelEvent[] = [
 
 test('the schema and the kernel event union are the same type', () => {
   assert.equal(schemaMatchesKernel, true);
+});
+
+test('the snapshot schema and the SnapshotPort type are the same type', () => {
+  assert.equal(snapshotMatchesPort, true);
 });
 
 test('every event the kernel writes decodes', () => {
