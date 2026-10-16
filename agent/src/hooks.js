@@ -52,6 +52,12 @@ function runCommandHook(hook, payload, timeoutMs) {
       child = exec(hook.command, { cwd: payload.cwd, timeout: timeoutMs + 10_000, maxBuffer: 4 * 1024 * 1024, env: process.env }, (err, stdout, stderr) => {
         done({ ok: !err, code: err?.code ?? 0, stdout: stdout || '', stderr: stderr || '', timedOut: !!err?.killed });
       });
+      // A hook is free to exit without reading stdin (a plain `exit 0`, a command
+      // that ignores the payload, a killed-on-timeout child). The write below then
+      // fails asynchronously with EPIPE — and without a stream error handler that
+      // is an uncaught exception that takes the whole CLI down. Measured on Linux
+      // in CI; Windows did not surface it, which is why it survived this long.
+      child.stdin?.on('error', () => { /* EPIPE here is expected, not an error */ });
       child.stdin?.write(JSON.stringify(payload));
       child.stdin?.end();
     } catch (e) {

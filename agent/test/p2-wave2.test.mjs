@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { detectIde, makeIdeSink, ideStatus } from '../src/ide.js';
 import { execFileSync } from 'node:child_process';
-import { createWorktree, listWorktrees, isGitRepo } from '../src/worktree.js';
+import { createWorktree, listWorktrees, isGitRepo, canonicalPath } from '../src/worktree.js';
 import { BUILTIN_ROLES } from '../src/prompts/subagents.js';
 import { createSubagentRunner } from '../src/subagent.js';
 import { ToolRegistry } from '../src/tools/registry.js';
@@ -75,7 +75,10 @@ test('P2-4: worktree creation, listing, and rejection outside a repo', () => {
   assert.ok(existsSync(wt.path));
   assert.match(wt.branch, /^cowcat\/feat-x$/);
   const trees = listWorktrees(repo);
-  assert.ok(trees.some((t) => t.path === wt.path && t.branch.endsWith('feat-x')));
+  // Compare canonical paths: the path we build with join() and the one git prints
+  // can differ textually (drive-letter case, 8.3 short names on a Windows CI
+  // runner). Product code canonicalizes both sides; the test says so explicitly.
+  assert.ok(trees.some((t) => canonicalPath(t.path) === canonicalPath(wt.path) && t.branch.endsWith('feat-x')));
   const notRepo = mkdtempSync(join(tmpdir(), 'cowcat-norepo-'));
   assert.equal(isGitRepo(notRepo), false);
   assert.throws(() => createWorktree(notRepo), /不是 git 仓库/);

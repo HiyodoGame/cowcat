@@ -83,6 +83,19 @@ test('P1-3: once hooks remove themselves from config after firing', async () => 
   }
 });
 
+test('P1-3: a hook that exits without reading stdin does not take the process down', async () => {
+  // Regression (found by CI on Linux, invisible on Windows): the payload write to
+  // a hook's stdin failed with EPIPE when the command had already exited — any
+  // `exit 0`-style hook, or a child killed on timeout. Without a stream error
+  // handler that was an *uncaught* exception and the whole CLI died.
+  const cmd = process.platform === 'win32' ? 'exit /b 0' : 'exit 0';
+  const hooks = loadHooks({ hooks: { PreToolUse: [{ type: 'command', command: cmd, timeout: 5000 }] } });
+  const r = await fireHooks(hooks, 'PreToolUse', { tool: 'Bash', cwd: tmpdir() }, { blocking: true });
+  assert.equal(r.denied, false);
+  assert.equal(r.results.length, 1);
+  assert.equal(r.results[0].ok, true, 'the hook itself ran fine; only its stdin was closed');
+});
+
 test('P1-3: command hook times out and (blocking) denies; async hooks do not block', async () => {
   const slow = { type: 'command', command: process.platform === 'win32' ? 'ping -n 30 127.0.0.1 >NUL' : 'sleep 30', timeout: 1 };
   const hooks = loadHooks({ hooks: { PreToolUse: [slow] } });

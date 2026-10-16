@@ -1,5 +1,14 @@
 # CowCat changelog
 
+## 0.14.1（未发布）— CI 首跑暴露的两处缺陷 + 工程基建
+
+补齐仓库基建（`.github/workflows/ci.yml`、`tools/check-tarball.mjs`、dependabot，详见 `docs/fix-plan-2026-10-15.md` 第十三轮）。**CI 第一跑就抓到两个本机（Windows + 现有 git 配置）掩盖着的问题**：
+
+- **修复（P1）：hook 子进程提前退出会让整个 CLI 崩溃**。`src/hooks.js` 把 payload 写进 hook 的 stdin 时没有流级错误处理：hook 若不读 stdin 就退出（`exit 0` 这类、或超时被 SIGKILL），写入以 **EPIPE 异步抛错**，未捕获 → 进程直接挂掉。Linux 上必现（CI 三个 node 版本全崩在同一处），Windows 未暴露，所以一直没被发现。修复：给 `child.stdin` 挂 `error` 处理器（此处的 EPIPE 是正常情况），并加回归测试（`test/p1-wave2.test.mjs`）。
+- **修复（P2）：worktree 路径身份在两条来源之间不一致**。`createWorktree` 用 `join()` 拼路径，`listWorktrees` 解析 `git worktree list --porcelain`，两者在 Windows CI 上文本不相等（盘符大小写 / 8.3 短名 / 符号链接的 tmpdir），导致「刚创建的 worktree 不在列表里」。修复：两侧统一走 `canonicalPath()`（`realpathSync.native`，失败回落 `resolve`），路径身份可靠后后续 `worktree remove` 之类的匹配也不会踩坑。
+
+验证：`npm test` 675 passed / 0 failed；CI（node 20/22/24 on Linux + node 22 on Windows + 打包守卫）以实际运行结果为准。
+
 ## 0.14.0（2026-10-16）— PDF：ToUnicode CMap 解析（含 0.13.1 的真机抽取修正）
 
 0.13.0 发布后做了真实多模态冒烟（新增 `agent/test/live/multimodal.mjs`、`agent/test/live/multimodal-cli.mjs`）。

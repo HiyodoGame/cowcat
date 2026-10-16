@@ -1,6 +1,6 @@
 {
   "name": "@corescense/cowcat",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "CowCat — a minimal Claude-Code-style CLI coding agent for domestic (China) LLM providers",
   "type": "module",
   "author": "心感科技（深圳）有限公司 (CoreScense)",
