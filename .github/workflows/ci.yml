@@ -99,7 +99,7 @@ jobs:
       # node_modules is restored directly instead of re-running `npm ci`. The
       # lock file is in the key, so a dependency change misses the cache and
       # falls through to a real install; only the exact same tree is reused.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         if: needs.scope.outputs.legacy == 'true'
         id: node-modules
         with:
@@ -145,7 +145,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: agent/package-lock.json
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: node-modules
         with:
           path: agent/node_modules
@@ -174,7 +174,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: agent/package-lock.json
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: node-modules
         with:
           path: agent/node_modules
