@@ -39,7 +39,7 @@
 | 平台 | `win32`（Windows） |
 | Node | `v24.18.0`（`npm 11.16.0`） |
 | CI 门禁腿 | Node 22 · ubuntu-latest |
-| 仓库状态 | `main = 18cfd83`；本文件与同时回写的 `dev-plan-v2.md` 尚在 `docs/p1-kernel-research` 分支上。`docs/HANDOFF.md` 是本机交接件（从未入库，见其正文自述），引用它时请自行取其副本 |
+| 仓库状态 | 实验基线 `main = 18cfd83`；本文件经 PR #27 合入。`docs/HANDOFF.md` 是本机交接件（从未入库，见其正文自述），引用它时请自行取其副本 |
 
 **平台差异提示**：本次全部实验都在 Windows + Node 24 上完成，而 CI 门禁腿是 Node 22 · Linux。锁的行为是操作系统级的（`O_EXCL`、`unlink`、`rename`、pid 存活），Windows 的实测结论**不能直接迁移到 Linux**，§3.6 列为待验证项。
 
@@ -403,7 +403,7 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 3. 三个 schema 库在本仓库真实 schema 上的对比（§2.7）。
 4. zod 引入后对 `tsc` 编译耗时的影响。
 5. 本次全部实测在 Node 24 上；CI 门禁腿是 Node 22，需以 CI 结果为准。
-6. `packages/cowcat` 的 Windows 作业在 main 上的真实耗时：该作业只在合入 main 时运行，因此首次合入本 PR 后才会产生第一条记录。
+6. ~~`packages/cowcat` 的 Windows 作业在 main 上的真实耗时~~ —— **已验证**（2026-10-16，main `1f7389a`，run [38967790242](https://github.com/HiyodoGame/cowcat/actions/runs/38967790242)）：**54s**、success，是该作业在 main 上的第一条真实记录。
 
 ---
 
