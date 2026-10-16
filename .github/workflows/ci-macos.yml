@@ -1,45 +1,29 @@
-# macOS leg of CI — the ONLY place the Seatbelt backend gets verified for real.
+# CI (macOS) — the ONLY place the Seatbelt backend is verified for real.
 #
-# Why it is a separate workflow instead of a matrix row in ci.yml:
-# macOS hosted runners are billed at 10x. This repository is PRIVATE on GitHub
-# Pro (3,000 included minutes/month); the Linux+Windows matrix in ci.yml already
-# cost ~696 billable minutes in one heavy day of PR work. "Run macOS on every
-# PR" would multiply that by ~5 and exhaust the allowance in under a week, so
-# the macOS leg is path-filtered: it runs when the sandbox actually changes, and
-# on demand. It is deliberately NOT in the branch-protection required checks —
-# a required check that only sometimes reports blocks every PR that skipped it.
+# macOS bills at 10x. Measured 2026-10-16: 27 triggered runs cost 79 billable
+# minutes (10% of that day's usage) — wall time is tiny (~20s), the multiplier is
+# not. So it runs on PRs touching the sandbox and never on main pushes: every
+# sandbox change already got verified before merge, and a merge-time macOS
+# verdict is not worth the budget. `workflow_dispatch` remains for re-running a
+# specific case by hand.
 #
-# What it buys: the assertions in test/sandbox-macos.test.mjs are real kernel
-# enforcement claims (G1/G2/G3 from docs/sandbox-system-plan-2026-10-16.md §2).
-# Unit tests cannot prove them; only macOS can.
+# It is deliberately NOT in the branch-protection required checks — a required
+# check that only sometimes reports blocks every PR that skipped it.
 #
-# The filter above deliberately includes trust.js / session.js / bin/cowcat.mjs,
-# not just src/sandbox/**: the macOS leg exists because path identity behaves
-# differently here (see bin/cowcat.mjs using process.cwd() against trust.js's
-# exact string match), and a fix for that must be able to trigger this leg.
+# Draft PRs are excluded for the same reason as ci.yml: they cannot be merged.
+# The path filter includes trust.js / session.js / bin/cowcat.mjs, not just
+# src/sandbox/**: the macOS leg exists because path identity behaves differently
+# here, and a fix for that must be able to trigger it.
 #
 # `macos-15`, not `macos-latest`: latest currently tracks macOS 26, where
 # `sandbox-exec` itself still works but a shell can abort before it runs because
 # it reads sysctls no profile has allowlisted (reported on the Cursor forum for
-# zsh 5.9). Pinning keeps the image stable and the failure signal readable;
-# moving to 26 later is a one-line change plus a profile fix.
+# zsh 5.9). Pinning keeps the image stable and the failure signal readable.
 name: CI (macOS)
 
 on:
   pull_request:
-    paths:
-      - 'agent/bin/cowcat.mjs'
-      - 'agent/src/sandbox.js'
-      - 'agent/src/sandbox/**'
-      - 'agent/src/tools/bash.js'
-      - 'agent/src/trust.js'
-      - 'agent/src/session.js'
-      - 'agent/test/sandbox*.test.mjs'
-      - 'agent/package.json'
-      - 'agent/package-lock.json'
-      - '.github/workflows/ci-macos.yml'
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'agent/bin/cowcat.mjs'
       - 'agent/src/sandbox.js'
@@ -65,6 +49,7 @@ jobs:
     name: test · node 22 · macos-15
     runs-on: macos-15
     timeout-minutes: 25
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
     defaults:
       run:
         working-directory: agent

@@ -1,18 +1,22 @@
-# CI: lint + the full test suite on every push/PR, plus a guard on what
-# `npm publish` would upload.
+# CI: lint + the full test suite, plus a guard on what `npm publish` would upload.
 #
-# Cost shape (measured 2026-10-16, repo is PRIVATE on GitHub Pro = 3000
-# included minutes/month): this workflow burned ~696 billable minutes in a
-# single day of heavy PR work. Linux counts 1x, Windows 2x, macOS 10x. So the
-# matrix is split:
-#   - PR gate      : node 22 on Linux + node 22 on Windows (the two platforms the
-#                   product is actually developed and used on) + the package
-#                   whitelist. These three are the branch-protection gate.
-#   - version sweep: node 20 and node 24 on Linux, on MAIN pushes only. Node
-#                   compatibility still gets a verdict on every merge, but it no
-#                   longer burns ~6 billable minutes per intermediate commit.
-# macOS lives in ci-macos.yml (path-filtered) because 10x billing makes
-# "every PR" unaffordable on a private repo.
+# ── Why this is shaped the way it is (cost) ──────────────────────────────────
+# This repository is PRIVATE on GitHub Pro: 3,000 included minutes per month.
+# Billing multipliers: Linux 1x, Windows 2x, macOS 10x. Measured on 2026-10-16,
+# one day of ordinary PR work (68 CI runs) cost ~795 billable minutes — 26% of
+# the monthly allowance in a single day. The largest line items were the Windows
+# job (33%) and the Node-version legs (31%).
+#
+# So the shape is: the cheapest gate that still catches what matters runs on
+# every PR, and everything that can wait for a merge runs on main only.
+#
+#   every PR (required gate)   node 22 on Linux + the package whitelist
+#   main pushes only           node 22 on Windows, node 24 on Linux
+#   draft PRs                  nothing — a draft cannot be merged, and
+#                              `ready_for_review` re-triggers a full run
+#
+# Dropped on purpose: Node 20 (end-of-life 2026-04-30, so there is no supported
+# runtime it represents) and Node 20/24 on PRs.
 #
 # The live checks under agent/test/live/ are deliberately NOT part of this: they
 # need a configured provider / real API key (see agent/test/live/README.md) or a
@@ -23,6 +27,9 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `ready_for_review` is NOT a default type, and draft PRs skip the jobs below
+    # — without this a PR promoted out of draft would never get a gate.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -32,21 +39,22 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Draft PRs cannot be merged, so running the gate on them buys nothing and costs
+# a full matrix per push. This is the single biggest saving in the file: the
+# iteration loop (commit, watch, fix, push) is where most runs come from. Each
+# job carries `if: github.event_name != 'pull_request' || …draft == false`.
+#
+
 jobs:
   test:
-    name: test · node ${{ matrix.node }} · ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: test · node ${{ matrix.node }} · ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 20
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     strategy:
       fail-fast: false
       matrix:
         node: [22]
-        os: [ubuntu-latest]
-        include:
-          # The product is developed and used on Windows (path handling, .cmd
-          # shims, MCP stdio launch), so one Windows job is part of the gate.
-          - os: windows-latest
-            node: 22
     defaults:
       run:
         working-directory: agent
@@ -57,7 +65,16 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: agent/package-lock.json
+      # node_modules is restored directly instead of re-running `npm ci`. The
+      # lock file is in the key, so a dependency change misses the cache and
+      # falls through to a real install; only the exact same tree is reused.
+      - uses: actions/cache@v4
+        id: node-modules
+        with:
+          path: agent/node_modules
+          key: node-modules-${{ runner.os }}-${{ matrix.node }}-${{ hashFiles('agent/package-lock.json') }}
       - name: Install (npm ci)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci
       # bubblewrap is what the system-level sandbox drives on Linux. Ubuntu 23.10+
       # restricts unprivileged user namespaces via AppArmor, so bwrap fails until
@@ -65,7 +82,6 @@ jobs:
       # this step stops working, test/sandbox-linux.test.mjs skips (with the
       # reason) instead of failing, and the log says which classification it hit.
       - name: Install sandbox deps (Linux)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap
@@ -75,23 +91,19 @@ jobs:
       - name: Lint + tests (pretest runs eslint)
         run: npm test
 
-  test-versions:
-    # Node-version compatibility sweep. Main pushes only: this is a merge-time
-    # verdict, not an every-commit one, and on a private repo the Linux minutes
-    # it saves are what pays for the macOS leg in ci-macos.yml.
+  test-windows:
+    # Main pushes only. Windows is a 2x multiplier and was the single largest
+    # line item (33% of a day's usage); the product is developed and used there,
+    # so this is not "don't test Windows" — it is "a Windows regression is
+    # caught at merge rather than before it". Deliberately NOT a required check:
+    # see docs/CONTRIBUTING.md §3 for the trade-off.
     #
-    # The name deliberately does NOT interpolate ${{ matrix.node }}: a job skipped
-    # by a job-level `if:` is never matrix-expanded, so GitHub displays the raw
-    # template ("test · node ${{ matrix.node }} · ubuntu-latest") and the branch
-    # protection UI shows a name no job will ever report under.
-    name: node-version sweep · ubuntu-latest (20, 24)
-    runs-on: ubuntu-latest
+    # The name does not interpolate matrix — a job skipped by a job-level `if:`
+    # is never matrix-expanded, so GitHub displays the raw template.
+    name: test · node 22 · windows-latest
+    runs-on: windows-latest
     timeout-minutes: 20
-    if: github.event_name == 'push'
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [20, 24]
+    if: github.event_name != 'pull_request'
     defaults:
       run:
         working-directory: agent
@@ -99,10 +111,46 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: npm
           cache-dependency-path: agent/package-lock.json
+      - uses: actions/cache@v4
+        id: node-modules
+        with:
+          path: agent/node_modules
+          key: node-modules-${{ runner.os }}-22-${{ hashFiles('agent/package-lock.json') }}
       - name: Install (npm ci)
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Lint + tests (pretest runs eslint)
+        run: npm test
+
+  test-node24:
+    # Node-version compatibility. Main pushes only: a merge-time verdict, not an
+    # every-commit one. Node 20 used to be here; it reached end-of-life on
+    # 2026-04-30 (nodejs.org/en/about/previous-releases), so testing it asserted
+    # compatibility with a runtime that receives no security updates.
+    name: test · node 24 · ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name != 'pull_request'
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: actions/cache@v4
+        id: node-modules
+        with:
+          path: agent/node_modules
+          key: node-modules-${{ runner.os }}-24-${{ hashFiles('agent/package-lock.json') }}
+      - name: Install (npm ci)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci
       - name: Install sandbox deps (Linux)
         run: |
@@ -118,6 +166,7 @@ jobs:
     name: package whitelist
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
