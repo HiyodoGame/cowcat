@@ -1,4 +1,4 @@
-# CI: lint + the full test suite, plus a guard on what `npm publish` would upload.
+# CI: two packages, one gate each, and a cheap scope check in front of the legacy one.
 #
 # ── Why this is shaped the way it is (cost) ──────────────────────────────────
 # This repository is PRIVATE on GitHub Pro: 3,000 included minutes per month.
@@ -7,16 +7,19 @@
 # the monthly allowance in a single day. The largest line items were the Windows
 # job (33%) and the Node-version legs (31%).
 #
-# So the shape is: the cheapest gate that still catches what matters runs on
-# every PR, and everything that can wait for a merge runs on main only.
-#
-#   every PR (required gate)   node 22 on Linux + the package whitelist
-#   main pushes only           node 22 on Windows, node 24 on Linux
+#   legacy agent/ (until P8)   runs only when agent/ or this file changed;
+#                              its Windows and Node 24 legs run on main only
+#   packages/cowcat (v2)       every non-draft PR on Linux / Node 22;
+#                              Windows on main only, until measured cost says otherwise
+#   package whitelist          every non-draft PR (cheap, guards what npm publishes)
 #   draft PRs                  nothing — a draft cannot be merged, and
 #                              `ready_for_review` re-triggers a full run
 #
-# Dropped on purpose: Node 20 (end-of-life 2026-04-30, so there is no supported
-# runtime it represents) and Node 20/24 on PRs.
+# The legacy `test` job keeps its name because branch protection requires it.
+# When `agent/` is untouched its steps are skipped inside a job that still reports
+# success, so the required check is satisfied without paying for the suite.
+#
+# Dropped on purpose: Node 20 (end-of-life 2026-04-30).
 #
 # The live checks under agent/test/live/ are deliberately NOT part of this: they
 # need a configured provider / real API key (see agent/test/live/README.md) or a
@@ -39,42 +42,71 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Draft PRs cannot be merged, so running the gate on them buys nothing and costs
-# a full matrix per push. This is the single biggest saving in the file: the
-# iteration loop (commit, watch, fix, push) is where most runs come from. Each
-# job carries `if: github.event_name != 'pull_request' || …draft == false`.
-#
-
 jobs:
+  scope:
+    name: scope · does the legacy agent/ change?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    outputs:
+      legacy: ${{ steps.check.outputs.legacy }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: check
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          # A skipped gate must never be a guess: anything we cannot compare
+          # (manual run, brand-new branch, base commit missing) runs the suite.
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            legacy=true
+          elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(agent/|\.github/workflows/ci\.yml$)'; then
+            legacy=true
+          else
+            legacy=false
+          fi
+          echo "legacy=$legacy" >> "$GITHUB_OUTPUT"
+          echo "legacy suite: $legacy (compared with ${base:-nothing})"
+
   test:
-    name: test · node ${{ matrix.node }} · ubuntu-latest
+    name: test · node 22 · ubuntu-latest
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: scope
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22]
     defaults:
       run:
         working-directory: agent
     steps:
       - uses: actions/checkout@v7
+        if: needs.scope.outputs.legacy == 'true'
       - uses: actions/setup-node@v7
+        if: needs.scope.outputs.legacy == 'true'
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: npm
           cache-dependency-path: agent/package-lock.json
       # node_modules is restored directly instead of re-running `npm ci`. The
       # lock file is in the key, so a dependency change misses the cache and
       # falls through to a real install; only the exact same tree is reused.
       - uses: actions/cache@v4
+        if: needs.scope.outputs.legacy == 'true'
         id: node-modules
         with:
           path: agent/node_modules
-          key: node-modules-${{ runner.os }}-${{ matrix.node }}-${{ hashFiles('agent/package-lock.json') }}
+          key: node-modules-${{ runner.os }}-22-${{ hashFiles('agent/package-lock.json') }}
       - name: Install (npm ci)
-        if: steps.node-modules.outputs.cache-hit != 'true'
+        if: needs.scope.outputs.legacy == 'true' && steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci
       # bubblewrap is what the system-level sandbox drives on Linux. Ubuntu 23.10+
       # restricts unprivileged user namespaces via AppArmor, so bwrap fails until
@@ -82,6 +114,7 @@ jobs:
       # this step stops working, test/sandbox-linux.test.mjs skips (with the
       # reason) instead of failing, and the log says which classification it hit.
       - name: Install sandbox deps (Linux)
+        if: needs.scope.outputs.legacy == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap
@@ -89,21 +122,19 @@ jobs:
           sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
       - name: Lint + tests (pretest runs eslint)
+        if: needs.scope.outputs.legacy == 'true'
         run: npm test
 
   test-windows:
     # Main pushes only. Windows is a 2x multiplier and was the single largest
-    # line item (33% of a day's usage); the product is developed and used there,
-    # so this is not "don't test Windows" — it is "a Windows regression is
-    # caught at merge rather than before it". Deliberately NOT a required check:
-    # see docs/CONTRIBUTING.md §3 for the trade-off.
-    #
-    # The name does not interpolate matrix — a job skipped by a job-level `if:`
-    # is never matrix-expanded, so GitHub displays the raw template.
+    # line item (33% of a day's usage); a Windows regression is caught at merge
+    # rather than before it. Deliberately NOT a required check: see
+    # docs/CONTRIBUTING.md §3 for the trade-off.
     name: test · node 22 · windows-latest
     runs-on: windows-latest
     timeout-minutes: 20
-    if: github.event_name != 'pull_request'
+    needs: scope
+    if: github.event_name != 'pull_request' && needs.scope.outputs.legacy == 'true'
     defaults:
       run:
         working-directory: agent
@@ -127,13 +158,12 @@ jobs:
 
   test-node24:
     # Node-version compatibility. Main pushes only: a merge-time verdict, not an
-    # every-commit one. Node 20 used to be here; it reached end-of-life on
-    # 2026-04-30 (nodejs.org/en/about/previous-releases), so testing it asserted
-    # compatibility with a runtime that receives no security updates.
+    # every-commit one.
     name: test · node 24 · ubuntu-latest
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event_name != 'pull_request'
+    needs: scope
+    if: github.event_name != 'pull_request' && needs.scope.outputs.legacy == 'true'
     defaults:
       run:
         working-directory: agent
@@ -160,6 +190,50 @@ jobs:
           sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
       - name: Lint + tests (pretest runs eslint)
+        run: npm test
+
+  cowcat:
+    # The v2 kernel. Cheap by construction: no sandbox, no child processes, no
+    # network — the suite finishes in seconds, so the cost is checkout and setup.
+    name: packages/cowcat · node 22 · ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/cowcat
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/cowcat/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+
+  cowcat-windows:
+    # Main only, per the cost decision (docs/dev-plan-v2.md, P1). Re-evaluate
+    # against the measured duration of this job before moving it onto PRs.
+    name: packages/cowcat · node 22 · windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request'
+    defaults:
+      run:
+        working-directory: packages/cowcat
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/cowcat/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
         run: npm test
 
   package:

@@ -1,6 +1,7 @@
 logs/
 analysis/*.pretty.js
 node_modules/
+packages/*/dist/
 *.tgz
 .keys.env
 # 顶部锚定：这是仓库根目录下的本地沙箱/试验目录。不锚定会连

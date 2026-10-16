@@ -1,0 +1,199 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  DEFAULT_RULES,
+  Session,
+  replay,
+  runTurn,
+  type ActionRequest,
+  type KernelEvent,
+  type ToolPort,
+} from '../src/index.js';
+import { fixedClock, MemoryEventStore, ScriptedModel, sequentialIds, tool } from './support.js';
+
+const readTool: ToolPort = tool({ name: 'read_file', description: 'read', risk: 'read' }, () => ({
+  ok: true,
+  output: 'file contents',
+}));
+
+const writeTool: ToolPort = tool({ name: 'write_file', description: 'write', risk: 'write' }, () => ({
+  ok: true,
+  output: 'written',
+}));
+
+function setup(
+  model: ScriptedModel,
+  tools: ToolPort[],
+  approve: (r: ActionRequest) => Promise<boolean> = () => Promise.resolve(true),
+) {
+  const store = new MemoryEventStore();
+  const session = Session.create({ store, clock: fixedClock(), ids: sequentialIds() }, 'sess_1');
+  const deps = {
+    session,
+    model,
+    tools: new Map(tools.map((t) => [t.spec.name, t])),
+    rules: DEFAULT_RULES,
+    approve: (r: ActionRequest) => approve(r),
+    ids: sequentialIds(),
+  };
+  return { store, session, deps };
+}
+
+const types = (events: readonly KernelEvent[]) => events.map((e) => e.type);
+
+test('a plain answer completes the turn in one model call', async () => {
+  const model = new ScriptedModel([[{ type: 'text', text: 'hello' }]]);
+  const { store, session, deps } = setup(model, []);
+  const outcome = await runTurn(deps, 'hi', new AbortController().signal);
+
+  assert.deepEqual(outcome, { state: 'completed', reason: null });
+  assert.equal(session.state.turn?.state, 'completed');
+  assert.deepEqual(session.state.messages, [
+    { role: 'user', text: 'hi' },
+    { role: 'assistant', text: 'hello', toolCalls: [] },
+  ]);
+  assert.deepEqual(types(store.events), [
+    'turn.opened',
+    'turn.transitioned', // idle -> requesting
+    'turn.transitioned', // requesting -> streaming
+    'model.message',
+    'turn.transitioned', // streaming -> finishing
+    'turn.transitioned', // finishing -> completed
+  ]);
+});
+
+test('streamed text is shown live but never written to the log', async () => {
+  const model = new ScriptedModel([[{ type: 'text', text: 'he' }, { type: 'text', text: 'llo' }]]);
+  const { store, session, deps } = setup(model, []);
+  const deltas: string[] = [];
+  session.subscribe((u) => {
+    if (u.type === 'model.delta') deltas.push(u.text);
+  });
+  await runTurn(deps, 'hi', new AbortController().signal);
+
+  assert.deepEqual(deltas, ['he', 'llo']);
+  assert.equal(store.events.some((e) => (e.type as string) === 'model.delta'), false);
+  assert.equal(store.events.find((e) => e.type === 'model.message')?.type, 'model.message');
+});
+
+test('a read tool runs without asking and its result reaches the next model call', async () => {
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: { path: 'a' } } }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const { session, deps } = setup(model, [readTool]);
+  const outcome = await runTurn(deps, 'read it', new AbortController().signal);
+
+  assert.equal(outcome.state, 'completed');
+  assert.deepEqual(model.requests[1]?.messages.at(-1), {
+    role: 'tool',
+    callId: 'c1',
+    ok: true,
+    output: 'file contents',
+  });
+  assert.equal(session.state.messages.length, 4);
+});
+
+test('a write tool is asked about, and a rejection is reported to the model instead of executed', async () => {
+  const asked: string[] = [];
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'write_file', input: {} } }],
+    [{ type: 'text', text: 'ok, skipping' }],
+  ]);
+  const { session, deps } = setup(model, [writeTool], async (r) => {
+    asked.push(r.name);
+    return false;
+  });
+  await runTurn(deps, 'write it', new AbortController().signal);
+
+  assert.deepEqual(asked, ['write_file']);
+  const toolMsg = session.state.messages.find((m) => m.role === 'tool');
+  assert.deepEqual(toolMsg, { role: 'tool', callId: 'c1', ok: false, output: 'rejected by user' });
+});
+
+test('a denied action never reaches the tool', async () => {
+  let ran = false;
+  const guarded: ToolPort = tool({ name: 'rm_all', description: 'x', risk: 'exec' }, () => {
+    ran = true;
+    return { ok: true, output: '' };
+  });
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'rm_all', input: {} } }],
+    [{ type: 'text', text: 'ok' }],
+  ]);
+  const { deps } = setup(model, [guarded]);
+  deps.rules = [{ name: 'no-rm', matches: (r) => r.name === 'rm_all', verdict: 'deny', reason: 'never' }];
+  await runTurn(deps, 'go', new AbortController().signal);
+
+  assert.equal(ran, false);
+});
+
+test('a tool that throws becomes a failed tool result, not a failed turn', async () => {
+  const boom: ToolPort = tool({ name: 'read_file', description: 'x', risk: 'read' }, () => {
+    throw new Error('disk on fire');
+  });
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: {} } }],
+    [{ type: 'text', text: 'recovered' }],
+  ]);
+  const { session, deps } = setup(model, [boom]);
+  const outcome = await runTurn(deps, 'x', new AbortController().signal);
+
+  assert.equal(outcome.state, 'completed');
+  assert.deepEqual(session.state.messages.find((m) => m.role === 'tool'), {
+    role: 'tool',
+    callId: 'c1',
+    ok: false,
+    output: 'disk on fire',
+  });
+});
+
+test('a model error fails the turn with its reason, and the log says so', async () => {
+  const model = new ScriptedModel([new Error('upstream 503')]);
+  const { store, session, deps } = setup(model, []);
+  const outcome = await runTurn(deps, 'hi', new AbortController().signal);
+
+  assert.deepEqual(outcome, { state: 'failed', reason: 'upstream 503' });
+  assert.equal(session.state.turn?.state, 'failed');
+  const last = store.events.at(-1);
+  assert.equal(last?.type, 'turn.transitioned');
+});
+
+test('aborting before the call cancels without calling the model', async () => {
+  const model = new ScriptedModel([[{ type: 'text', text: 'never' }]]);
+  const { session, deps } = setup(model, []);
+  const ctrl = new AbortController();
+  ctrl.abort();
+  const outcome = await runTurn(deps, 'hi', ctrl.signal);
+
+  assert.equal(outcome.state, 'cancelled');
+  assert.equal(model.requests.length, 0);
+  assert.equal(session.state.turn?.state, 'cancelled');
+});
+
+test('replaying the log reproduces the live session state exactly', async () => {
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: {} } }],
+    [{ type: 'text', text: 'final' }],
+  ]);
+  const { store, session, deps } = setup(model, [readTool]);
+  await runTurn(deps, 'go', new AbortController().signal);
+
+  assert.deepEqual(replay('sess_1', store.events), session.state);
+});
+
+test('a session reopened from the store continues where it stopped', async () => {
+  const store = new MemoryEventStore();
+  const deps = { store, clock: fixedClock(), ids: sequentialIds() };
+  const first = Session.create(deps, 'sess_2');
+  await runTurn(
+    { session: first, model: new ScriptedModel([[{ type: 'text', text: 'one' }]]), tools: new Map(), rules: DEFAULT_RULES, approve: async () => true, ids: sequentialIds() },
+    'first',
+    new AbortController().signal,
+  );
+
+  const reopened = await Session.open(deps, 'sess_2');
+  assert.equal(reopened.state.messages.length, 2);
+  assert.equal(reopened.state.lastSeq, first.state.lastSeq);
+  assert.equal(reopened.state.turn?.state, 'completed');
+});
