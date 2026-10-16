@@ -69,6 +69,11 @@ test('P1-8: statusline timeout and failure fall back to null silently', async ()
   assert.equal(out, null);
   assert.ok(Date.now() - t0 < 6000, '2s timeout + kill grace');
   assert.equal(await runStatusLine('exit 1', '{}'), null);
+  // A command that exits immediately without reading stdin used to raise EPIPE on
+  // the stdin write, which crashed the process on Linux (CI caught it twice:
+  // hooks.js and statusline.js). It must simply produce no line.
+  const quickExit = process.platform === 'win32' ? 'exit /b 0' : 'exit 0';
+  assert.equal(await runStatusLine(quickExit, '{}'), null);
 });
 
 test('P1-8: statusline set/clear persists to state.json preserving fields', () => {

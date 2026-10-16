@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cowcatHome, writeState, PKG_VERSION } from './config.js';
+import { guardStdin } from './childio.js';
 import { SseParser } from './sse.js';
 
 // One SSE frame's data is a JSON-RPC message for MCP. Non-JSON frames (and the
@@ -178,7 +179,13 @@ class StdioTransport {
         return;
       }
       child.once('error', reject);
-      child.once('spawn', () => { child.removeListener('error', reject); resolve(child); });
+      child.once('spawn', () => {
+        child.removeListener('error', reject);
+        // Writes to a server that has just died raise EPIPE on the stream; the
+        // guard keeps that from becoming an uncaught exception (src/childio.js).
+        guardStdin(child);
+        resolve(child);
+      });
     });
   }
   // Windows cannot exec the .cmd shims directly, and the documented config says

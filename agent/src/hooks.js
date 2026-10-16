@@ -5,6 +5,7 @@
 // model). Hooks never prompt for approval. COWCAT_DISABLE_HOOKS=1 disables all.
 import { exec } from 'node:child_process';
 import { writeState } from './config.js';
+import { writeStdinOnce } from './childio.js';
 
 export const HOOK_EVENTS = [
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit',
@@ -53,13 +54,11 @@ function runCommandHook(hook, payload, timeoutMs) {
         done({ ok: !err, code: err?.code ?? 0, stdout: stdout || '', stderr: stderr || '', timedOut: !!err?.killed });
       });
       // A hook is free to exit without reading stdin (a plain `exit 0`, a command
-      // that ignores the payload, a killed-on-timeout child). The write below then
-      // fails asynchronously with EPIPE — and without a stream error handler that
-      // is an uncaught exception that takes the whole CLI down. Measured on Linux
-      // in CI; Windows did not surface it, which is why it survived this long.
-      child.stdin?.on('error', () => { /* EPIPE here is expected, not an error */ });
-      child.stdin?.write(JSON.stringify(payload));
-      child.stdin?.end();
+      // that ignores the payload, a killed-on-timeout child). Writing then fails
+      // asynchronously with EPIPE, which without a stream error handler is an
+      // uncaught exception that takes the whole CLI down — measured on Linux in
+      // CI, invisible on Windows. See src/childio.js.
+      writeStdinOnce(child, JSON.stringify(payload));
     } catch (e) {
       done({ ok: false, code: -1, stdout: '', stderr: e.message, timedOut: false });
     }

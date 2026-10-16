@@ -2,6 +2,7 @@
 // fed one JSON line on stdin, and its first stdout line is appended to the
 // status bar. Hard 2s timeout — a slow statusline must never stall the UI.
 import { exec } from 'node:child_process';
+import { writeStdinOnce } from './childio.js';
 
 const TIMEOUT_MS = 2000;
 
@@ -23,8 +24,10 @@ export function runStatusLine(command, payload) {
         const first = (stdout || '').split('\n')[0].trim();
         resolve(first || null);
       });
-      child.stdin?.write(payload);
-      child.stdin?.end();
+      // A statusline command may exit without reading the payload (or be killed
+      // on timeout): the write then raises EPIPE, which must not become an
+      // uncaught exception. See src/childio.js.
+      writeStdinOnce(child, payload);
     } catch {
       clearTimeout(timer);
       resolve(null);

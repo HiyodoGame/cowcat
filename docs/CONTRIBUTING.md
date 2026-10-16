@@ -24,12 +24,13 @@ git add -A && git commit -m "fix(hooks): 修 hook 子进程提前退出时的 EP
 git push -u origin fix/hook-epipe
 gh pr create --fill --base main
 
-# 4) 等 CI（改动 CI 配置本身时尤其要看）
-gh pr checks --watch
-
-# 5) 绿了再合（squash 保持 main 线性，并删除远端分支）
-gh pr merge --squash --delete-branch
+# 4) 等 CI，并且**只在全绿时才合**：&& 让失败的 checks 直接中断这一步
+gh pr checks --watch && gh pr merge --squash --delete-branch
 ```
+
+> ⚠️ **`gh pr merge` 自己不会拦失败的 checks** —— 服务端没有分支保护时（见 §6），
+> 唯一的门禁就是上面这个 `&&`。第十四轮踩过一次：PR 在 node 20 上失败却照样合并了，
+> 因为我把两条命令分开执行、忽略了 `gh pr checks --watch` 的退出码。请始终用 `&&` 串起来。
 
 本地想先看一眼 CI 结果：`gh run list --workflow=ci.yml --limit 3` / `gh run view <id>`。
 
