@@ -28,9 +28,12 @@ gh pr create --fill --base main
 gh pr checks --watch && gh pr merge --squash --delete-branch
 ```
 
-> ⚠️ **`gh pr merge` 自己不会拦失败的 checks** —— 服务端没有分支保护时（见 §6），
-> 唯一的门禁就是上面这个 `&&`。第十四轮踩过一次：PR 在 node 20 上失败却照样合并了，
-> 因为我把两条命令分开执行、忽略了 `gh pr checks --watch` 的退出码。请始终用 `&&` 串起来。
+> ⚠️ 分支保护是 `strict` 的（要求分支基于最新 main）。若期间 main 前进过，合并会被拒
+> （`not mergeable: the head branch is not up to date`）。此时先更新分支、等新的一轮
+> checks、再合：
+> ```bash
+> gh pr update-branch <n> && gh pr checks <n> --watch && gh pr merge <n> --squash --delete-branch
+> ```
 
 本地想先看一眼 CI 结果：`gh run list --workflow=ci.yml --limit 3` / `gh run view <id>`。
 
@@ -68,30 +71,37 @@ git config core.hooksPath .githooks
 启用后，`git push` 到 `main` 会被拦下并提示走 PR；确实需要直推时用 `git push --no-verify`（故意绕过，自己负责）。
 它只拦分支推送，**不拦 tag 推送**，所以发布流程不受影响。
 
-## 6. 服务端强制保护：现状与三条路
+## 6. 服务端强制保护：已启用（GitHub Pro）
 
-GitHub 的 branch protection / rulesets 在**私有仓库 + 免费计划**下不可用，API 会直接回：
+仓库升级到 **GitHub Pro** 后，`main` 的保护已挂上（此前私有免费仓库下 API 直接 403）。当前配置：
+
+| 项 | 值 |
+|---|---|
+| 必须走 PR | ✅（直推 main 会被服务端拒绝） |
+| 必须通过的检查 | `package whitelist`、`test · node 20/22/24 · ubuntu-latest`、`test · node 22 · windows-latest` |
+| 要求分支基于最新 main（strict） | ✅ |
+| 需要批准数 | 0（单人开发；PR 是流程载体，不强制他人批准） |
+| 强制管理员同上 | ✅（对自己也生效） |
+| 允许强推 / 删除分支 | ❌ / ❌ |
+
+实测证据（绕过本地钩子直推 main）：
 
 ```
-Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+remote: - Changes must be made through a pull request.
+remote: - 5 of 5 required status checks are expected.
 ```
 
-因此「`main` 禁止直推 + 必须 CI 绿才能合并」目前只能靠 §5 的客户端守卫与自觉。想变成**服务端强制**，三选一：
-
-| 方案 | 代价 | 说明 |
-|---|---|---|
-| **仓库转公开** | 免费，但全部历史与后续代码公开 | 转公开即可开启 branch protection + rulesets。转之前确认历史里没有内部资料（本仓库 `.keys.env` 从未进过历史，`analysis/`、`artifacts/` 均被 gitignore） |
-| **升级 GitHub Pro** | 约 $4/月 | 私有仓库也能开 branch protection + rulesets，仓库继续私有 |
-| **维持现状（客户端守卫 + CI 可见）** | 免费 | 门禁靠自觉：CI 在 PR 上跑、本地 pre-push 拦主分支；对单人开发通常够用 |
-
-选定后，服务端保护可以用一条命令挂上（把检查项按 CI 的 job 名列出）：
+重新应用 / 修改（`docs/PUBLISH.md` 与本节同步维护这份配置）：
 
 ```bash
-gh api -X PUT repos/:owner/:repo/branches/main/protection \
-  -f 'required_status_checks[strict]=true' \
-  -f 'required_status_checks[contexts][]=package whitelist' \
-  -f 'required_status_checks[contexts][]=test · node 22 · windows-latest' \
-  -f 'enforce_admins=true' \
-  -f 'required_pull_request_reviews[required_approving_review_count]=0' \
-  -F 'allow_force_pushes=false' -F 'allow_deletions=false'
+# 当前配置（JSON 见仓库历史或按上表构造）
+gh api -X PUT repos/:owner/:repo/branches/main/protection --input protection.json
+
+# 临时放开（例如 CI 自身坏了、需要紧急直推）：删掉保护后再重新应用
+gh api -X DELETE repos/:owner/:repo/branches/main/protection
 ```
+
+**代价与取舍**：`strict: true` 意味着每次 main 前进后，其它 PR 都要 `gh pr update-branch` 并重跑一轮 checks（约 3 分钟）。单人仓库如果觉得这个开销大于收益，可以把 `required_status_checks.strict` 改成 `false`（仍要求检查通过，但不要求分支最新）——语义上会放松「测过的就是你合的那棵树」这条保证。
+
+**本地仍保留 pre-push 钩子**（§5）：服务端保护已经能拦住直推，但钩子能在你敲下命令时就给出提示，且离线/异常状态下也是第一道防线。tag 推送不受分支保护影响，发布流程照旧。

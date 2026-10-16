@@ -102,5 +102,5 @@
 2. **法律边界不变**：prompt/描述改写不照抄；功能性短句可用；逆向产物不进发布 tarball（`files` 白名单已隔离）
 3. **不冒充**：UA、user_id、产物品牌均为 CowCat/CoreScense
 4. **原版实验性功能**（团队/远程/cowork）永远低优先，核心体验（工具/权限/记忆/hooks/MCP）优先
-5. 各批次间用户可随时要求 npm 发布当前版本（流程见 docs/PUBLISH.md）
-6. **改动走 PR**（分支与流程见 `docs/CONTRIBUTING.md`）：`main` 只通过 PR 合入、CI 在每个 PR 上跑；本地 pre-push 守卫拦直推。**服务端分支保护在私有免费仓库上不可用**（GitHub API 403），是否转公开 / 升 Pro 由用户决定（`docs/CONTRIBUTING.md` §6 有三条路与现成命令）。
+6. **改动走 PR**（分支与流程见 `docs/CONTRIBUTING.md`）：`main` 只通过 PR 合入、CI 在每个 PR 上跑；本地 pre-push 守卫拦直推。**服务端分支保护已启用**（仓库升级 GitHub Pro 后挂上：必须走 PR + 5 个固定检查全绿 + 要求分支最新 + 对 admin 同样生效 + 禁止强推/删除）。
+7. 各批次间用户可随时要求 npm 发布当前版本（流程见 docs/PUBLISH.md）
