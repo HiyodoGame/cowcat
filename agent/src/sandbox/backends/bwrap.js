@@ -141,7 +141,7 @@ export function buildBwrapCommand(policy, { command, cwd, shell = SHELL, fs = de
 export function bwrapLimitations(policy) {
   const out = policy.unsupported.map((u) => `${u.in}: ${u.entry} — ${u.why}`);
   if (policy.network === 'ask') {
-    out.push('network "ask" behaves as "off" until per-command approval lands (Phase 1b)');
+    out.push('network "ask" is granted only for commands the user approves; in yolo mode (no prompts) it stays off');
   }
   if (policy.read.profile === 'hide') {
     out.push('read profile "hide": reads are open outside the denied paths (credentials are still unreachable)');

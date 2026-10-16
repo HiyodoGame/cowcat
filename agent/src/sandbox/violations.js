@@ -77,6 +77,12 @@ export function sandboxNote({ policy, backend, violations = [], limitations = []
     'This is the sandbox, not a broken command or a missing file.',
     'If the command is genuinely needed, ask the user to run /sandbox light (or grant the path/network in sandbox.* config) — do not try to work around it.',
   ];
+  // The most common refusal in `ask` mode is a command that needed the network
+  // and was not approved for this run: name the fix precisely so the model asks
+  // for the right thing instead of retrying the same call.
+  if (kinds.includes('net') && policy.network === 'ask') {
+    lines.push('network was NOT granted for this run: the user approves it per command (or set sandbox.network to "on").');
+  }
   if (limitations.length) lines.push(`note: ${limitations.slice(0, 2).map(sanitizeLine).join('; ')}`);
   return lines.join(' ');
 }

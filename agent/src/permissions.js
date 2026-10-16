@@ -80,6 +80,13 @@ export class Permissions {
     this.alwaysAllowed.add(`${toolName}:${JSON.stringify(pickKeyInput(toolName, input))}`);
   }
 
+  // Read-side counterpart of approveAlways(): the sandbox network gate asks
+  // "was this exact call pre-approved earlier?", which is what keeps an `always`
+  // answer meaningful after the dialog stops appearing.
+  isAlwaysAllowed(toolName, input = {}) {
+    return this.alwaysAllowed.has(`${toolName}:${JSON.stringify(pickKeyInput(toolName, input))}`);
+  }
+
   // Plan mode gate: null = allowed, string = rejection reason for the model.
   planReject(toolName, input = {}) {
     if (this.mode !== 'plan') return null;

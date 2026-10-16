@@ -82,12 +82,46 @@ test('system sandbox: credential paths are hidden, not merely unreadable (G2)', 
   assert.ok(!/BEGIN [A-Z ]*PRIVATE KEY/.test(res.stdout), 'no key material in the result');
 });
 
+// Node's fetch ignores HTTP_PROXY by construction — which is exactly why the
+// network control has to be a namespace, not an env var (research §2.5). Reused
+// by the G3 test and the Phase 1b grant test.
+const FETCH_CMD = 'node -e "fetch(\'https://example.com\').then(r=>console.log(\'REACHED\', r.status)).catch(e=>{console.error(\'blocked\', e.cause?.code || e.name); process.exit(3)})"';
+
 test('system sandbox: no network, without relying on proxy environment variables (G3)', { skip }, async () => {
-  // Node's fetch ignores HTTP_PROXY by construction — which is exactly why the
-  // network control has to be a namespace, not an env var (research §2.5).
-  const res = await run('node -e "fetch(\'https://example.com\').then(r=>console.log(\'REACHED\', r.status)).catch(e=>{console.error(\'blocked\', e.cause?.code || e.name); process.exit(3)})"');
+  const res = await run(FETCH_CMD);
   assert.notEqual(res.exitCode, 0, 'the fetch must fail');
   assert.ok(!res.stdout.includes('REACHED'), 'nothing was reached');
+});
+
+test('system sandbox: network "ask" grants the network for an approved call only (Phase 1b)', { skip }, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'cowcat-ask-home-'));
+  const prev = process.env.COWCAT_HOME;
+  process.env.COWCAT_HOME = home;
+  const config = { sandbox: { mode: 'system', network: 'ask' } };
+  const call = (extra) => BashTool.execute(
+    { command: FETCH_CMD, timeout: 30000 },
+    { cwd: proj, config, env: {}, ...extra },
+  );
+  try {
+    // Without the grant the namespace stays off, even though the policy is `ask`
+    // (the approval is what turns it on, not the setting).
+    const denied = await call({});
+    assert.notEqual(denied.exitCode, 0, 'unapproved call must have no network');
+    assert.ok(!denied.stdout.includes('REACHED'));
+
+    const approved = await call({ networkApproved: true });
+    assert.equal(approved.exitCode, 0, `approved call should reach the network: ${approved.output}`);
+    assert.match(approved.stdout, /REACHED 200/);
+
+    // The audit line must record which of the two it was.
+    const lines = readFileSync(join(home, 'audit.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const networks = lines.filter((l) => l.mode === 'system').map((l) => l.network);
+    assert.deepEqual(networks.slice(-2), ['off', 'on'], `expected off then on, got ${networks.join(',')}`);
+  } finally {
+    if (prev === undefined) delete process.env.COWCAT_HOME;
+    else process.env.COWCAT_HOME = prev;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('system sandbox: the audit line records the enforced mode and backend', { skip }, async () => {

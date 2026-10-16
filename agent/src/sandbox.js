@@ -104,34 +104,44 @@ const DANGEROUS_EXTRA = [
 ];
 
 const ELEVATED_RULES = [
-  { re: /\b(npm|pnpm|yarn|bun|pip3?|pipx|gem|cargo|composer)\s+(install|add|i)\b/, why: 'package-manager install (runs third-party install scripts)' },
-  { re: /\b(curl|wget|ssh|scp|sftp|rsync|ftp)\b/, why: 'network client' },
-  { re: /\bgit\s+push\b/, why: 'publishes to a remote' },
+  { re: /\b(npm|pnpm|yarn|bun|pip3?|pipx|gem|cargo|composer)\s+(install|add|i)\b/, why: 'package-manager install (runs third-party install scripts)', net: true },
+  { re: /\b(curl|wget|ssh|scp|sftp|rsync|ftp)\b/, why: 'network client', net: true },
+  { re: /\bgit\s+push\b/, why: 'publishes to a remote', net: true },
   { re: /\brm\s+(-[a-zA-Z]+\s+)*(-r|-rf|--recursive)?\s*(\.\.?\/|\/|~\/|[a-zA-Z]:[\\/])/, why: 'delete targeting a path outside the cwd' },
 ];
 
-// Cheap static triage. Returns { risk: 'low'|'elevated'|'dangerous', reasons }.
+// Cheap static triage. Returns { risk: 'low'|'elevated'|'dangerous', reasons,
+// network }. `network` answers "does this command probably need the network?"
+// and is what the system-mode `network: 'ask'` gate keys on: it marks the card
+// in the approval prompt and decides whether an approval should also grant the
+// network namespace. It is a heuristic (a build script can download without
+// matching any rule), which is why the refusal note tells the model to surface
+// the limit instead of silently retrying.
 // Never throws: unparseable/empty input is 'low' — the permission system and
 // the human approval flow remain the real gates.
 export function classifyCommand(command, { cwd } = {}) {
   const reasons = [];
   try {
     const c = String(command || '').trim();
-    if (!c) return { risk: 'low', reasons };
+    if (!c) return { risk: 'low', reasons, network: false };
     if (isDangerousCommand(c)) {
       reasons.push('matches the dangerous-command heuristics (permissions.js)');
-      return { risk: 'dangerous', reasons };
+      return { risk: 'dangerous', reasons, network: /\b(curl|wget|ssh|scp|nc|ncat|rsync|ftp)\b/.test(c) };
     }
     for (const { re, why } of DANGEROUS_EXTRA) {
       if (re.test(c)) reasons.push(why);
     }
-    if (reasons.length) return { risk: 'dangerous', reasons };
-    for (const { re, why } of ELEVATED_RULES) {
-      if (re.test(c)) reasons.push(why);
+    if (reasons.length) return { risk: 'dangerous', reasons, network: /\b(curl|wget|ssh|scp|nc|ncat|rsync|ftp)\b/.test(c) };
+    let network = false;
+    for (const { re, why, net } of ELEVATED_RULES) {
+      if (re.test(c)) {
+        reasons.push(why);
+        if (net) network = true;
+      }
     }
-    return { risk: reasons.length ? 'elevated' : 'low', reasons };
+    return { risk: reasons.length ? 'elevated' : 'low', reasons, network };
   } catch {
-    return { risk: 'low', reasons };
+    return { risk: 'low', reasons, network: false };
   }
 }
 

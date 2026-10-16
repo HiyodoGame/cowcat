@@ -38,7 +38,9 @@ cowcat doctor inspect   # 深度报告：[config] / [permission rules] / [hooks]
 |---|---|---|
 | `off` | 原样执行 | 都别管 |
 | `light`（默认） | 脱敏 env（凭据形状变量）+ 静态命令分级（危险命令不再执行）+ 审计 `~/.cowcat/audit.log` | **护栏，不是安全边界** |
-| `system` | 之上再加 OS 级隔离（Linux: bubblewrap）：读只限项目 + 系统目录、写只限项目（含 worktree 同级目录）与 `/tmp`、**网络默认关** | 边界（仅覆盖 Bash 及其子进程） |
+| `system` | 之上再加 OS 级隔离（Linux: bubblewrap）：读只限项目 + 系统目录、写只限项目（含 worktree 同级目录）与私有 `/tmp`、**网络默认关** | 边界（仅覆盖 Bash 及其子进程） |
+
+网络三态（`sandbox.network`）：`off`（默认，沙箱内无网络）/ `ask`（**按命令审批**：需要联网的命令（curl/wget/ssh/scp/rsync、`npm|pip|… install`、`git push`）在卡片上带 `[needs network: sandbox]`，用户在审批里点头才拿到网络，且只管这一次）/ `on`（沙箱内始终有网络，等价于不要网络隔离）。注意 `ask` 在 **yolo 模式**下等同 `off`——yolo 不弹任何对话框，没有"点头"的地方。
 
 `system` 需要本机可用后端（Linux/WSL2 需 `bubblewrap`）；不可用时**默认退回 `light` 并在卡片上标注未生效**（`sandbox.failOpen: false` 则直接拒绝执行）。Bash 卡角标永远显示**实际生效**的档位。
 
@@ -48,7 +50,7 @@ cowcat doctor inspect   # 深度报告：[config] / [permission rules] / [hooks]
 // 或
 "sandbox": {
   "mode": "system",
-  "network": "off",                    // off | ask（ask 目前等同 off，按命令审批在 Phase 1b）| on
+  "network": "off",                    // off | ask | on；ask = 按命令审批（yolo 下等同 off）
   "read":  { "profile": "workspace", "deny": ["~/.ssh", "~/.config/gh"], "allow": [] },
   "write": { "allow": ["."], "deny": [".env", ".git/hooks"] },
   "failOpen": true,                     // 后端不可用：true=退回 light 并标注；false=拒绝执行

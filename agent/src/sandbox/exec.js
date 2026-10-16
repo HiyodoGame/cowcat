@@ -40,23 +40,50 @@ const IMPLEMENTED = new Set(['bwrap']);
  * @param {object} args.probe    from sandboxProbe()
  * @param {string} args.command  the raw command string from the model
  * @param {string} args.cwd
- * @returns {{kind:'plain'}|{kind:'wrapped',file:string,args:string[],backend:string}
+ * @param {boolean} args.networkGranted  the user approved THIS call and the policy
+ *        is `network: 'ask'` — the one thing that can turn the network namespace off
+ * @returns {{kind:'plain'}|{kind:'wrapped',file:string,args:string[],backend:string,network:string,limitations:string[]}
  *          |{kind:'unavailable',backend:string|null,reason:string,detail:string,fix:string|null,limitations:string[]}}
  */
-export function planBashCommand({ policy, probe, command, cwd }) {
+export function planBashCommand({ policy, probe, command, cwd, networkGranted = false }) {
   if (policy.mode !== 'system') return { kind: 'plain' };
 
   const backend = pickBackend(policy, probe);
   if (!backend.ok) return { kind: 'unavailable', ...backend };
 
-  const built = buildBwrapCommand(policy, { command, cwd });
+  // `ask` is decided per call: everything runs with the network off unless this
+  // particular command was approved. There is no ambient "the user said yes once"
+  // state here — that lives in the permission layer (approveAlways).
+  const effective = policy.network === 'ask' && networkGranted
+    ? { ...policy, network: 'on' }
+    : (policy.network === 'ask' ? { ...policy, network: 'off' } : policy);
+
+  const built = buildBwrapCommand(effective, { command, cwd });
   return {
     kind: 'wrapped',
     file: built.file,
     args: built.args,
     backend: backend.name,
+    network: effective.network,
     limitations: backend.limitations,
   };
+}
+
+/**
+ * Does a Bash call in this configuration need a network decision from the user?
+ * Returns the effective-sandbox verdict when the answer is "ask and it will be
+ * enforced", otherwise null. Used by the loop to route the call through the
+ * approval prompt (and to mark it in the card, so the user knows what they are
+ * being asked for).
+ */
+export function networkAskFor(config, { cwd = process.cwd() } = {}) {
+  try {
+    const eff = effectiveSandbox(config, { cwd });
+    if (!eff.active || eff.mode !== 'system') return null;
+    return eff.policy.network === 'ask' ? eff : null;
+  } catch {
+    return null;
+  }
 }
 
 function pickBackend(policy, probe) {

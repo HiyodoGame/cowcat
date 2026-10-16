@@ -19,7 +19,14 @@
 - **测试**：`test/sandbox-system.test.mjs` 26 条纯逻辑（argv 映射、策略默认值、worktree 同级目录、角标诚实性、净化与截断）；`test/sandbox-linux.test.mjs` 6 条**真实拦截**断言（项目内可写、项目外写被拒、宿主文件不可达、凭据不可读、无网络、审计字段），无 bwrap 时按探测分类 skip。
 - **CI 成为权威验证**：Linux 腿新增 `apt-get install bubblewrap` 并按本文档给出的 AppArmor profile 步骤加载（Ubuntu 24.04 默认限制无特权 userns → 这条链路本身即回归测试）。
 - **验证结果（CI 的真实 Linux）**：6 条拦截断言在 `ubuntu-latest` 的 node 20/22/24 三腿上**真跑并通过**（不是 skip）；同一套断言在 Windows 腿上按探测分类 skip（`no bwrap backend on win32`）。**CI 首跑就抓出两个问题**并已修掉：① `write.allow` 默认含宿主临时目录，在 `--tmpfs /tmp` 之后又把它绑回去，宿主 `/tmp` 重新可见可写（G1/G2 因此失败）；② 我自己写错的 G1 断言口径——沙箱必须在空根里合成 `/home/<user>` 才能挂载允许的 home 文件，所以"在沙箱内写 home 会失败"这个前提是错的，真正的不变量是**宿主文件系统未被改动**。
-- **本版不做**（范围明确）：macOS Seatbelt 后端（Phase 2）、`network: 'ask'` 的按命令审批（Phase 1b，目前 `ask` 等同 `off` 且写进 limitations）、Windows 原生（明确不支持 + 引导 WSL2 / Docker Sandboxes）。glob 形式的路径规则会被收集进 `unsupported` 并提示，而不是假装生效。
+- **本版不做**（范围明确）：macOS Seatbelt 后端（Phase 2）、Windows 原生（明确不支持 + 引导 WSL2 / Docker Sandboxes）。glob 形式的路径规则会被收集进 `unsupported` 并提示，而不是假装生效。
+
+### Phase 1b（同一版本内）：`network: 'ask'` 按命令审批
+
+- **语义**：`ask` 下命令默认仍**无网络**；只有**用户在这次审批里点头**的那一条命令才会拿到网络命名空间（不加 `--unshare-net`），并且只对这一次调用生效。授权由 loop 通过 `ctx.networkApproved` 逐次传给 Bash 工具，不落地成任何粘性状态（"always" 由权限层的 `approveAlways` 记住，授权随其一起生效）。
+- **为什么不做成"sticky 一次就全开"**：`ask` 一旦能自己变成 `on`，它就只是文案。同理 **yolo 模式下 `ask` 等同 `off`**（yolo 不问任何问题，也就不该拿到网络）——与 Claude Code 在 auto-allow 下仍保留域名白名单是同一个取向。
+- **可见性**：需要联网的命令在卡片上带 `[needs network: sandbox]` 标记，用户知道自己批的是什么；审计记录该次运行的 `network` 是 `off` 还是 `on`；被拒时给模型的话术里明确写"网络没有被授权：需要用户按命令批准，或把 sandbox.network 设为 on"。
+- **测试**：`test/sandbox-network.test.mjs` 5 条（批准的调用拿到授权、`always` 之后不再弹窗但授权仍在、拒绝则根本不执行、yolo 绝不授权、light 档不受影响）；`test/sandbox-linux.test.mjs` 新增端到端断言——同一配置下**未批准**的 fetch 失败、**批准**的 fetch 拿到 200，且审计里连续两条分别是 `off` 与 `on`。
 
 ## 0.14.1（2026-10-16）— CI 与 PR 流程暴露的四类缺陷 + 工程基建
 

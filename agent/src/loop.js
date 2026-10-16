@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { estimateTokens, compactConversation as doCompact } from './prompts/compact.js';
 import { todoReminder, dateReminder } from './prompts/reminders.js';
 import { isDangerousCommand } from './permissions.js';
+import { classifyCommand } from './sandbox.js';
+import { networkAskFor } from './sandbox/exec.js';
 import { unifiedDiff } from './diffcard.js';
 import { bashCardModel } from './outputcard.js';
 import { createCheckpoint, persistCheckpointRecord } from './checkpoint.js';
@@ -92,6 +94,10 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
   // immediate: a tool_result produced without executing (error/denial), or
   // approval: the call must prompt the user before it may run, or
   // run: safe to execute without asking.
+  //
+  // Resolved once per turn: does this configuration want per-command network
+  // approval at all (system mode + network: 'ask' + a backend that will enforce)?
+  const netAsk = ctx.config ? networkAskFor(ctx.config, { cwd: ctx.cwd }) : null;
   const runnable = [];
   const approval = [];
   blocks.forEach((block, i) => {
@@ -135,16 +141,24 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
       block, i,
       preview: previews.get(block.id) ?? null,
       groupInfo: null,
+      // System-mode `network: 'ask'`: does THIS call need a network decision from
+      // the user? Known before running because the classifier flags the commands
+      // that normally reach the network (curl/wget/ssh/npm install/git push).
+      networkAsk: Boolean(netAsk) && block.name === 'Bash' && classifyCommand(block.input.command || '').network,
     };
     entry.groupInfo = entry.preview && group
       ? { ...group, index: writeOps.findIndex((b) => b.id === block.id) + 1 }
       : null;
     if (permissions.mode !== 'plan' && permissions.decide(block.name, block.input) === 'ask') approval.push(entry);
+    // A network-ask call needs a dialog even when the permission layer would
+    // allow it (a rule or an earlier "always") — unless we are in yolo mode,
+    // where asking is off by definition and the network simply stays off.
+    else if (entry.networkAsk && permissions.mode !== 'yolo' && !permissions.isAlwaysAllowed(block.name, block.input)) approval.push(entry);
     else runnable.push(entry);
   });
 
   // --- shared execution tail: hooks veto, checkpoint, run, result --------------
-  const runBlock = async ({ block, i, preview, groupInfo }) => {
+  const runBlock = async ({ block, i, preview, groupInfo, networkAsk = false }, { networkGranted = false } = {}) => {
     const tool = registry.get(block.name);
     // PreToolUse hooks can veto the call (deny reason feeds back to the model).
     if (ctx.hooks) {
@@ -170,7 +184,10 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
     events?.onToolStart?.(block.name, block.input);
     let res;
     try {
-      res = await tool.execute(block.input, ctx);
+      // `networkApproved` is per call and never sticky: the system sandbox reads
+      // it to drop --unshare-net for exactly this invocation (plan §5.7).
+      const callCtx = networkGranted ? { ...ctx, networkApproved: true } : ctx;
+      res = await tool.execute(block.input, callCtx);
     } catch (e) {
       res = { ok: false, error: e.message };
     }
@@ -215,7 +232,11 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
       // allow-listed (or plan-mode read-only) calls announce their card here;
       // the ask flow announces inside runApproval below.
       ui.toolCall(g.block.name, summarizeCall(g.block.name, g.block.input), g.block.id);
-      await runBlock(g);
+      // Reaching phase 1 in a non-yolo mode means a rule (or an earlier
+      // "always") allowed this call, so an approved network ask is granted here
+      // too. yolo asks nothing and therefore grants nothing: `ask` must not
+      // degrade into `on` just because prompts are disabled.
+      await runBlock(g, { networkGranted: g.networkAsk && permissions.mode !== 'yolo' });
     }
   };
   await Promise.all(Array.from({ length: Math.min(cap, queue.length) }, worker));
@@ -238,12 +259,15 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
     }
     if (decisionNow === 'allow') {
       ui.toolCall(block.name, summarizeCall(block.name, block.input), block.id);
-      await runBlock(g);
+      await runBlock(g, { networkGranted: Boolean(g.networkAsk) && permissions.mode !== 'yolo' });
       continue;
     }
     const dangerous = block.name === 'Bash' && isDangerousCommand(block.input.command || '');
     const summary = summarizeCall(block.name, block.input);
-    ui.toolCall(block.name, summary + (dangerous ? ' [dangerous]' : ''), block.id);
+    // Tell the user WHAT they are approving: a system-mode Bash command that
+    // needs the network gets the namespace only if they say yes here.
+    const netTag = g.networkAsk ? ' [needs network: sandbox]' : '';
+    ui.toolCall(block.name, summary + (dangerous ? ' [dangerous]' : '') + netTag, block.id);
     const decision = await ui.approve(block.name, summary, { dangerous, preview: g.preview, group: g.groupInfo, input: block.input });
     if (decision === 'n') {
       sessionArtifacts.denials++;
@@ -261,7 +285,7 @@ async function executeToolUses(assistantMsg, { registry, ctx, ui, permissions, e
       continue;
     }
     if (decision === 'always') permissions.approveAlways(block.name, block.input);
-    await runBlock(g);
+    await runBlock(g, { networkGranted: Boolean(g.networkAsk) && permissions.mode !== 'yolo' });
   }
 
   return results;

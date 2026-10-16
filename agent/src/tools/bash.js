@@ -60,6 +60,9 @@ Failure modes: timeouts mean the command was still running — rerun with a long
 
     const plan = planBashCommand({
       policy: sb, probe: sandboxProbe(), command: input.command || '', cwd: ctx.cwd,
+      // The loop sets this for a single approved call (Phase 1b): in `network:
+      // 'ask'` mode the prompt is where the network namespace comes from.
+      networkGranted: ctx.networkApproved === true,
     });
     // A system run without a usable backend: fall back (and SAY SO) or refuse.
     // The degrade note is what separates us from agents that silently run
@@ -74,9 +77,10 @@ Failure modes: timeouts mean the command was still running — rerun with a long
     }
 
     const decision = classification.risk === 'elevated' ? 'elevated-run' : 'run';
+    const runNetwork = plan.network ?? sb.network;
     auditRecord({
       command: input.command, cwd: ctx.cwd, risk: classification.risk, decision,
-      ...(sb.mode === 'system' ? { mode: sb.mode, network: sb.network } : {}),
+      ...(sb.mode === 'system' ? { mode: sb.mode, network: runNetwork } : {}),
       ...(plan.kind === 'wrapped' ? { backend: plan.backend } : {}),
     });
     const childEnv = sandboxEnv({ ...process.env, ...ctx.env }, sb);
@@ -112,7 +116,7 @@ Failure modes: timeouts mean the command was still running — rerun with a long
           // one-line-per-run shape for normal runs while recording the evidence.
           auditRecord({
             command: input.command, cwd: ctx.cwd, risk: classification.risk,
-            decision: 'violation', mode: sb.mode, backend: plan.backend, network: sb.network, violations,
+            decision: 'violation', mode: sb.mode, backend: plan.backend, network: runNetwork, violations,
           });
         }
         const out = [
