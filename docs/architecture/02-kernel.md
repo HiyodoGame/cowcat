@@ -11,6 +11,7 @@
 
 | 类型 | 含义 | 归约到状态 |
 |---|---|---|
+| `session.opened` | 会话创建，携带日志格式版本与创建者的 CowCat 版本 | 校验它是首条事件；不产生消息（见「会话头与 schema 版本」） |
 | `turn.opened` | 用户输入开始一个回合 | 新建 turn（idle），追加 user 消息 |
 | `turn.transitioned` | Turn 状态变迁 | 更新 turn 状态（校验 from/to 合法，否则视为日志损坏） |
 | `model.message` | 模型一次完整输出（文本 + 工具调用） | 追加 assistant 消息 |
@@ -66,7 +67,46 @@ loop:
 
 `Session.open(deps, id)` 读取全部事件并回放，得到与关闭前完全一致的状态，包括未结束回合的 turn 状态。注意：**回合不会自动续跑**。打开一个停在 `awaiting_approval` 的会话，内核只恢复状态，由前端决定是重新询问还是把它标记为取消。这避免了「重启后悄悄执行了一个从未被批准的操作」。
 
+## 会话头与 schema 版本
+
+> ADR-012。契约在此；实现状态见「已知的未决项」。
+
+- 首条事件固定为 `session.opened`（`seq = 1`），字段 `{ schemaVersion, cowcatVersion }`。**不额外存 `createdAt`**：`EventBase` 已有 `ts`，由 `emit` 用 `clock.now()` 填写，同一件事不存两份。
+- **只在创建时写入，`open` 只读校验、不回写**。否则重新打开会试图再写一次 `seq = 1`。
+- `reduce` 在该事件不是首条（`lastSeq !== 0`）时抛错，与其他损坏判定一致。
+- **`schemaVersion` 是内核常量**（`kernel/schema-version.ts`），它描述的是日志格式契约，归内核所有。**`cowcatVersion` 由组合根注入**（`SessionDeps.cowcatVersion`，来源是 `package.json`）——内核读不了文件系统（ADR-003 的 lint 禁令），所以它必须被告诉。
+- **分工：适配器做结构校验，内核做版本兼容判定。**
+  - 适配器的 schema 对 `schemaVersion` 用整数而非字面量。写成 `z.literal(1)` 会让「版本 2 的日志」报成「字段不匹配」，指向错误的原因；而 zod 默认忽略多余字段，所以「只是加了字段的新版本」能穿过结构校验、被版本判定拦下——这正是我们要的路径。
+  - 内核在 `Session.open` 的 `replay` 之前调用 `assertSupportedSchemaVersion`，报错信息列出支持的版本号。
+
+日志形态的裁决表：
+
+| 情形 | 裁决 |
+|---|---|
+| 文件不存在 | 空状态（可在其上 `create`） |
+| 文件存在、0 字节 | **损坏**：「缺少会话头」 |
+| 首行不是 `session.opened` | 损坏（适配器报行号） |
+| `schemaVersion` 不在支持列表 | 内核报明确版本错误，列出支持版本 |
+
+0 字节为什么算损坏而不是空：本实现从不产生 0 字节日志（`append` 总是写完整一行），所以它只能是外部干扰的产物。若当成空，`Session` 会在一份无头文件上从 `seq = 1` 继续写，最后产出一份再也打不开的日志。
+
+**不写迁移路径**：ADR-004 已定不保留旧版兼容，无头日志按损坏处理，不猜测、不补写头。
+
+## 快照
+
+> ADR-013。契约在此；实现状态见「已知的未决项」。
+
+- 定位：**回放加速，不是事实来源**。快照缺失或损坏时，全量回放必须给出相同结果——这条性质由属性测试覆盖（「任意快照点回放结果相同」）。
+- 形态：`SnapshotPort`（`load` / `save`）+ `SessionSnapshot { schemaVersion, lastSeq, state }`，落在与日志同目录的 `<sessionId>.snapshot.json`，写入经 `.tmp` + `rename` 原子替换（`rename` 的原子性只保证单进程语义，不要当作并发保护）。
+- `load` 用 `null` 表示「没有快照」：这是正常路径而非异常，与 `LockPort` 的 `LockHeldError` 刻意相反——「已被占用」确实是异常。
+- 载入顺序：读快照 → 校验 `schemaVersion` 受支持 → 校验 `lastSeq` 不超过日志实际最大 seq → 一致则只归约 `seq > lastSeq` 的事件；任一步不符则**丢弃快照、全量回放**。
+- **写入由调用方显式触发**（`Session.saveSnapshot()`），不做自动节流。自动策略（每 N 个事件 / 按体积 / 关闭时）依赖真实会话长度分布，P1 没有这类数据，现在定阈值就是拍脑袋。
+- **P1 的快照不省 IO，只省归约**：`readAll` 仍会读入并解析整个日志，被省掉的是 `reduce` 与消息数组重建。要真正省 IO，需要快照额外记录字节偏移、并给 `EventStore` 增加 `readFrom(sessionId, byteOffset)`——偏移在 append-only 下是稳定的，但必须校验「该偏移处确实是行首」并处理文件被截断的情形。这属于后续一轮，不在 P1 的承诺范围内。
+- 快照**不改变锁的必要性**：锁保护的是 `seq` 的读-改-写，快照只是回放加速。
+
 ## 已知的未决项（进入 P1 处理）
+
+> 会话头与快照的契约见上文；解码边界与单写者锁的结论见 [../research/p1-kernel.md](../research/p1-kernel.md)。实现落地后本节转为「已解决」。
 
 - 日志没有版本头，只有每行的字段结构。P1 增加会话头事件与 schema 版本号。
 - 没有单写者锁：两个进程同时打开同一会话会互相覆盖序号。P1 用文件锁解决。
