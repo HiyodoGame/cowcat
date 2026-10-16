@@ -398,7 +398,7 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 
 ## 7. 待验证清单（汇总）
 
-1. ~~Linux / macOS 上重跑锁实验 A、B、C、E、I~~ **大部分已解决（P1 T3）**：A（`wx` 的 `EEXIST`，含 8 个进程同时争抢）、B（`kill(pid, 0)` 判活）、C（删除活锁对持有者不可见）、「默认不自动接管」，以及**持有者被硬杀后的恢复指引**，都由 `test/lock.test.ts` 与 `test/lock-cross-process.test.ts` 在 CI 的 **Linux 腿**（Node 22 · ubuntu-24.04）上真实执行，不再是本机 Windows 结论的外推。实验 I 的构造式反例针对的是**自动接管**，本实现不实现自动接管，故无对应测试。**macOS 仍未覆盖。**
+1. ~~Linux / macOS 上重跑锁实验 A、B、C、E、I~~ **大部分已解决（P1 T3）**：A（`wx` 的 `EEXIST`，含 8 个进程同时争抢）、B（`kill(pid, 0)` 判活）、C（删除活锁对持有者不可见）、「默认不自动接管」，以及**持有者被硬杀后的恢复指引**，都由 `test/lock.test.ts` 与 `test/lock-cross-process.test.ts` 在 CI 上真实执行：**Linux 腿**（Node 22 · ubuntu-24.04，PR 门禁）与 **Windows 腿**（Node 22，main，run [38975308181](https://github.com/HiyodoGame/cowcat/actions/runs/38975308181)）各自 43 项、`skipped 0`，不再是本机 Windows 手工探针的结论外推。实验 I 的构造式反例针对的是**自动接管**，本实现不实现自动接管，故无对应测试。**macOS 仍未覆盖。**
 2. 会话目录位于 NFS / SMB / 同步盘时的锁行为。
 3. 三个 schema 库在本仓库真实 schema 上的对比（§2.7）。
 4. zod 引入后对 `tsc` 编译耗时的影响。
@@ -425,7 +425,7 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 
 **T1 的验证证据**：`packages/cowcat` 的 `npm test` 由 22 项增至 **30** 项（build + ESLint + 测试全通过，本机 Windows / Node `v24.18.0`）。新增 `test/header.test.ts` 覆盖：头作为首条事件写入、磁盘往返后头仍在、`create` 重复被拒、`open` 不存在被拒、无头日志被拒、未知 `schemaVersion` 报错（含 `found` 与 `supported` 字段）、空文件判损坏、同一日志里的第二个头判损坏。
 
-**T3 的验证证据**：`npm test` 由 30 项增至 **43** 项（同上环境全通过）。单进程内的协议分支由 `test/lock.test.ts`（11 项）覆盖：锁文件内容（`pid` / `nonce` / `hostname` / `startedAt`）、同进程二次认领被拒（断言 `pid` 与 `lockPath` 而非文案）、死锁被拒且指引与活锁可区分、内容无法解读的锁被拒且不猜持有人、释放可重复且真正释放、不删不属于自己的锁、删除活锁对持有者不可见、同一会话不能开两次、失败的 `open` 不泄漏锁、`close()` 后拒绝写入、`exclusiveLock` 替身。跨进程场景由 `test/lock-cross-process.test.ts`（2 项）覆盖：8 个进程两阶段信号同步争抢（恰好 1 个认领成功、7 个被拒、赢家释放后锁文件消失），以及**子进程认领后被 `SIGKILL` 硬杀**后重新认领的指引（真实崩溃路径）。**这些测试在 CI 的 Linux 腿上真实执行**，因此 §7 第 1 条由本任务的 CI 运行给出结论。
+**T3 的验证证据**：`npm test` 由 30 项增至 **43** 项（同上环境全通过）。单进程内的协议分支由 `test/lock.test.ts`（11 项）覆盖：锁文件内容（`pid` / `nonce` / `hostname` / `startedAt`）、同进程二次认领被拒（断言 `pid` 与 `lockPath` 而非文案）、死锁被拒且指引与活锁可区分、内容无法解读的锁被拒且不猜持有人、释放可重复且真正释放、不删不属于自己的锁、删除活锁对持有者不可见、同一会话不能开两次、失败的 `open` 不泄漏锁、`close()` 后拒绝写入、`exclusiveLock` 替身。跨进程场景由 `test/lock-cross-process.test.ts`（2 项）覆盖：8 个进程两阶段信号同步争抢（恰好 1 个认领成功、7 个被拒、赢家释放后锁文件消失），以及**子进程认领后被 `SIGKILL` 硬杀**后重新认领的指引（真实崩溃路径）。**这些测试在 CI 的 Linux 与 Windows 两腿上真实执行**（各自 43 项、`skipped 0`；Windows 侧同时验证了「硬杀后 pid 释放」所依赖的 2 秒等待窗口在 Windows 上够用），因此 §7 第 1 条由本任务的 CI 运行给出结论。
 
 ---
 
