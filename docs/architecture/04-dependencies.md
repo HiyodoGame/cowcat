@@ -17,7 +17,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 | 包 | 版本 | 角色 | 选择依据 |
 |---|---|---|---|
-| `typescript` | 6.0.3 | 开发：编译与类型检查 | npm `latest` 指向 7.0.2（原生 Go 实现）。6.x 是稳定的 JS 实现线，typescript-eslint 等工具链的兼容性在 7.x 上未经本项目核实，因此先用 6.x。7.x 在 P1 重新评估 |
+| `typescript` | 6.0.3 | 开发：编译与类型检查 | **P1 结论：不迁移**（调研 §4）。TS 7.0.2 的编译器本身可用——用本仓库原样的 `tsconfig.json` 编译通过并跑通全部测试，tsconfig 也已经是 TS 7-ready；阻塞点是 typescript-eslint 的 peer 范围仍为 `>=4.8.4 <6.1.0`，且 TS 7.0 不提供编译器 API。**重估条件（三条同时满足）**：peer 范围包含 7.x；届时用本仓库跑通 `npm test`；迁移前先在 6.x 上打开 `stableTypeOrdering` 把行为差异暴露出来。另记：引入 zod 后本地 `tsc` 由约 0.63s 涨到约 1.8s（≈3×，单机测量），这让「本地 build 已经够快」这个前提变弱——见调研 §4.5 |
 | `@types/node` | ^22 | 开发：类型 | 与最低运行时 Node 22 对齐，避免用到 22 没有的 API 却通过了类型检查 |
 | `eslint` | 10.13.0 | 开发：lint | 与仓库既有 lint 栈一致 |
 | `typescript-eslint` | 8.71.2 | 开发：TS 规则 | 使用 `strictTypeChecked`；测试目录对 `no-floating-promises` 与 `require-await` 放宽（见 eslint.config.js 注释） |
