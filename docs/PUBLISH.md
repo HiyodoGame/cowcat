@@ -28,6 +28,7 @@
   ```
   只要有任何输出，先换 key 并清理历史（`git filter-repo`）再发布。
 - [ ] 版本号与 `docs/changelog.md` 同步；README、LICENSE、package.json 的 author 信息正确。
+- [ ] changelog 里本版本段落若带「未发布」标记（工作期间的新版本段落故意这么标），**发布这一步才摘掉**——避免出现「已发布版本的段落里混进后续未发布内容」的错位（v0.12.1 踩过）。
 - [ ] tarball 内容检查（关键）：
   ```bash
   cd agent
