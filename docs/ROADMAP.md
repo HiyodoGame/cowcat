@@ -103,3 +103,4 @@
 3. **不冒充**：UA、user_id、产物品牌均为 CowCat/CoreScense
 4. **原版实验性功能**（团队/远程/cowork）永远低优先，核心体验（工具/权限/记忆/hooks/MCP）优先
 5. 各批次间用户可随时要求 npm 发布当前版本（流程见 docs/PUBLISH.md）
+6. **改动走 PR**（分支与流程见 `docs/CONTRIBUTING.md`）：`main` 只通过 PR 合入、CI 在每个 PR 上跑；本地 pre-push 守卫拦直推。**服务端分支保护在私有免费仓库上不可用**（GitHub API 403），是否转公开 / 升 Pro 由用户决定（`docs/CONTRIBUTING.md` §6 有三条路与现成命令）。
