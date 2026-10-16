@@ -1,6 +1,19 @@
 # CI: lint + the full test suite on every push/PR, plus a guard on what
 # `npm publish` would upload.
 #
+# Cost shape (measured 2026-10-16, repo is PRIVATE on GitHub Pro = 3000
+# included minutes/month): this workflow burned ~696 billable minutes in a
+# single day of heavy PR work. Linux counts 1x, Windows 2x, macOS 10x. So the
+# matrix is split:
+#   - PR gate      : node 22 on Linux + node 22 on Windows (the two platforms the
+#                   product is actually developed and used on) + the package
+#                   whitelist. These three are the branch-protection gate.
+#   - version sweep: node 20 and node 24 on Linux, on MAIN pushes only. Node
+#                   compatibility still gets a verdict on every merge, but it no
+#                   longer burns ~6 billable minutes per intermediate commit.
+# macOS lives in ci-macos.yml (path-filtered) because 10x billing makes
+# "every PR" unaffordable on a private repo.
+#
 # The live checks under agent/test/live/ are deliberately NOT part of this: they
 # need a configured provider / real API key (see agent/test/live/README.md) or a
 # running MCP server, so they stay opt-in on a developer machine.
@@ -27,8 +40,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        node: [22]
         os: [ubuntu-latest]
-        node: [20, 22, 24]
         include:
           # The product is developed and used on Windows (path handling, .cmd
           # shims, MCP stdio launch), so one Windows job is part of the gate.
@@ -53,6 +66,45 @@ jobs:
       # reason) instead of failing, and the log says which classification it hit.
       - name: Install sandbox deps (Linux)
         if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y apparmor-profiles 2>/dev/null || true
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
+      - name: Lint + tests (pretest runs eslint)
+        run: npm test
+
+  test-versions:
+    # Node-version compatibility sweep. Main pushes only: this is a merge-time
+    # verdict, not an every-commit one, and on a private repo the Linux minutes
+    # it saves are what pays for the macOS leg in ci-macos.yml.
+    #
+    # The name deliberately does NOT interpolate ${{ matrix.node }}: a job skipped
+    # by a job-level `if:` is never matrix-expanded, so GitHub displays the raw
+    # template ("test · node ${{ matrix.node }} · ubuntu-latest") and the branch
+    # protection UI shows a name no job will ever report under.
+    name: node-version sweep · ubuntu-latest (20, 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 24]
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Install sandbox deps (Linux)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap

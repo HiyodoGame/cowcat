@@ -1,0 +1,90 @@
+# macOS leg of CI — the ONLY place the Seatbelt backend gets verified for real.
+#
+# Why it is a separate workflow instead of a matrix row in ci.yml:
+# macOS hosted runners are billed at 10x. This repository is PRIVATE on GitHub
+# Pro (3,000 included minutes/month); the Linux+Windows matrix in ci.yml already
+# cost ~696 billable minutes in one heavy day of PR work. "Run macOS on every
+# PR" would multiply that by ~5 and exhaust the allowance in under a week, so
+# the macOS leg is path-filtered: it runs when the sandbox actually changes, and
+# on demand. It is deliberately NOT in the branch-protection required checks —
+# a required check that only sometimes reports blocks every PR that skipped it.
+#
+# What it buys: the assertions in test/sandbox-macos.test.mjs are real kernel
+# enforcement claims (G1/G2/G3 from docs/sandbox-system-plan-2026-10-16.md §2).
+# Unit tests cannot prove them; only macOS can.
+#
+# The filter above deliberately includes trust.js / session.js / bin/cowcat.mjs,
+# not just src/sandbox/**: the macOS leg exists because path identity behaves
+# differently here (see bin/cowcat.mjs using process.cwd() against trust.js's
+# exact string match), and a fix for that must be able to trigger this leg.
+#
+# `macos-15`, not `macos-latest`: latest currently tracks macOS 26, where
+# `sandbox-exec` itself still works but a shell can abort before it runs because
+# it reads sysctls no profile has allowlisted (reported on the Cursor forum for
+# zsh 5.9). Pinning keeps the image stable and the failure signal readable;
+# moving to 26 later is a one-line change plus a profile fix.
+name: CI (macOS)
+
+on:
+  pull_request:
+    paths:
+      - 'agent/bin/cowcat.mjs'
+      - 'agent/src/sandbox.js'
+      - 'agent/src/sandbox/**'
+      - 'agent/src/tools/bash.js'
+      - 'agent/src/trust.js'
+      - 'agent/src/session.js'
+      - 'agent/test/sandbox*.test.mjs'
+      - 'agent/package.json'
+      - 'agent/package-lock.json'
+      - '.github/workflows/ci-macos.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agent/bin/cowcat.mjs'
+      - 'agent/src/sandbox.js'
+      - 'agent/src/sandbox/**'
+      - 'agent/src/tools/bash.js'
+      - 'agent/src/trust.js'
+      - 'agent/src/session.js'
+      - 'agent/test/sandbox*.test.mjs'
+      - 'agent/package.json'
+      - 'agent/package-lock.json'
+      - '.github/workflows/ci-macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test · node 22 · macos-15
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      # No sandbox dependency to install: sandbox-exec ships with macOS. The
+      # probe in src/sandbox/probe.js checks that it can actually apply a
+      # profile (not just that the binary exists), and the enforcement tests
+      # skip with that classification if it cannot.
+      - name: Report the backend preflight
+        # awk, not sed: renderInspect() puts section headers back to back with no
+        # blank line between them, so a /^$/ terminator would either print to the
+        # end of the output or nothing at all.
+        run: node bin/cowcat.mjs doctor inspect | awk '/^\[sandbox\]/{f=1;next} /^\[/{f=0} f'
+      - name: Lint + tests (pretest runs eslint)
+        run: npm test

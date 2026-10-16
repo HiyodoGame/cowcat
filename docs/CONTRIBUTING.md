@@ -41,11 +41,16 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 
 `.github/workflows/ci.yml` 在 `push`（main）与**每个 PR**上跑：
 
-| job | 内容 |
-|---|---|
-| `test · node 20/22/24 · ubuntu-latest` | `npm ci` → `npm test`（`pretest` 含 ESLint） |
-| `test · node 22 · windows-latest` | 同上（产品在 Windows 上使用，`.cmd` shim / 路径 / MCP stdio 依赖平台行为） |
-| `package whitelist` | `node tools/check-tarball.mjs`：`npm publish` 会传的东西是否越界 |
+| job | 内容 | 何时 |
+|---|---|---|
+| `test · node 22 · ubuntu-latest` | `npm ci` → `npm test`（`pretest` 含 ESLint） | 每个 PR + 每次合入 main |
+| `test · node 22 · windows-latest` | 同上（产品在 Windows 上使用，`.cmd` shim / 路径 / MCP stdio 依赖平台行为） | 每个 PR + 每次合入 main |
+| `package whitelist` | `node tools/check-tarball.mjs`：`npm publish` 会传的东西是否越界 | 每个 PR + 每次合入 main |
+| `test · node 20/24 · ubuntu-latest` | 同上（Node 版本兼容扫描） | **只在合入 main 时** |
+
+**为什么 PR 只跑 node 22**：仓库是**私有**的 Pro 计划，每月 3000 分钟包含额度。2026-10-16 实测这一个 workflow 在一天的密集 PR 里烧掉约 **696 计费分钟**（Linux 1x / Windows 2x / macOS 10x）。node 兼容性扫描因此移到 main 推送时跑——每次合入仍然拿得到版本结论，但不再为每个中间提交付两次钱，省下的额度正好付 `ci-macos.yml`。
+
+**macOS 单独一个 workflow**（`.github/workflows/ci-macos.yml`，`macos-15`）：它是 Seatbelt 后端唯一能做**真实内核断言**的地方（`test/sandbox-macos.test.mjs` 的 G1/G2/G3）。macOS runner 计费 10 倍，"每个 PR 都跑"会按当前用量放大到 5 倍、一周内烧穿配额，所以它**按路径过滤**：只在沙箱相关文件（`agent/src/sandbox/**`、`src/sandbox.js`、`src/tools/bash.js`、`test/sandbox*.test.mjs`）变更时跑，另有 `workflow_dispatch` 手动触发。它**不在必过检查里**——一个只是有时才上报的 required check 会把所有没触发它的 PR 卡死。
 
 live 脚本（`agent/test/live/*`）**不进 CI**：它们需要真实 API key 或真实 MCP server，属于发布前手工跑的验证。
 
@@ -78,7 +83,7 @@ git config core.hooksPath .githooks
 | 项 | 值 |
 |---|---|
 | 必须走 PR | ✅（直推 main 会被服务端拒绝） |
-| 必须通过的检查 | `package whitelist`、`test · node 20/22/24 · ubuntu-latest`、`test · node 22 · windows-latest` |
+| 必须通过的检查 | `package whitelist`、`test · node 22 · ubuntu-latest`、`test · node 22 · windows-latest`（2026-10-16 从 5 个收敛到 3 个：node 20/24 的兼容扫描改为 main 推送时跑，见 §3 的配额账） |
 | 要求分支基于最新 main（strict） | ✅ |
 | 需要批准数 | 0（单人开发；PR 是流程载体，不强制他人批准） |
 | 强制管理员同上 | ✅（对自己也生效） |
@@ -89,7 +94,7 @@ git config core.hooksPath .githooks
 ```
 remote: error: GH006: Protected branch update failed for refs/heads/main.
 remote: - Changes must be made through a pull request.
-remote: - 5 of 5 required status checks are expected.
+remote: - 3 of 3 required status checks are expected.
 ```
 
 重新应用 / 修改（`docs/PUBLISH.md` 与本节同步维护这份配置）：
