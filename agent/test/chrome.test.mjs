@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 
 import { TuiUI } from '../src/tui/ui.js';
-import { decodeOutput } from '../src/textdecode.js';
+import { decodeOutput, hasGbkSupport } from '../src/textdecode.js';
 
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -103,7 +103,16 @@ test('chrome: no stray border-only row under a done tool card', () => {
   tui.close();
 });
 
-test('decode: GBK bytes decode instead of U+FFFD, UTF-8 untouched', () => {
+test('decode: GBK bytes decode instead of U+FFFD, UTF-8 untouched', (t) => {
+  // GBK comes from the ICU data. Runtimes built with small ICU (some CI images)
+  // cannot decode it at all — that is a capability of the runtime, so assert the
+  // graceful path there instead of a decoder we do not have.
+  if (!hasGbkSupport()) {
+    t.skip('this runtime has no GBK decoder (small ICU)');
+    const gbk = Buffer.from([0xc4, 0xe3]); // '你'
+    assert.equal(decodeOutput(gbk), gbk.toString('utf8'), 'falls back to the UTF-8 attempt, no crash');
+    return;
+  }
   // '你好' in GBK
   const gbk = Buffer.from([0xc4, 0xe3, 0xba, 0xc3]);
   assert.equal(decodeOutput(gbk), '你好');
