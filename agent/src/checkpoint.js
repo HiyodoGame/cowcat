@@ -1,4 +1,4 @@
-// File checkpoints + /rewind (persistence.md §6, session-scoped edition).
+// File checkpoints + /rewind (session-scoped edition).
 // Before an Edit/Write lands, the file's current content is snapshotted under
 // ~/.cowcat/checkpoints/<sessionId>/<checkpointN>/ and a {type:"checkpoint"}
 // record is appended to the session JSONL. /rewind restores file contents and

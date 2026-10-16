@@ -398,12 +398,12 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 
 ## 7. 待验证清单（汇总）
 
-1. ~~Linux / macOS 上重跑锁实验 A、B、C、E、I~~ **大部分已解决（P1 T3）**：A（`wx` 的 `EEXIST`，含 8 个进程同时争抢）、B（`kill(pid, 0)` 判活）、C（删除活锁对持有者不可见）、「默认不自动接管」，以及**持有者被硬杀后的恢复指引**，都由 `test/lock.test.ts` 与 `test/lock-cross-process.test.ts` 在 CI 上真实执行：**Linux 腿**（Node 22 · ubuntu-24.04，PR 门禁）与 **Windows 腿**（Node 22，main，run [38975308181](https://github.com/HiyodoGame/cowcat/actions/runs/38975308181)）各自 43 项、`skipped 0`，不再是本机 Windows 手工探针的结论外推。实验 I 的构造式反例针对的是**自动接管**，本实现不实现自动接管，故无对应测试。**macOS 仍未覆盖。**
+1. ~~Linux / macOS 上重跑锁实验 A、B、C、E、I~~ **大部分已解决（P1 T3）**：A（`wx` 的 `EEXIST`，含 8 个进程同时争抢）、B（`kill(pid, 0)` 判活）、C（删除活锁对持有者不可见）、「默认不自动接管」，以及**持有者被硬杀后的恢复指引**，都由 `test/lock.test.ts` 与 `test/lock-cross-process.test.ts` 在 CI 上真实执行：**Linux 腿**（Node 22 · ubuntu-24.04，PR 门禁）与 **Windows 腿**（Node 22，main，run 38975308181（该运行记录在开源前的私有仓库上，链接不再可访问））各自 43 项、`skipped 0`，不再是本机 Windows 手工探针的结论外推。实验 I 的构造式反例针对的是**自动接管**，本实现不实现自动接管，故无对应测试。**macOS 仍未覆盖。**
 2. 会话目录位于 NFS / SMB / 同步盘时的锁行为。**P1 明确不做**：会话目录默认落本机磁盘，协议不承诺网络卷安全（§3.6）。
 3. 三个 schema 库在本仓库真实 schema 上的对比（§2.7）。**P1 不做**：§2.3 已给出选型依据并保留重估条件（schema 数量增长、或 JSON Schema 保真成为硬要求时重估）。
 4. ~~zod 引入后对 `tsc` 编译耗时的影响~~ **已验证（P1 T2）**：同一台机器（Windows / Node `v24.18.0`）各测三次，`tsc -p tsconfig.json` **引入前 605 / 638 / 634 ms，引入后 1869 / 1706 / 1713 ms**，即约 **+1.1 s（≈3×）**。绝对值仍是秒级，但这个倍数值得记住：§4.5 里「本地 build 是秒级，收益不足以换来两套编译器」的前提因此变弱了一些。
 5. ~~本次全部实测在 Node 24 上；CI 门禁腿是 Node 22，需以 CI 结果为准~~ **已验证（P1）**：P1 的每一轮改动都在 CI 的 Node 22 · ubuntu-24.04 腿（PR 门禁）与 Node 22 · windows-latest 腿（main）上跑过，测试计数与本地一致（最终 69 项）。
-6. ~~`packages/cowcat` 的 Windows 作业在 main 上的真实耗时~~ —— **已验证**（2026-10-16，main `1f7389a`，run [38967790242](https://github.com/HiyodoGame/cowcat/actions/runs/38967790242)）：**54s**、success，是该作业在 main 上的第一条真实记录。
+6. ~~`packages/cowcat` 的 Windows 作业在 main 上的真实耗时~~ —— **已验证**（2026-10-16，main `1f7389a`，run 38967790242（同上，记录在开源前的私有仓库））：**54s**、success，是该作业在 main 上的第一条真实记录。
 7. 让快照带上「它所覆盖的日志前缀的摘要」，并在载入时比对，以发现**结构合法但内容与日志不符**的快照（T4 记录的残余风险；现在是刻意篡改与位翻转的唯一漏洞）。
 
 ---

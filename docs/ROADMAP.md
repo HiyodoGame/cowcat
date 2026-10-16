@@ -1,7 +1,7 @@
 # CowCat 全量功能路线图（对标 Claude Code CLI 2.1.55）
 
 > 目标：把 CowCat 从"核心闭环可用"推进到"Claude Code 全功能面（除账号体系）的完整体验"。
-> 依据：三路侦察——CowCat 现状盘点（agent/src 全模块）、2.1.55 完整功能面（analysis/cli-2.1.55.pretty.js 50 万行 + 已有逆向文档）、本机其他 CLI 借鉴面（cline / glm-acp-agent / minimax code / openclaw / codex）。
+> 依据：CowCat 现状盘点（agent/src 全模块）与本机其他 CLI 的借鉴面（cline / glm-acp-agent / minimax code / openclaw / codex）。对标 Claude Code CLI 的功能面来自其公开文档与官方博客。
 
 ## 0. 范围声明
 
@@ -37,9 +37,9 @@
 |---|---|---|---|---|
 | P0-1 | 修 5 个接线 bug | — | todo sessionId、Agent model 透传、npm test glob、死代码清理（smallModel 由 compact 消费、trackProcess 落实为 SIGINT 杀子进程）、Grep 补 -B/-A/type/multiline | ✅ |
 | P0-2 | WebFetch + WebSearch | WebFetch/WebSearch 工具 | WebFetch：fetch+HTML→markdown、5MB/20k 截断；WebSearch：DuckDuckGo HTML 引擎（可换付费 provider）、域名过滤 | ✅ |
-| P0-3 | 工具描述扩写 | analysis/tools-descriptions/ | 9+2 工具全部补"何时用/不用/约束/失败模式"，原创改写，schema 零变动 | ✅ |
-| P0-4 | 文件 checkpoint + /rewind | persistence.md §6 | 会话内简化版：Edit/Write 前快照到 ~/.cowcat/checkpoints/，/rewind 选点回滚文件+截断对话 | ✅ |
-| P0-5 | compact 增强 | agent-loop.md §2 | 双模板（全量/近期比例）、compact_boundary+compacted 落盘、resume 不重放原文、/compact [指令] | ✅ |
+| P0-3 | 工具描述扩写 | — | 9+2 工具全部补"何时用/不用/约束/失败模式"，原创改写，schema 零变动 | ✅ |
+| P0-4 | 文件 checkpoint + /rewind | — | 会话内简化版：Edit/Write 前快照到 ~/.cowcat/checkpoints/，/rewind 选点回滚文件+截断对话 | ✅ |
+| P0-5 | compact 增强 | — | 双模板（全量/近期比例）、compact_boundary+compacted 落盘、resume 不重放原文、/compact [指令] | ✅ |
 | P0-6 | 斜杠命令第一波 | 命令清单 | /cost /status /export /fork /todos /theme，/help 全量更新（现共 17 条命令） | ✅ |
 | P0-7 | OpenAI provider countTokens | — | tokapprox.js 本地校准启发式（±20%），doctor 改极小 generate 真实探网 | ✅ |
 
@@ -47,11 +47,11 @@
 
 | # | 事项 | 对标 | 说明 |
 |---|---|---|---|
-| P1-1 | 记忆系统完整版 | persistence.md §5 | `~/.cowcat/CLAUDE.md`（user 级）→ 项目 CLAUDE.md/.cowcat/CLAUDE.md/.cowcat/rules/ → 父目录递归；/memory 交互编辑（选 scope）；企业 policy 层不做 ✅ |
-| P1-2 | 权限规则引擎 | agent-loop.md §5 + 校验器 119014 | settings 里 `permissions.allow/deny/ask` 数组，`Tool(pattern)` 语法（Bash 前缀 `:*` 匹配），zod 式校验器带错误建议；/permissions 管理界面；权限档当前仅 default/plan/yolo 三档，acceptEdits（自动接受编辑）与 bypassPermissions 未实现（后续批次，见 §4.5） ✅ |
-| P1-3 | hooks 核心子集 | agent-loop.md §6 | 8 事件：PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact；command 类型（timeout/once/async）+ http 类型；prompt/agent 类型评估后置 ✅ |
-| P1-4 | MCP 客户端 | protocol/README.md | stdio 传输（.cowcat.json 或 .mcp.json 项目级 + user 级）+ http 流式；动态 mcp__server__tool 注册；超时/输出截断；resources/prompts 支持（ListMcpResources/ReadMcpResource）未做（后续批次，见 §4.5）；OAuth 登录不做（与账号豁免一致） ✅ |
-| P1-5 | 自定义 agents/commands/skills 加载 | persistence.md §1/§5 | `~/.cowcat/{agents,commands,skills}` + 项目 `.cowcat/{...}` 目录加载；commands 即斜杠命令 markdown（frontmatter 支持 allowed-tools/model）；agents 为角色定义（tools/model 白名单）；skills 为按需注入 prompt ✅ |
+| P1-1 | 记忆系统完整版 | — | `~/.cowcat/CLAUDE.md`（user 级）→ 项目 CLAUDE.md/.cowcat/CLAUDE.md/.cowcat/rules/ → 父目录递归；/memory 交互编辑（选 scope）；企业 policy 层不做 ✅ |
+| P1-2 | 权限规则引擎 | — | settings 里 `permissions.allow/deny/ask` 数组，`Tool(pattern)` 语法（Bash 前缀 `:*` 匹配），zod 式校验器带错误建议；/permissions 管理界面；权限档当前仅 default/plan/yolo 三档，acceptEdits（自动接受编辑）与 bypassPermissions 未实现（后续批次，见 §4.5） ✅ |
+| P1-3 | hooks 核心子集 | — | 8 事件：PreToolUse/PostToolUse/PostToolUseFailure/UserPromptSubmit/Stop/SessionStart/SessionEnd/PreCompact；command 类型（timeout/once/async）+ http 类型；prompt/agent 类型评估后置 ✅ |
+| P1-4 | MCP 客户端 | — | stdio 传输（.cowcat.json 或 .mcp.json 项目级 + user 级）+ http 流式；动态 mcp__server__tool 注册；超时/输出截断；resources/prompts 支持（ListMcpResources/ReadMcpResource）未做（后续批次，见 §4.5）；OAuth 登录不做（与账号豁免一致） ✅ |
+| P1-5 | 自定义 agents/commands/skills 加载 | — | `~/.cowcat/{agents,commands,skills}` + 项目 `.cowcat/{...}` 目录加载；commands 即斜杠命令 markdown（frontmatter 支持 allowed-tools/model）；agents 为角色定义（tools/model 白名单）；skills 为按需注入 prompt ✅ |
 | P1-6 | 后台任务 | TaskOutput/TaskStop + /tasks | Bash run_in_background + TaskOutput 取回、TaskStop 终止、/tasks 列表管理；TaskCreate 系列结构化任务工具未实现（后续批次，见 §4.5） ✅ |
 | P1-7 | 子代理体系扩展 | prompts README §2 | 内建角色增至 4 个（explore/plan/general-purpose/statusline-setup 等效物）；自定义 agent 定义生效（含 model 覆盖、只读工具集声明）；Task resume 续接子代理 transcript ✅ |
 | P1-8 | 输出样式 + statusline | §14/§13 | output-styles 目录加载 + /output-style 切换；statusline 自定义命令（stdin 收 JSON：model/cost/context） ✅ |

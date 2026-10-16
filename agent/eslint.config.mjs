@@ -43,7 +43,7 @@ const nodeGlobals = {
 export default [
   {
     // test/live/** are opt-in checks against real third-party packages that are
-    // not installed by default; analysis/** holds reverse-engineering dumps.
+    // not installed by default.
     ignores: ['node_modules/**', 'test/live/**', 'test/fixtures/**'],
   },
   {

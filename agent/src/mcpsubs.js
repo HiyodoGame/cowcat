@@ -1,4 +1,4 @@
-// MCP resource subscriptions (docs/tools/tool-catalog.md §15/§16).
+// MCP resource subscriptions.
 //
 // A subscription is the triple (server, uri, reason): `server` says who to ask,
 // `uri` what to watch, `reason` is echoed back in the update notification so the

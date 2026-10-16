@@ -9,7 +9,7 @@
 | 请求-响应 | stdio（JSON-RPC 行协议）与 Streamable HTTP（POST + SSE 响应体）都已加固（分页、session、保持流、超时、预算） |
 | 无 `id` 的入站消息 | **被丢弃**：`StdioTransport._onData` 只匹配 `pending`，其余静默丢弃；`HttpTransport._readResult` 注释「server notification: nothing to hand back, keep reading」 |
 | server→client 长连接 | 无（只发 POST，从不 `GET`） |
-| `resources/subscribe` | 无；`docs/tools/tool-catalog.md` 15/16 已规定 `SubscribeMcpResource`/`UnsubscribeMcpResource`，**代码缺失** |
+| `resources/subscribe` | 无；对标主流 agent 的定价 已规定 `SubscribeMcpResource`/`UnsubscribeMcpResource`，**代码缺失** |
 | server 发起的请求（sampling / elicitation / roots） | 无回应——规范要求客户端回 error，否则 server 一直等 |
 
 后果：`notifications/message`（logging）、`*/list_changed`、`resources/updated` 永远收不到；文件类 server 刚新建的文件、工具集变化、server 的日志，客户端全都不知道。

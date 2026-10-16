@@ -1,4 +1,4 @@
-// MCP resources tools (docs/tools/tool-catalog.md:176-214): ListMcpResources
+// MCP resources tools: ListMcpResources
 // enumerates resources on every connected server; ReadMcpResource fetches one
 // by server + uri. Sources come from ctx.mcpClients (name -> McpClient).
 const MAX_OUTPUT = 20_000;

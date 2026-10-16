@@ -456,7 +456,7 @@ async function main() {
   const mcpServers = loadMcpConfigs(cwd);
   const mcpClients = new Map();
   baseCtx.mcpClients = mcpClients;
-  // Resource subscriptions (tool-catalog §15/§16) live for the session; the two
+  // Resource subscriptions live for the session; the two
   // tools read the registry through ctx.
   const mcpSubs = new McpSubscriptions();
   baseCtx.mcpSubs = mcpSubs;

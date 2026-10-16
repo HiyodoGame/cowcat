@@ -35,7 +35,7 @@
 
 ## 4. Claude Code 设计规格摘录（复刻基准）
 
-来源：`analysis/cli-2.1.55.pretty.js` 行号可查证；标注"推断"的项为合理推测。
+标注「推断」的项为合理推测，未做实测验证。
 
 **配色 token（dark 主题核心值）**：品牌橙 claude rgb(215,119,87)；交互蓝 permission rgb(177,185,249)（审批框边框/行内代码/链接强调）；边框灰 promptBorder rgb(136,136,136)；正文白；inactive rgb(153,153,153)；subtle rgb(80,80,80)；success rgb(78,186,101) / error rgb(255,107,128) / warning rgb(255,193,7)；Bash 粉 bashBorder rgb(253,93,177)；用户气泡底 rgb(55,55,55)；plan 模式青绿 rgb(72,150,140)；autoAccept 紫 rgb(175,135,255)；diff 深绿底/深红底 + 亮绿/亮红字。6 套主题（含色盲友好与 ANSI-only 降级），约 40 个语义 token。
 

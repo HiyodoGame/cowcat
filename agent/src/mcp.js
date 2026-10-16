@@ -1,4 +1,4 @@
-// MCP client (docs/protocol/README.md; OAuth out of scope). Transports:
+// MCP client. OAuth is out of scope. Transports:
 // stdio (JSON-RPC 2.0 over newline-delimited stdio) and http (POST JSON-RPC;
 // SSE bodies parsed). Config: ~/.cowcat/mcp.json + <cwd>/.cowcat/mcp.json,
 // project level wins per server name.
@@ -658,7 +658,7 @@ export class McpClient {
     const out = parts.join('\n') || '(no content)';
     return { text: out.length > MAX_OUTPUT ? `${out.slice(0, MAX_OUTPUT)}\n[truncated]` : out, isError: !!res.isError };
   }
-  // MCP resources (docs/tools/tool-catalog.md): resources/list + resources/read
+  // MCP resources: resources/list + resources/read
   // over whichever transport is in use; errors surface to the caller.
   // resources/list is paginated like tools/list: a server that hands back a
   // cursor hides every resource past the first page.
