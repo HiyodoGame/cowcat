@@ -1,13 +1,13 @@
 # CowCat changelog
 
-## 0.15.0（未发布）— 系统级 Bash 沙箱：Phase 0 后端探测 + Phase 1 Linux 后端与档位
+## 0.15.0（2026-10-16）— 系统级 Bash 沙箱：Phase 0 探测 + Phase 1（Linux 后端与按命令网络审批）
 
 大件的第一步（**Phase 0，零行为变化**）：先能量化"现在能拿到什么"，再谈怎么拦。调研与方案见 `docs/sandbox-research-2026-10-16.md`、`docs/sandbox-system-plan-2026-10-16.md`。
 
 - **新增：系统级沙箱后端探测（`src/sandbox/probe.js`）**。回答一个问题：本机此刻能用哪个 OS 级后端；不能用**是为什么**。关键是分类而不只是布尔值——"bwrap 没装" / "用户命名空间被 AppArmor 限制（Ubuntu 24.04+ 默认）" / "其它错误"给出**不同的**修复命令。Linux 与 WSL 探 bubblewrap（真跑一次 `bwrap --unshare-all --ro-bind / / true`：能跑才算能用），macOS 探 `sandbox-exec`，**原生 Windows 直接判定不支持**并给出 WSL2 / Docker Sandboxes 两条出路。永不抛出：探测坏了退化为"无后端"，与"沙箱坏了退化为 light"是同一个契约。
 - **新增：`cowcat doctor inspect` 的 `[sandbox]` 节**，显示配置档位 + 后端探测结果 + 修复命令。**刻意不放进 `runDoctorChecks`**：系统级后端是可选升级，机器上没有 bubblewrap 不算"安装坏了"，不该让 `cowcat doctor` 的退出码变非零。
 - **新增：只读基线探针（`agent/test/live/sandbox-probe.mjs`，不进 CI）**。走**真实的 `BashTool`**，对比 `off`/`light` 两档下命令能拿到什么。本机（Windows）实测：`~/.ssh`（10 项）与 `gh` 令牌文件（88 字节）**两档都可读**、外网可达（`https://example.com` 200）、`~/.cowcat` 可写；light 档唯一拦住的是 env 里 TOKEN 形状的变量。→ 这正是 Phase 1 要拦的东西，也是"系统级档到底有没有用"的对照基线。
-- 版本号 0.15.0（未发布）。
+- 版本号 0.15.0。
 
 ### Phase 1（同一版本内）：`system` 档 + Linux 后端 + 违规反馈
 
