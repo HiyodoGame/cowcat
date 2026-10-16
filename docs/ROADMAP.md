@@ -13,7 +13,7 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.15.0 已发布 2026-10-16；724 tests＝714 pass / 10 skip（skip 均需真实 Linux 后端）+ ESLint 门禁 + GitHub Actions CI 全绿 + main 分支保护已启用）
+## 1. 现状快照（v0.16.0 未发布；762 tests＝742 pass / 20 skip（skip 均需真实 Linux 或 macOS 后端）+ ESLint 门禁 + GitHub Actions CI 全绿 + main 分支保护已启用（2 个必过检查））
 
 > v0.12.0 发布收尾过程中另修：MCP 握手的 `clientInfo.version` 从硬编码 `0.5.0` 改为读 `package.json`（单一版本源）；`Glob` 的 `path` 参数崩溃与 `/output-style` 未接线（见 `docs/fix-plan-2026-10-15.md` 第六轮）。
 
@@ -22,9 +22,10 @@
 **沙箱（v0.12.0 起，2026-10-16 的 0.15.0 补齐系统级档）**：三档 `/sandbox off|light|system`。
 
 - `light`（默认）：secret 脱敏 env + 静态命令分级 + `~/.cowcat/audit.log` 审计、Bash 卡 `· sandboxed` 角标。**诚实威胁模型：这是护栏不是安全边界**——不抵御恶意命令，只防误操作与留审计痕迹。
-- `system`（0.15.0 新增，**Linux/WSL2 需 `bubblewrap`**；0.16.0 补齐 **macOS**，用系统自带 `sandbox-exec`）：OS 级隔离——读只限项目 + 系统目录（凭据路径硬拒绝）、写只限项目（含 worktree 同级目录）与**每次调用独立的私有临时目录**、**网络默认关**；`network: 'ask'` 时按命令审批（卡片标注 `[needs network: sandbox]`），`failOpen` 默认 true（后端不可用时降级 light **并在卡片上标注未生效**）。G1/G2/G3 已在 CI 真实 Linux 与真实 macOS（`macos-15`）逐条验证；Windows 原生不支持（引导 WSL2 / Docker Sandboxes）。
+- `system`（0.15.0 新增，**Linux/WSL2 需 `bubblewrap`**；0.16.0 补齐 **macOS**，用系统自带 `sandbox-exec`）：OS 级隔离——读只限项目 + 系统目录（凭据路径硬拒绝）、写只限项目（含 worktree 同级目录）与**每次调用独立的私有临时目录**、**网络默认关**；`network: 'ask'` 时按命令审批（卡片标注 `[needs network: sandbox]`），`failOpen` 默认 true（后端不可用时降级 light **并在卡片上标注未生效**）。G1/G2/G3，以及「项目里 `rm` 仍可用」「私有临时目录存在/可写/不越界/调用后已删除」「审计记录 backend」，已在 CI 真实 Linux（`ubuntu-latest`）与真实 macOS（`macos-15`）逐条验证。Windows 原生不支持（引导 WSL2 / Docker Sandboxes）。
+- **平台差异如实报出，不假装一致**：macOS 上 `network: 'on'` **不可用**——实测即便放行**全部** Mach 服务与**全部** unix socket，沙箱内的 `getaddrinfo` 仍不通（数字字面量 IP 也一样），且 Seatbelt 本身无法按域名过滤。所以这一档被**明确拒绝**（`network-not-supported`，且不可降级为 light：那会丢掉隔离却保留网络），而不是交付一个「授权了也没网」的坑。出网与按域名白名单都归 Phase 3 的**沙箱外代理**——这也正是 Claude Code / Codex / srt 的做法。夹逼实验数据与过程见 `docs/fix-plan-2026-10-15.md` 第二十轮。
 
-调研与设计：`docs/sandbox-research-2026-10-16.md`（技术调研）+ `docs/sandbox-system-plan-2026-10-16.md`（威胁模型与方案）；实施与 CI 抓到的缺陷见 `docs/fix-plan-2026-10-15.md` 第十六～十八轮。
+调研与设计：`docs/sandbox-research-2026-10-16.md`（技术调研）+ `docs/sandbox-system-plan-2026-10-16.md`（威胁模型与方案）；实施与 CI 抓到的缺陷见 `docs/fix-plan-2026-10-15.md` 第十六～二十轮。
 
 **整块缺失**（对照 2.1.55/2.1.296 功能面）：bypassPermissions 权限档、Workflow/Monitor 工具（原版 2.1.296 生态件，低优先）、沙箱的**按域名网络白名单**（Phase 3，沙箱外代理；Seatbelt 本身做不到）与 Windows 原生路线（Phase 4）。
 
