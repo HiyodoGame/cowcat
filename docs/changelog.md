@@ -44,8 +44,10 @@ PDF 里 CID/Identity 编码的字串存的是**字形 id**，只有字体自带�
 ### 验证
 
 - `npm test` **674 passed / 0 failed**（新增 16 项 `test/pdftext.test.mjs`：CMap 的 bfchar/bfrange/码宽、对象层与 `/ObjStm`、`/Resources` 间接引用与继承、CID 解码、码表覆盖率拒绝、1 字节简单字体映射、无页面结构回退等）。
+- **API 级端到端**（`agent/test/live/pdf-api-e2e.mjs`，新增，跑的是**公开**的 11.7MB GB 国标）：模型逐字复述文档开头 **43 字符**（须为抽取文本开头区域的逐字子串）、概括回答与原文有 **32 字符逐字重合** —— 证明模型经 CMap 链路真的拿到了文本。私有文档未外发；脚本默认不打印任何文档内容，且把文件复制为 `sample.pdf` 以免模型从工具头猜答案。
 - live：`multimodal.mjs`（合成 PDF 现已走新 CMap 路径 ✅）、`multimodal-cli.mjs`、`pdf-extract-report.mjs`。
 - 真实 PDF 度量**只输出统计量**：这些是本机私人文档，内容不出进程（要发给模型需用户显式同意）。
+- 顺带记录一个保真度限制：封面大字逐字排版时，抽取结果会一行一个字符（该标准以孤立的 `I`/`C`/`S` 行开头）——文本准确但版式丢失，属纯文本抽取的固有边界。
 
 ## 0.13.0（2026-10-16）— Read 多模态（图片 / PDF / notebook）+ NotebookEdit
 
