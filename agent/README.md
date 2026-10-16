@@ -1,5 +1,7 @@
 # cowcat
 
+[![CI](https://github.com/HiyodoGame/cowcat/actions/workflows/ci.yml/badge.svg)](https://github.com/HiyodoGame/cowcat/actions/workflows/ci.yml)
+
 > CowCat 是跑在你自己终端里的开源 CLI 编程 Agent。
 
 CowCat is an interactive CLI coding agent: high-energy, action-biased, but professionally reliable. It talks to any Anthropic-compatible or OpenAI-compatible model endpoint — including Kimi for Coding — and keeps your code, your keys, and your terminal under your own control.

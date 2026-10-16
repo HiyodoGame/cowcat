@@ -1,0 +1,24 @@
+# Keep the dev dependency set and the workflow actions current without noise.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: npm
+    directory: /tools
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"

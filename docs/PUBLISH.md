@@ -37,6 +37,10 @@
   确认文件列表**只有** `bin/`、`src/`、`assets/` + README/LICENSE/package.json；
   必须**不含** `analysis/`、`docs/`、`test/`、`logs/`、`sandbox/`、`tools/` 及任何抓包/prompt 素材（`files` 白名单已限定，dry-run 再目视确认一遍）。
 - [ ] `cd agent && npm install && npm test` 全绿（`pretest` 会先跑 ESLint 的 `no-undef`/`no-unused-vars`）。
+- [ ] **CI 绿**（`.github/workflows/ci.yml`：node 20/22/24 on Linux + node 22 on Windows，`npm ci` + `npm test`），且 `package whitelist` job 通过——它在 CI 里跑的就是本地这条：
+  ```bash
+  node tools/check-tarball.mjs      # 白名单守卫：不该进包的东西一旦混入就直接失败
+  ```
 - [ ] 本地一次干净安装演练：`npm pack` 后解包到临时目录，`node bin/cowcat.mjs --version` 正常。
 
 ## ④ 发布
