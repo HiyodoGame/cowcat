@@ -424,6 +424,9 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 | T3 单写者锁 | 跨进程争抢用**两阶段信号文件**（`GO` → 全部尝试完毕 → `RELEASE`）同步，而不是固定 sleep | 若赢家一拿到锁就释放，晚到的竞争者可能在释放之后才尝试，于是出现两个 `ACQUIRED`——靠 sleep 赌余量会变成随机失败。信号文件把顺序变成确定的 |
 | T2 zod 解码 | `package.json` 记 `^4.6.7` 而不是精确 `4.6.7` | 与仓库既有写法一致（`typescript: ^6.0.3`），CI 按 lockfile 装精确版本；要锁死请改成精确版本 |
 | T2 zod 解码 | schema 用 `z.readonly(z.array(...))`，让 `z.infer` 也推导出 `readonly ToolCall[]` | §2.5 的 `Equals` 要求**双向**等价，而内核的 `toolCalls` 是 `readonly`。若 schema 推导出可变数组，断言会失败——放宽断言就等于放弃这层保护，所以让 schema 侧对齐内核侧 |
+| T5 属性测试 | 「非法跃迁一律被拒绝」做成**穷举**（9×9 全对，另加 `from` 不匹配、`turnId` 不匹配两类），而不是 fast-check 抽样 | 状态机只有 9 个状态、81 个转移对，穷举比抽样更便宜也更强；随机性留给真正需要它的那条性质（回放等于实时状态） |
+| T5 属性测试 | 生成器不用 `fc.jsonValue()`，改为自建值域，并**刻意**放入 `-0` / `NaN` / `±Infinity` / `undefined` / 无原型对象 | `fc.jsonValue()` 自身 3000 次采样有 **16 次**无法 JSON 往返（`-0`），`fc.dictionary()` 生成的是无原型对象。这些正是内核必须规范化的那一类值，所以要用它们来**验证规范化**，而不是绕开 |
+| T5 属性测试 | 内核在 `streamModel` 新增对工具调用 `input` 的 JSON 规范化，并让**执行也用规范化后的值** | 属性测试**第一次运行**就抓到反例：`input` 是 `unknown` 而日志是 JSON，`-0`（`JSON.parse('-0')` 真实产生）与无原型对象都会让回放得到的消息与实时状态不等，破坏 02-kernel.md 约定 2。规范化让日志与「工具实际看到的」一致；唯一无法规范化的是 `BigInt` 与循环引用，以明确原因让回合失败 |
 
 **T1 的验证证据**：`packages/cowcat` 的 `npm test` 由 22 项增至 **30** 项（build + ESLint + 测试全通过，本机 Windows / Node `v24.18.0`）。新增 `test/header.test.ts` 覆盖：头作为首条事件写入、磁盘往返后头仍在、`create` 重复被拒、`open` 不存在被拒、无头日志被拒、未知 `schemaVersion` 报错（含 `found` 与 `supported` 字段）、空文件判损坏、同一日志里的第二个头判损坏。
 
@@ -432,6 +435,10 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 **T2 的验证证据**：`npm test` 由 43 项增至 **52** 项（同上环境全通过）。新增 `test/schema.test.ts`（7 项）：编译期 `Equals` 断言、内核会写的 6 种事件全部解码通过、新版本多出的字段被 strip 而不是拒绝、未知 `schemaVersion` 结构通过（版本判定留给内核）、报错路径含嵌套索引（`toolCalls[0].callId`）、未知事件类型被拒。`test/store.test.ts` 增加 2 项（结构非法的行报行号与字段；首行不是头报在第 1 行），并修掉了它原有的夹具——那份夹具的首行 `{"ok":true}` 在 zod 落地后会先在第 1 行失败，从而测不到「第 2 行的位置」。
 
 **两项额外验证（手工探针，非测试）**：① `Equals` 断言不是装饰——把比较对象临时换成 `{ type: string }`，构建确实以 `Type 'true' is not assignable to type 'false'` 失败；② 新的 lint pattern 生效——临时在 `src/kernel/state.ts` 加 `import { z } from 'zod'`，lint 以「schemas belong to the decoding boundary… (ADR-009)」报错，而不是 `node:*` 那条文案。两次探针都已撤除，工作区无残留。
+
+**T5 的验证证据**：`npm test` 由 52 项增至 **59** 项（同上环境全通过）。新增 `test/property.test.ts`（7 项）：固定种子的随机回合脚本属性「回放等于实时状态」（60 次运行，每次都经 JSONL 落盘、由 zod 解码后重开），9×9 转移矩阵的穷举，`from` 不匹配与 `turnId` 不匹配两类损坏，规范化与不可规范化各一条。
+
+**这套属性测试的价值是被证明的，不是被声称的**：它在**修复前第一次运行**就抓到了反例（`fc.dictionary()` 生成的无原型对象使 `input` 往返不等），并给出了收缩后的最小用例；修复后同一条属性通过。另外，fast-check 的失败输出原生包含 `{ seed, path }` 与 counterexample（本次实际看到 `{ seed: 20261017, path: "0:2:1:2:2:2" }`），所以出口标准要求的「种子可复现」不只是「配了固定种子」，而是失败时能直接复现。
 
 ---
 

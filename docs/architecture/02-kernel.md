@@ -3,7 +3,7 @@
 ## 核心约定
 
 1. **持久化的只有事实**。`KernelEvent` 联合类型中的每一项都是已经发生的事实（一个回合开始了、模型给出了一条消息、某个工具调用的结果是什么）。
-2. **状态是事件的归约结果**。`reduce(state, event)` 是纯函数；`replay(events)` 得到的状态必须与实时运行时的状态逐字段相等。这条性质有测试（`replaying the log reproduces the live session state exactly`）。
+2. **状态是事件的归约结果**。`reduce(state, event)` 是纯函数；`replay(events)` 得到的状态必须与实时运行时的状态逐字段相等。这条性质有测试（`replaying the log reproduces the live session state exactly`）。内核在记录模型给出的工具调用时会对入参做一次 JSON 规范化——日志是 JSON，而 `JSON.parse('-0')` 真的会产生 `-0`、`JSON.stringify(-0)` 是 `"0"`，不规范化这条性质就会对**真实可达**的输入静默失效。无法规范化的入参（`BigInt`、循环引用）以明确原因让回合失败。
 3. **先落盘，后应用，再通知**。`Session.emit` 的顺序是：`store.append` → `reduce` → 通知监听者。监听者永远看不到日志里没有的事实。
 4. **瞬时增量不落盘**。模型逐 token 的 `model.delta` 只通过 `SessionUpdate` 推给前端，不进日志；最终的 `model.message` 才是事实。否则一个长回复会产生上千条无意义的日志行。
 

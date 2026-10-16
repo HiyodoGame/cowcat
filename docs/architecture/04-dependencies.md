@@ -22,6 +22,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `eslint` | 10.13.0 | 开发：lint | 与仓库既有 lint 栈一致 |
 | `typescript-eslint` | 8.71.2 | 开发：TS 规则 | 使用 `strictTypeChecked`；测试目录对 `no-floating-promises` 与 `require-await` 放宽（见 eslint.config.js 注释） |
 | `zod` | `^4.6.7`（当前 4.6.7） | **运行时**：日志解码的结构校验 | 只允许出现在 `src/adapters/`，由 lint 单独一条 pattern 强制。JSON Schema 转换内置，省掉 P5 与模型交互的一个依赖。选型对比、被否决的方案与保留的重估条件见 [../research/p1-kernel.md](../research/p1-kernel.md) §2 |
+| `fast-check` | `^4.10.2`（当前 4.10.2） | 开发：属性测试 | 用例见 `test/property.test.ts`。种子固定在测试里（`COWCAT_PROPERTY_SEED` 可覆盖），失败输出自带 `{ seed, path }` 与收缩后的 counterexample |
 
 运行时依赖：**1 个**（`zod`）。上限 6，每引入一个都要有 ADR。
 
@@ -35,7 +36,6 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 |---|---|---|---|
 | `@anthropic-ai/sdk` 与 `openai` | P4 | 模型协议 | 候选。两者负责协议、流式解析与重试，符合判断标准 1。国产厂商大多提供 OpenAI 兼容端点，故 `openai` 是主力。**是否采用、是否需要 Anthropic 官方 SDK 才能覆盖 Claude 端点，P4 调研后定** |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
-| `fast-check` | P1 | 属性测试 | 候选，用于验证「回放等于实时状态」对任意事件序列成立。开发依赖 |
 
 ## 明确不引入的
 

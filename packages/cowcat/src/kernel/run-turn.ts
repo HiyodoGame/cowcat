@@ -73,13 +73,33 @@ async function streamModel(deps: TurnDeps, signal: AbortSignal): Promise<readonl
       text += chunk.text;
       session.streamDelta(chunk.text);
     } else {
-      calls.push(chunk.call);
+      calls.push(normalizeCall(chunk.call));
     }
   }
   if (signal.aborted) throw new TurnAborted('aborted while streaming');
 
   await session.emit({ type: 'model.message', turnId, text, toolCalls: calls });
   return calls;
+}
+
+// The log is JSON, and the log is the source of truth: a fact that cannot survive a
+// JSON round trip cannot be recorded faithfully, and "replay equals the live state"
+// would break silently. This is reachable, not theoretical — `JSON.parse('-0')`
+// really yields -0, and `JSON.stringify(-0)` is "0".
+//
+// Normalizing here, before the call is either recorded or executed, keeps the log
+// equal to what the tool actually ran with. Only values `JSON.stringify` refuses
+// outright (BigInt, cyclic structures) cannot be normalized; those fail the turn.
+function normalizeCall(call: ToolCall): ToolCall {
+  let text: unknown;
+  try {
+    text = JSON.stringify(call.input);
+  } catch {
+    throw new Error(`tool call ${call.callId} (${call.name}) has an input that cannot be written to the log`);
+  }
+  // JSON.stringify(undefined) is undefined rather than a string — but its lib type
+  // says `string`, so keep the result as unknown and check it at runtime.
+  return { ...call, input: typeof text === 'string' ? (JSON.parse(text) as unknown) : null };
 }
 
 async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
