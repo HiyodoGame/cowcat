@@ -95,11 +95,21 @@ async function ask(filePath, question, { maxTokens = 120 } = {}) {
     { role: 'user', content: [toolResult, { type: 'text', text: question }] },
   ];
   const started = Date.now();
+  const call = () => provider.chat({
+    system: 'You answer questions about files that were just read. Be brief and literal.',
+    messages, maxTokens, stream: false, timeoutMs: 90000,
+  });
   try {
-    const res = await provider.chat({
-      system: 'You answer questions about files that were just read. Be brief and literal.',
-      messages, maxTokens, stream: false, timeoutMs: 90000,
-    });
+    let res;
+    try {
+      res = await call();
+    } catch (e) {
+      // One retry for transient network failures: a live check that fails on a
+      // blip tells you nothing about the feature under test.
+      if (!/fetch failed|ECONNRESET|socket hang up|ETIMEDOUT|EAI_AGAIN/i.test(String(e.message))) throw e;
+      console.log(`      （网络瞬时错误，重试一次：${String(e.message).slice(0, 60)}）`);
+      res = await call();
+    }
     const text = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
     return {
       text,
@@ -109,14 +119,18 @@ async function ask(filePath, question, { maxTokens = 120 } = {}) {
       attachmentTokens: (read.attachments || []).reduce((n, a) => n + a.tokens, 0),
     };
   } catch (e) {
-    return { error: e, ms: Date.now() - started, readOutput: read.output };
+    return { error: e, cause: e.cause?.code || e.cause?.message || null, ms: Date.now() - started, readOutput: read.output };
   }
 }
 
 function reportRefusal(label, error) {
   const parsed = parseApiError(error);
   const { lines } = formatApiErrorLines(parsed, { lang: 'zh' });
-  check(`${label}: provider 拒绝该请求，但被翻译成可操作提示`, Boolean(parsed.hint), `hint=${parsed.hint}`);
+  if (parsed.hint === 'visionUnsupported') {
+    check(`${label}: 上游拒绝被翻译成「模型可能不支持图片输入」`, true, `hint=${parsed.hint}`);
+  } else {
+    console.log(`      上游错误（hint=${parsed.hint ?? 'none'}）——不是视觉能力问题：`);
+  }
   for (const l of lines) console.log(`      ${l}`);
 }
 

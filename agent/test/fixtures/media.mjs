@@ -110,8 +110,7 @@ export function makeWebp(width, height) {
 
 // A structurally valid single-page PDF whose content stream is Flate-compressed
 // and draws the given lines with Tj operators.
-export function makePdf(lines) {
-  const body = `BT /F1 12 Tf 72 720 Td ${lines.map((l) => `(${l}) Tj T*`).join(' ')} ET`;
+export function makePdf(lines) {  const body = `BT /F1 12 Tf 72 720 Td ${lines.map((l) => `(${l}) Tj T*`).join(' ')} ET`;
   const stream = deflateSync(Buffer.from(body, 'latin1'));
   let pdf = '%PDF-1.4\n';
   const offsets = [];
@@ -166,4 +165,92 @@ export function makeNotebookBuffer({ indent = '  ', eol = '\n' } = {}) {
   };
   const json = JSON.stringify(nb, null, indent);
   return eol === '\n' ? `${json}\n` : `${json.replace(/\n/g, eol)}${eol}`;
+}
+
+// --- PDF fixtures ------------------------------------------------------------
+
+// Assemble objects into a PDF container. /Length is injected for streams so the
+// fixtures stay readable; the extractor never reads xref, so none is emitted.
+export function assemblePdf(entries) {
+  let pdf = '%PDF-1.4\n';
+  for (const e of entries) {
+    const body = e.stream == null ? null : (Buffer.isBuffer(e.stream) ? e.stream.toString('latin1') : e.stream);
+    const dict = body == null ? e.dict : e.dict.replace('<<', `<< /Length ${body.length}`);
+    pdf += `${e.num} 0 obj\n${dict}\n`;
+    if (body != null) pdf += `stream\n${body}\nendstream\n`;
+    pdf += 'endobj\n';
+  }
+  const size = Math.max(...entries.map((e) => e.num)) + 1;
+  pdf += `trailer\n<< /Size ${size} >>\n%%EOF\n`;
+  return Buffer.from(pdf, 'latin1');
+}
+
+// Minimal PDF whose stream bodies are planted verbatim (used to test the
+// non-content stream filter).
+export function pdfFixture(objects) {
+  let out = '%PDF-1.4\n';
+  objects.forEach((o, i) => {
+    out += `${i + 1} 0 obj\n<< /Length ${o.body.length}${o.extra || ''} >>\nstream\n${o.body.toString('latin1')}\nendstream\nendobj\n`;
+  });
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+// Pack object bodies into an /ObjStm stream, the way PDF 1.5+ generators do
+// (page and font dictionaries commonly live there).
+export function packObjStm(entries, num) {
+  let header = '';
+  let body = '';
+  for (const e of entries) {
+    header += `${e.num} ${body.length} `;
+    body += `${e.dict}\n`;
+  }
+  const first = header.length;
+  return {
+    num,
+    dict: `<< /Type /ObjStm /N ${entries.length} /First ${first} /Filter /FlateDecode >>`,
+    stream: deflateSync(Buffer.from(header + body, 'latin1')),
+  };
+}
+
+// What makeCidPdf's content stream is expected to decode to.
+export const CID_EXPECTED = { hi: 'Hi', cjk: '世界!', incremental: 'ABC' };
+
+// A PDF shaped like real-world documents: a Type0 (CID) font whose strings carry
+// glyph ids, translatable only through the /ToUnicode CMap.
+//   codes 0001-0002 -> Hi   0003-0005 -> 世界!   0010-0012 -> ABC
+// The second Tj is the same "Hi" as an escaped literal string — note the codes
+// must be written as full two-byte units (\000\001\000\002), because with
+// Identity-H a literal string is read two bytes at a time; \001\002 would be the
+// single (unmapped) code 0x0102. With `viaObjStm` the page and font dictionaries
+// are packed into an object stream.
+export function makeCidPdf({ withToUnicode = true, viaObjStm = false } = {}) {
+  const content = [
+    'BT /F1 24 Tf 72 700 Td <00010002> Tj ET',
+    'BT /F1 24 Tf 72 660 Td (\\000\\001\\000\\002) Tj ET',
+    'BT /F1 24 Tf 72 620 Td <000300040005> Tj ET',
+    'BT /F1 24 Tf 72 580 Td <001000110012> Tj ET',
+  ].join('\n');
+  const cmap = [
+    '/CIDInit /ProcSet findresource begin',
+    '12 dict begin begincmap',
+    '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
+    '1 begincodespacerange <0000> <FFFF> endcodespacerange',
+    '2 beginbfchar <0001> <0048> <0002> <0069> endbfchar',
+    '1 beginbfrange <0003> <0005> [<4E16> <754C> <0021>] endbfrange',
+    '1 beginbfrange <0010> <0012> <0041> endbfrange',
+    'endcmap end end',
+  ].join('\n');
+  const page = { num: 3, dict: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>' };
+  const font = { num: 5, dict: `<< /Type /Font /Subtype /Type0 /BaseFont /Sub /Encoding /Identity-H /DescendantFonts [6 0 R]${withToUnicode ? ' /ToUnicode 8 0 R' : ''} >>` };
+  const entries = [
+    { num: 1, dict: '<< /Type /Catalog /Pages 2 0 R >>' },
+    { num: 2, dict: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>' },
+    { num: 4, dict: '<< /Filter /FlateDecode >>', stream: deflateSync(Buffer.from(content, 'latin1')) },
+    { num: 6, dict: '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Sub /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>' },
+    ...(withToUnicode ? [{ num: 8, dict: '<< /Filter /FlateDecode >>', stream: deflateSync(Buffer.from(cmap, 'latin1')) }] : []),
+  ];
+  if (viaObjStm) entries.push(packObjStm([page, font], 9));
+  else entries.push(page, font);
+  return assemblePdf(entries.sort((a, b) => a.num - b.num));
 }

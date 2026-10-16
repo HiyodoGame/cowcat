@@ -14,7 +14,10 @@ import { basename } from 'node:path';
 import { formatBytes } from './imageinfo.js';
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-export const MAX_PDF_BYTES = 10 * 1024 * 1024;
+// Anchored to real data: a 11.7MB national-standard PDF on a dev machine
+// extracted cleanly, while Anthropic's own request ceiling is 32MB (base64
+// inflates by 4/3, so 16MB raw stays comfortably inside it).
+export const MAX_PDF_BYTES = 16 * 1024 * 1024;
 
 export function maxBytesFor(type) {
   return type === 'document' ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;

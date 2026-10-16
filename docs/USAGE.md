@@ -107,7 +107,9 @@ cowcat --resume <file.jsonl>    # 恢复指定会话文件
 | 文件 | 行为 |
 |---|---|
 | 图片（png/jpeg/gif/webp） | 作为图片块交给模型，返回 `[image] a.png — image/png, 1200x800, 234.5 KB (attached for the model)`；上限 5MB |
-| PDF | Anthropic 协议走原生 `document` 块；OpenAI 兼容协议走 best-effort 文本抽取——**只对简单编码的 PDF 有效**，现代 PDF（CID/内嵌字体编码、扫描件）会被明确拒绝并给出理由，需先转文本。上限 10MB（Anthropic 端点仍是最可靠的读 PDF 方式） |
+| PDF | Anthropic 协议走原生 `document` 块；OpenAI 兼容协议走**本地文本抽取（含 ToUnicode CMap 解析）**，能读现代 PDF（CID 子集字体 + 字符映射）。上限 16MB。抽不出可读文本时明确拒绝并说明原因（扫描件没有文本层 / 缺 ToUnicode 映射 / 码表覆盖率过低），不喂乱码 |
+
+PDF 抽取的真实表现（本机实测，`docs/fix-plan-2026-10-15.md` 第十一/十二轮）：4 份真实 PDF 中 2 份成功——包括一份 **11.7MB 的中文国标（22507 字符，100% 可打印，汉字占 22%）**；1 份中文合同因内嵌字体编码仍被拒；1 份扫描件本就没有文本层（正确拒绝）。原则是**只给能诚实解码的文本**。
 | `.ipynb` | 按单元格渲染（`--- cell [n] type ---` + 编号源码 + `--- output [n.m] ---`）；输出里的图片只标注大小，不上传 |
 | bmp / tiff / ico / avif / heic | 明确拒绝，提示先转换 |
 

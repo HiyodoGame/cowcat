@@ -5,16 +5,17 @@
 > **Notebook 读写配对一次做完**。
 > 版本：本批次完成后记 `0.13.0`（按 ROADMAP 执行原则 1：实现 + 测试 + 文档 + 版本号）。
 
-## 0. 实施状态（0.13.0，已发布 2026-10-16）
+## 0. 实施状态（0.13.0 已发布；PDF 部分在 0.14.0 重做，见下）
 
-**已按本方案实现并发布**，与方案的差异、本轮发现并修复的两个既有 P1 缺陷、以及验证结果记录在
-`docs/fix-plan-2026-10-15.md` 的「第十轮」段。要点：
+**已按本方案实现并发布**，与方案的差异、发现并修复的缺陷、以及验证结果记录在
+`docs/fix-plan-2026-10-15.md` 的「第十轮」（本批）与「第十一/十二轮」（真机验证 → CMap）。
 
-- `npm test` 656 passed / 0 failed（新增 63 项）；6 个 MCP 联调脚本全绿。
+- `npm test` 674 passed / 0 failed（0.13.0 时 656 + 16 项 pdftext）；6 个 MCP 联调脚本全绿。
 - registry：`@corescense/cowcat@0.13.0`（99 files，`dist.shasum` 与本地打包一致），官方源隔离安装验证通过。
 - 与方案的偏差：① PDF 的 best-effort 文本抽取**已实现**（原列为可选）；② notebook 渲染截断按**字符数**（20000/输出、400KB/整册）而非「2000 行 / 100KB」；③ `NotebookEdit` 的 insert 语义在工具描述与测试里固化为「插在 `cell_index` 处，原单元格顺延」。
 - 本方案 §3.3 的「附件只存引用」不变式已落实：图片字节不落会话、`/export`、compact、`/context`。
-- 下面 §1 的「不做」清单里，notebook output 内嵌图片、CMap 解析、图片压缩、SVG 栅格化仍未做（保持后置）。
+- **§3.5 的 PDF 部分已被真机验证推翻并重做**（0.14.0，未发布）：原方案把 CMap 缺失列为「已知局限、质量门挡住最差情况」，实测那是常态（4/4 真实 PDF 被拒）；现已实现 `src/pdfcmap.js` + `src/pdfobj.js` 的 ToUnicode CMap 解码，真实 PDF 变 2/4 可抽取（含 11.7MB 中文国标），PDF 上限提到 16MB。
+- 仍未做（保持后置）：notebook output 内嵌图片、图片压缩、SVG 栅格化；以及无 ToUnicode 映射的自定义字形编码（如那份银行表单）。
 
 ## 1. 范围
 
@@ -105,11 +106,14 @@ visionSupport(config) -> 'yes' | 'no' | 'unknown'
 
 ### 3.5 PDF 策略
 
-- **Anthropic 协议**：原生 `document` 块（base64，`media_type: application/pdf`），单文件上限 10MB。
-- **OpenAI 兼容协议**：新增 `src/pdftext.js`（零依赖，用内置 `zlib` inflate 流 + 文本操作符扫描：`Tj`/`TJ`/`'`/`"`）做 **best-effort 文本抽取**，带质量门：
-  - 抽出的可打印文本 < 200 字符，或替换字符占比 > 30% → **判定失败**，返回明确错误（建议换视觉模型或先转文本），而不是把乱码喂给模型；
-  - 成功则返回文本 + 一行来源说明（`[PDF text extracted best-effort; complex/CID-encoded PDFs may lose characters]`）。
-  - 已知局限（写进代码注释与文档）：不处理 ToUnicode CMap，CJK 字体可能丢字或乱码——质量门会挡住最差情况，但抽出的文本仍需模型自行判断。
+- **Anthropic 协议**：原生 `document` 块（base64，`media_type: application/pdf`），单文件上限 **16MB**（0.14.0 起；原 10MB 被一份 11.7MB 的真实标准文档撞到）。
+- **OpenAI 兼容协议**：`src/pdftext.js`（零依赖）做**本地文本抽取**，分三层：
+  - `src/pdfobj.js` 解析对象（含 `/ObjStm` 内对象）、页面树、`/Contents` 与 `/Resources`/`/Font`；
+  - `src/pdfcmap.js` 解析字体 `/ToUnicode` CMap（`bfchar`/`bfrange`/码宽）；
+  - `pdftext.js` 按 `Tf` 跟踪当前字体、用 CMap 把字串（含字形 id）翻成字符，没有映射的 CID 字体**不回退 Latin-1**（只计未映射）。
+  - 两道守卫：码表覆盖率 < 50%（样本 ≥ 8 码）拒绝；整篇无页面结构却存在无 ToUnicode 的 CID 字体 → 拒绝。质量门（可打印比例 + 最小长度）保留为最后一道。
+  - 无法诚实解码时返回明确错误（扫描件 / 无映射的自定义字形编码），并建议先转文本。
+  - **实测**（`agent/test/live/pdf-extract-report.mjs`，只输出统计量）：现代 PDF（CID 子集字体 + ToUnicode）可读，含中文；4 份真实 PDF 中 2 份成功。
 
 ### 3.6 Notebook 读取与编辑
 
@@ -151,7 +155,7 @@ visionSupport(config) -> 'yes' | 'no' | 'unknown'
 
 **离线（`npm test`，可在无凭据机器跑）**
 - 图片：真实最小 PNG/JPEG/GIF/WEBP 字节 → 附件形状、`mediaType`、`tokens>0`；`Read` 打开图片不再报 binary。
-- 上限：图片 > 5MB、PDF > 10MB、目录 `attachment:false`、`COWCAT_VISION=off` → 各自的拒绝文案。
+- 上限：图片 > 5MB、PDF > 16MB、目录 `attachment:false`、`COWCAT_VISION=off` → 各自的拒绝文案。
 - 门控：`unknown` 放行 + `COWCAT_VISION=force` 覆盖。
 - PDF：Anthropic 侧出现 `document` 块；OpenAI 侧成功抽取（fixture）与无文本 PDF 的失败文案。
 - 翻译：Anthropic `tool_result.content` 数组含 text+image；OpenAI 输出顺序为 `assistant(tool_calls)` → `tool` → `user(image_url)`。
@@ -187,9 +191,10 @@ visionSupport(config) -> 'yes' | 'no' | 'unknown'
 ## 7. 后续可选项（不阻塞本批次）
 
 - notebook output 内嵌图片回传（需给附件加 base64 兜底 + 大小预算）。
-- PDF 抽取增强（ToUnicode CMap 解析）或引入可选的本地 `pdftotext` 调用。**实测这已是 PDF 支持的主要缺口**：真实 PDF（现代生成器、CJK、扫描件）基本都靠 CMap 把字节映射成字符，不解析就只能拒绝——本机 4 份真实 PDF 4/4 拒绝。
+- PDF：无 ToUnicode 映射的自定义字形编码（如 AGL 字形名表 / `/Differences` 映射），以及扫描件的 OCR——当前一律明确拒绝。
+- 可选：在检测到本地 `pdftotext` 时调用它作为交叉校验（零依赖原则下不做默认路径）。
 
-## 真机验证（0.13.0 发布后补做 → 0.13.1）
+## 真机验证（0.13.0 发布后补做 → 0.14.0）
 
 新增两个 live 脚本（不进 `npm test`，需要已配置的 provider + 真实 key）：
 
@@ -198,7 +203,7 @@ visionSupport(config) -> 'yes' | 'no' | 'unknown'
 
 结果（`zai-coding-plan` / `glm-5.3-flash`，OpenAI 协议）：图片 ✅（估算 160 vs 上游 `prompt_tokens` 336）、notebook ✅、合成简单 PDF ✅、**真实 PDF 4/4 拒绝**、CLI 端到端 ✅。
 
-**PDF 的实测结论比 §3.5 的预期悲观，因此实现与文案都改了**（详见 `docs/fix-plan-2026-10-15.md` 第十一轮）：
+**PDF 的实测结论比 §3.5 的预期悲观，因此实现与文案都改了**（详见 `docs/fix-plan-2026-10-15.md` 第十一/十二轮）：
 
 1. 抽取器原本 inflate 每一个 Flate 流，连嵌入字体程序/ICC/XMP 元数据一起扫 → 二进制垃圾混入正文、可打印比例被拉低（一份 1MB 英文规范 `Type0`=0 却量出 33% 非可打印）。改为按**当前对象**的字典跳过字体/图片/元数据/对象流；`/Form` 故意不跳过（页面文本可以存在于 form XObject）。
 2. 新增 CID 字体（`/Type0` 且无 `/ToUnicode`）的**结构性前置拒绝**，提示更准确（扫描件由此命中）。

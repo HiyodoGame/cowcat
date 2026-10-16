@@ -1,14 +1,14 @@
 # CowCat changelog
 
-## 0.13.1（未发布）— 真机多模态验证后的 PDF 抽取修正
+## 0.14.0（未发布）— PDF：ToUnicode CMap 解析（含 0.13.1 的真机抽取修正）
 
 0.13.0 发布后做了真实多模态冒烟（新增 `agent/test/live/multimodal.mjs`、`agent/test/live/multimodal-cli.mjs`）。
-图片与 notebook 两条路径真机通过；**PDF 在 OpenAI 兼容协议上实测基本不可用**（本机 4 份真实 PDF 4/4 被拒），据此修了三处：
+图片与 notebook 两条路径真机通过；**PDF 在 OpenAI 兼容协议上实测基本不可用**（本机 4 份真实 PDF 4/4 被拒），先修了三处抽取缺陷，随后补上 **ToUnicode CMap 解析**——真实 PDF 从 0/4 变为 2/4 可抽取（含一份 11.7MB 中文国标）。0.13.1 未发布过，其内容并入本版一次记档。
 
 - **修复（既有缺陷）：抽取器把无关流当页面文本扫**。原来 inflate 每一个 Flate 流，连嵌入字体程序/ICC/XMP 元数据一起扫，产出二进制垃圾并拉低可打印比例（实测一份 1MB 英文规范 `Type0`=0、却量出 33% 非可打印）。现在按**当前对象**的字典跳过 `/Subtype` 为 `Type1C|CIDFontType0C|CIDFontType2|OpenType|TrueType|Type0|Type3|XML|Image` 的流、`/Type` 为 `Metadata|ObjStm|XRef|EmbeddedFile` 的流、以及 `/FontFile*`；`/Form` 故意不跳过——页面文本可以合法地存在 form XObject 里。
   - 修这里时踩到自己一个坑（已有测试锁住）：字典窗口原本取 stream 前 600 字节，会把**上一个对象**的字典也框进来——一个字体流紧挨着页面流时，页面流会被误判跳过，正文整段消失。改为从当前对象的 `obj` 起算。
 - **新增：CID 字体的结构性前置拒绝**。检测到 PDF 含 `/Type0`（CID 字体，字串里是字形 id 而非字符）且无 `/ToUnicode` 时直接拒绝并说明，而不是先抽出一堆乱码再靠比例判定（本机扫描件由此命中，提示更准确）。
-- **文案诚实化**：质量门失败时的提示不再断言“glyph-encoded fonts without a ToUnicode map”（ToUnicode 存在时这句是错的），改为“这份 PDF 的文本编码需要真正的 PDF 解析器（内嵌字体编码 / CMap），请先转文本”；`Read` 的工具描述也写明：OpenAI 兼容协议下 PDF 基本等于“先转文本”，要原生读 PDF 用 Anthropic 协议端点。
+- **文案诚实化**：质量门失败时的提示不再断言“glyph-encoded fonts without a ToUnicode map”（ToUnicode 存在时这句是错的），改为“这份 PDF 的文本编码需要真正的 PDF 解析器（内嵌字体编码 / CMap），请先转文本”。（本版随后补上 CMap 解析，见下。）
 
 真机结论（`zai-coding-plan` / `glm-5.3-flash`，OpenAI 协议；详见 `docs/fix-plan-2026-10-15.md` 第十一轮）：
 
@@ -20,7 +20,32 @@
 | 本机 4 份真实 PDF（英文规范 / 中文合同 / 扫描件 / 11.7MB 国标） | ⛔ 4/4 按设计拒绝（超限 1 份，其余文本编码不可解），拒绝理由各自准确 |
 | CLI 端到端 | ✅ 未信任目录（只读 plan）下模型仍能读图；已信任目录 `-y` 下模型调用 `NotebookEdit` 落盘，且未改动该目录任何文件 |
 
-所以文档不再笼统写“支持 PDF”，而是写“简单编码的 PDF 可抽；其余会明确拒绝并建议先转文本；原生读 PDF 需 Anthropic 协议端点”。
+### 新增：ToUnicode CMap 解析（本版主要工作）
+
+PDF 里 CID/Identity 编码的字串存的是**字形 id**，只有字体自带的 `/ToUnicode` 流能把它们翻回字符。三个新模块零依赖实现这条链路：
+
+- `src/pdfcmap.js`：解析 `/ToUnicode` CMap —— `begincodespacerange`（判定 1/2 字节码宽）、`beginbfchar`、`beginbfrange`（含 `[<..> <..>]` 数组形式与递增形式）；目标按 UTF-16BE 解码（容忍只写单字节 ASCII 的写法），支持「一个码 → 多字符」（连字）。递增只覆盖 BMP 范围（跨代理对的区间无法这样表示）。
+- `src/pdfobj.js`：轻量对象层 —— 经典 `N 0 obj … endobj` 扫描 + **`/ObjStm` 内对象展开**（现代生成器把页面/字体字典放进对象流）+ 按对象字典做 Flate 解压 + 平衡括号的字典取值 + `/Pages`→`/Contents`→`/Resources`→`/Font` 关联；`/Resources` 是间接对象、或页面继承父节点资源，都能解析。
+- `src/pdftext.js` 改为**页面感知**抽取：逐页取内容流，跟 `Tf` 跟踪当前字体，字串按该字体的 CMap 解码（2 字节/1 字节码宽各自处理）；**没有可用映射的 CID 字体不再回退 Latin-1**（那正是乱码来源），只计入「未映射」统计。没有页面结构时才回退到原来的全流扫描。
+- **两道新守卫**：① 码表覆盖率 < 50%（样本 ≥ 8 个码）→ 拒绝，避免「大部分码没映射、剩下的恰好长得像文字」被当成结果；② 整篇没有页面结构（只能字体无关地扫）而文档里又存在无 ToUnicode 的 CID 字体 → 拒绝，不给「可能是字形 id 的可打印文本」背书。
+- 顺带修掉真机挖出的缺陷：内容流里的**内联图片**（`BI … ID <二进制> EI`）此前被当文本扫——那是那份 1MB 英文规范 33% 非可打印的最大来源。
+
+### 真实 PDF 度量（`agent/test/live/pdf-extract-report.mjs`，只输出统计量、不打印内容）
+
+| 文件 | CMap 之前 | 现在 |
+|---|---|---|
+| 1MB 英文规范（7 页，135 个子集字体） | ⛔ 33% 非可打印 | ✅ 14953 字符，97% 可打印，码表覆盖 86% |
+| 11.7MB 中文国标（19 页） | ⛔ 78% 非可打印 | ✅ **22507 字符，100% 可打印，汉字占 22%**，码表覆盖 100% |
+| 47KB 中文合同（银行表单） | ⛔ 69% | ⛔ 仍拒绝（34%）：自定义字形编码且无 ToUnicode |
+| 420KB 扫描件 | ⛔ | ⛔ 仍拒绝（正确：本无文本层） |
+
+**现代 PDF（CID 子集字体 + ToUnicode）现在能读，含中文；无映射的与扫描件仍明确拒绝。** PDF 上限由 10MB 提到 **16MB**（被那份 11.7MB 国标撞到；仍远低于 Anthropic 的 32MB 请求上限）。
+
+### 验证
+
+- `npm test` **674 passed / 0 failed**（新增 16 项 `test/pdftext.test.mjs`：CMap 的 bfchar/bfrange/码宽、对象层与 `/ObjStm`、`/Resources` 间接引用与继承、CID 解码、码表覆盖率拒绝、1 字节简单字体映射、无页面结构回退等）。
+- live：`multimodal.mjs`（合成 PDF 现已走新 CMap 路径 ✅）、`multimodal-cli.mjs`、`pdf-extract-report.mjs`。
+- 真实 PDF 度量**只输出统计量**：这些是本机私人文档，内容不出进程（要发给模型需用户显式同意）。
 
 ## 0.13.0（2026-10-16）— Read 多模态（图片 / PDF / notebook）+ NotebookEdit
 

@@ -337,7 +337,7 @@ test('Read: an oversized PDF is refused', () => {
   const path = writeFixture(dir, 'big.pdf', Buffer.concat([makePdf(['hi']), Buffer.alloc(MAX_PDF_BYTES)]));
   const res = ReadTool.execute({ file_path: path }, ctxFor(dir, { model: VISION_MODEL, provider: 'deepinfra', protocol: 'anthropic' }));
   assert.equal(res.ok, false);
-  assert.match(res.error, /limit for model PDF input is 10\.0 MB/);
+  assert.match(res.error, /limit for model PDF input is 16\.0 MB/);
 });
 
 test('pdftext: inflates FlateDecode streams and reports quality failures', () => {
