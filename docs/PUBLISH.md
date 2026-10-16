@@ -65,6 +65,12 @@ npm publish --access=public   # 首次发布（scoped 公开包；package.json �
 >
 > 不想用 .npmrc 时也可以临时指定：`npm publish --registry=https://registry.npmjs.org`。
 
+> **发布前先确认凭据还有效**（v0.14.1 发布时踩到）：`npm whoami --registry=https://registry.npmjs.org`
+> 返回 `E401 Unauthorized`，或 `npm publish` 报
+> `E404 … The requested resource '@corescense/cowcat@X.Y.Z' could not be found or you do not have permission`
+> —— **scoped 包的 PUT 在未授权时会被 npm 伪装成 404**（避免泄漏包是否存在），别把它当成「包名写错」或「版本已存在」。
+> 处置：`npm login --auth-type=web`（浏览器完成 2FA）刷新 token 后再发。**这一步无法由脚本代做**，必须先有人在浏览器里过 2FA。
+
 > **新 scope 首发会走 staged publishing**（2026 起 npm 默认安全机制）：CLI 显示成功后，包其实进了暂存区，registry 会先有 `0.0.0-stage` 占位版本。必须登录 npm 网页打开包页面，点 **Approve / Publish**（要 2FA）才真正上线；此前 `npm i` 会得到 404，且 registry 的 404 有 CDN 缓存，批准后可能还要等 1-2 分钟才能安装到。
 
 ### 暂存期的三个实测坑（v0.12.0 发布时踩到）

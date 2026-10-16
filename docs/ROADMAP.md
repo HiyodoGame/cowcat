@@ -13,7 +13,7 @@
 - GCS 自动更新器（npm 分发已覆盖，原生自更新不做）
 - 插件**市场**体系（marketplace 下载渠道）；但本地插件目录加载机制保留在 P2 评估
 
-## 1. 现状快照（v0.14.0 已发布 2026-10-16；0.14.1 未发布：675 tests 全绿 + ESLint 门禁 + GitHub Actions CI 全绿）
+## 1. 现状快照（v0.14.1 已发布 2026-10-16；675 tests 全绿 + ESLint 门禁 + GitHub Actions CI 全绿 + main 分支保护已启用）
 
 > v0.12.0 发布收尾过程中另修：MCP 握手的 `clientInfo.version` 从硬编码 `0.5.0` 改为读 `package.json`（单一版本源）；`Glob` 的 `path` 参数崩溃与 `/output-style` 未接线（见 `docs/fix-plan-2026-10-15.md` 第六轮）。
 
