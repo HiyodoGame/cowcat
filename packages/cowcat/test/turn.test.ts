@@ -9,7 +9,7 @@ import {
   type KernelEvent,
   type ToolPort,
 } from '../src/index.js';
-import { fixedClock, MemoryEventStore, ScriptedModel, sequentialIds, tool } from './support.js';
+import { MemoryEventStore, ScriptedModel, sequentialIds, sessionDeps, tool } from './support.js';
 
 const readTool: ToolPort = tool({ name: 'read_file', description: 'read', risk: 'read' }, () => ({
   ok: true,
@@ -21,13 +21,13 @@ const writeTool: ToolPort = tool({ name: 'write_file', description: 'write', ris
   output: 'written',
 }));
 
-function setup(
+async function setup(
   model: ScriptedModel,
   tools: ToolPort[],
   approve: (r: ActionRequest) => Promise<boolean> = () => Promise.resolve(true),
 ) {
   const store = new MemoryEventStore();
-  const session = Session.create({ store, clock: fixedClock(), ids: sequentialIds() }, 'sess_1');
+  const session = await Session.create(sessionDeps(store), 'sess_1');
   const deps = {
     session,
     model,
@@ -43,7 +43,7 @@ const types = (events: readonly KernelEvent[]) => events.map((e) => e.type);
 
 test('a plain answer completes the turn in one model call', async () => {
   const model = new ScriptedModel([[{ type: 'text', text: 'hello' }]]);
-  const { store, session, deps } = setup(model, []);
+  const { store, session, deps } = await setup(model, []);
   const outcome = await runTurn(deps, 'hi', new AbortController().signal);
 
   assert.deepEqual(outcome, { state: 'completed', reason: null });
@@ -53,6 +53,7 @@ test('a plain answer completes the turn in one model call', async () => {
     { role: 'assistant', text: 'hello', toolCalls: [] },
   ]);
   assert.deepEqual(types(store.events), [
+    'session.opened',
     'turn.opened',
     'turn.transitioned', // idle -> requesting
     'turn.transitioned', // requesting -> streaming
@@ -64,7 +65,7 @@ test('a plain answer completes the turn in one model call', async () => {
 
 test('streamed text is shown live but never written to the log', async () => {
   const model = new ScriptedModel([[{ type: 'text', text: 'he' }, { type: 'text', text: 'llo' }]]);
-  const { store, session, deps } = setup(model, []);
+  const { store, session, deps } = await setup(model, []);
   const deltas: string[] = [];
   session.subscribe((u) => {
     if (u.type === 'model.delta') deltas.push(u.text);
@@ -81,7 +82,7 @@ test('a read tool runs without asking and its result reaches the next model call
     [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: { path: 'a' } } }],
     [{ type: 'text', text: 'done' }],
   ]);
-  const { session, deps } = setup(model, [readTool]);
+  const { session, deps } = await setup(model, [readTool]);
   const outcome = await runTurn(deps, 'read it', new AbortController().signal);
 
   assert.equal(outcome.state, 'completed');
@@ -100,7 +101,7 @@ test('a write tool is asked about, and a rejection is reported to the model inst
     [{ type: 'tool_call', call: { callId: 'c1', name: 'write_file', input: {} } }],
     [{ type: 'text', text: 'ok, skipping' }],
   ]);
-  const { session, deps } = setup(model, [writeTool], async (r) => {
+  const { session, deps } = await setup(model, [writeTool], async (r) => {
     asked.push(r.name);
     return false;
   });
@@ -121,7 +122,7 @@ test('a denied action never reaches the tool', async () => {
     [{ type: 'tool_call', call: { callId: 'c1', name: 'rm_all', input: {} } }],
     [{ type: 'text', text: 'ok' }],
   ]);
-  const { deps } = setup(model, [guarded]);
+  const { deps } = await setup(model, [guarded]);
   deps.rules = [{ name: 'no-rm', matches: (r) => r.name === 'rm_all', verdict: 'deny', reason: 'never' }];
   await runTurn(deps, 'go', new AbortController().signal);
 
@@ -136,7 +137,7 @@ test('a tool that throws becomes a failed tool result, not a failed turn', async
     [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: {} } }],
     [{ type: 'text', text: 'recovered' }],
   ]);
-  const { session, deps } = setup(model, [boom]);
+  const { session, deps } = await setup(model, [boom]);
   const outcome = await runTurn(deps, 'x', new AbortController().signal);
 
   assert.equal(outcome.state, 'completed');
@@ -150,7 +151,7 @@ test('a tool that throws becomes a failed tool result, not a failed turn', async
 
 test('a model error fails the turn with its reason, and the log says so', async () => {
   const model = new ScriptedModel([new Error('upstream 503')]);
-  const { store, session, deps } = setup(model, []);
+  const { store, session, deps } = await setup(model, []);
   const outcome = await runTurn(deps, 'hi', new AbortController().signal);
 
   assert.deepEqual(outcome, { state: 'failed', reason: 'upstream 503' });
@@ -161,7 +162,7 @@ test('a model error fails the turn with its reason, and the log says so', async 
 
 test('aborting before the call cancels without calling the model', async () => {
   const model = new ScriptedModel([[{ type: 'text', text: 'never' }]]);
-  const { session, deps } = setup(model, []);
+  const { session, deps } = await setup(model, []);
   const ctrl = new AbortController();
   ctrl.abort();
   const outcome = await runTurn(deps, 'hi', ctrl.signal);
@@ -176,7 +177,7 @@ test('replaying the log reproduces the live session state exactly', async () => 
     [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: {} } }],
     [{ type: 'text', text: 'final' }],
   ]);
-  const { store, session, deps } = setup(model, [readTool]);
+  const { store, session, deps } = await setup(model, [readTool]);
   await runTurn(deps, 'go', new AbortController().signal);
 
   assert.deepEqual(replay('sess_1', store.events), session.state);
@@ -184,8 +185,8 @@ test('replaying the log reproduces the live session state exactly', async () => 
 
 test('a session reopened from the store continues where it stopped', async () => {
   const store = new MemoryEventStore();
-  const deps = { store, clock: fixedClock(), ids: sequentialIds() };
-  const first = Session.create(deps, 'sess_2');
+  const deps = sessionDeps(store);
+  const first = await Session.create(deps, 'sess_2');
   await runTurn(
     { session: first, model: new ScriptedModel([[{ type: 'text', text: 'one' }]]), tools: new Map(), rules: DEFAULT_RULES, approve: async () => true, ids: sequentialIds() },
     'first',

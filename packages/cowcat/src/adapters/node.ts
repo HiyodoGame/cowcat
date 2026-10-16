@@ -39,10 +39,14 @@ export class JsonlEventStore implements EventStore {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     }
-    return raw
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map((line, index) => {
+    const lines = raw.split('\n').filter((line) => line.length > 0);
+    // append() always writes a whole line, so a log that exists and holds nothing
+    // is not something this store produced. Reporting it as corrupt keeps it from
+    // being extended into a headerless log (ADR-012).
+    if (lines.length === 0) {
+      throw new Error(`corrupt session log ${sessionId}.jsonl: missing session header`);
+    }
+    return lines.map((line, index) => {
         try {
           return JSON.parse(line) as KernelEvent;
         } catch {

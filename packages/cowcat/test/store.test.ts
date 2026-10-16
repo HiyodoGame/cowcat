@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonlEventStore, Session, DEFAULT_RULES, runTurn, replay } from '../src/index.js';
-import { fixedClock, ScriptedModel, sequentialIds } from './support.js';
+import { ScriptedModel, sequentialIds, sessionDeps } from './support.js';
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'cowcat-core-'));
@@ -14,8 +14,8 @@ test('JSONL store round-trips a full turn to disk and replays identically', asyn
   const dir = tempDir();
   try {
     const store = new JsonlEventStore(dir);
-    const deps = { store, clock: fixedClock(), ids: sequentialIds() };
-    const session = Session.create(deps, 'sess_disk');
+    const deps = sessionDeps(store);
+    const session = await Session.create(deps, 'sess_disk');
     await runTurn(
       {
         session,

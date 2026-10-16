@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import type { ModelChunk, ModelPort, ModelRequest, EventStore, Clock, IdSource, ToolPort, ToolSpec, ToolResult } from '../src/index.js';
+import type { ModelChunk, ModelPort, ModelRequest, EventStore, Clock, IdSource, ToolPort, ToolSpec, ToolResult, SessionDeps } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -27,6 +27,12 @@ export function sequentialIds(): IdSource {
       return `${prefix}_${String(n)}`;
     },
   };
+}
+
+// One place to build SessionDeps: it grows with each P1 task (cowcatVersion now,
+// lock and snapshots later), and tests should not each carry the whole shape.
+export function sessionDeps(store: EventStore, cowcatVersion = '0.0.0-test'): SessionDeps {
+  return { store, clock: fixedClock(), ids: sequentialIds(), cowcatVersion };
 }
 
 // Each entry is what one model call yields. The requests it received are kept

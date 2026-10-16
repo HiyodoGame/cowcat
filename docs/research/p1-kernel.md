@@ -407,6 +407,20 @@ npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.2
 
 ---
 
+## 8. 实现后的偏差记录
+
+> 工作规则 6：区分「已验证」与「推测」。本节记录实现落地时与本文档结论不一致的地方及原因，随每个 P1 任务的 PR 追加。
+
+| 任务 | 偏差 | 原因 |
+|---|---|---|
+| T1 会话头 | 头字段由 `{ schemaVersion, createdAt, cowcatVersion }` 改为 `{ schemaVersion, cowcatVersion }`（§5 行1 的原字段集合） | `EventBase` 已有 `ts`，由 `emit` 用 `clock.now()` 填写；`createdAt` 是同一事实的第二份副本，两者不一致时无法判断以谁为准 |
+| T1 会话头 | 裁决表更正：新增「`create` 的目标已有事件 → 拒绝」，并把「文件不存在 → 空状态」改为「`open` 拒绝（会话不存在）」 | 原表述开了一条把日志写坏的路：`open` 不写头（正确决定），却允许在空日志上继续 `emit`，于是写出无头日志；而首行不是头即损坏，该日志**永久打不开**。实现时发现，随 T1 一并修正 ADR-012 |
+| T1 会话头 | 「首行不是 `session.opened`」当前由内核判定，适配器只判「存在但没有任何非空行」 | zod 在 T2 才引入。T2 落地后逐行结构校验（含首行）归适配器，内核保留版本兼容判定，§2.4 的分工不变 |
+
+**T1 的验证证据**：`packages/cowcat` 的 `npm test` 由 22 项增至 **30** 项（build + ESLint + 测试全通过，本机 Windows / Node `v24.18.0`）。新增 `test/header.test.ts` 覆盖：头作为首条事件写入、磁盘往返后头仍在、`create` 重复被拒、`open` 不存在被拒、无头日志被拒、未知 `schemaVersion` 报错（含 `found` 与 `supported` 字段）、空文件判损坏、同一日志里的第二个头判损坏。
+
+---
+
 ## 附录 A：单进程原语探针（`lock-probe.mjs`）
 
 ```js

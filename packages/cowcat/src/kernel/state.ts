@@ -23,6 +23,12 @@ export function initialState(sessionId: string): SessionState {
 export function reduce(state: SessionState, event: KernelEvent): SessionState {
   const base = { ...state, lastSeq: event.seq };
   switch (event.type) {
+    case 'session.opened': {
+      // The header is the log's first fact by construction. Anything else means
+      // the file was appended to without one (ADR-012).
+      if (state.lastSeq !== 0) throw new Error('corrupt log: session.opened is not the first event');
+      return base;
+    }
     case 'turn.opened': {
       if (event.turnId === null) throw new Error('turn.opened without turnId');
       return {
