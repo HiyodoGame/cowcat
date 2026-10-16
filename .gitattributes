@@ -1,0 +1,9 @@
+# Line endings: LF in the repository AND in every checkout.
+#
+# Why pin it: a CRLF shell script is a hard failure on POSIX — a CRLF `set -eu`
+# raises "set: -: invalid option" (measured on .githooks/pre-push, which was
+# checked out CRLF by core.autocrlf=true and then refused to run under sh).
+# Hooks, tools/*.sh and the CI steps are shared between this Windows dev machine
+# and Linux CI, so the whole tree is normalized instead of chasing exceptions.
+# text=auto keeps binary files (images, .tgz, font programs) untouched.
+* text=auto eol=lf
