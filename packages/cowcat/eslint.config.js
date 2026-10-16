@@ -28,6 +28,15 @@ export default tseslint.config(
               group: ['node:*', 'fs', 'fs/*', 'path', 'child_process', 'os', 'crypto'],
               message: 'kernel, policy and ports stay runtime-agnostic; put Node code in src/adapters',
             },
+            {
+              // A separate pattern on purpose: folding zod into the group above
+              // would report it with the Node message, which points at the wrong
+              // reason. Decoding is a boundary concern and belongs in src/adapters
+              // (ADR-009).
+              group: ['zod', 'zod/*'],
+              message:
+                'schemas belong to the decoding boundary; keep zod in src/adapters and let the kernel work on typed events (ADR-009)',
+            },
           ],
         },
       ],

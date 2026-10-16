@@ -21,14 +21,18 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `@types/node` | ^22 | 开发：类型 | 与最低运行时 Node 22 对齐，避免用到 22 没有的 API 却通过了类型检查 |
 | `eslint` | 10.13.0 | 开发：lint | 与仓库既有 lint 栈一致 |
 | `typescript-eslint` | 8.71.2 | 开发：TS 规则 | 使用 `strictTypeChecked`；测试目录对 `no-floating-promises` 与 `require-await` 放宽（见 eslint.config.js 注释） |
+| `zod` | `^4.6.7`（当前 4.6.7） | **运行时**：日志解码的结构校验 | 只允许出现在 `src/adapters/`，由 lint 单独一条 pattern 强制。JSON Schema 转换内置，省掉 P5 与模型交互的一个依赖。选型对比、被否决的方案与保留的重估条件见 [../research/p1-kernel.md](../research/p1-kernel.md) §2 |
 
-运行时依赖：**当前为零**。
+运行时依赖：**1 个**（`zod`）。上限 6，每引入一个都要有 ADR。
+
+**边界纪律**（ADR-009）：`zod` 只允许出现在 `src/adapters/`。日志解码是适配器的职责，内核／策略／端口三层必须只看到类型化的事件。这条由 lint 强制——`eslint.config.js` 里给 `zod` 单独加了一条 `no-restricted-imports` pattern，**不能**把它并进 `node:*` 那一组，否则报错文案会指向「运行时相关」这个错误的原因。
+
+内核的事件联合类型与适配器的 schema 是同一个格式的两份手写描述，因此用**编译期等价断言**钉住（`test/schema.test.ts`）：两份一旦漂移就构建失败，而不是等到某天把内核自己写的日志报成「损坏」。
 
 ## 计划中的依赖（按阶段引入，引入时各写一条 ADR）
 
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
-| `zod` | P1 | 数据校验 | 版本 4.6.7。只用于边界：配置文件、模型响应、工具入参、日志解码。TS 类型从 schema 推导，避免类型与校验各写一份。替代方案 valibot / typebox 未做对比，P1 开始前补一轮 |
 | `@anthropic-ai/sdk` 与 `openai` | P4 | 模型协议 | 候选。两者负责协议、流式解析与重试，符合判断标准 1。国产厂商大多提供 OpenAI 兼容端点，故 `openai` 是主力。**是否采用、是否需要 Anthropic 官方 SDK 才能覆盖 Claude 端点，P4 调研后定** |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 | `fast-check` | P1 | 属性测试 | 候选，用于验证「回放等于实时状态」对任意事件序列成立。开发依赖 |

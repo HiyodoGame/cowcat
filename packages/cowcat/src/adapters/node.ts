@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { KernelEvent } from '../kernel/events.js';
 import { LockHeldError, type Clock, type EventStore, type IdSource, type LockPort, type SessionLock } from '../ports/index.js';
+import { decodeEventLine } from './schema.js';
 
 export const systemClock: Clock = { now: () => Date.now() };
 
@@ -44,16 +45,24 @@ export class JsonlEventStore implements EventStore {
     // append() always writes a whole line, so a log that exists and holds nothing
     // is not something this store produced. Reporting it as corrupt keeps it from
     // being extended into a headerless log (ADR-012).
-    if (lines.length === 0) {
+    const [first, ...rest] = lines;
+    if (first === undefined) {
       throw new Error(`corrupt session log ${sessionId}.jsonl: missing session header`);
     }
-    return lines.map((line, index) => {
-      try {
-        return JSON.parse(line) as KernelEvent;
-      } catch {
-        throw new Error(`corrupt session log ${sessionId}.jsonl at line ${String(index + 1)}`);
-      }
-    });
+    // The header is decoded and checked before the rest, so a log whose overall
+    // shape is wrong fails on line 1 instead of on whichever line breaks first.
+    const header = decodeEventLine(first, `${sessionId}.jsonl at line 1`);
+    if (header.type !== 'session.opened') {
+      throw new Error(
+        `corrupt session log ${sessionId}.jsonl at line 1: expected a session header, found ${header.type}`,
+      );
+    }
+    return [
+      header,
+      ...rest.map((line, index) =>
+        decodeEventLine(line, `${sessionId}.jsonl at line ${String(index + 2)}`),
+      ),
+    ];
   }
 }
 
