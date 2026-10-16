@@ -14,6 +14,7 @@ import { renderFileCard, renderGroup } from '../diffcard.js';
 import { analyzeContext } from '../contextviz.js';
 import { getTheme } from './theme.js';
 import { detectCapabilities } from './capabilities.js';
+import { sandboxBadgeLabel } from '../sandbox/exec.js';
 import { createMarkdownRenderer } from './markdown.js';
 import { highlightCode } from './highlight.js';
 import {
@@ -369,15 +370,19 @@ export class TuiUI {
     const dim = (s) => (this.colors ? `${this.theme.inactive}${s}\x1b[0m` : s);
     if (name === 'Bash') {
       const cmd = String(summary || '').trim();
-      // P4 sandbox honesty: dim `· sandboxed` tag while light mode is on.
-      // Read live from getConfig() so a mid-session /sandbox toggle shows up
-      // on the very next card. Shown only when the mode is explicitly set —
-      // production config always defaults it to 'light', while headless/test
-      // UIs with no config source stay un-tagged. Line-mode UI is plain.
+      // Sandbox honesty: the tag shows the mode that is ACTUALLY in effect, not
+      // the one that was requested. A system-mode session whose backend is
+      // missing says so on the card instead of wearing a reassuring label —
+      // that failure mode (UI claims a sandbox, commands run bare) is exactly
+      // what the research report measured in other agents. Read live from
+      // getConfig() so a mid-session /sandbox toggle shows up on the next card.
+      // Headless/test UIs with no config source stay un-tagged. The helper is
+      // deliberately probe-free for light/off: probing spawns processes, and a
+      // frame render must not block on that.
       let tag = '';
       try {
-        const s = this._meta.getConfig().sandbox;
-        if (s != null && s !== 'off') tag = ' · sandboxed';
+        const label = sandboxBadgeLabel(this._meta.getConfig(), { cwd: process.cwd() });
+        tag = label ? ` · ${label}` : '';
       } catch { tag = ''; }
       return `● Ran a command${cmd ? dim(` · $ ${truncateAnsi(cmd, 60)}`) : ''}${tag ? dim(tag) : ''}`;
     }

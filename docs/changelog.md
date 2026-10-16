@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 0.15.0（未发布）— 系统级 Bash 沙箱 Phase 0：后端探测 + 基线探针
+## 0.15.0（未发布）— 系统级 Bash 沙箱：Phase 0 后端探测 + Phase 1 Linux 后端与档位
 
 大件的第一步（**Phase 0，零行为变化**）：先能量化"现在能拿到什么"，再谈怎么拦。调研与方案见 `docs/sandbox-research-2026-10-16.md`、`docs/sandbox-system-plan-2026-10-16.md`。
 
@@ -8,6 +8,18 @@
 - **新增：`cowcat doctor inspect` 的 `[sandbox]` 节**，显示配置档位 + 后端探测结果 + 修复命令。**刻意不放进 `runDoctorChecks`**：系统级后端是可选升级，机器上没有 bubblewrap 不算"安装坏了"，不该让 `cowcat doctor` 的退出码变非零。
 - **新增：只读基线探针（`agent/test/live/sandbox-probe.mjs`，不进 CI）**。走**真实的 `BashTool`**，对比 `off`/`light` 两档下命令能拿到什么。本机（Windows）实测：`~/.ssh`（10 项）与 `gh` 令牌文件（88 字节）**两档都可读**、外网可达（`https://example.com` 200）、`~/.cowcat` 可写；light 档唯一拦住的是 env 里 TOKEN 形状的变量。→ 这正是 Phase 1 要拦的东西，也是"系统级档到底有没有用"的对照基线。
 - 版本号 0.15.0（未发布）。
+
+### Phase 1（同一版本内）：`system` 档 + Linux 后端 + 违规反馈
+
+- **新增第三档 `system`**（`/sandbox system`；默认仍是 `light`）。策略归一化在 `src/sandbox/policy.js`：读 **deny-then-allow**（默认只读项目 + 系统目录，凭据路径硬拒绝）、写 **allow-only**（默认项目 + **worktree 同级目录** + `/tmp`）、**网络默认关**；失败策略 `failOpen` 默认 true —— 后端不可用时降级 light，但在**卡片与结果里明说**未生效。配置沿用既有的 `sandbox` 键（字符串或对象），`{envDeny}` 继续兼容。
+- **Linux 后端 `bubblewrap`**（`src/sandbox/backends/bwrap.js`，纯 argv 生成、可单测）：`--die-with-parent --new-session --unshare-pid/ipc/uts`；网络关闭时 `--unshare-net`（**不是**代理环境变量）；workspace 读档只绑定允许面（bubblewrap 从空根开始），拒绝路径用 `--tmpfs`（目录）/`--ro-bind /dev/null`（文件）**隐藏**，写拒绝用 `--ro-bind` 回绑（保留内容，不是清空）。
+- **违规反馈**（`src/sandbox/violations.js`）：bwrap 自己不报告拒绝，拒绝表现为命令自身的报错，故按模式匹配并标为 "likely"。关键是**被隐藏的路径看起来像"文件不存在"**，所以错误里必须点明这是沙箱（否则模型会去绕边界）；文本经净化 + 500 字符上限后进上下文，并明确写"请让用户执行 `/sandbox light`，不要尝试绕开"。
+- **UI 诚实**：Bash 卡角标显示**实际生效**的档位——`· sandboxed`（light）/`· sandboxed (system · bwrap)`/`· NOT sandboxed (system unavailable)`；`/sandbox` 显示生效档位 + 探测结论 + 修复命令，切换写审计（`decision: 'mode-change'`）。
+- **审计**：新增 `mode`/`backend`/`network` 字段（`off`/`light` 的行保持字节不变）；被拒时追加一条 `decision: 'violation'` 行。
+- **测试**：`test/sandbox-system.test.mjs` 26 条纯逻辑（argv 映射、策略默认值、worktree 同级目录、角标诚实性、净化与截断）；`test/sandbox-linux.test.mjs` 6 条**真实拦截**断言（项目内可写、项目外写被拒、宿主文件不可达、凭据不可读、无网络、审计字段），无 bwrap 时按探测分类 skip。
+- **CI 成为权威验证**：Linux 腿新增 `apt-get install bubblewrap` 并按本文档给出的 AppArmor profile 步骤加载（Ubuntu 24.04 默认限制无特权 userns → 这条链路本身即回归测试）。
+- **验证结果（CI 的真实 Linux）**：6 条拦截断言在 `ubuntu-latest` 的 node 20/22/24 三腿上**真跑并通过**（不是 skip）；同一套断言在 Windows 腿上按探测分类 skip（`no bwrap backend on win32`）。**CI 首跑就抓出两个问题**并已修掉：① `write.allow` 默认含宿主临时目录，在 `--tmpfs /tmp` 之后又把它绑回去，宿主 `/tmp` 重新可见可写（G1/G2 因此失败）；② 我自己写错的 G1 断言口径——沙箱必须在空根里合成 `/home/<user>` 才能挂载允许的 home 文件，所以"在沙箱内写 home 会失败"这个前提是错的，真正的不变量是**宿主文件系统未被改动**。
+- **本版不做**（范围明确）：macOS Seatbelt 后端（Phase 2）、`network: 'ask'` 的按命令审批（Phase 1b，目前 `ask` 等同 `off` 且写进 limitations）、Windows 原生（明确不支持 + 引导 WSL2 / Docker Sandboxes）。glob 形式的路径规则会被收集进 `unsupported` 并提示，而不是假装生效。
 
 ## 0.14.1（2026-10-16）— CI 与 PR 流程暴露的四类缺陷 + 工程基建
 

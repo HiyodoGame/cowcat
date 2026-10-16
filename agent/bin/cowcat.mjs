@@ -51,6 +51,8 @@ import { completeFiles } from '../src/mention.js';
 import { slashCommandList, slashCommandDocs } from '../src/slashlist.js';
 import { parseApiError, formatApiErrorLines } from '../src/errfmt.js';
 import { runInspect, renderInspect, runFix, doctorJson } from '../src/doctor.js';
+import { auditRecord } from '../src/sandbox.js';
+import { effectiveSandbox } from '../src/sandbox/exec.js';
 import { detectIde, makeIdeSink, ideStatus } from '../src/ide.js';
 import { TuiUI } from '../src/tui/ui.js';
 import { PERM_LABELS } from '../src/tui/render.js';
@@ -1006,15 +1008,33 @@ async function main() {
         }
       } else if (cmd === 'sandbox') {
         const arg = (args[0] || '').toLowerCase();
-        const cur = config.sandbox === 'off' ? 'off' : 'light';
-        if (arg === 'off' || arg === 'light') {
+        const eff = effectiveSandbox(config, { cwd: process.cwd() });
+        if (['off', 'light', 'system'].includes(arg)) {
+          // Switching to system mode is gated on a live backend check: accepting
+          // the setting and silently running bare is the failure mode this whole
+          // feature exists to avoid.
+          if (arg === 'system' && !effectiveSandbox({ sandbox: 'system' }, { cwd: process.cwd() }).active) {
+            const probe = effectiveSandbox({ sandbox: 'system' }, { cwd: process.cwd() });
+            ui.print(ui.lang === 'zh'
+              ? `sandbox: system 在本机不可用 [${probe.reason}] ${probe.detail || ''}${probe.fix ? `\n  修复：${probe.fix}` : ''}\n  未切换，仍为 ${eff.label}`
+              : `sandbox: system is unavailable here [${probe.reason}] ${probe.detail || ''}${probe.fix ? `\n  fix: ${probe.fix}` : ''}\n  not switched, still ${eff.label}`);
+            continue;
+          }
           config.sandbox = arg; // live: the next Bash run and card title pick it up
           writeState((s) => { s.sandbox = arg; return s; });
-          ui.print(ui.lang === 'zh'
-            ? `sandbox: ${arg}（${arg === 'off' ? '环境变量不再脱敏，危险命令改走审批流' : '轻量护栏：脱敏环境变量 + 静态分级 + 审计日志'}）`
-            : `sandbox: ${arg} (${arg === 'off' ? 'env no longer sanitized; dangerous commands go through approval' : 'light guard rail: sanitized env + static triage + audit log'})`);
+          // Mode changes are audited: the sandbox must never be turned off (or on)
+          // without a trace, whoever asked (plan §5.7).
+          auditRecord({ command: `/sandbox ${arg}`, cwd: process.cwd(), risk: 'low', decision: 'mode-change', mode: arg });
+          const after = effectiveSandbox(config, { cwd: process.cwd() });
+          ui.print(`sandbox: ${after.label}${after.active && after.limitations?.length ? `\n  注意：${after.limitations[0]}` : ''}`);
         } else {
-          ui.print(`sandbox: ${cur} — usage: /sandbox off|light`);
+          const lines = [`sandbox: ${eff.label}`];
+          if (eff.mode === 'system' && !eff.active) {
+            lines.push(`  reason: ${eff.reason} — ${eff.detail || ''}`);
+            if (eff.fix) lines.push(`  fix: ${eff.fix}`);
+          }
+          lines.push('usage: /sandbox off|light|system');
+          ui.print(lines.join('\n'));
         }
       } else if (cmd === 'theme') {
         const want = args[0] === 'l' || args[0] === 'light' ? 'light' : (args[0] === 'd' || args[0] === 'dark' ? 'dark' : null);

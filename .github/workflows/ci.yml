@@ -46,6 +46,19 @@ jobs:
           cache-dependency-path: agent/package-lock.json
       - name: Install (npm ci)
         run: npm ci
+      # bubblewrap is what the system-level sandbox drives on Linux. Ubuntu 23.10+
+      # restricts unprivileged user namespaces via AppArmor, so bwrap fails until
+      # the profile is loaded — the same fix our preflight tells users about. If
+      # this step stops working, test/sandbox-linux.test.mjs skips (with the
+      # reason) instead of failing, and the log says which classification it hit.
+      - name: Install sandbox deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y apparmor-profiles 2>/dev/null || true
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
       - name: Lint + tests (pretest runs eslint)
         run: npm test
 

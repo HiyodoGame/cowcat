@@ -35,6 +35,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isDangerousCommand } from './permissions.js';
 import { cowcatHome } from './config.js';
+import { normalizeSandbox } from './sandbox/policy.js';
 
 // --- environment sanitizing ---------------------------------------------------
 
@@ -148,13 +149,19 @@ export function classifyCommand(command, { cwd } = {}) {
 // whole subprocess is not a meaningful cost.
 export function auditRecord(rec = {}) {
   try {
-    const { command, cwd, risk, decision, ts = new Date().toISOString() } = rec || {};
+    const { command, cwd, risk, decision, mode, backend, network, violations, ts = new Date().toISOString() } = rec || {};
     const line = JSON.stringify({
       ts,
       tool: 'Bash',
+      // System-mode facts, present only for runs that have them: the light/off
+      // audit lines stay byte-identical to what earlier versions wrote.
+      ...(mode ? { mode } : {}),
+      ...(backend ? { backend } : {}),
+      ...(network ? { network } : {}),
       cwd: String(cwd ?? ''),
       risk,
-      decision, // 'run' | 'elevated-run' | 'blocked'
+      decision, // 'run' | 'elevated-run' | 'blocked' | 'mode-change'
+      ...(Array.isArray(violations) && violations.length ? { violations } : {}),
       command: String(command ?? '').slice(0, 500),
     }) + '\n';
     const file = join(cowcatHome(), 'audit.log');
@@ -166,18 +173,21 @@ export function auditRecord(rec = {}) {
 // --- Bash tool wiring helpers -----------------------------------------------------
 
 // Resolve the sandbox mode for a tool context. Reads ctx.config.sandbox
-// ('off' | 'light', default 'light') plus the envDeny list. Wrapped so a
-// malformed config degrades to 'off' (no behavior change) rather than ever
-// throwing into execute().
-export function sandboxFor(config) {
+// ('off' | 'light' | 'system', or the object form) plus the policy knobs and
+// returns the normalized policy from src/sandbox/policy.js. `cwd` matters
+// because the default write set includes the session's worktree siblings.
+// Wrapped so a malformed config degrades to 'off' (no behavior change) rather
+// than ever throwing into execute().
+export function sandboxFor(config, { cwd } = {}) {
   try {
-    const mode = config?.sandbox === 'off' ? 'off' : 'light';
-    const envDeny = Array.isArray(config?.sandboxEnvDeny)
-      ? config.sandboxEnvDeny
-      : (Array.isArray(config?.sandbox?.envDeny) ? config.sandbox.envDeny : []);
-    return { mode, envDeny };
+    return normalizeSandbox(config, { cwd: cwd || process.cwd() });
   } catch {
-    return { mode: 'off', envDeny: [] };
+    return {
+      mode: 'off', envDeny: [], network: 'off', failOpen: true, backend: 'auto',
+      read: { profile: 'workspace', deny: [], allow: [] },
+      write: { deny: [], allow: [] },
+      unsupported: [], configured: 'off (malformed config)',
+    };
   }
 }
 
@@ -200,4 +210,20 @@ export function sandboxBlockMessage(classification) {
     + 'The command was classified dangerous and was NOT executed. '
     + 'If this is truly intended, re-run with the sandbox off (/sandbox off) — '
     + 'the run will then require the normal approval flow.';
+}
+
+// System mode was requested but no backend can run on this machine. `failOpen:
+// false` refuses the command with this text; the default (failOpen: true) runs it
+// as light and prefixes the result with sandboxDegradedNote() instead. Both exist
+// so the two outcomes cannot be confused with "the sandbox is on".
+export function sandboxUnavailableMessage(plan, policy) {
+  const fix = plan?.fix ? ` Fix: ${plan.fix}` : '';
+  return `Blocked: sandbox "${policy?.mode}" is not available here [${plan?.reason || 'unknown'}]`
+    + `${plan?.detail ? ` — ${plan.detail}` : ''}.${fix} `
+    + 'Set sandbox.failOpen to true to run as light mode instead, or switch with /sandbox light.';
+}
+
+export function sandboxDegradedNote(plan, policy) {
+  return `[sandbox] unavailable → running UNSANDBOXED (${policy?.mode} requested, ${plan?.reason || 'unknown'})`
+    + `${plan?.detail ? `: ${plan.detail}` : ''}.${plan?.fix ? ` Fix: ${plan.fix}` : ''}`;
 }

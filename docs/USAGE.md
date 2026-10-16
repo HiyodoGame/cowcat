@@ -32,6 +32,32 @@ cowcat doctor    # 逐项 ✓/✗：model 引用可解析 / protocol / baseURL /
 cowcat doctor inspect   # 深度报告：[config] / [permission rules] / [hooks] / [state] / [sandbox]（后端探测：本平台能不能用系统级沙箱、不能用是为什么、修复命令）
 ```
 
+### Bash 沙箱三档（`/sandbox off|light|system`）
+
+| 档 | 做什么 | 定位 |
+|---|---|---|
+| `off` | 原样执行 | 都别管 |
+| `light`（默认） | 脱敏 env（凭据形状变量）+ 静态命令分级（危险命令不再执行）+ 审计 `~/.cowcat/audit.log` | **护栏，不是安全边界** |
+| `system` | 之上再加 OS 级隔离（Linux: bubblewrap）：读只限项目 + 系统目录、写只限项目（含 worktree 同级目录）与 `/tmp`、**网络默认关** | 边界（仅覆盖 Bash 及其子进程） |
+
+`system` 需要本机可用后端（Linux/WSL2 需 `bubblewrap`）；不可用时**默认退回 `light` 并在卡片上标注未生效**（`sandbox.failOpen: false` 则直接拒绝执行）。Bash 卡角标永远显示**实际生效**的档位。
+
+```jsonc
+// ~/.cowcat/state.json（sandbox 键；字符串与对象两种写法都支持）
+"sandbox": "system"
+// 或
+"sandbox": {
+  "mode": "system",
+  "network": "off",                    // off | ask（ask 目前等同 off，按命令审批在 Phase 1b）| on
+  "read":  { "profile": "workspace", "deny": ["~/.ssh", "~/.config/gh"], "allow": [] },
+  "write": { "allow": ["."], "deny": [".env", ".git/hooks"] },
+  "failOpen": true,                     // 后端不可用：true=退回 light 并标注；false=拒绝执行
+  "envDeny": ["/^MY_/"]                 // 原有能力，保留
+}
+```
+
+> 路径规则目前只支持字面路径（绝对、`~` 开头、或相对会话目录）。glob（如 `**/.env`）会被收集进 `unsupported` 并在 `/sandbox` 提示，**不会**假装生效。
+
 向导里输入过滤词缩小列表、编号选择；`✓` 标记已配置的 provider（apiKey 已存或其环境变量已存在）；选 `custom` 走自定义端点流程（protocol 二选一 + 自由 baseURL）。非交互环境（stdin 无输入）自动按当前环境变量写入。`/setup` 在会话内重跑向导并热生效。
 
 ### ~/.cowcat/config.json 示例

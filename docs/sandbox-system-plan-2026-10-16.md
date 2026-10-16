@@ -385,3 +385,14 @@ agent/src/sandbox/
 - **本机（Windows）基线数据**：`~/.ssh`（10 项条目）与 `gh` 令牌文件（88 字节）在 `off`/`light` **两档都可读**；外网可达（`example.com` → 200）；`~/.cowcat` 可写（意味着沙箱内进程能改我们自己的配置与审计 —— §5.7 要防的正是这个）；`light` 档唯一拦住的一项是 env 中 TOKEN 形状的变量。→ Phase 1 的验收就按"这三项必须被拦"来定。
 - 平台结论：本机 `win32` → `unsupported-platform`，探测给出的替代路径是 WSL2 / Docker Sandboxes（与 §4.3 一致）。
 - 仍未做：§8.1 的 1/2/3/4 项（srt 与 MXC 的可用性实测）留待 Phase 4 决策前跑；本机没有 WSL2 环境，bwrap 的真实探测需在 Linux/WSL2 上执行。
+
+**2026-10-16 更新（Phase 1a 已落地，Phase 1b / Phase 2 未做）**：
+
+- 档位贯通：新增 `system` 档，默认仍是 `light`；配置沿用既有 `sandbox` 键（字符串或对象），`{envDeny}` 兼容。策略在 `src/sandbox/policy.js`（读 deny-then-allow、写 allow-only、网络默认关、`failOpen`）。
+- Linux 后端：`src/sandbox/backends/bwrap.js`（纯 argv，**workspace 读档从空根只 bind 允许面**；拒绝路径用 `--tmpfs` / `--ro-bind /dev/null` 隐藏；写拒绝回绑只读；网络关用 `--unshare-net` 而非环境变量）。
+- 违规反馈与 UI 诚实：`src/sandbox/violations.js` + Bash 卡角标显示**实际生效**档位（`system · bwrap` / `NOT sandboxed (system unavailable)`）+ `/sandbox` 显示探测结论与修复命令、切换写审计。
+- 测试：`test/sandbox-system.test.mjs` 26 条纯逻辑；`test/sandbox-linux.test.mjs` 6 条真实拦截断言（无 bwrap 时按分类 skip）；CI Linux 腿安装 bubblewrap 并按本文档的 AppArmor 步骤加载。
+- **验证状态**：已在 CI 的**真实 Linux**（ubuntu-latest，node 20/22/24）通过全部 6 条拦截断言——G1（项目外写不落到宿主）、G2（宿主 home 与宿主 /tmp 的文件都不可达，且错误里点明是沙箱）、G3（Node 的 fetch 也被拦，证明网络控制不依赖代理环境变量）、凭据路径隐藏、审计字段。本机 Windows 上同一套断言按分类 skip（`no bwrap backend on win32`）。
+- **CI 首跑抓到两个真问题**（这就是"CI 作为权威验证"的收益，本地 6 条断言全 skip 时它们是看不见的）：① 默认写集含宿主临时目录，在私有 `--tmpfs /tmp` 之后又把宿主 `/tmp` 绑回来，于是宿主 `/tmp` 重新可见可写；② G1 的断言口径写错了——沙箱必须在空根里合成 `/home/<user>` 才能挂载允许的 home 文件，"在沙箱内写 home 必失败"这个前提本身不成立，正确的不变量是"宿主文件系统未被改动"。两处均已修，并补了单测（策略默认写集**不含**宿主 tmpdir）。
+- **已知抖动**：两条 TUI 定时测试（`toast` 15–60ms 窗口、`chrome` 的 15ms 等待）在高负载 runner 上会偶发失败，与本功能无关（重跑即过）；顺带把 Bash 角标改成 probe-free（light/off 不再触发探测），避免在帧渲染里同步 spawn 进程。
+- 仍未做：`network: 'ask'` 的按命令审批（Phase 1b；当前 `ask` 等同 `off` 并在 limitations 中说明）、macOS Seatbelt（Phase 2）、Windows 原生（不支持 + 引导）、glob 路径规则（收集进 `unsupported` 并提示）。

@@ -656,7 +656,11 @@ test('TUI app: tool card titles — ✓ Used {Tool} and ✓ Ran a command · $ �
   tui.toolCall('Bash', 'x'.repeat(100));
   tui.toolSuccess();
   line = tui._flat().map(stripAnsi).reverse().find((l) => l.startsWith('✓ Ran a command'));
-  assert.ok(visibleLen(line.split('$ ')[1].trimEnd()) <= 60, 'long command truncated to ~60 cols');
+  // The sandbox tag rides at the end of the title, so measure the command part
+  // alone: the 60-column budget applies to the command, not to the badge.
+  const commandPart = line.split('$ ')[1].replace(/ · .*$/, '');
+  assert.ok(visibleLen(commandPart.trimEnd()) <= 60, 'long command truncated to ~60 cols');
+  assert.match(line, / · sandboxed/, 'the default (light) mode is labelled on the card');
   tui.toolCall('Bash', 'bad');
   tui.toolError('boom');
   const raw = tui._flat().find((l) => stripAnsi(l).startsWith('✗ Ran a command · $ bad'));
