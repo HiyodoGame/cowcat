@@ -33,12 +33,33 @@ CowCat 是 npm 分发的产品。用户通过 `npm i -g` 安装，**不能要求
 | 阶段 | 决定 | 理由 |
 |---|---|---|
 | P2–P3 | Windows 原生的 `system` 沙箱档**不可用**，请求时显式拒绝，并给出两条替代路径：WSL2，或保持 `light` 档 | 不假装沙箱存在。与 ADR-007 一致 |
-| P2 | Windows 上 shell 解析顺序：Git Bash → PowerShell；记录实际使用的 shell 到会话头 | 与 Claude Code 的做法对齐，且 Git Bash 的命令语义更接近 POSIX 工具链 |
+| P2 | Windows 上 shell 解析顺序：Git Bash → PowerShell → cmd；记录实际使用的 shell 到会话头 | 与 Claude Code 的做法对齐，且 Git Bash 的命令语义更接近 POSIX 工具链。链的细节与实测见 [shell 解析](#shell-解析p2-已实现) |
 | P2 | 进程树终止使用 `taskkill /T /F` | Windows 上父进程被杀后子进程常成为孤儿，这是必须解决的问题 |
 | R1（P8 之后） | 调研非提权 restricted token 方案：能否满足「文件写只限项目」，网络不由它管 | 非提权是 npm 分发的前提，值得单独评估其强度上限 |
 | R1 | 若 R1 的结论是强度不足，评估提权账户方案，但只作为**可选**增强，不作为默认 | 保持默认安装无需管理员 |
 
 **绝对的红线**：在 Windows 原生上，`light` 档的文案不得暗示有 OS 隔离；`system` 档在不可用时不得降级到 `light` 后仍显示「沙箱已启用」。
+
+## shell 解析（P2 已实现）
+
+> ADR-018。实现见 `src/adapters/shell.ts`（纯逻辑，宿主相关的 `which`/`exists`/`run` 全部注入）与 `src/adapters/platform.ts`（Node 宿主实现）；证据见 `docs/research/p2-shell-detection.md`。
+
+三条规则，每条都对应一个实测踩过的坑：
+
+1. **绝不接受裸名**。参考机上 `where bash` 的前两项是 WSL 启动器（退出 1）和一个 **能跑但语义不对** 的 OpenSSH shim（`$0=sh`）。所以候选一律是绝对路径——顺带也消掉了 cwd 影子劫持（项目目录里的真 `bash.exe` 会压过 System32，实测）。
+2. **「存在」不等于「能用」，版本号也不等于「是它」**。每个候选都被**真跑一次**并要求吐出标记串才被接受；OpenSSH 的 shim 能通过存在性检查，只有真跑才拦得住。
+3. **安装位置要跟着实际安装走**。参考机上注册表三键全缺、`C:\Program Files\Git` 也不存在（Git 在 `E:`），唯一有效的来源是 `git.exe` **向上查找**。上溯同时覆盖 `<root>\cmd\git.exe` 与（在 Git Bash 里查询会得到的）`<root>\mingw64\bin\git.exe`。
+
+候选链：
+
+| 平台 | 顺序 | 理由 |
+|---|---|---|
+| Windows | `<root>\bin\bash.exe` → `<root>\usr\bin\bash.exe` → `pwsh` → `powershell` → `ComSpec` | `bin` 在 `usr\bin` 前：两者都能跑，但只有 `bin` 给 mingw64 优先的 PATH。pwsh 在 5.1 前：5.1 每次启动约 745ms，而 shell 是**每条命令**启动一次 |
+| POSIX | `/bin/bash` → `$SHELL` → `/bin/sh` | 见下 |
+
+**macOS 的取舍（待实测结清）**：macOS 默认 shell 是 `/bin/zsh`，而这里选 `/bin/bash`。理由是沙箱 profile 里写死了 `/bin/bash`——沙箱内外跑在不同解释器上，会把「这里好用、那里失败」变成难查得多的 bug。代价是 bash 3.2 很旧。**该顺序尚未在 `macos-15` 上实测**，属于已知缺口（`docs/research/p2-shell-detection.md` §3）。
+
+探测**同步**执行并**按会话记忆一次**：PowerShell 启动一次 745ms、沙箱探测要 spawn 进程，按命令重复探测会直接进到每次工具调用的延迟里。
 
 ## macOS
 

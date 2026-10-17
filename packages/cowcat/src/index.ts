@@ -52,9 +52,28 @@ export {
   type PlatformPort,
   type PlatformId,
   type Shell,
+  type SessionShell,
   type ShellKind,
   type SandboxBackendVerdict,
   type TerminationStrategy,
 } from './ports/index.js';
 export { ENV_ALWAYS_KEEP, ENV_SENSITIVE, redactEnv, type RedactionRequest, type RedactionResult } from './policy/env.js';
 export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';
+export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
+export {
+  detectPlatformId,
+  discoverWindowsRoots,
+  gitRoots,
+  posixShellCandidates,
+  posixPath,
+  resolveShell,
+  windowsShellCandidates,
+  winPath,
+  type PathFlavour,
+  type ResolveOptions,
+  type RunResult,
+  type ShellCandidate,
+  type ShellHost,
+  type ShellResolution,
+} from './adapters/shell.js';
+export { probeBackends, usableBackend, WINDOWS_ALTERNATIVES, type ProbeHost } from './adapters/sandbox-probe.js';
