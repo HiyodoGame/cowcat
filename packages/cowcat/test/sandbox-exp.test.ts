@@ -27,28 +27,31 @@ test('exp: what does traversing a symlink actually require', { skip: platform !=
   const canonical = fs.canonical(home);
   const friendly = spellings(canonical)[1] ?? canonical;
   const reads = [canonical, ...SEATBELT_READ_PATHS].flatMap(spellings).map((path) => `(allow file-read* (subpath ${JSON.stringify(path)}))`);
+  // The same list WITHOUT the friendly twins — the question is whether the symlink rule
+  // alone makes a friendly-spelled path work, or whether the twin rules earn their keep.
+  const readsCanonicalOnly = [canonical, ...SEATBELT_READ_PATHS].map((path) => `(allow file-read* (subpath ${JSON.stringify(path)}))`);
 
   const base = [
-  '(version 1)',
-  '(deny default)',
-  ...RUNTIME_ALLOWS,
-  ...reads,
-  // Note 7: without this the root inode is uncovered and dyld aborts BEFORE exec, with an
-  // empty stderr. That is what the first run of this experiment measured.
-  '(allow file-read* (literal "/"))',
-  '(allow file-read-metadata (vnode-type DIRECTORY))',
-];
+    '(version 1)',
+    '(deny default)',
+    ...RUNTIME_ALLOWS,
+    ...reads,
+    // Note 7: without this the root inode is uncovered and dyld aborts BEFORE exec, with an
+    // empty stderr. That is what the first run of this experiment measured.
+    '(allow file-read* (literal "/"))',
+    '(allow file-read-metadata (vnode-type DIRECTORY))',
+  ];
 
+  const baseCanonicalOnly = base.map((line) => (line === reads[0] ? readsCanonicalOnly[0] ?? line : line)).filter((line) => !reads.slice(1).includes(line));
+
+  const symlink = '(allow file-read-metadata (vnode-type SYMLINK))';
   const variants: Record<string, string[]> = {
     'A as-generated': base,
-    'B +metadata-SYMLINK': [...base, '(allow file-read-metadata (vnode-type SYMLINK))'],
+    'B +metadata-SYMLINK': [...base, symlink],
     'C +allow-literal-/var': [...base, '(allow file-read* (literal "/var"))'],
     'D +read*-SYMLINK': [...base, '(allow file-read* (vnode-type SYMLINK))'],
-    'E +B and C': [
-      ...base,
-      '(allow file-read-metadata (vnode-type SYMLINK))',
-      '(allow file-read* (literal "/var"))',
-    ],
+    'F canonical-only +SYMLINK': [...baseCanonicalOnly, symlink],
+    'G canonical-only only': baseCanonicalOnly,
   };
 
   const probe = `const fs=require("fs");
