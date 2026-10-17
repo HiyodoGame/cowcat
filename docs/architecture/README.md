@@ -1,6 +1,6 @@
 # CowCat v2 架构文档
 
-> 状态：**P3 完成**（策略、配置与审批协议，T1–T5 已合，ADR-023~034）；**P4 模型层调研未开始**。本目录随实现同步更新；与代码不一致时以代码和测试为准，并在同一 PR 里修正文档。
+> 状态：**P3 完成**（策略、配置与审批协议，T1–T5 已合，ADR-023~034）；**P4 模型层调研完成、决定待评审，实现未开始**。本目录随实现同步更新；与代码不一致时以代码和测试为准，并在同一 PR 里修正文档。
 
 ## 目标
 
@@ -16,7 +16,7 @@ CowCat 是一个长期分发的 npm 编程 agent。v2 的目标不是在旧代�
 | [04-dependencies.md](04-dependencies.md) | 依赖策略与每个依赖的选择依据 |
 | [05-platforms.md](05-platforms.md) | Windows / macOS / Linux / 鸿蒙 的平台策略与调研结论 |
 | [../dev-plan-v2.md](../dev-plan-v2.md) | 全面重构的阶段计划与出口标准 |
-| [../research/](../research/) | 各阶段开工前的调研与实测。P3 见 [`p3-policy.md`](../research/p3-policy.md)（决定草案、探针与外部对照），P2 见 [`p2-ports.md`](../research/p2-ports.md) 等，P1 见 [`p1-kernel.md`](../research/p1-kernel.md) |
+| [../research/](../research/) | 各阶段开工前的调研与实测。P4 见 [`p4-models.md`](../research/p4-models.md)（模型层：协议差异、契约缺口与决定草案），P3 见 [`p3-policy.md`](../research/p3-policy.md)（决定草案、探针与外部对照），P2 见 [`p2-ports.md`](../research/p2-ports.md) 等，P1 见 [`p1-kernel.md`](../research/p1-kernel.md) |
 
 ## 架构决策记录（ADR）
 

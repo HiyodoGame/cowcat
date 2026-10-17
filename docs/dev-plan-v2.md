@@ -372,6 +372,8 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P4 模型层
 
+> **调研已完成（决定待评审）**：[`research/p4-models.md`](research/p4-models.md)。六项决定以草案形式给出，**评审拍板前不得据以实现**；本次无新增探针，协议行为待夹具落地后才算实测。两条出口标准的比对口径见该文 §8。
+
 **调研问题**
 
 - `openai` 与 `@anthropic-ai/sdk` 的流式、重试、取消语义；是否满足 `ModelPort` 契约
