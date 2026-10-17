@@ -2,127 +2,112 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-17**（P3 合并之后）
-> 交接时仓库状态：`main` = `cfe38ec`，工作区干净
+> 最近一次更新：**2026-10-18**（P4 的 T1–T5 落地之后）
+> 交接时仓库状态：`main` = `4a9e0a8`，工作区干净
 
 ---
 
 ## 1. 本次实际做了什么
 
-**做了整个 P3（策略、配置与审批协议）**，从调研到 T5 全部合并。共 10 个 PR：
+**P4（模型层）推进到 T5**，另有两件顺带的事。共 8 个 PR：
 
 | PR | 内容 |
 |---|---|
-| #14 | P3 调研文档 `docs/research/p3-policy.md` + 三个探针（32 条断言） |
-| #15 | ADR-023~033 落地 + **仓库自己的 `AGENTS.md`**（此前缺失） |
-| #16 | T1 规则语言改为结构化字段 |
-| #17 | T2a `ActionRequest` 的生产者 |
-| #18 | T2b 配置三层分层 + 列表合并 + 两级错误报告 |
-| #19 | T3a 信任门控 + 配置层来源标注 + **ADR-034** |
-| #20 | T3b 信任记录的独立存储 |
-| #21 | T3c `AGENTS.md` 加载 + 未信任不注入 |
-| #22 | T4 审批协议 + 超时 auto-deny + `always` 限会话内 |
-| #23 | T5 审计作为事件消费者 |
+| #25 | 修 P3 状态漂移（架构 README + 开发计划，4 处） |
+| #26 | P4 调研 `docs/research/p4-models.md`（决定草案 + ADR 清单） |
+| #27 | 落 **ADR-035~043** + 定下依赖上限口径 + 补 P4 任务拆分表 |
+| #28 | **T1 契约与事件**（ADR-035/040/041） |
+| #29 | **T2 OpenAI 兼容适配器** + 注入 transport（ADR-036/042） |
+| #30 | **T3 Anthropic 适配器**（ADR-036/040） |
+| #31 | **T4 录制-回放夹具与录制脚本**（ADR-042）+ **ADR-044** |
+| #32 | **T5 重试、退避与取消边界**（ADR-039） |
 
-**测试 219 → 347**（`fail` 全程为 0）。三个探针脚本的断言从 32 条增至 **34 条**，另新增一个**验证探针本身会失败**的 meta 探针（3 条断言）。
+**测试 347 → 406**（`fail` 全程为 0）。ADR 表到 **ADR-044**。运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）。
 
-**两件发生在本次、且值得单独记住的事**：
+### 三件值得单独记住的实测发现
 
-1. **一个必须修的缺陷是写测试时暴露的**（ADR-034）。`DEFAULT_RULES` 里那条 catch-all 的 `ask`（`mutations-need-approval`）因为 `ask > allow` 而**遮蔽了所有 `allow`** —— 于是 P3 出口标准第一条「策略的全部裁决都能由配置表达」**无论怎么写配置都不可达**，信任门控也随之失去意义。根因是「默认询问」被写成了规则而不是兜底。**这条是纯靠读代码看不出来的**，它只在一条「我原以为会通过」的断言失败时现了形。
-2. **我一度把无法失败的探针当成了证据。** `tools/legacy-config-probe.mjs` 在重写时丢了汇总行与失败退出码，变成「只会打印不会失败」；而我向用户报的「10/10」是照搬重写**之前**的输出。补救是 `tools/probe-guards.mjs`：对每个探针写一份「故意改坏一条期望」的副本，要求它非零退出、点名失败用例、汇总不是 `N/N`、并打印勿引用警告。**现在 3/3 探针实测会失败。**
+1. **两家 SDK 都不把调用方的 signal 对象交给 `fetch`**，而是各自桥接一层，且**桥接在请求结束时拆除**。这否证了我在 T2 里写的一条断言（「请求完成后 `fetch` 手里的 signal 是 aborted」）——那**量的是拆除不是取消**。真实性质是行为：遵守 signal 的传输层上，中途 abort 必须让流停下。**适配器因此不需要自建取消管线**；唯一的例外是退避等待（T5）。
+2. **Anthropic SDK 的 7 个依赖树成员里只有 4 个真进运行时**（`@opentelemetry/api`、`standardwebhooks`、`fast-sha256`、`@stablelib/base64`），**3 个是纯类型层**（`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`）。取证用了解析钩子 + 源码扫描两种方法。`openai` 是零运行时依赖。
+3. **一个必须知道的读法**：`APIError.status` 与 `.headers` 在两家 SDK 里都是 `any`。
 
 ---
 
 ## 2. 当前状态
 
-### 已验证 —— 真机（CI 实跑）
+### 已验证 —— CI 实跑
 
 | 腿 | 结果 |
 |---|---|
-| `packages/cowcat · node 22 · ubuntu-latest` | **347 pass / 0 fail / 0 skipped** |
-| `packages/cowcat · node 22 · macos-15` | **pass**（24s） |
-| `packages/cowcat · node 22 · windows-latest` | **pass**（33s） |
+| `packages/cowcat · node 22 · ubuntu-latest` | pass |
+| `packages/cowcat · node 22 · macos-15` | pass |
+| `packages/cowcat · node 22 · windows-latest` | pass |
+| `test · node 22 · ubuntu-latest` / `macos-15` | pass |
 
-**Linux 腿的 0 skipped 值得注意**：本机因缺真后端而跳过的 16 项（bubblewrap / seatbelt 相关）在 CI 上**全部真跑通过**。所以「沙箱相关断言在 Linux 上通过」是有 CI 证据的，而本机的跳过不是失败。
+### 已验证 —— 本机（Windows，Node 24.18.0）
 
-### 已验证 —— 本机（Windows）
-
-`npm test` **347 tests / 331 pass / 0 fail / 16 skipped**。
-
-三个探针共 **34 条断言**（16 + 10 + 8），加上 meta 探针 3 条。六个脚本（都遵循「每条先写期望、期望不符即非零退出」的约定）：
-
-| 脚本 | 结果 |
-|---|---|
-| `tools/policy-decide-probe.mjs` | **16 / 16** |
-| `tools/legacy-config-probe.mjs` | **10 / 10** |
-| `tools/legacy-trust-probe.mjs` | **8 / 8** |
-| `tools/probe-guards.mjs` | **3 / 3 探针在改坏后期望后确实非零退出** |
-| `tools/lint-probe.mjs` | `all probes behaved as expected`（验证 lint 规则真的会报错） |
-| `tools/check-tarball.mjs` | `tarball check passed` |
-
-### 平台设置（单独核对过）
-
-分支保护 `required_status_checks` 仍是 **6 条**，本次未改动：
-
-```
-test · node 22 · ubuntu-latest          packages/cowcat · node 22 · ubuntu-latest
-packages/cowcat · node 22 · windows-latest   packages/cowcat · node 22 · macos-15
-test · node 22 · macos-15               package whitelist
-```
-
-PR 上报的作业共 9 条，后 3 条（`test · node 24 · ubuntu-latest`、`test · node 22 · windows-latest`、`scope · does the legacy agent/ change?`）不阻塞合并。**本次每个 PR 都跑绿了才合并，没有一次靠重试蒙过去。**
+`npm test` **406 tests / 390 pass / 0 fail / 16 skipped**。另：`tools/lint-probe.mjs` **7 条探针全部按预期**（含 T2 新增的两条 SDK 边界探针）、`tools/check-tarball.mjs` 通过。
 
 ### 项目状态
 
-- **P3 六项范围全部落地**。ADR 表到 **ADR-034**。
-- `packages/cowcat` = `@corescense/cowcat-core` `0.0.0` `private: true` —— **从未发布**，v2 格式未对外，`schemaVersion` 仍是 **1**（ADR-019：改必需头字段才升，而没人有存量日志）。
-- 旧 `agent/` 树**本次未改动一行**（P8 前只收安全修复）。`docs/HANDOFF.md` 里上一轮提到的两处旧版缺口（`subagent.js:58` 的 yolo 推断、`planmode.js:122` 的 `allowedPrompts` 绕校验）**在 v2 里还封不了** —— v2 既没有子 agent 工具也没有 plan 模式，**没有可封的代码**。已记为未来实现这两处时的约束，而不是假装修好了。
-- 仓库现在有一份自己的 [`AGENTS.md`](../AGENTS.md)（本轮补的）。它现在是 agent 的工作说明，**改它等于改 agent 的行为**。
+- **P4 到 T5 落地**；`packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**，`schemaVersion` 仍是 **1**。
+- **旧 `agent/` 树本次未改动一行**（P8 前只收安全修复）。
+- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 已合，T6/T7 未开始」。
 
-### P3 两条出口标准的现状
+### P4 六项范围的落地情况
 
-- 「策略的全部裁决都能由配置表达，无需改代码」—— **库层面成立**（规则是数据、数据来自配置、`allow` 真正可达）；**端到端仍未成立**，因为还没有 CLI 去读配置文件（P6）。
-- 「无人值守模式下所有 `ask` 要么按显式规则放行、要么拒绝并留审计」—— **成立**（`ask` → auto-deny + 留审计事件 + 审计消费者；`deny` 永不被短路）。
+| # | 范围 | 状态 |
+|---|---|---|
+| 1 | `ModelPort` 适配器（OpenAI 兼容 + Anthropic） | ✅ 两个都落了 |
+| 2 | 流式归一化 → `ModelChunk` | ✅ 含用量与结束原因 |
+| 3 | 重试与退避 | ✅ T5 |
+| 4 | 录制-回放夹具 | ✅ T4（配对夹具 + 钉板 + 录制脚本） |
+| 5 | 模型预设以数据形式存在 | ❌ **T6 未开始** |
+
+### P4 两条出口标准的现状
+
+- **「同一回合脚本在两种协议的录制夹具上得到相同的事件序列（归一化后）」**——**适配器层已经成立**：T4 的配对夹具有一条测试断言两个适配器从两种不同编码产出同样的归一结果。**内核层（`runTurn` 的事件序列）尚未断言**，那是 T7。
+- **「取消在流式中途生效，且不产生半条 `model.message`」**——**结构上成立**（`run-turn.ts:109` 只在流结束后才写 `model.message`），两个适配器各有「中途 abort 让流停下」的测试，T1 另有一条 runTurn 层的「用量活过取消、零 `model.message`」。**两条合起来的一次端到端断言仍在 T7。**
 
 ---
 
 ## 3. 项目唯一下一步
 
-**P4：模型层。** 范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4`。要点：
+**P4 的 T6 与 T7。** 范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4` 任务表。
 
-1. `ModelPort` 适配器：OpenAI 兼容协议（主力）、Anthropic 协议
-2. 流式归一化：文本增量、工具调用拼装、用量统计，统一成内部 `ModelChunk`
-3. 重试与退避：仅对可重试错误；取消立即生效
-4. 录制-回放夹具：CI 中不访问网络，协议行为由夹具固定
-5. 模型预设以数据形式存在，不写死在代码里
+### T6：模型预设为数据（ADR-037/038）
 
-出口标准：同一回合脚本在两种协议的录制夹具上得到**相同的事件序列**（归一化后）；取消在流式中途生效且**不产生半条 `model.message`**。
+1. `ModelPreset` 类型：形状沿用 `agent/assets/providers.json`（`protocol` / `api` / `env` + 每模型的 `limit` / `tool_call` / `reasoning_options` / `cost`）。**数据由组合根注入，内核只认类型**。
+2. `tool_call: false` 的模型**不发 `tools`**，并把「该模型不支持工具」作为**可判定事实**上报。
+3. 厂商扩展**不猜默认值**：只发预设声明过的档位，逃生口按协议分别映射（MiniMax 的 `reasoning_effort: 'none'` 与 `thinking.type: 'disabled'` 都会 **400**）。
+4. **注意**：产出 catalog 的蒸馏脚本**不在仓库里**（`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不存在）。沿用「数据形状」可行，「怎么更新它」是遗留问题。
+5. `thinking_delta` / `reasoning_content` **目前刻意不映射**（契约里没有推理内容的位置，T3 把它留给了 T6）——T6 要决定要不要加。
 
-**按工作规则 1，P4 开工前先写 `docs/research/p4-models.md`。** 调研问题里有一条要特别留意：**国产厂商的 OpenAI 兼容端点差异要逐家核实，不凭印象** —— 上一轮的教训是「文档声称」与「实现实际」经常不一致。
+### T7：出口标准（ADR-043）
 
-**从 P3 带到 P4 的具体东西**：
+**这是整阶段的兑现点，也是最能出成果的一步**，因为夹具已经就位：
 
-- `ModelPort.stream(request, signal)` 的**取消语义是新写的要求**：P3 的审批等待已改成响应 `signal`，模型流还没有被同样地检查过。
-- P3 给 `TurnDeps` 加了 `fs` 与 `approvalTimeoutMs`；P4 若再加依赖，`test/support.ts` 的 `turnDeps()` 是唯一要改的地方（刻意集中）。
+1. 把 T4 的**配对夹具**（`test/fixtures/{openai,anthropic}/paired/text-and-tool`）送进 **`runTurn`**，断言两条路径产生**同样的内核事件序列**。
+2. 比对前必须按 **ADR-043** 做投影：剥掉 tool call id（用 `call_<index>` 归一）、`seq`、`ts`、`sessionId`、`turnId`、chunk 切分；**保留** text、`toolCalls[].name`/`input`、归一后的 stopReason、四项 usage。**比的是「已提交事实」而不是 delta**（chunk 边界是传输层偶然）。
+3. 第二条出口标准：一条「流中途 abort」的端到端断言——**零 `model.message`**，且**拿到用量之后的取消仍留下用量**（ADR-041 的存在理由，T1 已有单测，T7 补 runTurn 层的）。
 
 ---
 
-## 4. 关键决策
-
-本轮新增 12 条 ADR（023~034）。最该知道的几条：
+## 4. 关键决策（本轮新增 10 条）
 
 | 决策 | 内容 | 出处 |
 |---|---|---|
-| **`deny` 永不被短路** | 无人值守只改变 `ask` 的归宿。**有意偏离旧版**：旧版 yolo 在一切规则之前一票放行，`deny` 一并失效 | ADR-024 |
-| **「默认询问」是兜底，不是规则** | 写成规则会遮蔽所有 `allow`，让出口标准不可达。**不改变任何裁决结果**，只换个理由文案 | **ADR-034** |
-| **配置三层 + 环境变量不作层** | 内建默认 → 用户 → 项目 → 会话；环境变量逐键决定。**取消 `STATE_KEYS` 式隐式最高层** | ADR-025 |
-| **列表键合并，撤销靠更窄的 deny** | 不需要引入 `!` 负向语法 | ADR-026 |
-| **信任门控按来源不对称** | 只有 **project 层**的 `allow` 等信任；`deny`/`ask` 立即生效 | ADR-028 |
-| **指令文件统一为 `AGENTS.md`** | 去掉专有的 `COWCAT.md`（旧版把它排在最前，标准文件永远读不到）。未信任**不注入**并明确告知 | ADR-029/030 |
-| **`always` 的键是「这一个动作」** | `command ?? path ?? 整个入参`。**只按工具名做键是不安全的** | ADR-031 |
-| **审计是消费者不是分支** | 「永不抛」只约束消费者本身；**静默失败的审计比没有审计更糟** | ADR-033 |
+| **契约要补三类信息** | `ModelRequest` 增 `model`/`system`/`maxTokens`/厂商扩展逃生口；`ModelChunk` 增 `usage` 与 `stop`；**结束原因归一但保留厂商原值** | ADR-035 |
+| **协议只做两种** | OpenAI 兼容（Chat Completions，**不用 Responses**）+ Anthropic 原生；数据 201 / 8 | ADR-036 |
+| **预设是数据，内核只认类型** | 形状沿用 providers.json | ADR-037 |
+| **厂商扩展不猜默认值** | 只发预设声明过的档位 | ADR-038 |
+| **重试在适配器内** | 默认 2 次、尊重 `Retry-After`、**取消涵盖退避等待**、**不重试已开始输出的流** | ADR-039 |
+| **用量归一四项，合并而非覆盖** | Anthropic 的 `message_delta` 会省略可选键 | ADR-040 |
+| **用量进日志，独立事件** | `model.usage`（评审拍板）——取消时也留痕 | ADR-041 |
+| **夹具录原始字节** | 注入 transport 使 CI 不访问网络；录制脚本不落请求头 | ADR-042 |
+| **出口标准比对口径** | 一条 golden、两个协议、比已提交事实、配对夹具必须是同一逻辑回合的两种编码 | ADR-043 |
+| **适配器不发明策略** | 契约没说的就拒绝或上报（`inputSchema` / 畸形 arguments 抛错 / 缺 `max_tokens` 拒绝） | ADR-044 |
 
-完整表见 [`architecture/README.md`](architecture/README.md)（ADR-001~034）。
+完整表见 [`architecture/README.md`](architecture/README.md)（ADR-001~044）。
 
 ---
 
@@ -130,48 +115,53 @@ PR 上报的作业共 9 条，后 3 条（`test · node 24 · ubuntu-latest`、`
 
 **关于证据**
 
-1. **一个只会打印的探针是无法失败的探针。** 它看起来像证据，其实是装饰。见 §1 第二件事 —— 我为这条专门做了 `tools/probe-guards.mjs`。
-2. **「我原以为会通过」的断言，往往比失败的断言更值钱。** ADR-034 那个缺陷就是它抓到的。断言失败时先怀疑**自己的理解**，但确认之后要接着怀疑**产品**。
-3. **编译期等价断言是承重的**，不是形式主义。本轮它两次抓到真问题（T4 缺 `grants`、T5 缺 `name`/`facts`）。加事件时它会先报红 —— **那是对的**。
-4. **旧代码是行为参照，不是规范。** 旧版配置的 `readState()` 把全局 `config.json` 当 state 兜底再重放，于是其中的 STATE_KEY **被应用两次**（探针 C5 钉住）。文档从未提及这一层。
+1. **`process.moduleLoadList` 不跟踪 ESM。** 我用它查「哪些传递依赖真进运行时」，两家 SDK 自己都没出现在表里——**这个工具在这个用途上是假阴性**。改用 `registerHooks` 的解析钩子才拿到真答案。
+2. **「请求完成后看 signal 的 aborted」量的是拆除，不是取消。** 见 §1 第 1 条。**同一件事我错了两次**：先写了断言，又在发现 Anthropic 侧是 `false` 时一度以为那是 SDK 缺陷。
+3. **我的探针第一版是错的**：stub transport 忽略了 `init.signal`，于是「Anthropic 不响应取消」看起来像缺陷，其实是我的 stub 不遵守 signal。**公平的探针要模拟真实传输层的行为**。
+4. **两处测试期望是我写错的**（T5）：已 aborted 的信号走提前返回、压根不注册监听器；以及「流中途断时半截输出被保留」依赖 SDK 缓冲行为、不可靠。**改的是测试不是代码**，但两次都值得先怀疑自己的理解。
 
-**关于 Windows 工具（本机 Git Bash + PowerShell）**
+**关于工具（Windows / 本机）**
 
-5. **`Get-Content` / `Select-String` 的行号在中文密集的 UTF-8 文件上不可靠** —— 按 ANSI 码页解码会把部分 `\n` 当尾字节吞掉、行被合并。实测同一文件它数出 657 行而 `node` 数出 874 行；ASCII 为主的文件两者一致。**要准确行号用 `read` / `rg`，或 `node -e` 数。** 这条已写进 `AGENTS.md`。
-6. **`node -e "..."` 里再套引号在 PowerShell 下必然被改写**（本次实测三次）。不要试第二次，直接写脚本文件。
-7. `import('F:\\...')` 被 ESM loader 拒为 `ERR_UNSUPPORTED_ESM_URL_SCHEME` → 用 `pathToFileURL(p).href`。
-8. `git commit -m "…"` 带引号会被截断 → 用 `git commit -F <文件>`。
-9. **探针脚本从自身位置解析仓库根**，所以「故意改坏的副本」必须写在 `tools/` 内部 —— 放到 temp 里会崩溃，**而崩溃也有非零退出码**，正是 `probe-guards` 要防的假阳性。
+5. **`execFileSync` 包一层时子进程会挂住**（`spawnSync ETIMEDOUT`），同一个脚本**直接跑正常**。T4 的录制脚本端到端验证因此改成直接调用；**子进程那条路径至今未查明**。
+6. **`edit` 工具里 oldString 结尾带上 `\n` 就等于要删掉那个换行。** 我犯了两次，把两行注释和一行代码分别接到了下一行——**改完要读回来确认**，这次两次都是靠读回来发现的。
+7. 目录名影响命令能否找到文件：`tools/` 在**仓库根**，在 `packages/cowcat` 里跑 `node tools/...` 会报「找不到模块」而不是「脚本失败」。
+8. 早先几条仍然有效：`git commit -m` 带引号会被截断（用 `-F`）；`Get-Content`/`Select-String` 在中文 UTF-8 上数行号不可靠（用 `read`/`rg`/`node -e`）；`node -e` 里嵌套引号在 PowerShell 下必坏（写脚本文件）。
 
-**关于 TypeScript / lint 的组合拳**
+**关于 gh / 分支**
 
-10. **`exactOptionalPropertyTypes` 与 zod 的 optional 不兼容**：zod 推断出 `x?: T | undefined`（「可缺省或显式 undefined」），而类型要的是「可缺省且出现时非 undefined」。解法是**逐字段构造**（`...(v === undefined ? {} : { v })`），或让字段**可空而非可选**。
-11. **`@typescript-eslint/no-unnecessary-condition` 与 `noUncheckedIndexedAccess` 会互相打架**：一边要 `?.`，另一边说 `?.` 多余。稳定的写法是 `const [x] = arr; assert.ok(x);` 之后再普通访问。
-12. `restrict-template-expressions` 不允许模板串里直接插 `number` → `${String(n)}`。
+9. **`gh pr merge --delete-branch` 会自己切分支并尝试 `git pull`**；若当时有未提交改动，它会 `Aborting`，于是你以为合并流程走完了，实际本地 main 还落后一个提交、而改动留在旧树上。**合并后请显式核对 `git log` 与 `git status`**（这次我因此把依赖装到了错的树上，靠 `git checkout --` + `pull --ff-only` 恢复）。
+
+**关于 TypeScript / lint**
+
+10. `APIError.status` / `.headers` 是 `any` → `no-unsafe-argument` 会拦，**显式收窄**而不是断言。
+11. `Partial<T>` 上的 `x === null` 会被 `no-unnecessary-condition` 判为「无重叠」——但运行时的 `null` 恰恰不是 `undefined`，**守卫会漏掉它存在的理由**。用 `Record<string, unknown>` 之类的宽类型 + 运行时检查。
+12. Promise executor 里「先声明 `let timer` 再在闭包里读」会触发 `prefer-const`；**调整声明顺序**（提前 `if (aborted) return`）比改成对象容器更干净。
+13. 测试里 `assert.ok(x)` 能收窄判别联合；日志解码的**编译期等价断言**在这一轮又按设计报红两次（T1 的 `stopReason`、新事件），**那是对的**。
 
 ---
 
 ## 6. 未验证 / 待确认
 
-### 已实测但**未在生产**验证
+### 三个**未回答的小问题**（不阻塞，但记着）
 
-- 全部沙箱证据来自 **CI runner**（见 §2）。本机 Windows 上 16 项真后端用例是**跳过**的，不是通过。
-- `isTrusted` 的分隔符与大小写行为在两个平台上都有用例，但**POSIX 的 symlink 语义（`/var` → `/private/var` 类）本机没有验证过** —— 只验证了「尾部斜杠」与「`..`」两种等价拼写。
+1. **macOS flake 要不要开 issue**：`agent/test/chrome.test.mjs:47` 用固定 `await sleep(15)` 等一次真实屏幕渲染，`:49` 就断言光标序列已写出。它**真的卡过 #26**（同一 commit 重跑即绿，`main` 同镜像 10 分钟前也是绿的）。**它是一条会随机卡住任何 PR 的必过检查**，且在冻结的 `agent/` 树里（修它要先定「算不算安全修复」的口径）。已问三轮未答。
+2. **ADR-034 要不要挪到 033 之后**：ADR 表里 034 排在 023 之后（P3 期间按主题归组插入），全表不严格单调。新 ADR 一律追加在表末。建议单独一个 `chore/` PR。
+3. **ADR-044 是否认可**：T2/T3 的三处「只在代码注释里」的决定已收成一条 ADR（内容见 §4）；若认为该拆成三条，改它。
 
 ### 已知缺口（**不声称已解决**）
 
-1. **两条旧版缺口在 v2 里封不了**：`subagent.js:58` 从 `tools === null` 推断 yolo、`planmode.js:122` 的 `allowedPrompts` 绕过 `validateRule`。v2 没有这两个功能，**没有可封的代码**。已记为未来实现这两处时的约束。
-2. **配置文件与信任记录放哪里，仍未定**。`loadConfig` 接受已读出的文本 + 来源标识，`FileTrustStore` 接受显式文件路径 —— 都是**组合根的职责**，等 P6 的 CLI。动工前用户提过倾向（`cowcat.json`、`~/.cowcat/`、仓库根 `.cowcat/`），但**没有定死**。
-3. **`instructions` 式显式 glob 追加未实现**（ADR-029 提到的 monorepo 用法）。glob 展开要目录列举，是一块更大的面。
-4. **永久化规则机制不存在**。ADR-031 把 `always` 限在会话内，正是因为永久规则要先有撤销设计（ADR-026）。外部参照的「按工具而异、Bash 永久」是它之后的细化。
-5. **模型流中途的取消没有被检查过**（见 §3）。
-6. **调研文档 §10 列的 9 条未验证项**仍未验证，其中 3 条标注为【推断】—— 不得作为实现依据。清单在 [`research/p3-policy.md`](research/p3-policy.md) §10。
+1. **`architecture/README.md` 的状态行滞后**（见 §2）——实现到 T5 了，状态行还写着「实现未开始」。
+2. **两条旧版缺口在 v2 里封不了**：`subagent.js:58` 从 `tools === null` 推断 yolo、`tools/planmode.js:121-124` 的 `allowedPrompts` 绕过 `validateRule`。v2 没有这两个功能，**没有可封的代码**。
+3. **配置文件与信任记录放哪里仍未定**（组合根的职责，等 P6 的 CLI）。
+4. **永久化规则机制不存在**（ADR-031 把 `always` 限在会话内）。
+5. **`execFileSync` 下的子进程挂起**（§5 第 5 条）未查明。
+6. **推理内容没有归宿**：`thinking_delta` / `reasoning_content` 刻意不映射，留给 T6 决定。
 
-### 需要下一位核对的差异
+### 厂商差异：哪些有出处、哪些还没有
 
-- `docs/research/p3-policy.md` 里 §2.2 的 **P9 用例已被 T3a 替换**（原「`matches` 抛异常直接冒泡」随 ADR-027 失效），附录 B 末尾的「B-补」记了这次改动。**不要按旧编号找它。**
-- 调研文档的探针计数是 **16 / 10 / 8**（正文与附录均已同步）。若与旧记录不符，以文件为准。
-- 仓库自己的 `AGENTS.md` 是**在 P3 期间补的**，它同时是给 agent 的指令。上一轮的 `HANDOFF` 里没有它。
+**有出处（【上游】）**：DeepSeek 同时提供 OpenAI 与 Anthropic 端点并带 `thinking`/`reasoning_effort` 扩展；MiniMax 的 OpenAI 兼容端点、`reasoning_content`、`thinking.type='disabled'` 与 `reasoning_effort='none'` 的 **400** 行为、被静默忽略的参数、多轮必须保留完整 assistant 消息。
+
+**未验证**：其余 200 家端点的流式细节**一律未取到样例**——`websearch` 本轮不可用（HTTP 402），只用了 `webfetch` 与 Context7，**没有做跨来源交叉验证**。`Retry-After` 在国产端点的存在率也未验证。**这些都只能靠 T4 的录制脚本逐家覆盖**，不能推断。
 
 ---
 
@@ -179,19 +169,19 @@ PR 上报的作业共 9 条，后 3 条（`test · node 24 · ubuntu-latest`、`
 
 | 路径 | 内容 |
 |---|---|
-| [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P3 的任务拆分表与两条出口标准已更新 |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~034** |
-| [`research/p3-policy.md`](research/p3-policy.md) | P3 调研。§0 结论摘要、§10 未验证清单、附录 B 实测、附录 E `AGENTS.md` 标准调研 |
-| `packages/cowcat/src/policy/decide.ts` | 裁决 + 结构化 `when` 匹配 + `validateRules` |
-| `packages/cowcat/src/policy/config.ts` | 三层分层、列表合并、`SourcedRule.origin` |
-| `packages/cowcat/src/adapters/config.ts` | 配置的 zod 边界（**strict**，与日志的开放对象刻意相反） |
-| `packages/cowcat/src/policy/trust.ts` | `trustedRules`（按来源门控）、`isTrusted`（无继承） |
-| `packages/cowcat/src/adapters/trust.ts` | 信任记录落盘（独立于配置） |
-| `packages/cowcat/src/policy/instructions.ts` | 候选名、未信任不注入的决定与提示 |
-| `packages/cowcat/src/policy/approval.ts` | `approvalKey`（`always` 的粒度） |
-| `packages/cowcat/src/policy/audit.ts` | `AuditConsumer`：投影、永不抛、失败可见 |
-| `packages/cowcat/src/kernel/run-turn.ts` | 审批往返、超时、`grants` 检查、`facts` 透传 |
-| `packages/cowcat/src/kernel/state.ts` | `reduce`，含 `grants` 的归约 |
-| `packages/cowcat/test/support.ts` | `sessionDeps` / `turnDeps` / `fakeFs`（**新增依赖只改这里**） |
-| `tools/probe-guards.mjs` | 验证探针本身会失败 |
+| [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P4 的任务拆分表（T1–T7）与两条出口标准 |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~044** |
+| [`research/p4-models.md`](research/p4-models.md) | P4 调研：证据边界、六项决定、§8 的 12 条 T1 断言、§10 待验证清单 |
+| `packages/cowcat/src/ports/model.ts` | `ModelUsage` / `StopReason` / `StopReasonKind`（放在自己文件里是为了打断 `index.ts` ↔ `events.ts` 的循环） |
+| `packages/cowcat/src/ports/index.ts` | `ModelRequest` / `ModelChunk` / `ToolSpec`（含 `inputSchema?`） |
+| `packages/cowcat/src/kernel/run-turn.ts` | 回合主循环：消费 chunk、**拿到 usage 立刻 emit**、chunk 分派的 `default: never` 绊线 |
+| `packages/cowcat/src/kernel/events.ts` | `model.message`（含 `stopReason`）与 `model.usage` |
+| `packages/cowcat/src/adapters/model-openai.ts` | OpenAI 兼容适配器（Chat Completions） |
+| `packages/cowcat/src/adapters/model-anthropic.ts` | Anthropic 适配器（连续工具结果合并进一条 user 消息） |
+| `packages/cowcat/src/adapters/model-retry.ts` | 重试/退避/`sleepAbortably`；分类器留在各适配器 |
+| `packages/cowcat/test/fixtures.ts` | 夹具定位（**从包根解析**，因为夹具不进 `dist/`）与加载 |
+| `packages/cowcat/test/fixtures/` | `paired/`（跨协议配对）+ `synthetic/`（钉板） |
+| `packages/cowcat/test/support.ts` | `turnDeps` / `ScriptedModel` / `replayTransport` / `openEndedTransport` / `sequenceTransport` / `settlesWithin`（**新增依赖只改这里**） |
+| `tools/record-fixture.mjs` | 录制脚本：不写请求头；`logical` 留空由人填写 |
+| `tools/lint-probe.mjs` | 7 条 lint 探针（含 SDK 边界禁令）——**规则真的会报错** |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | 三条 `packages/cowcat` 腿；草稿 PR 不跑检查 |

@@ -372,7 +372,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P4 模型层
 
-> **调研已完成、ADR-035~043 已定（评审通过）**：[`research/p4-models.md`](research/p4-models.md)。协议行为**待夹具落地后才算实测**；出口标准的比对口径见该文 §8 与 **ADR-043**。开工前另有两条口径待定：**运行时依赖上限怎么数**（该文 §9 注）与**拼不完的 tool `arguments` 该退回还是抛错**（该文 §8 断言 11）。
+> **调研已完成、ADR-035~044 已定（评审通过），T1–T5 已合**：[`research/p4-models.md`](research/p4-models.md)。协议行为**待夹具落地后才算实测**；出口标准的比对口径见该文 §8 与 **ADR-043**。**T6/T7 未开始**，具体做法见 [`HANDOFF.md`](HANDOFF.md) §3。
 
 **调研问题**
 
