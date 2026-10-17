@@ -63,8 +63,12 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
           type: 'tool.finished',
           turnId: session.turnId,
           callId: call.callId,
+          name: call.name,
           ok: result.ok,
           output: result.output,
+          // Passed through, not invented: a tool that reported no facts contributes
+          // `null`, so the audit can tell "not known" from "nothing applied".
+          facts: result.facts ?? null,
         });
       }
       await session.transition('requesting');

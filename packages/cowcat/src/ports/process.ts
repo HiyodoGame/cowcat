@@ -130,6 +130,27 @@ export interface TerminationRecord {
   readonly residuePossible: boolean;
 }
 
+/**
+ * The parts of a `ProcessResult` worth persisting to the session log (ADR-033).
+ *
+ * A subset on purpose. `stdout` / `stderr` / `exitCode` describe the OUTCOME, and
+ * the outcome already reaches the log as `tool.finished.ok` + `.output`. What is
+ * nowhere else — and what nobody can reconstruct afterwards — is what the gateway
+ * actually DID: which sandbox ran, how the process ended, and which variables were
+ * taken out of its environment.
+ *
+ * This type exists because `ToolPort.run` returns a `ToolResult`, not a
+ * `ProcessResult`: without it the sandbox facts stop at the tool boundary and an
+ * audit consumer can never see them.
+ */
+export interface ExecutionFacts {
+  readonly sandbox: AppliedSandbox;
+  readonly termination: TerminationRecord;
+  /** Names only, never values (ADR-015). */
+  readonly removedEnv: readonly string[];
+  readonly ignoredDeny: readonly string[];
+}
+
 export interface ProcessResult {
   readonly exitCode: number | null;
   readonly signal: string | null;

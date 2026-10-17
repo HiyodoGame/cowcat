@@ -1,10 +1,12 @@
 import type { KernelEvent } from '../kernel/events.js';
 import type { Message, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
+import type { ExecutionFacts } from './process.js';
 
 // The P2 ports live in their own files (docs/architecture/01-layers.md) and are
 // re-exported here, so this barrel stays the single import surface for the kernel
 // and the tests.
+export * from './audit.js';
 export * from './fs.js';
 export * from './instructions.js';
 export * from './platform.js';
@@ -35,6 +37,13 @@ export interface ToolSpec {
 export interface ToolResult {
   readonly ok: boolean;
   readonly output: string;
+  /**
+   * What the execution gateway actually did, when this tool ran a process
+   * (ADR-033). Absent means the tool reported NOTHING — which an audit has to record
+   * as "not known", never as "no sandbox". The difference between those two is the
+   * whole point of an audit trail.
+   */
+  readonly facts?: ExecutionFacts;
 }
 
 export interface ToolPort {
