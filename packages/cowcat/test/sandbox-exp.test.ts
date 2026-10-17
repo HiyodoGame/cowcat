@@ -58,10 +58,16 @@ test('exp: what does traversing a symlink actually require', { skip: platform !=
     attempt(" readlink",()=>fs.readlinkSync("/var"));
     process.stdout.write("\\n");`;
 
+  // sandbox-exec hands its last arguments to a SHELL, so the command has to be shell —
+  // which is why the real builder shell-quotes the executable and its script separately.
+  // The probe contains no single quotes, so one pair of them is the whole quoting job.
+  assert.ok(!probe.includes("'"), 'the probe must stay single-quote free');
+  const command = `'${process.execPath}' -e '${probe}'`;
+
   for (const [name, rules] of Object.entries(variants)) {
     let outcome: string;
     try {
-      outcome = execFileSync('/usr/bin/sandbox-exec', ['-p', rules.join('\n'), '/bin/bash', '-c', probe], {
+      outcome = execFileSync('/usr/bin/sandbox-exec', ['-p', rules.join('\n'), '/bin/bash', '-c', command], {
         encoding: 'utf8',
         timeout: 30_000,
       }).trim();
