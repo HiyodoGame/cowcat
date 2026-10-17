@@ -6,6 +6,7 @@ import type { SessionState } from '../kernel/state.js';
 // re-exported here, so this barrel stays the single import surface for the kernel
 // and the tests.
 export * from './fs.js';
+export * from './instructions.js';
 export * from './platform.js';
 export * from './process.js';
 export * from './trust.js';
