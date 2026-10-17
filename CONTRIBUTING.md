@@ -48,6 +48,10 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 改动落在哪条线，取决于任务：v1 只做安全修复，新功能进 v2。判断依据见
 [`docs/dev-plan-v2.md`](docs/dev-plan-v2.md) 的阶段总览。
 
+接手一个进行中的阶段，先读 [`docs/HANDOFF.md`](docs/HANDOFF.md)（最近一次阶段收尾的快照：
+当前状态、唯一下一步、已知缺口、未验证项）。它是**快照不是活文档**，与 `dev-plan-v2.md`
+冲突时以 `dev-plan-v2.md` 为准。
+
 ## 4. CI 门禁
 
 | job | 内容 | 何时 | 必过 |
