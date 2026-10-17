@@ -162,6 +162,72 @@ quoted     :  exit 1   stdout ""   stderr "node:fs:441"      ← 脚本跑起来
 
 顺带验证过：含空格与单引号的路径经 `shellQuote` 后由真 shell 原样还原。
 
+### 4.10 `existsSync` 是个坏探针：存在性看得见，内容看不见【实测】
+
+补上 4.9 的 SYMLINK 规则之后，「宿主临时文件不可见」那条断言翻成了可见。追下去发现是**断言本身错了**，而且之前是**错因通过**。
+
+先用六个变体定位（同一 profile，`proj`/`home` 授权，marker 是它们的兄弟目录，既未授权也未拒绝）：
+
+| 变体 | exists-marker | stat-marker | read-marker | read-proj |
+|---|---|---|---|---|
+| 有 SYMLINK 规则 | **true** | EPERM | EPERM | OK |
+| 仅 DIRECTORY | false | EPERM | EPERM | **EPERM** |
+
+两条结论：
+
+1. **内容隔离一直是好的**。`read-marker` 与 `read-secret` 在两个变体里都是 EPERM，已授权的项目可读。没有洞。
+2. **`existsSync` 在 `statSync` 与 `readFileSync` 都 EPERM 的地方返回 true**。它不是一个「能不能读」的判据。写隔离测试时拿它当探针，等于在测一个和被测性质无关的信号。
+
+而且在补 SYMLINK 规则之前，`exists-marker=false` 是因为**查找在 `/var` 就失败了**，策略根本没被问到——通过的原因是遍历失败，不是策略生效。
+
+**已上报的限制**：macOS 上**读面之外路径的存在性可以被观察，内容不行**。这是 agent 可用的一个小侧信道（可以探测某路径是否有文件），不影响内容机密性。测的是 Node 的 `existsSync`；没有单独测裸 `access(2)`，所以不宣称更多。
+
+教训与 T5 踩过的同一条：`research/p2-sandbox.md` §2.1——**断言落在语义上，不要落在信号上**。这里的信号本身是坏的。
+
+### 4.9 遍历符号链接需要 SYMLINK vnode 的读权限【实测】
+
+现象：profile 正确授权了家目录，命令读**它自己会用的那种拼写**却得到 EPERM。
+
+```
+read-canonical-home    = OK      /private/var/folders/…/home/n.txt
+read-friendly-home     = EPERM   /var/folders/…/home/n.txt
+read-relative          = OK      ./r.txt（相对路径不受影响）
+readlink /var          = EPERM
+```
+
+最初的判断是「`subpath` 匹配字面路径，所以要给两种拼写」。**这个判断错了**，而且第一版修复（`spellings()`）也因此无效：加了双拼写、跑 CI，仍然 EPERM。
+
+把两组变量分开跑才拿到答案（六个变体，同一 profile、同一文件）：
+
+| 变体 | profile 里的拼写 | SYMLINK 规则 | friendly |
+|---|---|---|---|
+| A | 双拼写 | 无 | EPERM |
+| B | 双拼写 | 有 | OK |
+| G | 仅 canonical | 无 | EPERM |
+| **F** | **仅 canonical** | **有** | **OK** |
+
+所以真正的机制是：解析从调用方写的拼写开始，而 `/var` 是符号链接，解析它需要读 SYMLINK vnode；`subpath` 本身匹配的是**内核解析后**的路径（原本的判断成立）。修法是补一条 `file-read-metadata (vnode-type SYMLINK)`。
+
+**记下走错的那一步**，因为它看起来非常像对的：双拼写不但无效，还把 deny 面扩大了一倍——每条 deny 都要手工复制两份，漏一处就是绕过。为了零收益扩大拒绝面，比不做更糟。现在有一条测试钉住「不生成双拼写」。
+
+它之所以能一路错到 CI：`subpath` 是对的、profile 是对的、相对路径是对的，只有「人写的绝对路径」这一条不对。
+
+### 4.8 挂载顺序会静默吃掉授权【实测】
+
+挂载按命令行顺序生效、后者覆盖前者。因此 `--tmpfs /tmp` 放在读绑定**之后**，会遮住宿主 `/tmp` 下的每一个读授权：
+
+```
+顺序 A（tmpfs 在后）：GONE notes.txt    present readable.txt
+顺序 B（tmpfs 在前）：present notes.txt  present readable.txt
+```
+
+这条是在写 T6 的测试时发现的——测试夹具用 `mkdtemp` 建在 `/tmp` 下，于是「家目录可读」那条用例必然失败。真实影响比测试更大：**任何位于宿主 `/tmp` 下的读授权都会被静默丢弃**，包括 `$HOME` 落在 `/tmp` 的开发环境与 CI。那正是「策略看起来授予了、实际什么都没做」这一类。
+
+两个 profile 的顺序要求**相反**，且各有原因：
+
+- `workspace`：tmpfs **在前**，让策略自己的绑定把该暴露的重新暴露出来；
+- `hide`：`--ro-bind / /` 把宿主的 `/tmp` 一起绑了进来，所以 tmpfs 必须在它**之后**，否则沙箱会重新继承宿主的临时目录（旧版 CI 第一次跑就因为这个半真半假而失败）。
+
 ### 4.6 私有 `/tmp` 是宿主机内存的一半【实测】
 
 ```

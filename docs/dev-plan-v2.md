@@ -19,7 +19,7 @@
 |---|---|---|
 | P0 | 架构基线与内核骨架 | **已完成**（PR #24，`dca0d31`） |
 | P1 | 内核加固与工程基线 | **已完成**（PR #31–#38，测试 22 → 69） |
-| P2 | 端口与执行网关（含沙箱执行器迁移） | 未开始 |
+| P2 | 端口与执行网关（含沙箱执行器迁移） | **已完成**（T1–T5 已合；T6 见下） |
 | P3 | 策略、配置与审批协议 | 未开始 |
 | P4 | 模型层 | 未开始 |
 | P5 | 工具层 | 未开始 |
@@ -130,7 +130,7 @@
 | T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | ✅ PR 见 §P2 交付 |
 | T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | ✅ PR 见 §P2 交付 |
 | T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | ✅ PR 见 §P2 交付 |
-| T6 | G1/G2/G3 与「`rm` 可用」「私有临时目录」「拒绝被解释成沙箱」迁移为 v2 测试；**`packages/cowcat` 的 Linux 腿要装 bubblewrap**（现在只有 `agent/` 的腿装了） | 未开始 |
+| T6 | G1/G2/G3 与「`rm` 可用」「私有临时目录」「拒绝被解释成沙箱」迁移为 v2 测试；**`packages/cowcat` 的 Linux 腿要装 bubblewrap**（现在只有 `agent/` 的腿装了） | ✅ PR 见 §P2 交付 |
 
 **交付（T1）**
 
@@ -210,7 +210,53 @@
 
 **T5 已知缺口（不声称已解决）**
 
-- **完整的 G1/G2/G3 矩阵仍在 T6**：本任务只证明 argv 能跑且基本隔离成立
+- **完整的 G1/G2/G3 矩阵仍在 T6**：本任务只证明 argv 能跑且基本隔离成立 → **T6 已完成**，见下
+
+**交付（T6）**
+
+前置是一轮前沿文献调研：[research/p2-sandbox-literature.md](research/p2-sandbox-literature.md)（`websearch` 集成返回 402，改用 arXiv API 直查）。七篇相关文献改变了两处做法：
+
+- **标注验证等级**（[2610.04504](https://arxiv.org/abs/2610.04504) 的 VAL，「zero is an outcome, not a guarantee」）：G1/G2/G3 证明的是 **L2 客观事实**，不是保证。写进测试文件头与架构文档，避免「215 pass」被读成「沙箱是安全的」。
+- **把「沙箱管不到什么」钉成测试**（[2605.18583](https://arxiv.org/abs/2605.18583) 的 overeager 分类：范围扩张是与逃逸并列的第四类授权问题，实测仅移除授权声明即使越界率从 0.0% 升到 17.1%）：新增一条断言「范围内破坏**确实能发生**」，以防日后被过度声称，或被「顺手修好」而 deny 掉 `rm`。
+
+`test/sandbox-enforcement.test.ts` 扩成完整矩阵（本机 12 条按平台 skip，Linux/macOS 真跑）：
+
+| 用例 | 断言 |
+|---|---|
+| G0 | 沙箱内能跑；结果携带**实际生效**的 mode/backend |
+| G1 | 项目内写入到达宿主（否则下面的拒绝也可能来自「什么都拒绝」）；`rm` 可用；宿主临时目录下的写入不落地；`/etc` 被拒 |
+| G1 边界 | **范围内破坏不被阻止**（钉住保证的边界） |
+| G2 | 读面外不可达；**被允许的家目录里的凭据路径仍不可达**；家目录本身仍可读 |
+| G3 | DNS 在沙箱内失败 |
+| 私有临时目录 | 宿主临时文件不可见 + 沙箱临时目录可写 |
+| 可解释性 | 结果携带足够解释拒绝的材料 |
+
+**修了一个真 bug**：挂载顺序。`--tmpfs /tmp` 排在读绑定**之后**时会遮住宿主 `/tmp` 下的每一个读授权——实测允许的 `$HOME/notes.txt` 变成 GONE。两个 profile 的顺序要求相反且各有原因，已写进架构文档与测试。
+
+Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生效后 `--disable-userns` 是否可用」——若 `hardening` 为空，日志会显示，且每次运行的 limitations 都会说明沙箱更弱（这是预期的降级，不是失败）。
+
+**T6 在两条真机腿上又挖出四个真问题**（这是它真正的价值——写完测试不等于跑过测试）
+
+1. **私有临时目录没走 canonical 化**：mkdtemp 的结果直接进了 Seatbelt 的 `(subpath …)`，而它不经过 `resolveEntries`。macOS 上前者是 `/var/…`、内核报 `/private/var/…`，于是规则什么都没授予，实测**沙箱自己的 TMPDIR 不可写**。
+2. **遍历符号链接需要对 SYMLINK vnode 的读权限**：`/var`、`/etc`、`/tmp` 本身是符号链接，而 profile 只授了 DIRECTORY 的 metadata，于是**任何人会写的绝对路径全部 EPERM**，而 profile 看起来完全正确。补 `file-read-metadata (vnode-type SYMLINK)`（ADR-022）。中途我误判成「`subpath` 匹配字面路径」并实现了「每条路径发两种拼写」——实测**无效**，且把 deny 面扩大一倍（每条 deny 要手工复制两份，漏一处就是绕过），已删除并由一条测试钉住。
+3. **隔离断言不能拿 `existsSync` 当探针**：它在 `statSync` 与 `readFileSync` 都 EPERM 的路径上返回 true。且之前那个 `false` 是**错因通过**——查找在 `/var` 就失败了，策略从没被问到。断言改为看**内容是否到达**。
+4. 顺带修掉自己两个测试 bug：`unlinkSync` 返回 undefined 所以 `&&` 会短路；`node()` 只给整串加一次 `require("fs").`。
+
+**T6 的出口标准与验证结果**
+
+- [x] `npm run build` / `npm run lint` 通过
+- [x] `npm test` 205 → **219**，0 失败
+- [x] **两条真机腿全绿**：`packages/cowcat · node 22 · ubuntu-latest`（bubblewrap 0.9.0 + AppArmor profile）与 `macos-15`（seatbelt）
+- [x] 必过检查 9 条全绿
+
+**T6 已知缺口（不声称已解决）**
+
+- **没有 seccomp 过滤**：目前最大的加固缺口。bwrap 支持 `--seccomp FD`，但需要一份编译好的 BPF 程序与允许清单维护策略。依据 SysComb（[2608.26871](https://arxiv.org/abs/2608.26871)）——限制可用系统调用可缩小内核攻击面。记为 R1
+- **G1/G2/G3 停在 L2**：没有可判定的完备性论证，平台换了也不会有人被提醒
+- **macOS 上读面之外路径的存在性可被观察，内容不可**（实测：Node 的 `existsSync` 返回 true 而 `statSync`/`readFileSync` 是 EPERM）。这是 agent 可用的小侧信道，已写进限制项。未单独测裸 `access(2)`
+- **root 调用者下还剩哪些隔离未量化**：文件权限不再保护，但挂载与网络隔离仍在
+- **worktree 兄弟目录未自动纳入写策略**：应由调用方作为额外写路径传入（P3 接入 worktree 时）
+- **`setsid()` 逃逸仍是推断**（附录 B 实证它能逃，但「前台超时孤儿」一类无样本）
 - **AppArmor 与 `--disable-userns` 的交互未验证**：WSL2 内核没有 Ubuntu 24.04 那条限制，只有 CI 能验。若加固被拒，会自动降级为「不加固 + 上报限制项」，不会失败
 - **root 调用者下还剩哪些隔离未量化**：文件权限不再保护，但挂载隔离与网络隔离仍在。需要一次以 root 跑完整矩阵的实验
 - **worktree 兄弟目录未自动纳入写策略**：旧版会扫描父目录；v2 里它应由调用方作为额外写路径传入（P3 接入 worktree 功能时）

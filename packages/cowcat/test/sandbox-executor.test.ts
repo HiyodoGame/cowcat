@@ -28,6 +28,7 @@ const PROBE: { dirs: readonly string[]; files: readonly string[] } = { dirs: ['/
 const fsProbe: SandboxFsProbe = {
   isDir: (path) => PROBE.dirs.includes(path),
   isFile: (path) => PROBE.files.includes(path),
+  canonical: (path) => path,
 };
 
 function spec(overrides: Partial<SandboxProfile> = {}, argv: readonly string[] = ['/bin/bash', '-c', 'echo hi']): ProcessSpec {

@@ -110,12 +110,52 @@ test('directory metadata is allowed after the denies, so realpath still works', 
 test('the kernel spellings are used, not the friendly ones', () => {
   const { text } = build();
 
-  // `/etc`, `/var` and `/tmp` are symlinks into /private on macOS, and Seatbelt matches
-  // against what the KERNEL reports. A profile written with the friendly spelling grants
-  // nothing.
+  // `/etc`, `/var` and `/tmp` are symlinks into /private on macOS, and `subpath` matches the
+  // path the KERNEL resolves to — so the canonical form is what belongs on the allow side.
   for (const path of SEATBELT_READ_PATHS) {
     assert.ok(text.includes(`(subpath ${JSON.stringify(path)})`), `missing ${path}`);
   }
+});
+
+test('metadata is granted for SYMLINK vnodes, or no absolute path a person types works', () => {
+  // The rule that actually makes `/var/folders/…` work, which is why it is not optional.
+  // Measured on macOS 15, one profile, one file:
+  //
+  //     read /private/var/folders/…/n.txt   OK
+  //     read /var/folders/…/n.txt          EPERM   without this rule
+  //     read /var/folders/…/n.txt          OK      with it
+  //
+  // The walk begins at the path the caller typed, and `/var` is a symlink; resolving it
+  // needs read access to a SYMLINK vnode. The DIRECTORY rule beside it does not cover that,
+  // and because `subpath` itself is fine the failure looks like a spelling problem rather
+  // than a missing rule — which is what sent this file down the wrong fix first (note 8).
+  const { text } = build();
+
+  assert.ok(text.includes('(allow file-read-metadata (vnode-type SYMLINK))'), 'the symlink metadata rule');
+  // Metadata only, and after the denies: a denied path must keep denying its CONTENTS even
+  // though this rule now follows it. file-read-data is what carries contents, and this rule
+  // does not name it.
+  const denyEnd = text.indexOf('(allow file-read* (literal "/"))');
+  assert.ok(text.indexOf('(vnode-type SYMLINK)') > denyEnd, 'it has to come after the read denies');
+  assert.equal(text.includes('(allow file-read* (vnode-type SYMLINK))'), false, 'metadata only, not every read op');
+});
+
+test('no dual-spelling rules: one path, one filter', () => {
+  // A rejected experiment, kept as a test because it is the kind of change that looks
+  // obviously right. Emitting every path under BOTH `/private/var/…` and `/var/…` does NOT
+  // make friendly spellings work — the symlink rule above is what does, and the same
+  // measurement shows a canonical-only profile succeeds once it is present.
+  //
+  // So the dual spelling bought nothing and cost something real: every deny has to be
+  // duplicated by hand in two spellings, and one missed duplicate turns a credential deny
+  // into a two-keystroke bypass. A wider deny surface for no gain is worse than none.
+  const { text } = build({
+    read: { profile: 'workspace', allow: ['/private/var/folders/x/proj'], deny: ['/private/var/folders/x/home/.ssh'] },
+  });
+
+  assert.ok(text.includes('(subpath "/private/var/folders/x/home/.ssh")'), 'the canonical deny');
+  assert.equal(text.includes('(subpath "/var/folders/x/home/.ssh")'), false, 'and no friendly twin — see the test name');
+  assert.equal(text.includes('(subpath "/var/folders/x/proj")'), false, 'nor on the allow side');
 });
 
 test('network on is refused, not rendered as a half-working profile', () => {

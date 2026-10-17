@@ -42,6 +42,7 @@ CowCat 是一个长期分发的 npm 编程 agent。v2 的目标不是在旧代�
 | ADR-019 | 会话头记录**实际 shell**（`kind` + 绝对 `executable`，不记可推导的 `baseArgs`/`commandFlag`），**不升 `schemaVersion`**——v2 日志格式从未发布（包为 `private: 0.0.0`），升版本是为不存在的兼容性付代价；此后**改动必填头字段即升 `schemaVersion`** | 已决定（P2 T2），见 [02-kernel.md](02-kernel.md#会话头与-schema-版本) |
 | ADR-020 | 沙箱后端的**加固能力与可用性分开探测**：bwrap 能跑 ≠ 能禁用嵌套 user namespace（实测默认能建，`--disable-userns` 能堵，0.9.0 可用）。内核拒绝加固时**照常沙箱化但写进限制项**，不报成不可用；未探测就发 flag 会让第一条真实命令失败 | 已决定（P2 T5），见 [03-policy-and-execution.md](03-policy-and-execution.md#沙箱执行器p2-t5) 与调研 `p2-sandbox.md` §4.1 |
 | ADR-021 | 沙箱执行器的两种拒绝分属不同错误类：**后端跑不了**（`SandboxUnavailableError`）与**后端能跑但请求满足不了**（`SandboxRequestRefusedError`，如 macOS `network: 'on'`）；两者都不可降级。私有 `/tmp` 固定 2 GiB + `--perms 1777`（实测默认是内存一半、0755）；写策略中尚不存在的路径被跳过时**必须**写进限制项 | 已决定（P2 T5），见 [03-policy-and-execution.md](03-policy-and-execution.md#沙箱执行器p2-t5) 与调研 `p2-sandbox.md` §4.4–§4.6 |
+| ADR-022 | macOS 上**遍历符号链接需要对 SYMLINK vnode 的读权限**：`/var`、`/etc`、`/tmp` 本身是符号链接，而 profile 只授了 DIRECTORY 的 metadata，于是**任何人会写的绝对路径全部 EPERM**，而 profile 本身是对的。修法是与 DIRECTORY 同规则同位置补一条 `file-read-metadata (vnode-type SYMLINK)`。`subpath` 匹配的是**内核解析后**的路径（原本的判断成立）；曾试过「每条路径发两种拼写」，实测**无效**且把 deny 面扩大一倍，已删除 | 已接受（P2 T6）。见 [03-policy-and-execution.md](03-policy-and-execution.md#seatbelt-的符号链接遍历是承重的) 与 `p2-sandbox.md` §4.9 |
 
 ## 与旧文档的关系
 

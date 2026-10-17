@@ -28,7 +28,9 @@ function profile(overrides: Partial<SandboxProfile> = {}): SandboxProfile {
 function probe(world: { dirs?: readonly string[]; files?: readonly string[] } = {}): SandboxFsProbe {
   const dirs = new Set(world.dirs ?? []);
   const files = new Set(world.files ?? []);
-  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path) };
+  // Identity: these tests are about the argv, not the spelling. The macOS
+  // /var → /private/var translation is real and has its own enforcement test.
+  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path), canonical: (path) => path };
 }
 
 const LINUX = probe({ dirs: [...BWRAP_READ_PATHS, '/proj', '/home/u/.ssh'], files: ['/proj/.env'] });
@@ -128,8 +130,38 @@ test('a write entry naming a path that does not exist is skipped AND reported', 
   );
 });
 
+/** The scratch tmpfs, not one of the `--tmpfs` covers a read-denied directory emits. */
+function scratchIndex(args: readonly string[]): number {
+  const found = args.findIndex((entry, index) => entry === '--tmpfs' && args[index + 1] === '/tmp');
+  assert.ok(found >= 0, `no scratch tmpfs in: ${args.join(' ')}`);
+  return found;
+}
+
+test('the private tmpfs comes FIRST in the workspace profile', () => {
+  // Mounts apply in command-line order and later ones win, so a `--tmpfs /tmp` emitted
+  // after the read binds SHADOWS every read allowance under the host's /tmp. Measured:
+  // with the tmpfs last, an allowed `$HOME/notes.txt` inside a /tmp project is GONE — a
+  // policy that appears to grant something and does nothing.
+  const args = build().args;
+  const scratch = scratchIndex(args);
+  const projectBind = args.indexOf('/proj');
+
+  assert.ok(scratch < projectBind, `the scratch filesystem must be mounted before the read binds, got: ${args.join(' ')}`);
+});
+
+test('the hide profile mounts it LAST, because the root bind would undo it', () => {
+  // The opposite requirement, same reason: `--ro-bind / /` binds the host's /tmp too, so
+  // a tmpfs emitted before it would be shadowed and the sandbox would inherit the host's
+  // temp directory — the exact half-truth the legacy suite caught in CI on its first run.
+  const args = build({ read: { profile: 'hide', allow: ['/proj'], deny: ['/home/u/.ssh'] } }).args;
+  const rootBind = args.indexOf('--ro-bind');
+
+  assert.ok(rootBind >= 0 && scratchIndex(args) > rootBind, args.join(' '));
+});
+
 test('the scratch directory is private, capped, and shaped like a real /tmp', () => {
   const args = build().args;
+  const scratch = scratchIndex(args);
   const perms = args.indexOf('--perms');
 
   assert.ok(perms >= 0, 'perms are set');
@@ -138,10 +170,7 @@ test('the scratch directory is private, capped, and shaped like a real /tmp', ()
   assert.equal(args[size + 1], String(SANDBOX_TMPFS_BYTES));
   // Verified that this is enforced, not merely recorded: with a cap, a write past it is
   // cut off and `df` reports the filesystem full.
-  // The LAST --tmpfs is the scratch one; an earlier one may be covering a denied path.
-  const tmpfs = build().args.lastIndexOf('--tmpfs');
-  assert.ok(tmpfs >= 0);
-  assert.equal(build().args[tmpfs + 1], '/tmp');
+  assert.ok(perms < scratch && size < scratch, 'perms and size must apply to the scratch mount');
 });
 
 test('the read profile choice changes the shape, and says so when it is open', () => {

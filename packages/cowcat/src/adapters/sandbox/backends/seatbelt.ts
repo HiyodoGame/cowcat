@@ -33,6 +33,10 @@
 //    on macOS 15: dyld aborts before exec with SIGABRT and no message, which reads
 //    as an unrelated crash rather than a missing rule. Hence the explicit
 //    `(allow file-read* (literal "/"))`.
+// 8. **`subpath` matches the LITERAL path, not the resolved one** (measured; see
+//    `spellings()` below). Note that this is what a *missing* read grant looks like
+//    when the profile is correct — a plain EPERM, not the SIGABRT of note 7, so the two
+//    failures are easy to confuse and need different fixes.
 //
 // ATTRIBUTION: RUNTIME_ALLOWS below is transcribed from @anthropic-ai/sandbox-runtime,
 // which is licensed Apache-2.0; see NOTICE at the repository root. Changes from the
@@ -58,6 +62,28 @@ const lit = (path: string): string => JSON.stringify(path);
 const sub = (path: string): string => `(subpath ${lit(path)})`;
 const literal = (path: string): string => `(literal ${lit(path)})`;
 
+/**
+ * Metadata on symlinks — note 8, and the one rule whose absence breaks every absolute
+ * path on macOS that a person would type.
+ *
+ * `subpath` matches the path the KERNEL resolves to, so a profile written in the
+ * canonical spelling is correct. But the walk to that path starts at whatever the caller
+ * typed, and on macOS `/var`, `/etc` and `/tmp` are themselves symlinks. Resolving one
+ * needs read access to a SYMLINK vnode, and the DIRECTORY rule above does not cover it.
+ * Measured, same profile, same file:
+ *
+ *     read /private/var/folders/…/n.txt   OK
+ *     read /var/folders/…/n.txt          EPERM     <- no symlink rule
+ *     read /var/folders/…/n.txt          OK        <- with this rule
+ *
+ * Metadata only, exactly like the DIRECTORY rule it sits next to, and in the same place:
+ * after the read denies, so denied paths keep denying their CONTENTS. The cost is that
+ * `readlink()` works anywhere, which reveals symlink targets — a path string, no file
+ * contents, and the same class of disclosure note 7 already accepts for directory
+ * metadata. It is the minimum for a normal filesystem to be walkable at all.
+ */
+const SYMLINK_METADATA = '(allow file-read-metadata (vnode-type SYMLINK))';
+
 function rule(action: string, ops: readonly string[], filters: readonly string[]): string[] {
   if (filters.length === 0) return [];
   return [`(${action} ${ops.join(' ')}`, ...filters.map((filter) => `  ${filter}`), ')'];
@@ -71,11 +97,11 @@ function uniq(list: readonly (string | null | undefined)[]): string[] {
  * Directories a normal build/test/VCS workflow needs to READ. A separate list from
  * bwrap's: macOS keeps the toolchain under /usr, /opt and /System.
  *
- * THE SPELLING IS THE POINT. These are KERNEL paths, not the paths a person types.
- * Seatbelt matches `(subpath …)` against what the kernel reports, and on macOS `/etc`,
- * `/var` and `/tmp` are all symlinks into `/private`. A profile written with the
- * friendly spelling grants nothing — and because a missing read grant is not an EPERM
- * but a dyld SIGABRT, it looks like an unrelated crash.
+ * These are the KERNEL paths. `/etc`, `/var` and `/tmp` are symlinks into `/private` on
+ * macOS, and a profile written with the friendly spelling grants nothing for the path the
+ * kernel resolves — which is note 8, measured. They are canonical for the allow side;
+ * `spellings()` emits the friendly twin next to each one so a command that types
+ * `/tmp/...` works as well as one that types `/private/tmp/...`.
  */
 export const SEATBELT_READ_PATHS: readonly string[] = [
   '/usr', '/bin', '/sbin', '/lib', '/opt', '/System',
@@ -237,8 +263,10 @@ function readSection(profile: SandboxProfile): string[] {
   // before exec with no message when it is missing. What it costs: `ls /` can list
   // the top-level names. It grants no subtree content.
   if (!open) lines.push('(allow file-read* (literal "/"))');
-  // AFTER the denies — note 4.
+  // AFTER the denies — note 4. Two vnode types, not one, and the second is the whole
+  // reason this file has a note 8.
   lines.push('(allow file-read-metadata (vnode-type DIRECTORY))');
+  lines.push(SYMLINK_METADATA);
   return lines;
 }
 

@@ -31,6 +31,17 @@ export const BWRAP_READ_PATHS: readonly string[] = [
 export interface SandboxFsProbe {
   readonly isDir: (path: string) => boolean;
   readonly isFile: (path: string) => boolean;
+  /**
+   * Canonical spelling, the same one `policy/sandbox-paths.ts` gives every policy entry.
+   *
+   * Present because a path can enter a profile from OUTSIDE the policy resolver — the
+   * scratch directory is created by the executor — and on macOS `/var` is a symlink to
+   * `/private/var`, so an un-canonicalised path yields `(subpath /var/…)`, which Seatbelt
+   * matches against nothing. Measured: the sandbox's own TMPDIR came back unwritable,
+   * which breaks every toolchain that needs scratch space, and it presents as a policy
+   * that grants nothing.
+   */
+  readonly canonical: (path: string) => string;
 }
 
 export interface BwrapOptions {
@@ -83,9 +94,23 @@ export function buildBwrapCommand(profile: SandboxProfile, options: BwrapOptions
 
   args.push('--dev-bind-try', '/dev', '/dev', '--proc', '/proc');
 
+  // Its own scratch space, always: sharing the host's /tmp would make every other
+  // process's temp files readable and turn "writes stay in the project" into a
+  // half-truth. Capped, and world-writable with a sticky bit like the real thing —
+  // the default tmpfs is 0755 and half of RAM (research §4.6).
+  const tmpfs = ['--perms', '1777', '--size', String(options.tmpfsBytes ?? SANDBOX_TMPFS_BYTES), '--tmpfs', '/tmp'];
+
   if (profile.read.profile === 'workspace') {
     // bubblewrap starts from an empty root here: bind exactly the read surface, so
     // anything else is not merely unreadable but ABSENT (measured: ENOENT).
+    //
+    // The tmpfs goes FIRST, and that order is load-bearing. Mounts are applied in
+    // command-line order and later ones win, so a `--tmpfs /tmp` emitted after the read
+    // binds SHADOWS every read allowance that lives under the host's /tmp — measured:
+    // with the tmpfs last, an allowed `$HOME/notes.txt` inside a `/tmp` project is gone,
+    // which is a policy that appears to grant something and does nothing. Putting it
+    // first lets the policy's own binds re-expose what it meant to expose.
+    args.push(...tmpfs);
     for (const path of [...BWRAP_READ_PATHS, ...profile.read.allow]) {
       if (fs.isDir(path)) args.push('--ro-bind', path, path);
       else if (fs.isFile(path)) args.push('--ro-bind-try', path, path);
@@ -95,19 +120,18 @@ export function buildBwrapCommand(profile: SandboxProfile, options: BwrapOptions
       if (hidden !== null) args.push(...hidden);
     }
   } else {
+    // Here the order is the opposite, and deliberately so: `--ro-bind / /` binds the
+    // whole root INCLUDING the host's /tmp, so a tmpfs emitted before it would be
+    // shadowed by the root bind and the sandbox would inherit the host's temp directory
+    // again. The root bind must come first, then the hides, then the tmpfs.
     args.push('--ro-bind', '/', '/');
     for (const path of profile.read.deny) {
       const hidden = hideRead(path, fs);
       if (hidden !== null) args.push(...hidden);
     }
+    args.push(...tmpfs);
     limitations.push('read profile "hide": reads are open outside the denied paths (the denied paths are still unreachable)');
   }
-
-  // Its own scratch space, always: sharing the host's /tmp would make every other
-  // process's temp files readable and turn "writes stay in the project" into a
-  // half-truth. Capped, and world-writable with a sticky bit like the real thing —
-  // the default tmpfs is 0755 and half of RAM (research §4.6).
-  args.push('--perms', '1777', '--size', String(options.tmpfsBytes ?? SANDBOX_TMPFS_BYTES), '--tmpfs', '/tmp');
 
   for (const path of profile.write.allow) {
     // A source that does not exist is a HARD failure for the whole command
