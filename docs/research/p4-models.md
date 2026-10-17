@@ -2,7 +2,7 @@
 
 > 依据 [`dev-plan-v2.md`](../dev-plan-v2.md)「工作规则 1」：每个阶段开始前先做调研，回答阶段内的开放问题，列出被否决的方案及理由。本文件回答 P4 的开放问题，并给出它们对 P4 五项范围的具体影响。
 >
-> 最后更新：**2026-10-18**。状态：**调研完成，决定已定（评审通过）**。本文件给出的各项决定已由评审拍板（§2.4、§3.5、§4.5、§5.4、§6.4/§6.6、§7.4），并已全部落成 **ADR-035~043**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）。其中 **ADR-041 的形状由评审直接拍板**——用量进日志用**独立的 `model.usage` 事件**，不挂在 `model.message` 上。
+> 最后更新：**2026-10-18**。状态：**调研完成，决定已定（评审通过）**。本文件给出的各项决定已由评审拍板（§2.4、§3.5、§4.5、§5.4、§6.4/§6.6、§7.4），并已全部落成 **ADR-035~044**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）。**T1–T5 已实现**（契约与事件、两个适配器、夹具、重试与取消边界），**T6/T7 未开始**。
 > 前置：[`dev-plan-v2.md`](../dev-plan-v2.md) 的 `## P4` 段、[`HANDOFF.md`](../HANDOFF.md) §3、[`architecture/04-dependencies.md`](../architecture/04-dependencies.md)。
 >
 > **本文件的证据边界（必须先说清）**：
@@ -458,7 +458,7 @@ npm i zod@4.6.7 openai@7.36.0 @anthropic-ai/sdk@0.135.0   →  added 10 packages
 | 直接（3） | `zod`（已有）、`openai`、`@anthropic-ai/sdk` |
 | 传递（7） | `standardwebhooks` → `fast-sha256`、`@stablelib/base64`；`json-schema-to-ts` → `@babel/runtime`、`ts-algebra`；`@opentelemetry/api` |
 
-`openai@7.36.0` **零运行时依赖**，6 个 peer 全为 `optional: true` 故不会自动安装（已核对 `peerDependenciesMeta`）。**这带出一个必须回答的问题**：`04-dependencies.md:14` 写「运行时依赖的上限：不超过 6 个，每一个都必须有 ADR」——**「6」数的是直接依赖还是整棵树，本表此前没有说明**。按整棵树算是 10（超限），按直接依赖是 3（未超限），且传递依赖不可能各有 ADR。**建议在 T1 之前定死口径**；另有 7 个传递依赖里「哪些真在运行时被加载」待核实（`json-schema-to-ts` 是类型层库、`@opentelemetry/api` 默认空实现）。
+`openai@7.36.0` **零运行时依赖**，6 个 peer 全为 `optional: true` 故不会自动安装（已核对 `peerDependenciesMeta`）。**这带出一个必须回答的问题**：`04-dependencies.md:14` 写「运行时依赖的上限：不超过 6 个，每一个都必须有 ADR」——**「6」数的是直接依赖还是整棵树，本表此前没有说明**。按整棵树算是 10（超限），按直接依赖是 3（未超限），且传递依赖不可能各有 ADR。**建议在 T1 之前定死口径**——**已于 2026-10-18 定死：数直接依赖，上限 6 不变**（见 [`04-dependencies.md`](../architecture/04-dependencies.md)）；另有 7 个传递依赖里「哪些真在运行时被加载」待核实（`json-schema-to-ts` 是类型层库、`@opentelemetry/api` 默认空实现）——**已于 T3 核实：7 个里 4 个真进运行时、3 个纯类型层**。
 
 **本次 PR 已同步的**：
 
