@@ -46,7 +46,7 @@ test('a plain answer completes the turn in one model call', async () => {
   assert.equal(session.state.turn?.state, 'completed');
   assert.deepEqual(session.state.messages, [
     { role: 'user', text: 'hi' },
-    { role: 'assistant', text: 'hello', toolCalls: [] },
+    { role: 'assistant', text: 'hello', toolCalls: [], reasoning: [] },
   ]);
   assert.deepEqual(types(store.events), [
     'session.opened',

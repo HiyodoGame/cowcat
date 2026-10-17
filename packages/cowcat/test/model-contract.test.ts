@@ -11,9 +11,10 @@ import {
 } from '../src/index.js';
 import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './support.js';
 
-// The model contract P4 added (ADR-035, ADR-040, ADR-041): usage and the stop reason
-// are facts the kernel receives from an adapter and has to record. Until this task the
-// kernel could only receive text and tool calls, so neither could be kept.
+// The model contract P4 added (ADR-035, ADR-040, ADR-041, ADR-045): usage, the stop
+// reason and the model's own reasoning are facts the kernel receives from an adapter and
+// has to record. Until this task the kernel could only receive text and tool calls, so
+// none of them could be kept.
 
 const usage: ModelUsage = { input: 12, output: 34, cacheRead: 5, cacheCreation: 6 };
 
@@ -145,4 +146,54 @@ test('a log carrying usage replays to the same state', async () => {
   await runTurn(deps, 'hi', new AbortController().signal);
 
   assert.deepEqual(replay('sess_1', await store.readAll('sess_1')), session.state);
+});
+
+test('reasoning reaches the log verbatim, in the order it arrived (ADR-045)', async () => {
+  // Both arms of the union, and a signature with nothing readable about it: the point is
+  // that the kernel is a carrier here, not an interpreter. Anthropic rejects a block whose
+  // opaque signature was re-derived or re-ordered, so "we kept it" has to mean "byte for
+  // byte, position for position" (the adapter decides how to send it back).
+  const model = new ScriptedModel([
+    [
+      { type: 'reasoning', block: { type: 'thinking', text: 'let me look', signature: 'sig-opaque-1' } },
+      { type: 'reasoning', block: { type: 'redacted', data: 'encrypted-blob' } },
+      { type: 'text', text: 'hi' },
+    ],
+  ]);
+  const { store, session, deps } = await setup(model);
+  await runTurn(deps, 'hi', new AbortController().signal);
+
+  const expected = [
+    { type: 'thinking', text: 'let me look', signature: 'sig-opaque-1' },
+    { type: 'redacted', data: 'encrypted-blob' },
+  ];
+  const message = of(await store.readAll('sess_1'), 'model.message')[0];
+  assert.deepEqual(message?.type === 'model.message' ? message.reasoning : null, expected);
+  // The reasoning is a sibling of the answer, never mixed into it.
+  assert.deepEqual(session.state.messages.at(-1), {
+    role: 'assistant',
+    text: 'hi',
+    toolCalls: [],
+    reasoning: expected,
+  });
+});
+
+test('reasoning survives a JSON round trip and replays to the same state', async () => {
+  // The log is JSON and the log is the source of truth: a block that could not be written
+  // back faithfully would make a reopened session differ from the live one. This suite's
+  // memory store keeps object references, so the round trip is made explicit here instead
+  // of being assumed from `replay` (the real file store encodes and decodes, and the
+  // decode boundary itself is covered in schema.test.ts).
+  const model = new ScriptedModel([
+    [
+      { type: 'reasoning', block: { type: 'thinking', text: 'thinking', signature: 'sig-opaque' } },
+      { type: 'reasoning', block: { type: 'redacted', data: 'encrypted-blob' } },
+    ],
+  ]);
+  const { store, session, deps } = await setup(model);
+  await runTurn(deps, 'hi', new AbortController().signal);
+
+  const logged = await store.readAll('sess_1');
+  assert.deepEqual(replay('sess_1', logged), session.state);
+  assert.deepEqual(replay('sess_1', JSON.parse(JSON.stringify(logged)) as KernelEvent[]), session.state);
 });

@@ -59,7 +59,10 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
     case 'model.message':
       return {
         ...base,
-        messages: [...state.messages, { role: 'assistant', text: event.text, toolCalls: event.toolCalls }],
+        messages: [
+          ...state.messages,
+          { role: 'assistant', text: event.text, toolCalls: event.toolCalls, reasoning: event.reasoning },
+        ],
       };
     case 'model.usage':
       // Nothing to derive: what a call cost does not change the conversation, and

@@ -10,7 +10,7 @@ export { reduce, replay, initialState, type SessionState, type TurnView } from '
 export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
-export type { Message, ToolCall } from './kernel/messages.js';
+export type { Message, ReasoningBlock, ToolCall } from './kernel/messages.js';
 export {
   decide,
   validateRules,

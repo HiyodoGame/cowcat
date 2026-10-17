@@ -51,6 +51,12 @@ const modelMessage: KernelEvent = {
   type: 'model.message',
   text: 'hello',
   toolCalls: [{ callId: 'c1', name: 'read_file', input: { path: 'a' } }],
+  // Both arms of the reasoning union, because each one is a separate decode rule and
+  // only one of them has readable text (ADR-045).
+  reasoning: [
+    { type: 'thinking', text: 'the file is a test fixture', signature: 'sig-opaque-1' },
+    { type: 'redacted', data: 'encrypted-blob' },
+  ],
   stopReason: { kind: 'toolCalls', raw: 'tool_calls' },
 };
 const modelUsage: KernelEvent = {
@@ -139,6 +145,23 @@ test('a nested field is reported with its index', () => {
   if (result.success) assert.fail('expected a decode failure');
 
   assert.match(describeIssues(result.error), /toolCalls\[0\]\.callId/);
+});
+
+test('a malformed reasoning block is reported with its path', () => {
+  // Both arms are closed shapes at the boundary, and each one is its own decode rule: a
+  // thinking block without its opaque signature and a redacted block without its payload
+  // are both unreplayable, so accepting either would push the failure to the wire
+  // (ADR-045).
+  const malformed: readonly Record<string, unknown>[] = [
+    { type: 'thinking', text: 'no signature' },
+    { type: 'redacted' },
+  ];
+  for (const block of malformed) {
+    const result = kernelEventSchema.safeParse({ ...modelMessage, reasoning: [block] });
+    if (result.success) assert.fail(`expected ${JSON.stringify(block)} to be refused`);
+
+    assert.match(describeIssues(result.error), /reasoning\[0\]/);
+  }
 });
 
 test('an event type the kernel does not know is refused', () => {
