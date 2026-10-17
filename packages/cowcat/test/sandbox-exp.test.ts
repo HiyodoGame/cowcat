@@ -29,22 +29,25 @@ test('exp: what does traversing a symlink actually require', { skip: platform !=
   const reads = [canonical, ...SEATBELT_READ_PATHS].flatMap(spellings).map((path) => `(allow file-read* (subpath ${JSON.stringify(path)}))`);
 
   const base = [
-    '(version 1)',
-    '(deny default)',
-    ...RUNTIME_ALLOWS,
-    ...reads,
-    '(allow file-read-metadata (vnode-type DIRECTORY))',
-  ];
+  '(version 1)',
+  '(deny default)',
+  ...RUNTIME_ALLOWS,
+  ...reads,
+  // Note 7: without this the root inode is uncovered and dyld aborts BEFORE exec, with an
+  // empty stderr. That is what the first run of this experiment measured.
+  '(allow file-read* (literal "/"))',
+  '(allow file-read-metadata (vnode-type DIRECTORY))',
+];
 
   const variants: Record<string, string[]> = {
     'A as-generated': base,
     'B +metadata-SYMLINK': [...base, '(allow file-read-metadata (vnode-type SYMLINK))'],
-    'C +read-symlink-SYMLINK': [...base, '(allow file-read-symlink (vnode-type SYMLINK))'],
-    'D +allow-literal-/var': [...base, '(allow file-read* (literal "/var"))'],
-    'E +both-symlink-rules': [
+    'C +allow-literal-/var': [...base, '(allow file-read* (literal "/var"))'],
+    'D +read*-SYMLINK': [...base, '(allow file-read* (vnode-type SYMLINK))'],
+    'E +B and C': [
       ...base,
       '(allow file-read-metadata (vnode-type SYMLINK))',
-      '(allow file-read-symlink (vnode-type SYMLINK))',
+      '(allow file-read* (literal "/var"))',
     ],
   };
 
@@ -63,7 +66,8 @@ test('exp: what does traversing a symlink actually require', { skip: platform !=
         timeout: 30_000,
       }).trim();
     } catch (err) {
-      outcome = 'THREW ' + ((err as { stderr?: string }).stderr ?? '').slice(0, 200);
+      const e = err as { status?: number; stderr?: string };
+      outcome = `THREW status=${String(e.status)} stderr=${(e.stderr ?? '').slice(0, 160)}`;
     }
     console.log('EXP %s :: %s', name.padEnd(26), outcome);
   }
