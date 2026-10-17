@@ -2,14 +2,14 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-18**（P4 的 T1–T5 落地之后）
-> 交接时仓库状态：`main` = `4a9e0a8`，工作区干净
+> 最近一次更新：**2026-10-18**（P4 的 T7 落地之后）
+> 交接时仓库状态：`main` = `4a9e0a8`（T1–T5）；T7 与本次交接都在未合分支上（`docs/handoff-p4` → `feat/p4-t7-exit-criteria`）
 
 ---
 
 ## 1. 本次实际做了什么
 
-**P4（模型层）推进到 T5**，另有两件顺带的事。共 8 个 PR：
+**P4（模型层）推进到 T5，出口标准（T7）随后单独落地**，另有两件顺带的事。共 8 个 PR：
 
 | PR | 内容 |
 |---|---|
@@ -23,6 +23,8 @@
 | #32 | **T5 重试、退避与取消边界**（ADR-039） |
 
 **测试 347 → 406**（`fail` 全程为 0）。ADR 表到 **ADR-044**。运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）。
+
+**T7（出口标准，ADR-043）在 T5 之后单独一个 PR 落地**：配对夹具（`paired/text-and-tool` + `paired/final-text`，同一回合脚本的两次模型调用）过一次 `runTurn`，两个协议对**同一份写死的 golden 事件序列**；外加「流中途取消 → 零 `model.message` + 用量留痕」两个协议各一条（`test/exit-criteria.test.ts`）。**测试 406 → 413**。
 
 ### 三件值得单独记住的实测发现
 
@@ -43,15 +45,17 @@
 | `packages/cowcat · node 22 · windows-latest` | pass |
 | `test · node 22 · ubuntu-latest` / `macos-15` | pass |
 
+> 上表是 **T5 那一轮**的实跑记录；T7 的 CI 结果要等它的 PR 跑完再看（本机结果见下一节）。
+
 ### 已验证 —— 本机（Windows，Node 24.18.0）
 
-`npm test` **406 tests / 390 pass / 0 fail / 16 skipped**。另：`tools/lint-probe.mjs` **7 条探针全部按预期**（含 T2 新增的两条 SDK 边界探针）、`tools/check-tarball.mjs` 通过。
+`npm test` **413 tests / 397 pass / 0 fail / 16 skipped**。另：`tools/lint-probe.mjs` **7 条探针全部按预期**（含 T2 新增的两条 SDK 边界探针）、`tools/check-tarball.mjs` 通过。
 
 ### 项目状态
 
-- **P4 到 T5 落地**；`packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**，`schemaVersion` 仍是 **1**。
+- **P4 的 T1–T5 与 T7 落地**（只剩 T6）；`packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**，`schemaVersion` 仍是 **1**。
 - **旧 `agent/` 树本次未改动一行**（P8 前只收安全修复）。
-- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 已合，T6/T7 未开始」。
+- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 与 T7 已合，T6 未开始」。
 
 ### P4 六项范围的落地情况
 
@@ -63,16 +67,16 @@
 | 4 | 录制-回放夹具 | ✅ T4（配对夹具 + 钉板 + 录制脚本） |
 | 5 | 模型预设以数据形式存在 | ❌ **T6 未开始** |
 
-### P4 两条出口标准的现状
+### P4 两条出口标准（ADR-043）—— 均已兑现
 
-- **「同一回合脚本在两种协议的录制夹具上得到相同的事件序列（归一化后）」**——**适配器层已经成立**：T4 的配对夹具有一条测试断言两个适配器从两种不同编码产出同样的归一结果。**内核层（`runTurn` 的事件序列）尚未断言**，那是 T7。
-- **「取消在流式中途生效，且不产生半条 `model.message`」**——**结构上成立**（`run-turn.ts:109` 只在流结束后才写 `model.message`），两个适配器各有「中途 abort 让流停下」的测试，T1 另有一条 runTurn 层的「用量活过取消、零 `model.message`」。**两条合起来的一次端到端断言仍在 T7。**
+- **「同一回合脚本在两种协议的录制夹具上得到相同的事件序列（归一化后）」**——**成立**：`test/exit-criteria.test.ts` 把配对夹具过一次 `runTurn`，两个协议对**同一份写死的 golden 事件序列**。投影口径按 ADR-043：剥 `seq`/`ts`/`sessionId`/`turnId`、tool call id 归一到 `call_<index>`、只比 stopReason 的 `kind`、**用量按「一次模型调用取最后一次」折叠后再比**（同一次调用里报几次是协议形态）。
+- **「取消在流式中途生效，且不产生半条 `model.message`」**——**成立**：同文件里两个协议各一条端到端断言（**真实适配器** + 开而不闭的 transport，等到 `model.usage` 进日志再 abort）：状态 `cancelled`、零 `model.message`、**用量留痕**（ADR-041）、日志最后一条是取消转移。
 
 ---
 
 ## 3. 项目唯一下一步
 
-**P4 的 T6 与 T7。** 范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4` 任务表。
+**P4 的 T6。**（T7 已落地，见 §2 的两条出口标准。）范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4` 任务表。
 
 ### T6：模型预设为数据（ADR-037/038）
 
@@ -82,13 +86,9 @@
 4. **注意**：产出 catalog 的蒸馏脚本**不在仓库里**（`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不存在）。沿用「数据形状」可行，「怎么更新它」是遗留问题。
 5. `thinking_delta` / `reasoning_content` **目前刻意不映射**（契约里没有推理内容的位置，T3 把它留给了 T6）——T6 要决定要不要加。
 
-### T7：出口标准（ADR-043）
+### T7：出口标准（ADR-043）—— 已落地
 
-**这是整阶段的兑现点，也是最能出成果的一步**，因为夹具已经就位：
-
-1. 把 T4 的**配对夹具**（`test/fixtures/{openai,anthropic}/paired/text-and-tool`）送进 **`runTurn`**，断言两条路径产生**同样的内核事件序列**。
-2. 比对前必须按 **ADR-043** 做投影：剥掉 tool call id（用 `call_<index>` 归一）、`seq`、`ts`、`sessionId`、`turnId`、chunk 切分；**保留** text、`toolCalls[].name`/`input`、归一后的 stopReason、四项 usage。**比的是「已提交事实」而不是 delta**（chunk 边界是传输层偶然）。
-3. 第二条出口标准：一条「流中途 abort」的端到端断言——**零 `model.message`**，且**拿到用量之后的取消仍留下用量**（ADR-041 的存在理由，T1 已有单测，T7 补 runTurn 层的）。
+见 §2 的两条出口标准；实现是 `packages/cowcat/test/exit-criteria.test.ts`（golden 写死在测试里，不取自某次运行；第二次模型调用是新加的配对夹具 `paired/final-text`）。**T7 暴露并留下的一处接缝**：`runTurn` 构造请求时**不带 `maxTokens`**，而 Anthropic 协议该字段必填（ADR-044 拒绝替它挑默认值）——所以测试用一个 `withPreset` 包装器站在**组合根**的位置（ADR-035 把这三个字段的组合根接线定在 P6）。**T6/P6 要决定的是「预设怎么进内核」**：给 `TurnDeps` 加字段，还是继续在端口边界包装。这不是 T7 的结论。
 
 ---
 
