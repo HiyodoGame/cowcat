@@ -22,6 +22,14 @@ export interface ToolSpec {
   readonly description: string;
   readonly risk: ToolRisk;
   /**
+   * JSON Schema for the tool's input as a model needs to see it, or absent when the
+   * tool declares none. Producers are P5's job (turning a tool's zod schema into JSON
+   * Schema is one of P5's research questions); an adapter needs a place to read it
+   * from, because a tool declared without parameters is a tool a model cannot call
+   * correctly.
+   */
+  readonly inputSchema?: unknown;
+  /**
    * Input field names that carry the two things a rule may narrow on. The kernel
    * reads them to build the `ActionRequest` (ADR-027) — a tool that writes a file
    * says `pathInput: 'file_path'`, one that runs a command says
