@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-18**（P4 的 T7 落地之后）
-> 交接时仓库状态：`main` = `4a9e0a8`（T1–T5）；T7 与本次交接都在未合分支上（`docs/handoff-p4` → `feat/p4-t7-exit-criteria`）
+> 最近一次更新：**2026-10-18**（T7 已合、T6 的决策已落 ADR-045/046）
+> 交接时仓库状态：`main` = `38acc3a`（含 T1–T5 与 T7）；T6 的决策文档在 `docs/p4-t6-adrs` 上
 
 ---
 
@@ -25,6 +25,8 @@
 **测试 347 → 406**（`fail` 全程为 0）。ADR 表到 **ADR-044**。运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）。
 
 **T7（出口标准，ADR-043）在 T5 之后单独一个 PR 落地**：配对夹具（`paired/text-and-tool` + `paired/final-text`，同一回合脚本的两次模型调用）过一次 `runTurn`，两个协议对**同一份写死的 golden 事件序列**；外加「流中途取消 → 零 `model.message` + 用量留痕」两个协议各一条（`test/exit-criteria.test.ts`）。**测试 406 → 413**。
+
+**T6 的决策随后落地（实现未开始）**：**ADR-045/046**——推理内容进契约（形状、回传口径、实时渲染推迟）与预设进内核的方式；T6 因此拆成 T6a/b/c。见 §3。
 
 ### 三件值得单独记住的实测发现
 
@@ -55,7 +57,7 @@
 
 - **P4 的 T1–T5 与 T7 落地**（只剩 T6）；`packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**，`schemaVersion` 仍是 **1**。
 - **旧 `agent/` 树本次未改动一行**（P8 前只收安全修复）。
-- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 与 T7 已合，T6 未开始」。
+- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 与 T7 已合（ADR-035~044），T6 的决策已落（ADR-045/046）、拆成 T6a/b/c，实现未开始」。
 
 ### P4 六项范围的落地情况
 
@@ -65,7 +67,7 @@
 | 2 | 流式归一化 → `ModelChunk` | ✅ 含用量与结束原因 |
 | 3 | 重试与退避 | ✅ T5 |
 | 4 | 录制-回放夹具 | ✅ T4（配对夹具 + 钉板 + 录制脚本） |
-| 5 | 模型预设以数据形式存在 | ❌ **T6 未开始** |
+| 5 | 模型预设以数据形式存在 | ❌ **决策已落（ADR-045/046）、拆成 T6a/b/c，实现未开始** |
 
 ### P4 两条出口标准（ADR-043）—— 均已兑现
 
@@ -78,21 +80,32 @@
 
 **P4 的 T6。**（T7 已落地，见 §2 的两条出口标准。）范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4` 任务表。
 
-### T6：模型预设为数据（ADR-037/038）
+### T6：模型预设为数据 —— 决策已落（ADR-045/046），拆成 T6a/b/c
 
-1. `ModelPreset` 类型：形状沿用 `agent/assets/providers.json`（`protocol` / `api` / `env` + 每模型的 `limit` / `tool_call` / `reasoning_options` / `cost`）。**数据由组合根注入，内核只认类型**。
-2. `tool_call: false` 的模型**不发 `tools`**，并把「该模型不支持工具」作为**可判定事实**上报。
-3. 厂商扩展**不猜默认值**：只发预设声明过的档位，逃生口按协议分别映射（MiniMax 的 `reasoning_effort: 'none'` 与 `thinking.type: 'disabled'` 都会 **400**）。
-4. **注意**：产出 catalog 的蒸馏脚本**不在仓库里**（`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不存在）。沿用「数据形状」可行，「怎么更新它」是遗留问题。
-5. `thinking_delta` / `reasoning_content` **目前刻意不映射**（契约里没有推理内容的位置，T3 把它留给了 T6）——T6 要决定要不要加。
+**两个叉的拍板**（本 PR 落的决策，实现未开始）：
+
+- **推理内容进契约，回传由预设声明**（ADR-045）。原因不是「想要 UI 展示」，而是 Anthropic 的 thinking 块**回传时必须原样、保持原顺序、签名完整**，否则 **400 `invalid_request_error`**——这条写死在装机可查的 SDK 类型文档里（`@anthropic-ai/sdk` 的 `messages.d.ts:3906-3940`、`signature_delta` 见 `:3787-3794`）。所以内核里的推理是**带不透明签名的块序列**，不是一段文本。
+- **档位→wire 参数的映射写进预设数据**（ADR-046）。预设为每个档位声明**要发的参数本身**，内核只校验「声明过吗」并透传，适配器只序列化 + 校验保留字/协议不变量。**这样不猜任何默认值**，也不用把映射表写进代码——v1 的折叠表（`llm/openai.js:90` 把 `xhigh`/`max` 压成 `high`）恰好与 DeepSeek 自己声明的 `max` 档冲突，是「替厂商定策略」的反例。
+
+**三个子任务**（一个 PR 一个）：
+
+| 任务 | 内容 |
+|---|---|
+| T6a | **契约与类型**：`ModelChunk` 增 `reasoning`（**整块**）、`Message.assistant` 增 `reasoning`、`model.message` 带上它、`ModelPreset` 类型、`TurnOutcome.notes`；连带 `state.ts` / `adapters/schema.ts` / 等价断言。**不动适配器、不动请求构造** |
+| T6b | **两个适配器**：读 `reasoning_content`/`reasoning` 与 `thinking_delta`+`signature_delta`；**只按声明回传**；`providerOptions` 序列化 + 保留字/协议不变量校验；`maxTokens` 接线 |
+| T6c | **预设进内核**：`TurnDeps.preset` 取代 `modelId`；`maxTokens ← limits.output`（**顺带闭掉 T7 记录的 Anthropic 必填缺口**）；`toolCalls:false` 不发 `tools` 并随 `notes` 上报；配对夹具补推理内容、golden 随之更新 |
+
+**仍然是遗留问题（不在 T6 解决）**：产出 catalog 的蒸馏脚本**不在仓库里**（`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不存在）；`providers.json` 只作**兼容基线**，而 **wire 参数与「回不回传」catalog 里没有**，必须由预设额外声明——「预设怎么更新」仍待定（ADR-037 已记、ADR-046 复述）。
 
 ### T7：出口标准（ADR-043）—— 已落地
 
-见 §2 的两条出口标准；实现是 `packages/cowcat/test/exit-criteria.test.ts`（golden 写死在测试里，不取自某次运行；第二次模型调用是新加的配对夹具 `paired/final-text`）。**T7 暴露并留下的一处接缝**：`runTurn` 构造请求时**不带 `maxTokens`**，而 Anthropic 协议该字段必填（ADR-044 拒绝替它挑默认值）——所以测试用一个 `withPreset` 包装器站在**组合根**的位置（ADR-035 把这三个字段的组合根接线定在 P6）。**T6/P6 要决定的是「预设怎么进内核」**：给 `TurnDeps` 加字段，还是继续在端口边界包装。这不是 T7 的结论。
+见 §2 的两条出口标准；实现是 `packages/cowcat/test/exit-criteria.test.ts`（golden 写死在测试里，不取自某次运行；第二次模型调用是新加的配对夹具 `paired/final-text`）。**T7 暴露并留下的一处接缝**：`runTurn` 构造请求时**不带 `maxTokens`**，而 Anthropic 协议该字段必填（ADR-044 拒绝替它挑默认值）——所以测试用一个 `withPreset` 包装器站在**组合根**的位置（ADR-035 把这三个字段的组合根接线定在 P6）。**这处接缝已由 T6 的决定收口**：`TurnDeps.preset` + `maxTokens ← limits.output`（ADR-046），T6c 实现。
 
 ---
 
 ## 4. 关键决策（本轮新增 10 条）
+
+> T6 决策时**追加 2 条**：**ADR-045**（推理内容进契约，形状是带不透明签名的块序列，回传由预设声明）与 **ADR-046**（预设进内核：`TurnDeps.preset` 单一事实源、`maxTokens ← limits.output`、`toolCalls:false` 不发 `tools` 并随 `notes` 上报、逃生口 = 预设数据里的 wire 参数 + 适配器校验保留字与协议不变量）。完整理由见 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 
 | 决策 | 内容 | 出处 |
 |---|---|---|
@@ -150,12 +163,12 @@
 
 ### 已知缺口（**不声称已解决**）
 
-1. **`architecture/README.md` 的状态行滞后**（见 §2）——实现到 T5 了，状态行还写着「实现未开始」。
+1. ~~**`architecture/README.md` 的状态行滞后**~~：**已修**——状态行随每次实现同步（最近一次：P4 T1–T5 与 T7 已合、T6 决策已落）。
 2. **两条旧版缺口在 v2 里封不了**：`subagent.js:58` 从 `tools === null` 推断 yolo、`tools/planmode.js:121-124` 的 `allowedPrompts` 绕过 `validateRule`。v2 没有这两个功能，**没有可封的代码**。
 3. **配置文件与信任记录放哪里仍未定**（组合根的职责，等 P6 的 CLI）。
 4. **永久化规则机制不存在**（ADR-031 把 `always` 限在会话内）。
 5. **`execFileSync` 下的子进程挂起**（§5 第 5 条）未查明。
-6. **推理内容没有归宿**：`thinking_delta` / `reasoning_content` 刻意不映射，留给 T6 决定。
+6. ~~**推理内容没有归宿**~~：**已定**——进契约、形状是带签名的块序列、回传由预设声明（**ADR-045**，T6a 实现）。
 
 ### 厂商差异：哪些有出处、哪些还没有
 
