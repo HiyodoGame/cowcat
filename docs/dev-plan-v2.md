@@ -372,7 +372,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P4 模型层
 
-> **调研已完成、ADR-035~044 已定（评审通过），T1–T5 与 T7 已合**：[`research/p4-models.md`](research/p4-models.md)。协议行为**由录制夹具固定**（自 T4 起 CI 不访问网络）；出口标准的比对口径见该文 §8 与 **ADR-043**。**T6 未开始**，具体做法见 [`HANDOFF.md`](HANDOFF.md) §3。
+> **调研已完成、ADR-035~044 已定（评审通过），T1–T5 与 T7 已合**：[`research/p4-models.md`](research/p4-models.md)。协议行为**由录制夹具固定**（自 T4 起 CI 不访问网络）；出口标准的比对口径见该文 §8 与 **ADR-043**。**T6 已拆成 T6a/b/c、决策落成 ADR-045/046，实现未开始**，做法见 [`HANDOFF.md`](HANDOFF.md) §3。
 
 **调研问题**
 
@@ -397,7 +397,10 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T3 | **Anthropic 适配器**（ADR-036）：六种 `RawMessageStreamEvent`、`input_json_delta` 拼装、usage **合并而非覆盖** | ✅ 本 PR。测试 369 → 380 |
 | T4 | **录制-回放夹具与录制脚本**（ADR-042）：录原始字节、**配对夹具**、厂商差异钉板、请求头裁剪 | ✅ 本 PR。测试 380 → 388 |
 | T5 | **重试、退避与取消边界**（ADR-039）：默认 2 次、尊重 `Retry-After`、取消涵盖退避等待、不重试已开始输出的流 | ✅ 本 PR。测试 388 → 406 |
-| T6 | **模型预设为数据**（ADR-037/038）：`ModelPreset` 类型 + 组合根注入；`toolCall:false` 不发 `tools`；厂商扩展不猜默认值 | 未开始 |
+| T6 | **模型预设为数据**（ADR-037/038）：拆成 T6a/b/c（见下） | 决策已落（ADR-045/046） |
+| T6a | **契约与类型**（ADR-045/046）：`ModelChunk` 增 `reasoning`（**整块**，带不透明签名）、`Message.assistant` 增 `reasoning`、`model.message` 带上它；新增 `ModelPreset` 类型与 `TurnOutcome.notes`；连带改 `state.ts` 的 switch、`adapters/schema.ts` 的解码边界与**编译期等价断言**。**不动适配器、不动 runTurn 的请求构造** | 未开始 |
+| T6b | **两个适配器的读写**（ADR-038/045）：读 `reasoning_content`/`reasoning`（OpenAI 兼容）与 `thinking_delta` + `signature_delta`（Anthropic）并把签名原样带回；**只在预设声明时**回传；`providerOptions` 序列化 + **保留字**与**协议不变量**校验（`budget_tokens` 那类）；`maxTokens` 接线 | 未开始 |
+| T6c | **预设进内核**（ADR-046）：`TurnDeps.preset` 取代 `modelId`；`maxTokens ← limits.output`；`toolCalls:false` 不发 `tools` 并随 `TurnOutcome.notes` 上报；档位未声明则不发 + note；配对夹具补上推理内容、golden 随之更新 | 未开始 |
 | T7 | **出口标准**（ADR-043）：配对夹具跑出同一事件序列；取消不产生半条 `model.message` | ✅ 本 PR。测试 406 → 413 |
 
 **出口标准**
