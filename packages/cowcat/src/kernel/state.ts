@@ -12,10 +12,20 @@ export interface SessionState {
   readonly lastSeq: number;
   readonly turn: TurnView | null;
   readonly messages: readonly Message[];
+  /**
+   * Actions answered `always`, for the rest of this session (ADR-031 decision 3).
+   *
+   * Derived from the log rather than held beside it, which is what makes the promise
+   * "replaying the log reproduces the live session" true for a grant as well: a
+   * reopened session gets its grants back because it gets its events back. Nothing
+   * here outlives the session — permanent rules need a way to revoke them first
+   * (ADR-026), and that does not exist yet.
+   */
+  readonly grants: readonly string[];
 }
 
 export function initialState(sessionId: string): SessionState {
-  return { sessionId, lastSeq: 0, turn: null, messages: [] };
+  return { sessionId, lastSeq: 0, turn: null, messages: [], grants: [] };
 }
 
 // Pure and total over valid logs. A log that contradicts itself (a transition
@@ -58,6 +68,12 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       };
     case 'policy.decided':
       return base;
+    case 'approval.requested':
+      // Nothing to derive: the question is recorded, but "being asked" is not a fact
+      // about the session's policy. The answer is, and it arrives next.
+      return base;
+    case 'approval.answered':
+      return event.verdict === 'always' ? { ...base, grants: [...state.grants, event.key] } : base;
   }
 }
 

@@ -41,7 +41,7 @@ async function run(name: string, input: unknown, options: RunOptions) {
       ...(options.fs === undefined ? {} : { fs: options.fs }),
       approve: (request) => {
         seen.push(request);
-        return Promise.resolve(true);
+        return Promise.resolve('once');
       },
     }),
     'go',

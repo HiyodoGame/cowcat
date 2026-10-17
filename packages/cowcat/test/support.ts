@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, DEFAULT_RULES, type ActionRequest, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
+import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -127,8 +127,9 @@ export function tool(spec: ToolSpec, run: (input: unknown) => ToolResult | Promi
 export interface TurnDepsOptions {
   readonly tools?: ReadonlyMap<string, ToolPort>;
   readonly rules?: readonly Rule[];
-  readonly approve?: (request: ActionRequest, decision: Decision) => Promise<boolean>;
+  readonly approve?: (request: ActionRequest, decision: Decision) => Promise<ApprovalVerdict>;
   readonly fs?: FsPort;
+  readonly approvalTimeoutMs?: number;
 }
 
 // One place to build TurnDeps, for the same reason sessionDeps exists: the shape
@@ -142,7 +143,8 @@ export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOp
     tools: options.tools ?? new Map(),
     rules: options.rules ?? DEFAULT_RULES,
     fs: options.fs ?? fakeFs(),
-    approve: options.approve ?? (() => Promise.resolve(true)),
+    approve: options.approve ?? (() => Promise.resolve('once')),
+    ...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
     ids: sequentialIds(),
   };
 }

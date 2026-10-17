@@ -7,7 +7,7 @@ export {
   UnsupportedSchemaVersionError,
 } from './kernel/schema-version.js';
 export { reduce, replay, initialState, type SessionState, type TurnView } from './kernel/state.js';
-export { runTurn, type TurnDeps, type TurnOutcome } from './kernel/run-turn.js';
+export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ToolCall } from './kernel/messages.js';
@@ -34,6 +34,7 @@ export {
   type SourcedRule,
 } from './policy/config.js';
 export { trustedRules, isTrusted, type TrustState } from './policy/trust.js';
+export { approvalKey, type ApprovalBy, type ApprovalVerdict } from './policy/approval.js';
 export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';
 export { INSTRUCTION_FILENAMES, decideInstruction, describeInstructionSkip, type InstructionDecision } from './policy/instructions.js';
 export { FileInstructionSource, type FileInstructionSourceOptions } from './adapters/instructions.js';
