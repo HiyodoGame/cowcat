@@ -54,6 +54,7 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 |---|---|---|---|
 | `packages/cowcat · node 22 · ubuntu-latest` | v2 内核：`npm test`（build + ESLint + 测试） | 每个**非草稿** PR + 每次合入 main | ✅ |
 | `packages/cowcat · node 22 · windows-latest` | v2 内核在 Windows 上 | 同上 | ✅ |
+| `packages/cowcat · node 22 · macos-15`（`CI (macOS)`） | v2 内核在 macOS 上：POSIX shell 选择（macOS 默认是 zsh，这里断言选 `/bin/bash`）+ Seatbelt 后端探测 | 同上 | ✅ |
 | `test · node 22 · macos-15`（`CI (macOS)`） | v1 在 macOS 上 + Seatbelt 真实内核断言（G1/G2/G3、私有临时目录、项目里 `rm` 仍可用） | 同上 | ✅ |
 | `package whitelist` | `node tools/check-tarball.mjs`：`npm publish` 会传的东西是否越界 | 同上 | ✅ |
 | `test · node 22 · ubuntu-latest` | v1 `agent/`：`npm test` + bubblewrap/AppArmor | 每个非草稿 PR；未触及时作业内步骤跳过 | ✅ |
@@ -68,7 +69,7 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 - **草稿 PR 不跑任何检查**：草稿本来就不可合并。迭代循环（提交 → 看结果 → 改 → 再推）是运行次数的主要来源，这是单项最大的节省。
 - **Linux 腿钉 `ubuntu-24.04`**：`ubuntu-latest` 自 2026-10-19 起逐步迁移到 Ubuntu 26.04。迁移期同一个提交可能落到两个镜像，而本门禁要在 Ubuntu 上装 `bubblewrap` + AppArmor profile，**装不上时沙箱测试是 skip 而不是 fail** —— 镜像漂移会让覆盖静默关闭而必过检查保持绿色。所以钉镜像。job **name** 仍写作 `ubuntu-latest`：required check 按 job name 匹配，改名必须与分支保护的 contexts 在同一窗口一起改。
 - **Node 20 已从矩阵删除**：官方 lifecycle 于 2026-04-30 EOL，测它等于宣称兼容一个不再收安全更新的运行时。要恢复请先想清楚支持承诺。
-- **macOS 单独一个 workflow**（`.github/workflows/ci-macos.yml`，`macos-15`）：它是 Seatbelt 后端唯一能做**真实内核断言**的地方（`test/sandbox-macos.test.mjs` 的 G1/G2/G3、私有临时目录、项目里 `rm` 仍可用）。仓库公开前它因为 10 倍计费而只在触及沙箱的 PR 上跑、且不进必过检查；公开后分钟免费，路径过滤已去掉，改为**每个非草稿 PR + 每次合入 main 都跑**，并进入必过检查——这样 Seatbelt 的断言第一次进了合并门禁。
+- **macOS 单独一个 workflow**（`.github/workflows/ci-macos.yml`，`macos-15`，两个作业）：它是 Seatbelt 后端唯一能做**真实内核断言**的地方（`test/sandbox-macos.test.mjs` 的 G1/G2/G3、私有临时目录、项目里 `rm` 仍可用），也是 **v2 POSIX shell 选择**唯一能被验证的 runner——macOS 是唯一默认 shell 不是 bash 的平台，在 Linux 上「选 `/bin/bash`」是废话，在 macOS 上才是断言（`test/platform.test.ts`）。仓库公开前它因为 10 倍计费而只在触及沙箱的 PR 上跑、且不进必过检查；公开后分钟免费，路径过滤已去掉，改为**每个非草稿 PR + 每次合入 main 都跑**，并进入必过检查——这样 Seatbelt 的断言第一次进了合并门禁。
 - **live 脚本（`agent/test/live/*`）不进 CI**：它们需要真实 API key 或真实 MCP server，属发布前手工验证。
 
 ## 5. 本地 git 钩子（可选，推荐）

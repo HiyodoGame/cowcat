@@ -173,14 +173,14 @@
 - [x] lint 门禁经 `tools/lint-probe.mjs` 复验：两条 block 的文案都还在，`src/adapters/` 仍豁免
 - [x] **真机跑通整条链**：本机（Git 在 `E:`，注册表三键全缺）解析出 `E:\WorkSoftwares\Git\bin\bash.exe`，kind = `git-bash`，与调研的实测一致；终止策略 `taskkill-tree`，沙箱裁决 `unsupported-platform` + WSL2 替代路径
 - [ ] CI 上 `packages/cowcat` 的 Linux / Windows 两腿（本 PR 的 checks）
-- [ ] **macOS 的 `/bin/bash` 优先于 `$SHELL`（zsh）尚未实测**——推断，需 `macos-15` 腿结清
+- [x] **macOS 的 `/bin/bash` 优先于 `$SHELL`（zsh）已结清**：加了 `packages/cowcat · node 22 · macos-15` 腿 + 硬断言（`test/platform.test.ts`）。macOS 是唯一默认 shell 不是 bash 的平台，所以这条断言只有在它上面成立才有意义；同一条腿还会打印解析结果与 Seatbelt 裁决
 
 **T2 已知缺口（不声称已解决）**
 
 - **`FsPort` / `ProcessPort` 适配器仍未写**：终止、脱敏、截断的真实行为要到 T4 才有测试覆盖
 - **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6
-- **macOS shell 顺序未实测**：`/bin/bash` 优先是为对齐沙箱 profile 里的写死路径，属于推断；`pwsh` 分支本机也没装，同样未实测
-- **沙箱探测只到「能不能用」**：profile 本身的正确性（G1/G2/G3）属于 T5
+- **`pwsh` 分支仍未实测**：本机没装 PowerShell 7，`pwsh` 优先于 5.1 这条只有链序测试覆盖，没有真机验证
+- **沙箱探测只到「能不能用」**：profile 本身的正确性（G1/G2/G3）属于 T5；v2 包的 Linux 腿也还没装 bubblewrap（T6）
 
 **出口标准**
 

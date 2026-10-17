@@ -1,7 +1,7 @@
 # P2 补充调研：Windows 上的 shell 探测与选择
 
 > P2 T2 的前置。`research/p2-ports.md` 的 §7 第 8 条把「shell 解析的实际探测方式」列为待验证，并注明**旧版零实现、没有可继承的结论**——本文件回答它。
-> 最后更新：2026-10-17。状态：**调研完成（Windows 侧实测），POSIX 侧未验证**；§4 的决定已在 T2 实现并在本机跑通（见 §6 末尾）。
+> 最后更新：2026-10-17。状态：**调研完成（Windows 侧实测），POSIX 侧已由 CI 腿实测**；§4 的决定已在 T2 实现并在本机跑通（见 §6 末尾）。
 
 ## 证据标注约定
 
@@ -174,11 +174,11 @@ resolveShell(): Shell
 
 ## 6. 待验证
 
-1. **macOS 上的选择顺序**：按 §3 会选 `/bin/bash`（3.2）而不是 `/bin/zsh`。需要在 `macos-15` 腿上跑一次真实命令并把结论写进断言——目前是**推断**。
+1. ~~**macOS 上的选择顺序**~~：**已由 CI 结清**（P2 T2，`packages/cowcat · node 22 · macos-15`）。`test/platform.test.ts` 里有一条硬断言：POSIX 主机解析结果必须是 `/bin/bash`，在 Windows 上 skip。macOS 是唯一默认 shell 不是 bash 的平台，所以这条只能在那里成立。
 2. **`pwsh` 分支**：本机没有 PowerShell 7，`pwsh` 优先于 5.1 这条未实测。
 3. **Git Bash 不在 PATH 但存在的布局**（`git.exe` 不在 PATH、只有 bash）：无法在本机构造，属于推断。
 4. **探测一次记忆多久**：会话级记忆是否够（长会话里用户装了 Git 会怎样）——当前决定是会话级。
-5. POSIX 的 `/bin/bash` 与 `$SHELL` 分支：CI 的 Linux 腿可覆盖部分，但 `macos-15` 才是关键。
+5. POSIX 的 `/bin/bash` 与 `$SHELL` 分支：`ubuntu-24.04` 与 `macos-15` 两条腿现在都会真跑一遍链（`NodePlatform` 默认接真实宿主）。
 
 ### 已由实现结清的部分
 

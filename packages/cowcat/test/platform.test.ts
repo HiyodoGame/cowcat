@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
-import { NodePlatform, type RunResult } from '../src/index.js';
+import { NodePlatform, detectPlatformId, type RunResult } from '../src/index.js';
 
 // Port-level checks against the real host. Everything else about the chain is decided in
 // shell.test.ts; what a fake cannot tell us is whether the default wiring — `where.exe`,
@@ -83,3 +83,28 @@ test('on a real host the shell is found by absolute path', () => {
   assert.ok(shell.commandFlag !== '');
   assert.ok(platform.sandboxBackends().length > 0);
 });
+
+// This is the assertion that makes the POSIX order a measurement rather than a
+// prediction. macOS is where it matters: /bin/bash exists but is 3.2, and the
+// platform default is /bin/zsh, so "POSIX prefers /bin/bash" is exactly the claim that
+// needs a real host to believe — and macos-15 is the only runner where it is not
+// trivially true. Deliberately a hard failure: if macOS ever resolves to something
+// else, that is a change in the sandbox-profile assumption, not a flaky environment.
+const hostPlatform = detectPlatformId(process.env, process.platform);
+const onPosixHost = hostPlatform === 'linux' || hostPlatform === 'macos' || hostPlatform === 'wsl';
+
+test(
+  'on a POSIX host the shell is /bin/bash, not the login shell',
+  { skip: onPosixHost ? false : `only meaningful on POSIX hosts, not ${hostPlatform}` },
+  () => {
+    const shell = new NodePlatform().resolveShell();
+
+    // Why bash and not zsh: the Seatbelt and bwrap profiles hardcode /bin/bash, so
+    // running bash outside the sandbox and zsh inside it would turn "works here, fails
+    // there" into a far harder bug than an outdated bash.
+    assert.equal(shell.executable, '/bin/bash');
+    assert.equal(shell.kind, 'posix');
+    assert.deepEqual(shell.baseArgs, []);
+    assert.equal(shell.commandFlag, '-c');
+  },
+);

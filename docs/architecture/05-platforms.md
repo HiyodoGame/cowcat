@@ -57,7 +57,7 @@ CowCat 是 npm 分发的产品。用户通过 `npm i -g` 安装，**不能要求
 | Windows | `<root>\bin\bash.exe` → `<root>\usr\bin\bash.exe` → `pwsh` → `powershell` → `ComSpec` | `bin` 在 `usr\bin` 前：两者都能跑，但只有 `bin` 给 mingw64 优先的 PATH。pwsh 在 5.1 前：5.1 每次启动约 745ms，而 shell 是**每条命令**启动一次 |
 | POSIX | `/bin/bash` → `$SHELL` → `/bin/sh` | 见下 |
 
-**macOS 的取舍（待实测结清）**：macOS 默认 shell 是 `/bin/zsh`，而这里选 `/bin/bash`。理由是沙箱 profile 里写死了 `/bin/bash`——沙箱内外跑在不同解释器上，会把「这里好用、那里失败」变成难查得多的 bug。代价是 bash 3.2 很旧。**该顺序尚未在 `macos-15` 上实测**，属于已知缺口（`docs/research/p2-shell-detection.md` §3）。
+**macOS 的取舍（已由 CI 实测）**：macOS 默认 shell 是 `/bin/zsh`，而这里选 `/bin/bash`。理由是沙箱 profile 里写死了 `/bin/bash`——沙箱内外跑在不同解释器上，会把「这里好用、那里失败」变成难查得多的 bug。代价是 bash 3.2 很旧。`packages/cowcat · node 22 · macos-15` 腿上有一条断言把这条从推断变成实测（`test/platform.test.ts`）：macOS 是唯一默认 shell 不是 bash 的平台，在 Linux 上同样的断言只是废话，所以这条只能在那里验证。
 
 探测**同步**执行并**按会话记忆一次**：PowerShell 启动一次 745ms、沙箱探测要 spawn 进程，按命令重复探测会直接进到每次工具调用的延迟里。
 
