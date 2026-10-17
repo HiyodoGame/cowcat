@@ -28,7 +28,9 @@ function profile(overrides: Partial<SandboxProfile> = {}): SandboxProfile {
 function probe(world: { dirs?: readonly string[]; files?: readonly string[] } = {}): SandboxFsProbe {
   const dirs = new Set(world.dirs ?? []);
   const files = new Set(world.files ?? []);
-  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path) };
+  // Identity: these tests are about the argv, not the spelling. The macOS
+  // /var → /private/var translation is real and has its own enforcement test.
+  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path), canonical: (path) => path };
 }
 
 const LINUX = probe({ dirs: [...BWRAP_READ_PATHS, '/proj', '/home/u/.ssh'], files: ['/proj/.env'] });

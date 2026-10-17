@@ -31,6 +31,17 @@ export const BWRAP_READ_PATHS: readonly string[] = [
 export interface SandboxFsProbe {
   readonly isDir: (path: string) => boolean;
   readonly isFile: (path: string) => boolean;
+  /**
+   * Canonical spelling, the same one `policy/sandbox-paths.ts` gives every policy entry.
+   *
+   * Present because a path can enter a profile from OUTSIDE the policy resolver — the
+   * scratch directory is created by the executor — and on macOS `/var` is a symlink to
+   * `/private/var`, so an un-canonicalised path yields `(subpath /var/…)`, which Seatbelt
+   * matches against nothing. Measured: the sandbox's own TMPDIR came back unwritable,
+   * which breaks every toolchain that needs scratch space, and it presents as a policy
+   * that grants nothing.
+   */
+  readonly canonical: (path: string) => string;
 }
 
 export interface BwrapOptions {

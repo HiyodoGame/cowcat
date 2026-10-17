@@ -168,7 +168,11 @@ function hardeningFor(platform: PlatformPort, backend: SandboxBackend): readonly
 
 function createScratchDir(deps: ExecutorDeps): string {
   const create = deps.createScratchDir ?? (() => mkdtempSync(join(tmpdir(), 'cowcat-sandbox-')));
-  return create();
+  // Canonical, because this path becomes a Seatbelt `(subpath …)` and a write root, and
+  // it never passes through resolveEntries — it is born here. On macOS mkdtemp hands back
+  // `/var/folders/…` while the kernel reports `/private/var/folders/…`, so the untranslated
+  // spelling grants nothing: measured, TMPDIR came back unwritable inside the sandbox.
+  return deps.fsProbe.canonical(create());
 }
 
 function removeScratchDir(deps: ExecutorDeps, path: string): void {

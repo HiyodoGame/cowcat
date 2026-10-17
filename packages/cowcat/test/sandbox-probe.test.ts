@@ -47,7 +47,8 @@ export function fakeFsProbe(world: {
 }): SandboxFsProbe {
   const dirs = new Set(world.dirs ?? []);
   const files = new Set(world.files ?? []);
-  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path) };
+  // Identity: the probe's own tests are about verdicts, not path spelling.
+  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path), canonical: (path) => path };
 }
 
 // Every platform yields exactly one verdict, so asserting the shape here beats sprinkling
