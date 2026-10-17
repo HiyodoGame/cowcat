@@ -127,7 +127,7 @@
 |---|---|---|
 | T1 | 三个端口的契约 + ADR-014～017 + 脱敏规则集（纯函数）+ lint 门禁 + `tools/lint-probe.mjs` | ✅ PR 见 §P2 交付 |
 | T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**）。shell 探测方式见 [research/p2-shell-detection.md](research/p2-shell-detection.md) | ✅ PR 见 §P2 交付 |
-| T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | 未开始 |
+| T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | ✅ PR 见 §P2 交付 |
 | T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | 未开始 |
 | T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | 未开始 |
 | T6 | G1/G2/G3 与「`rm` 可用」「私有临时目录」「拒绝被解释成沙箱」迁移为 v2 测试；**`packages/cowcat` 的 Linux 腿要装 bubblewrap**（现在只有 `agent/` 的腿装了） | 未开始 |
@@ -177,10 +177,31 @@
 
 **T2 已知缺口（不声称已解决）**
 
-- **`FsPort` / `ProcessPort` 适配器仍未写**：终止、脱敏、截断的真实行为要到 T4 才有测试覆盖
+- **`FsPort` / `ProcessPort` 适配器仍未写**：终止、脱敏、截断的真实行为要到 T4 才有测试覆盖 → `FsPort` 已在 T3 补上，只剩 `ProcessPort`
 - **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6
 - **`pwsh` 分支仍未实测**：本机没装 PowerShell 7，`pwsh` 优先于 5.1 这条只有链序测试覆盖，没有真机验证
 - **沙箱探测只到「能不能用」**：profile 本身的正确性（G1/G2/G3）属于 T5；v2 包的 Linux 腿也还没装 bubblewrap（T6）
+
+**交付（T3）**
+
+- `adapters/fs.ts`：迁自 `agent/src/canonical.js`。`realpathSync.native` 优先，失败则**上溯到最深已存在祖先**再接回缺失的尾巴（`write.allow` 里的 `.env` 与尚未创建的 worktree 兄弟目录靠这条）；`resolve()` 先行，所以 `..` 在开始取 `dirname()` 之前就折叠掉了
+- **永不抛**：`kindOf` / `exists` 把 EACCES、ELOOP、ENOTDIR 收成 `null` / `false`——沙箱路径上抛异常会变成工具路径的崩溃
+- 两处对旧版的实质修正：**缓存挂实例**（旧版是模块级 `Map`，两个适配器静默共享、测试拿不到干净的）；**只在找到现存祖先时才缓存**（没有 Z: 盘时 `Z:\project\file.txt` 的答案只是调用者的写法，缓存住等于在盘出现后仍钉死错误答案）
+- `test/fs.test.ts` 8 项**对着真实文件系统**测：假文件系统在这里是错的工具——被测的性质本身就是文件系统的行为。平台拒绝建符号链接时**带原因 skip**，不静默通过
+
+**T3 的出口标准与验证结果**
+
+- [x] `npm run build` / `npm run lint` 通过
+- [x] `npm test` 111 项（108 通过 / 3 项按平台 skip / 0 失败，本机 Windows / Node `v24.18.0`）
+- [x] 三个 skip 各自带原因，且在对应平台上是真跑：POSIX shell 断言（Windows）、`/dev/null` 的 `other` 分支（Windows）、**断链符号链接**（本机无开发者模式，Windows 缺文件符号链接权限——目录 junction 可以，所以其余 6 项照常跑）
+- [x] 缓存的陈旧窗口被钉成契约而不是注释：改指向后仍返回记忆值，`clearCache()` 之后才更新
+- [ ] CI 上 `packages/cowcat` 的 Linux / Windows / macOS 三腿（本 PR 的 checks）
+
+**T3 已知缺口（不声称已解决）**
+
+- **`PathPolicyResolver` 仍是接口**：`agent/src/sandbox/policy.js` 的 `expandPath` 与策略构建属于 T5，届时它会消费本任务的 `FsPort`
+- **Windows 8.3 短名（`RUNNER~1`）未单独测**：需要刻意创建短名目录才能构造；真实 runner 上 `realpath` 会把它还原，靠 Windows 腿间接覆盖
+- **不存在的路径在 Windows 上按大小写敏感比较**（回退到 `resolve()` 时保留调用者写法）。两侧都经过 `realpath` 的真实路径不受影响，且 `test/fs.test.ts` 的 fixture 一律先 canonicalize——但这是一处已知不对称，没有证据前不猜着「修」它
 
 **出口标准**
 

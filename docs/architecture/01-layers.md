@@ -35,7 +35,7 @@ test/
   *.test.ts
 ```
 
-P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/node/` 下的各实现；目录名随实现调整，但依赖规则不变。
+P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/` 下的各实现（`node.ts`、`platform.ts`、`shell.ts`、`sandbox-probe.ts`、`fs.ts`）；目录名随实现调整，但依赖规则不变。
 
 ## 路径身份（ADR-017）
 
@@ -45,6 +45,13 @@ P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已�
 
 - **方法保持同步**。它们被用在纯 argv 生成里（沙箱后端把解析好的策略变成命令行）；做成异步会把策略解析也拖成异步，而策略→argv 的映射必须是纯函数——这正是旧版能在 Windows 上单测 bwrap/seatbelt 映射的原因。
 - **内核需要的东西由组合根注入**。`cowcatVersion` 已是先例（ADR-012）；P2 起「实际使用的 shell」同样由组合根从 `PlatformPort` 取，再交给内核写进会话头（此时 `schemaVersion` **不升**——v2 的日志格式从未发布过，没有需要兼容的既有日志，该字段从一开始就是版本 1 的一部分）。
+
+实现（`adapters/fs.ts`，P2 T3 迁自 `agent/src/canonical.js`）在旧版语义上只做了两处调整，都是为了让状态可归属：
+
+- **缓存挂在实例上**，不是模块级 `Map`。隐藏的全局意味着两个适配器静默共享一份状态，且测试拿不到干净的缓存；实例字段让组合根拥有它，隔离是白送的。
+- **只在真的找到了现存祖先时才缓存结果**。若整条链都不可解析（没有 Z: 盘的机器上的 `Z:\project\file.txt`），答案就是调用者自己的写法——把它缓存住等于在盘符出现之后仍然钉死错误答案。旧版会缓存，这个窗口是本次唯一的实质修正。
+
+未处理且**故意不处理**：会话进行中被改指向的符号链接仍走缓存。它实际上观察不到（会话的 cwd、home 与策略根不会移动），而逃生口是 `clearCache()`——代价不该是每次查找一次 syscall。`test/fs.test.ts` 把这条行为钉成契约，而不是留在注释里当说法。
 
 ## 依赖规则
 
