@@ -1,0 +1,11 @@
+{
+  "description": "钉板：message_delta 的 usage 是累积量且省略 input 与 cache 计数。最终用量必须是 input 10 / output 12 / cacheRead 4 / cacheCreation 2——把 message_delta 当替换而不是合并，会把 input 与 cache 抹成 0（ADR-040；官方 SDK 自己有一条测试就叫 keeps message_start usage when message_delta omits the optional keys）。",
+  "urlPath": "/v1/messages",
+  "body": { "model": "fixture-model", "max_tokens": 1024, "stream": true },
+  "logical": {
+    "text": "done",
+    "toolCalls": [],
+    "usage": { "input": 10, "output": 12, "cacheRead": 4, "cacheCreation": 2 },
+    "stopKind": "end"
+  }
+}
