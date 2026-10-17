@@ -173,3 +173,104 @@ export function fakeFs(): FsPort & { readonly canonicalCalls: readonly string[] 
     },
   };
 }
+
+/**
+ * A transport that answers with the bytes it was given and records what it was asked
+ * (ADR-042).
+ *
+ * The bytes are the test's business; feeding them through the *real* SDK is the point —
+ * a stubbed client would test our idea of the protocol instead of the protocol, which is
+ * where the differences actually live.
+ */
+export interface RecordedRequest {
+  readonly url: string;
+  readonly body: Record<string, unknown>;
+  readonly signal: AbortSignal | null | undefined;
+}
+
+export interface ReplayTransport {
+  readonly fetch: typeof globalThis.fetch;
+  readonly requests: RecordedRequest[];
+}
+
+export function replayTransport(raw: string): ReplayTransport {
+  const requests: RecordedRequest[] = [];
+  const impl = (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
+    const [input, init] = args;
+    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+    requests.push({ url: urlOf(input), body, signal: init?.signal });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(raw));
+        controller.close();
+      },
+    });
+    return Promise.resolve(
+      new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    );
+  };
+  return { fetch: impl, requests };
+}
+
+// The SDKs pass a plain URL string; the other shapes are here for completeness rather
+// than because either adapter has been seen to use them.
+function urlOf(input: Parameters<typeof globalThis.fetch>[0]): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
+/**
+ * A transport whose response body never closes, so cancellation can be observed.
+ *
+ * It errors the body when the signal it was handed aborts, because that is what a real
+ * `fetch` does — and it is the whole mechanism behind counting a stream as cancelled:
+ *
+ * - **Neither SDK hands the caller's own signal to `fetch`.** Both bridge it, so an
+ *   identity check (`passed === caller.signal`) is false for both and testing it would
+ *   be testing the wrong thing.
+ * - **The bridge is torn down when the request ends.** So "the signal `fetch` holds is
+ *   aborted" is only observable while the request is still in flight; asserting it after
+ *   a completed request measures teardown, not cancellation.
+ */
+export function openEndedTransport(firstBytes: string): ReplayTransport {
+  const requests: RecordedRequest[] = [];
+  const impl = (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
+    const [input, init] = args;
+    requests.push({ url: urlOf(input), body: {}, signal: init?.signal });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(firstBytes));
+        init?.signal?.addEventListener('abort', () => {
+          controller.error(new DOMException('aborted', 'AbortError'));
+        });
+      },
+      // deliberately never closed
+    });
+    return Promise.resolve(
+      new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    );
+  };
+  return { fetch: impl, requests };
+}
+
+/**
+ * True when the promise settles (either way) within the deadline. Used to assert that a
+ * cancellation *takes effect* rather than to expect a particular ending: the kernel
+ * treats "the stream stopped" as the fact, and `run-turn` decides cancelled-vs-completed
+ * from the signal itself.
+ */
+export async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  const settled = promise.then(
+    () => true,
+    () => true,
+  );
+  // Braces on purpose: `resolve` returns void, and returning a void expression from an
+  // arrow shorthand is what no-confusing-void-expression objects to.
+  const deadline = new Promise<boolean>((resolve) => {
+    setTimeout(() => {
+      resolve(false);
+    }, ms);
+  });
+  return Promise.race([settled, deadline]);
+}

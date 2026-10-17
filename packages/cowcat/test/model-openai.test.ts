@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openAIModel } from '../src/adapters/model-openai.js';
 import type { Message, ModelChunk, ModelRequest } from '../src/index.js';
+import { openEndedTransport, replayTransport, settlesWithin } from './support.js';
 
 // The wire bytes are hand-written here rather than recorded: T4 owns the fixture files
 // and the recorder (ADR-042). What matters now is that they are bytes over an injected
@@ -29,36 +30,7 @@ const usageOnly = {
   usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
 };
 
-interface Replay {
-  readonly fetch: typeof globalThis.fetch;
-  readonly requests: { url: string; body: Record<string, unknown>; signal: AbortSignal | null | undefined }[];
-}
-
-// The SDK passes a plain URL string; the other two shapes are for completeness rather
-// than because this adapter has ever seen them.
-function urlOf(input: Parameters<typeof globalThis.fetch>[0]): string {
-  if (typeof input === 'string') return input;
-  if (input instanceof URL) return input.href;
-  return input.url;
-}
-
-function replay(events: readonly unknown[]): Replay {
-  const requests: Replay['requests'] = [];
-  const impl = (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
-    const [input, init] = args;
-    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
-    requests.push({ url: urlOf(input), body, signal: init?.signal });
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoder.encode(sse(events)));
-        controller.close();
-      },
-    });
-    return Promise.resolve(new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
-  };
-  return { fetch: impl, requests };
-}
+const replay = (events: readonly unknown[]) => replayTransport(sse(events));
 
 function request(overrides: Partial<ModelRequest> = {}): ModelRequest {
   return { messages: [{ role: 'user', text: 'hi' }], tools: [], model: 'test-model', ...overrides };
@@ -233,14 +205,14 @@ test('the base URL is honoured, so a compatible endpoint is the same code path',
   assert.match(r.requests[0]?.url ?? '', /^https:\/\/api\.deepseek\.com\/chat\/completions/);
 });
 
-test("the caller's signal is handed to the transport, which is what makes cancellation reach the socket", async () => {
-  const r = replay([chunk({ content: 'x' }, 'stop')]);
+test('aborting mid-stream ends the iteration, so cancellation really takes effect', async () => {
+  const r = openEndedTransport(sse([chunk({ content: 'x' })]));
   const controller = new AbortController();
-  await collect(openAIModel({ apiKey: 'k', fetch: r.fetch }), request(), controller.signal);
+  const model = openAIModel({ apiKey: 'k', fetch: r.fetch });
+  const iterator = model.stream(request(), controller.signal)[Symbol.asyncIterator]();
 
-  const passed = r.requests[0]?.signal;
-  assert.ok(passed, 'a signal must reach fetch');
-  assert.equal(passed.aborted, false);
+  await iterator.next();
   controller.abort();
-  assert.equal(passed.aborted, true, 'aborting the caller signal must abort the signal fetch holds');
+
+  assert.equal(await settlesWithin(iterator.next(), 1000), true, 'aborting must stop the stream, not hang it');
 });
