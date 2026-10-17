@@ -111,6 +111,25 @@ function node(expression: string): string {
   return `require("fs").${expression}`;
 }
 
+/**
+ * Why a file is (or is not) there, in the failure message.
+ *
+ * Three of these cases failed once with a bare `true !== false` and no way to tell a
+ * refusal from a wrong path from a test bug. A sandbox's whole job is to make refusals
+ * quiet, so the test has to be the loud one.
+ */
+function stateOf(result: ProcessResult, path: string): string {
+  return `${path} exists=${String(existsSync(path))} exit=${String(result.exitCode)} stderr=${result.stderr.trim().slice(0, 300)}`;
+}
+
+function gone(result: ProcessResult, path: string, why: string): void {
+  assert.equal(existsSync(path), false, `${why}: ${stateOf(result, path)}`);
+}
+
+function present(result: ProcessResult, path: string, why: string): void {
+  assert.equal(existsSync(path), true, `${why}: ${stateOf(result, path)}`);
+}
+
 // ── the workspace has to be there, or nothing below proves anything ────────────
 
 test('G0: a sandboxed run really runs, and the gateway reports what it applied', { skip }, async (t) => {
@@ -143,7 +162,7 @@ test('G1: a write inside the project reaches the host', { skip }, async (t) => {
   const result = await run(f, node(`writeFileSync("written.txt","x")`));
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.equal(existsSync(join(f.project, 'written.txt')), true);
+  present(result, join(f.project, 'written.txt'), 'a granted write must reach the host');
 });
 
 test('G1: rm works inside the project', { skip }, async (t) => {
@@ -159,7 +178,7 @@ test('G1: rm works inside the project', { skip }, async (t) => {
   const result = await run(f, node('unlinkSync("victim.txt")'));
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.equal(existsSync(join(f.project, 'victim.txt')), false, 'the file must actually be gone');
+  gone(result, join(f.project, 'victim.txt'), 'rm inside the project must actually delete');
 });
 
 test('G1: a write under the host temp directory never reaches the host', { skip }, async (t) => {
@@ -176,7 +195,7 @@ test('G1: a write under the host temp directory never reaches the host', { skip 
   const target = join(f.root, 'escaped.txt');
   const result = await run(f, node(`writeFileSync(${JSON.stringify(target)},"x")`));
 
-  assert.equal(existsSync(target), false, `a write into the sandbox scratch area must not reach the host (exit ${String(result.exitCode)}: ${result.stderr})`);
+  gone(result, target, 'a write into the sandbox scratch area must not reach the host');
 });
 
 test('G1: a write outside the granted scope does not reach the host', { skip }, async (t) => {
@@ -191,8 +210,8 @@ test('G1: a write outside the granted scope does not reach the host', { skip }, 
   assert.equal(existsSync(etc), false, 'the fixture must not already exist');
   const result = await run(f, node(`writeFileSync(${JSON.stringify(etc)},"x")`));
 
-  assert.notEqual(result.exitCode, 0);
-  assert.equal(existsSync(etc), false);
+  assert.notEqual(result.exitCode, 0, result.stderr);
+  gone(result, etc, 'a write outside the allow-list must not reach the host');
 });
 
 test('G1 boundary: destruction INSIDE the granted scope is NOT prevented', { skip }, async (t) => {
@@ -213,8 +232,8 @@ test('G1 boundary: destruction INSIDE the granted scope is NOT prevented', { ski
   const result = await run(f, node('unlinkSync("victim.txt") && unlinkSync("readable.txt")'));
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.equal(existsSync(join(f.project, 'victim.txt')), false);
-  assert.equal(existsSync(join(f.project, 'readable.txt')), false);
+  gone(result, join(f.project, 'victim.txt'), 'in-scope deletion is not prevented');
+  gone(result, join(f.project, 'readable.txt'), 'in-scope deletion is not prevented');
 });
 
 // ── G2: reads stay inside the granted surface ─────────────────────────────────
@@ -269,7 +288,7 @@ test('G2: the home directory itself stays readable, or nothing would work', { sk
   writeFileSync(allowed, 'home notes\n');
   const result = await run(f, `process.stdout.write(require("fs").readFileSync(${JSON.stringify(allowed)},"utf8"))`);
 
-  assert.equal(result.stdout, 'home notes\n', result.stderr);
+  assert.equal(result.stdout, 'home notes\n', `a granted read must work: ${stateOf(result, allowed)}`);
 });
 
 // ── G3: the network is off, at the namespace ───────────────────────────────────
@@ -310,9 +329,9 @@ test('the sandbox has its own scratch space, and the host\'s is not it', { skip 
       `writable:(()=>{try{fs.writeFileSync(p+"/probe","x");fs.unlinkSync(p+"/probe");return true}catch{return false}})()}))`,
   );
 
-  const probe = JSON.parse(result.stdout) as { visible: boolean; writable: boolean };
-  assert.equal(probe.visible, false, "the host's temp files must not be readable from inside");
-  assert.equal(probe.writable, true, 'the sandbox needs a writable scratch space or every build tool breaks');
+  const probe = JSON.parse(result.stdout || '{}') as { visible?: boolean; writable?: boolean };
+  assert.equal(probe.visible, false, `the host's temp files must not be readable from inside: ${stateOf(result, hostMarker)} stdout=${result.stdout}`);
+  assert.equal(probe.writable, true, `the sandbox needs a writable scratch space or every build tool breaks: ${stateOf(result, '(TMPDIR)')} stdout=${result.stdout}`);
 });
 
 // ── a refusal has to be explicable ────────────────────────────────────────────
