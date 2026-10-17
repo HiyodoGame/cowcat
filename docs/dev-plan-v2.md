@@ -104,6 +104,8 @@
 
 ## P2 端口与执行网关
 
+> 调研文档：[research/p2-ports.md](research/p2-ports.md)（含两组本机实测：Windows `taskkill` 边界、POSIX `setsid` 逃逸，见其附录 B）。契约落点见 [architecture/03-policy-and-execution.md](architecture/03-policy-and-execution.md)，路径身份见 [architecture/01-layers.md](architecture/01-layers.md)。
+
 **调研问题**
 
 - 进程树终止在 Windows 与 POSIX 上的可靠做法（`taskkill /T /F`、进程组）；是否存在子进程逃逸 `taskkill` 的已知情况
@@ -118,6 +120,42 @@
 4. `SandboxExecutor`：`light`、`seatbelt`（迁移）、`bwrap`（迁移）；`system` 档在不支持的平台上拒绝
 5. 旧版的 G1 / G2 / G3 语义与 `rm` 可用、私有临时目录等断言，迁移为新测试
 6. lint 规则：禁止 `child_process` 与 `fs` 绕过 ProcessPort / FsPort（适配器内除外）
+
+**任务拆分**（一个 PR 一个任务；契约先于实现）
+
+| 任务 | 内容 | 状态 |
+|---|---|---|
+| T1 | 三个端口的契约 + ADR-014～017 + 脱敏规则集（纯函数）+ lint 门禁 + `tools/lint-probe.mjs` | ✅ PR 见 §P2 交付 |
+| T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**） | 未开始 |
+| T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | 未开始 |
+| T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | 未开始 |
+| T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | 未开始 |
+| T6 | G1/G2/G3 与「`rm` 可用」「私有临时目录」「拒绝被解释成沙箱」迁移为 v2 测试；**`packages/cowcat` 的 Linux 腿要装 bubblewrap**（现在只有 `agent/` 的腿装了） | 未开始 |
+
+**交付（T1）**
+
+- `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`：三个契约，只含类型与不变量注释；每条不变量都指向调研里的实测出处
+- `policy/env.ts`：脱敏规则集作为**纯函数**（旧版只有 `light` 档在脱敏、`system` 反而漏了、后台任务还会回灌，见调研 §4.2）
+- `SandboxUnavailableError`：拒绝时带 `reason` / `detail` / `alternatives`，且**不得**读成「沙箱已启用」
+- lint：`src/adapters/` 之外禁 `node:child_process` / `node:fs` / `node:os`；`tools/lint-probe.mjs` 逐条验证门禁真的会报错（含 zod 那条没有被覆盖掉）
+- ADR-014（进程网关与终止边界）、ADR-015（脱敏在网关内统一）、ADR-016（沙箱默认拒绝不降级）、ADR-017（路径身份归 `FsPort`）
+- 测试 69 → 78
+
+**T1 的出口标准与验证结果**
+
+- [x] `npm run build` 通过（tsc，TS 6.0.3，`exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`）
+- [x] `npm run lint` 通过
+- [x] `npm test` 78 项全通过（本机 Windows / Node `v24.18.0`）
+- [x] lint 门禁经 `tools/lint-probe.mjs` 逐条验证：新 block 报 ProcessPort 文案、旧 block 报 kernel 文案、zod 文案仍在、`src/adapters/` 豁免
+- [ ] CI 上 `packages/cowcat` 的 Linux / Windows 两腿（本 PR 的 checks）
+
+**已知缺口（不声称已解决）**
+
+- **三个适配器都还没写**：本任务只交付契约。终止、脱敏、截断的真实行为要到 T4 才有测试覆盖。
+- **`shell` 字段与会话头尚未接线**：决定已定（不升 `schemaVersion`，因为 v2 日志格式从未发布），实现落在 T2。
+- **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6。
+- **lint 新 block 目前只覆盖 `src/` 下不属于 kernel/policy/ports 的文件**（当下只有 `src/index.ts`），真正的考验是 P6 之后出现 `modules/`、`frontends/` 时它是否还拦得住。
+- 两个 lint block 覆盖同一规则时**后者整体覆盖前者**（不是合并）——这个坑已经踩过一次并被探针抓到，配置里写了注释说明 `ignores` 是承重的。
 
 **出口标准**
 

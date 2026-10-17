@@ -30,4 +30,31 @@ export {
   type Clock,
   type IdSource,
 } from './ports/index.js';
+export {
+  defaultSandboxProfile,
+  type ProcessPort,
+  type ProcessSpec,
+  type ProcessResult,
+  type TerminationRecord,
+  type TerminationReason,
+  type TerminationMethod,
+  type SandboxMode,
+  type SandboxNetwork,
+  type SandboxBackend,
+  type SandboxProfile,
+  type EnvRedactionPolicy,
+  type ReadPolicy,
+  type WritePolicy,
+  type FsPort,
+  type FileKind,
+  type PathPolicyResolver,
+  SandboxUnavailableError,
+  type PlatformPort,
+  type PlatformId,
+  type Shell,
+  type ShellKind,
+  type SandboxBackendVerdict,
+  type TerminationStrategy,
+} from './ports/index.js';
+export { ENV_ALWAYS_KEEP, ENV_SENSITIVE, redactEnv, type RedactionRequest, type RedactionResult } from './policy/env.js';
 export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';
