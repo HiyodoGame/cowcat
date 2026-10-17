@@ -25,9 +25,11 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `openai` | `^7.36.0`（当前 7.36.0） | **运行时**：OpenAI 兼容协议的模型适配器（ADR-036） | P4 T2 引入。engines `node >=22.0.0` 与包一致；**实测零运行时依赖**，6 个 peer 全部 `optional: true` 故不会自动安装。**`maxRetries: 0`**：ADR-039 的重试策略由适配器自己实现（T5），留着 SDK 自带的两次重试会让两条策略同时生效。边界同样由 lint 强制（`no-restricted-imports` 的第三条 pattern，与 zod 分开写是为了让报错指向「跨了端口边界」而不是别的理由），`tools/lint-probe.mjs` 已验证它会报错 |
 | `fast-check` | `^4.10.2`（当前 4.10.2） | 开发：属性测试 | 用例见 `test/property.test.ts`。种子固定在测试里（`COWCAT_PROPERTY_SEED` 可覆盖），失败输出自带 `{ seed, path }` 与收缩后的 counterexample |
 
-运行时依赖：**2 个**（`zod`、`openai`）。上限 6，每引入一个都要有 ADR。
+运行时依赖：**3 个**（`zod`、`openai`、`@anthropic-ai/sdk`）。上限 6，每引入一个都要有 ADR。
 
-**口径已定（评审，2026-10-18）：数直接依赖。** 上限 **6 不变**——P4 再引入 `@anthropic-ai/sdk`（T3）后为 **3 / 6**（`openai` 已于 T2 装上，当前 2 / 6）。理由：传递依赖不是我们的选择，「每一个都必须有 ADR」这句在传递依赖上无从执行；而判断标准 1（协议与安全责任）要求的是**引入方说明自己带进来了什么**，不是给每个传递依赖立一份 ADR。
+**口径已定（评审，2026-10-18）：数直接依赖。** 上限 **6 不变**——P4 之后为 **3 / 6**。理由：传递依赖不是我们的选择，「每一个都必须有 ADR」这句在传递依赖上无从执行；而判断标准 1（协议与安全责任）要求的是**引入方说明自己带进来了什么**，不是给每个传递依赖立一份 ADR。
+
+**传递依赖已核实（P4 T3 履行了这条承诺）**：`@anthropic-ai/sdk` 的 7 个依赖树成员里，**4 个真的进运行时、3 个是纯类型层**（详见上表该行）。若将来有人改口径为「数整棵树」，这 3 个是可以争辩的余地——它们已被证明运行时零加载。**但注意**：依赖树实测为 **10 个包**，其中 **3 个**（`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`）已证明运行时零加载，能否靠打包/裁剪把它们去掉不在本阶段的范围内。
 
 但引入方**要登记**传递依赖并核实它们**是否真的进运行时**——这一条在 T3 装 `@anthropic-ai/sdk` 时落实，清单见上表 `@anthropic-ai/sdk` 行。**已知的可疑项**：`json-schema-to-ts` 是类型层库（运行时应为零负担）、`@opentelemetry/api` 默认是空实现门面。若 T1 实测发现某个传递依赖真的在运行时被加载且带分发负担，**按判断标准 4 重新评估，而不是当作没看见**。
 
@@ -39,7 +41,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
-| `@anthropic-ai/sdk` | P4 T3 | 模型协议（Anthropic 原生） | **已定采用（ADR-036）**，**尚未安装**（T3 才装）。版本 0.135.0。engines 未声明下限。**依赖预算**：它自带 3 个传递依赖（`standardwebhooks` → `fast-sha256`/`@stablelib/base64`、`json-schema-to-ts` → `@babel/runtime`/`ts-algebra`、`@opentelemetry/api`）；与 `zod`/`openai` 一起装时**实测整棵树 10 个包**。口径已定「数直接依赖」，但 T3 仍要核实这 7 个里**哪些真在运行时被加载** |
+| `@anthropic-ai/sdk` | `^0.135.0`（当前 0.135.0） | **运行时**：Anthropic 原生协议的模型适配器（ADR-036） | P4 T3 引入。**它自带传递依赖，实测结论如下**（这是引入方必须说明「带进来了什么」）：依赖树里 7 个包，**只有 4 个真的进运行时**——`@opentelemetry/api`（9 个运行时文件引用，含 `client.js`；不注册 provider 时是空门面）、`standardwebhooks`（仅 `resources/beta/webhooks.js`，却**在 import 时就被解析**）、`fast-sha256` 与 `@stablelib/base64`（`standardwebhooks` 的下游）；**另外 3 个是纯类型层，运行时完全不加载**——`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`（源码扫描零命中 + 解析钩子 in `not resolved`）。取证方法：`registerHooks` 解析钩子记录 import 时真正被解析的裸模块，并对运行时 `.js`（排除 `.d.ts`）做源码扫描。`maxRetries: 0`，理由同 `openai` |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
 ## 明确不引入的
