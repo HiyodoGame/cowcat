@@ -1,6 +1,6 @@
 # CowCat v2 架构文档
 
-> 状态：P0 完成（架构基线 + 内核骨架）。本目录随实现同步更新；与代码不一致时以代码和测试为准，并在同一 PR 里修正文档。
+> 状态：**P2 完成**（端口与执行网关，T1–T6 已合）；**P3 调研完成、实现未开始**。本目录随实现同步更新；与代码不一致时以代码和测试为准，并在同一 PR 里修正文档。
 
 ## 目标
 
@@ -16,6 +16,7 @@ CowCat 是一个长期分发的 npm 编程 agent。v2 的目标不是在旧代�
 | [04-dependencies.md](04-dependencies.md) | 依赖策略与每个依赖的选择依据 |
 | [05-platforms.md](05-platforms.md) | Windows / macOS / Linux / 鸿蒙 的平台策略与调研结论 |
 | [../dev-plan-v2.md](../dev-plan-v2.md) | 全面重构的阶段计划与出口标准 |
+| [../research/](../research/) | 各阶段开工前的调研与实测。P3 见 [`p3-policy.md`](../research/p3-policy.md)（决定草案、探针与外部对照），P2 见 [`p2-ports.md`](../research/p2-ports.md) 等，P1 见 [`p1-kernel.md`](../research/p1-kernel.md) |
 
 ## 架构决策记录（ADR）
 
@@ -43,6 +44,17 @@ CowCat 是一个长期分发的 npm 编程 agent。v2 的目标不是在旧代�
 | ADR-020 | 沙箱后端的**加固能力与可用性分开探测**：bwrap 能跑 ≠ 能禁用嵌套 user namespace（实测默认能建，`--disable-userns` 能堵，0.9.0 可用）。内核拒绝加固时**照常沙箱化但写进限制项**，不报成不可用；未探测就发 flag 会让第一条真实命令失败 | 已决定（P2 T5），见 [03-policy-and-execution.md](03-policy-and-execution.md#沙箱执行器p2-t5) 与调研 `p2-sandbox.md` §4.1 |
 | ADR-021 | 沙箱执行器的两种拒绝分属不同错误类：**后端跑不了**（`SandboxUnavailableError`）与**后端能跑但请求满足不了**（`SandboxRequestRefusedError`，如 macOS `network: 'on'`）；两者都不可降级。私有 `/tmp` 固定 2 GiB + `--perms 1777`（实测默认是内存一半、0755）；写策略中尚不存在的路径被跳过时**必须**写进限制项 | 已决定（P2 T5），见 [03-policy-and-execution.md](03-policy-and-execution.md#沙箱执行器p2-t5) 与调研 `p2-sandbox.md` §4.4–§4.6 |
 | ADR-022 | macOS 上**遍历符号链接需要对 SYMLINK vnode 的读权限**：`/var`、`/etc`、`/tmp` 本身是符号链接，而 profile 只授了 DIRECTORY 的 metadata，于是**任何人会写的绝对路径全部 EPERM**，而 profile 本身是对的。修法是与 DIRECTORY 同规则同位置补一条 `file-read-metadata (vnode-type SYMLINK)`。`subpath` 匹配的是**内核解析后**的路径（原本的判断成立）；曾试过「每条路径发两种拼写」，实测**无效**且把 deny 面扩大一倍，已删除 | 已接受（P2 T6）。见 [03-policy-and-execution.md](03-policy-and-execution.md#seatbelt-的符号链接遍历是承重的) 与 `p2-sandbox.md` §4.9 |
+| ADR-023 | 裁决顺序**保留 `deny > ask > allow`，且跨裁决与规则书写顺序无关**。理由采用外部对照的原话：宽 deny 如 `Bash(aws *)` 阻止所有匹配调用，**包括同时匹配更窄 allow 的调用——allow 无法从 deny 里挖出例外**。这是安全语义而非实现便利（外部对照里 OpenCode 选了 last-match-wins，allow 能覆盖 deny）。**同一裁决内仍取数组首个命中**，这条要明说，否则配置作者会假设顺序完全无关 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §2.5，14 条实测断言见其附录 B |
+| ADR-024 | **`deny` 永不被短路**：无人值守模式只改变 `ask` 的归宿，`deny` 在任何模式下都执行。**有意偏离旧版**——旧版 `permissions.js:58` 让 yolo 在一切规则之前一票 `return 'allow'`，`deny` 与 `ask` 一并失效（有测试钉住）。三条理由：①否则「无人值守下按显式规则放行或拒绝」这句出口标准自相矛盾（「显式规则」不含 deny）；②外部对照的 `dontAsk` 与 `--auto` 在这一点上一致，自动模式只改变本该 `ask` 的请求；③无人值守的语义应当是**收窄**（少问、多做确定安全的事），不该是**放宽** | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §2.5 |
+| ADR-025 | 配置分层定为**内建默认 → 用户级 → 项目级 → 会话级**（旧版的 CLI overrides 归入会话级）。**环境变量不作一层**，逐键决定谁赢——旧版把它当一层，产生「同机不同 shell 得到不同策略」的不可复现问题；外部对照同样选了「不是一层」。**取消 `STATE_KEYS` 这类隐式最高层**：运行时状态（信任记录、installId、theme 等）独立存放、**不参与配置合并**。旧版把两者混在一个 `state.json` 再整体套在最外层，因为 `readState()` 把全局 `config.json` 当 legacy 兜底再于项目层/环境变量/CLI 之后重放，导致其中的 STATE_KEY **被应用两次**，而 `hooks`/`permissions`/`sandbox`/`theme`/`panel`/`statusLine` 全在其中 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §3.6，10 条实测断言见其附录 B |
+| ADR-026 | **列表键合并而非替换**（对齐外部对照）：分层配置的用途就是「项目在用户基础上加东西」，整体替换会让用户级规则在项目里静默消失。**代价是必须回答「怎么撤销一条上层 `allow`」**——建议先用「更具体的 deny 覆盖」（deny 天然优先，见 ADR-023），**不引入 `!` 负向语法**；`!` 只在需要撤销一条 `deny` 时才必要，那属于收紧方向，留到有实际需求再设计 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §3.6 |
+| ADR-027 | 规则语言改为**结构化字段**：`{ name, verdict, reason?, when: { tool?, path?, command?, risk?, network? } }`，全部 `when` 子字段可选（省略即「不限」）。**否决**函数式 `matches`（配置无法表达函数，与出口标准直接矛盾）与纯文本 DSL（旧版 `perrules.js:67` 的 `matchRule(rule, toolName, input)` 三参签名锁死了表达力上限——无 risk、无 network、无参数子字段；外部对照也自认文本规则不可靠）。**路径匹配委托 `FsPort`**，不在策略层重实现 glob；`command` 用**前缀语义**并在文档写明不含 `&&`/管道感知。`ActionRequest` 要扩形状（加 `input`/路径/命令），但**不必进日志**——`policy.decided` 只带 `Decision`，所以这是免费改动 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §4.4 |
+| ADR-028 | 信任门控改为**不对称**（对齐外部对照）：未信任时 **`deny` / `ask` 立即生效，`allow` 不生效**。逻辑是**收紧不需要授权、放宽才需要**。旧版「一刀切 `setMode('plan')`」粒度太粗——它连「明确 deny 的工具」都要走 plan 闸门，而 plan 闸门放行的 `READ_ONLY` 白名单包含 `CronCreate`、`ScheduleWakeup` 这类**会改状态**的工具。信任判定本身沿旧版实测语义：**按目录身份精确匹配、无继承**（子目录必须自己被信任过），记录按 canonical 路径存 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §5.4，8 条实测断言见其附录 B |
+| ADR-029 | 项目指令文件统一为 **`AGENTS.md`**：候选列去掉专有的 `COWCAT.md`（旧版 `project.js:6` 把专有名字排在开放标准之前，导致仓库写了 `AGENTS.md` 也永远读不到），`AGENTS.md` 为标准名、`CLAUDE.md` 作兼容回退，从 cwd 向上第一个命中即止；`/init` 跟着改名。`AGENTS.md` 是被 60k+ 项目使用、由 Agentic AI Foundation（Linux Foundation）托管的开放格式，**无必填字段、纯 Markdown**。两处待实现时定的语义：①根目录与嵌套**就近取一份**并支持 `instructions` 式 glob 显式追加，不做自动合并；②指令文件路径**过 `FsPort.canonical`**（标准建议用 symlink 迁移，而本仓库已因 symlink 双拼写栽过 7 个 CI 失败） | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §5.2 与**附录 E** |
+| ADR-030 | **未信任时不注入指令文件**，且**明确告知**（「本目录未受信任，已跳过 `AGENTS.md`（N 行）」），`/act` 之后应重新加载（旧版 `/act` 只重置标志、不重读）。理由是 `AGENTS.md` 标准明确说**列在文件里的命令会被 agent 自动执行**，所以它不是纯文本注入而是**命令执行的入口**；与 ADR-028 同一精神——指令文件是「放宽 agent 行为」的内容，未信任时不生效 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §5.4 |
+| ADR-031 | 审批进日志：**`approval.requested` / `approval.answered` 作为 `KernelEvent` 成员**，`answered` 至少携带 `{ callId, verdict: 'once' \| 'always' \| 'reject', by: 'user' \| 'policy' \| 'timeout' }`。旧版把裁决丢在内存里（session JSONL 无 approval 记录、TUI 的 `→ y` 是纯内存、`audit.log` 只记 Bash 且 `decision` 字段是 `run\|elevated-run\|blocked\|mode-change` 而非用户裁决）——这是「没有结构化记录」的根因。**`always` 的持久化范围先做会话内**（旧版进程内、外部对照仅当前会话，交集即会话内；外部对照的「按工具而异、Bash 永久」留到 P3 之后单独立项，因为它必须先回答永久规则存哪、怎么撤销、怎么随仓库走）。加事件会连带触发三处硬失败：编译期等价断言、`state.ts` 的 switch 穷尽性、旧 build 读新日志时 `discriminatedUnion` 匹配不到 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §6.6 |
+| ADR-032 | 无人值守语义定为 **auto-deny**：所有 `ask` 在无人值守下被拒绝并留审计，与旧版 `-p` 及外部对照的 `dontAsk` 一致（auto-approve 式的 `--auto` 被否决——它让出口标准的「留审计」没有对应物）。**超时归宿同为 auto-deny**，`approval.answered` 的 `by` 字段区分 `'user'` 与 `'timeout'`。**与 ADR-024 取同一答案**：`deny` 永不被短路，无人值守只改变 `ask` 的归宿。另：**子 agent 不得从 `tools === null` 推断出 yolo 权限**（旧版 `subagent.js:58` 让 `general`/`lead` 无条件拿 yolo，无任何测试断言），**`ExitPlanMode` 的 `allowedPrompts` 必须走与配置规则同样的校验与分层**（旧版 `planmode.js:122` 直注入 `rules.allow`、绕过 `validateRule`） | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §6.4 与 §6.6 |
+| ADR-033 | 审计是 **`Session.subscribe` 的普通消费者**，不是内核内的分支。**「永不抛」只约束审计消费者本身，不约束被审计端口**——实测的承诺边界是 `ProcessPort.run`（最强）、`FsPort.*`、`PlatformPort.sandboxBackends` 有保证，而 `ToolPort.run`、`ModelPort.stream`、`EventStore.append` 无保证；把两者混为一谈会让审计失去意义，拿不到事实时**必须记录「拿不到」而不是静默不写**（旧版 `sandbox.js:180` 的空 catch 是反例）。**审计失败必须可见**（至少计数 + 会话结束上报）。**所有档位都写实际生效的 `mode`/`backend`**（旧版只在 system 档写，是为兼容历史日志的字节级一致性，v2 从未发布没有这个包袱）。要让审计看到沙箱事实，**必须先扩事件**——`ProcessResult` 的 13 个字段当前不进任何事件 | 已决定（P3 调研）。见 [../research/p3-policy.md](../research/p3-policy.md) §7.4 |
 
 ## 与旧文档的关系
 
