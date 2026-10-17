@@ -175,6 +175,36 @@ test('output is capped to the tail, and the dropped count is exact', async () =>
   assert.equal(result.dropped.stdout + result.stdout.length, 5003);
 });
 
+test('a child that exits without reading stdin does not crash the run', async () => {
+  // Measured on macOS: writing to a pipe whose reader is already gone raises EPIPE
+  // synchronously, and Node reports a child pipe error as an UNCAUGHT exception unless
+  // something listens. Unhandled, it took down the whole test process rather than
+  // failing one assertion — so this test is worth its line.
+  const result = await port().run(
+    spec({
+      argv: node('process.exit(0)', ['never-read']),
+      stdin: 'this input is going nowhere',
+    }),
+    new AbortController().signal,
+  );
+
+  assert.equal(result.exitCode, 0);
+});
+
+test('a child that ignores stdin and keeps running still gets its input', async () => {
+  // The other half: the error listener must not swallow the write itself.
+  const result = await port().run(
+    spec({
+      argv: node('setTimeout(() => { process.stdout.write(String(process.env.FROM_STDIN ?? "none")) }, 200)'),
+      stdin: 'unused',
+      env: { FROM_STDIN: 'inherited' },
+    }),
+    new AbortController().signal,
+  );
+
+  assert.equal(result.stdout, 'inherited');
+});
+
 test('stdin is delivered and closed', async () => {
   const result = await port().run(
     spec({

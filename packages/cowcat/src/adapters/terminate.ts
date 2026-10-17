@@ -92,8 +92,11 @@ export const nodeTreeKiller: TreeKiller = {
   killChild: (child) => {
     try {
       return child.kill('SIGKILL');
-    } catch {
-      return false;
+    } catch (error) {
+      // ESRCH is not a failure: the child is already gone, which is the outcome the
+      // caller asked for. EPERM (owned by another user) is reported as a failure so
+      // the fallback is not recorded as a clean kill.
+      return (error as NodeJS.ErrnoException).code === 'ESRCH';
     }
   },
 };

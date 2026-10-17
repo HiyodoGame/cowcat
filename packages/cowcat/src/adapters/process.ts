@@ -83,6 +83,11 @@ export class NodeProcess implements ProcessPort {
       });
     }
 
+    // A pipe we never write to must not become an uncaught exception. Node reports
+    // EPIPE (and ECONNRESET) on a child pipe as an uncaught error by default, and a
+    // gateway that crashes the whole program because a child closed its stdin early
+    // is a gateway nobody can use — measured on macOS, where a child that exits
+    // without reading stdin makes `end()` raise synchronously.
     const child = spawn(command, argv.slice(1), {
       cwd: spec.cwd,
       // Spread into a fresh object: spawn wants a mutable ProcessEnv, and handing it
@@ -99,6 +104,10 @@ export class NodeProcess implements ProcessPort {
       detached: this.#platform.platform !== 'windows',
       windowsHide: true,
       shell: false,
+    });
+    child.stdin.on('error', () => {
+      // Nothing the caller can do about a child that will not take its input. The
+      // command's own output is the result; a failed write to a pipe we opened is not.
     });
 
     child.stdin.end(spec.stdin ?? '');
