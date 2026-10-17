@@ -23,7 +23,7 @@ import {
   type ToolPort,
   type TurnState,
 } from '../src/index.js';
-import { ScriptedModel, sessionDeps, sequentialIds, snapshotsReturning, tool } from './support.js';
+import { ScriptedModel, sessionDeps, snapshotsReturning, tool, turnDeps } from './support.js';
 
 // Fixed so any failure can be reproduced exactly; override with COWCAT_PROPERTY_SEED
 // to explore other cases. fast-check prints the seed and the shrinking path in its
@@ -121,14 +121,11 @@ async function runScript(
   const controller = new AbortController();
   if (generated.abort) controller.abort();
   await runTurn(
-    {
-      session,
-      model,
+    turnDeps(session, model, {
       tools,
       rules: generated.denyBoom ? [...DEFAULT_RULES, DENY_BOOM] : DEFAULT_RULES,
       approve: () => Promise.resolve(generated.approve),
-      ids: sequentialIds(),
-    },
+    }),
     'go',
     controller.signal,
   );
@@ -302,14 +299,7 @@ test('a tool input JSON cannot represent is normalized before it is logged', asy
       [{ type: 'text', text: 'done' }],
     ]);
     await runTurn(
-      {
-        session,
-        model,
-        tools,
-        rules: DEFAULT_RULES,
-        approve: () => Promise.resolve(true),
-        ids: sequentialIds(),
-      },
+      turnDeps(session, model, { tools }),
       'go',
       new AbortController().signal,
     );
@@ -342,14 +332,7 @@ test('an input that cannot be normalized at all fails the turn with a reason', a
       [{ type: 'text', text: 'never reached' }],
     ]);
     const outcome = await runTurn(
-      {
-        session,
-        model,
-        tools,
-        rules: DEFAULT_RULES,
-        approve: () => Promise.resolve(true),
-        ids: sequentialIds(),
-      },
+      turnDeps(session, model, { tools }),
       'go',
       new AbortController().signal,
     );
@@ -380,22 +363,20 @@ test('the approve callback receives the request it is deciding', async () => {
       [{ type: 'text', text: 'done' }],
     ]);
     await runTurn(
-      {
-        session,
-        model,
+      turnDeps(session, model, {
         tools,
-        rules: DEFAULT_RULES,
         approve: (request) => {
           seen.push(request);
           return Promise.resolve(true);
         },
-        ids: sequentialIds(),
-      },
+      }),
       'go',
       new AbortController().signal,
     );
 
-    assert.deepEqual(seen, [{ kind: 'tool', callId: 'c1', name: 'write_file', risk: 'write' }]);
+    // `input` is part of the request the approver sees (ADR-027): the card needs the
+    // tool's arguments, and this call was generated with a null input.
+    assert.deepEqual(seen, [{ kind: 'tool', callId: 'c1', name: 'write_file', risk: 'write', input: null }]);
     await session.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JsonlEventStore, Session, DEFAULT_RULES, runTurn, replay, SCHEMA_VERSION } from '../src/index.js';
-import { ScriptedModel, sequentialIds, sessionDeps } from './support.js';
+import { JsonlEventStore, Session, runTurn, replay, SCHEMA_VERSION } from '../src/index.js';
+import { ScriptedModel, sessionDeps, turnDeps } from './support.js';
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'cowcat-core-'));
@@ -32,14 +32,7 @@ test('JSONL store round-trips a full turn to disk and replays identically', asyn
     const deps = sessionDeps(store);
     const session = await Session.create(deps, 'sess_disk');
     await runTurn(
-      {
-        session,
-        model: new ScriptedModel([[{ type: 'text', text: 'saved' }]]),
-        tools: new Map(),
-        rules: DEFAULT_RULES,
-        approve: async () => true,
-        ids: sequentialIds(),
-      },
+      turnDeps(session, new ScriptedModel([[{ type: 'text', text: 'saved' }]])),
       'persist me',
       new AbortController().signal,
     );

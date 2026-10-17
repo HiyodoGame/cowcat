@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
+import { LockHeldError, DEFAULT_RULES, type ActionRequest, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -122,4 +122,48 @@ export class ScriptedModel implements ModelPort {
 
 export function tool(spec: ToolSpec, run: (input: unknown) => ToolResult | Promise<ToolResult>): ToolPort {
   return { spec, run: async (input) => run(input) };
+}
+
+export interface TurnDepsOptions {
+  readonly tools?: ReadonlyMap<string, ToolPort>;
+  readonly rules?: readonly Rule[];
+  readonly approve?: (request: ActionRequest, decision: Decision) => Promise<boolean>;
+  readonly fs?: FsPort;
+}
+
+// One place to build TurnDeps, for the same reason sessionDeps exists: the shape
+// grows with each task (P3 T1 added rules, T2 added fs) and tests should not each
+// carry the whole thing. `approve` defaults to "yes" because most tests are not
+// about approval; the ones that are pass their own.
+export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOptions = {}): TurnDeps {
+  return {
+    session,
+    model,
+    tools: options.tools ?? new Map(),
+    rules: options.rules ?? DEFAULT_RULES,
+    fs: options.fs ?? fakeFs(),
+    approve: options.approve ?? (() => Promise.resolve(true)),
+    ids: sequentialIds(),
+  };
+}
+
+// A canonical() that touches no filesystem, so kernel tests stay runtime-agnostic.
+// It normalises separators and records what it was asked — which is what a kernel
+// test actually needs to assert: that the path reached FsPort at all. Path identity
+// itself is src/adapters/fs.ts and is tested there.
+export function fakeFs(): FsPort & { readonly canonicalCalls: readonly string[] } {
+  const calls: string[] = [];
+  return {
+    canonical(path) {
+      calls.push(path);
+      const normalised = path.replace(/\\/g, '/').replace(/\/+$/, '');
+      return normalised === '' ? '/' : normalised;
+    },
+    samePath: (a, b) => a.replace(/\\/g, '/') === b.replace(/\\/g, '/'),
+    kindOf: () => null,
+    exists: () => false,
+    get canonicalCalls() {
+      return calls;
+    },
+  };
 }

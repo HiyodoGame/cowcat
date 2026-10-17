@@ -15,6 +15,19 @@ export interface ToolSpec {
   readonly name: string;
   readonly description: string;
   readonly risk: ToolRisk;
+  /**
+   * Input field names that carry the two things a rule may narrow on. The kernel
+   * reads them to build the `ActionRequest` (ADR-027) — a tool that writes a file
+   * says `pathInput: 'file_path'`, one that runs a command says
+   * `commandInput: 'command'`. Absent means the action has no path/command, so a
+   * rule that selects on one simply does not match.
+   *
+   * Kept as two field names rather than a per-tool descriptor method so the
+   * declaration stays data: the risk level is declared the same way, and the
+   * kernel can read it without knowing any particular tool.
+   */
+  readonly pathInput?: string;
+  readonly commandInput?: string;
 }
 
 export interface ToolResult {
