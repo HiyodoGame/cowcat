@@ -2,12 +2,12 @@
 
 > 依据 [`dev-plan-v2.md`](../dev-plan-v2.md)「工作规则 1」：每个阶段开始前先做调研，回答阶段内的开放问题，列出被否决的方案及理由。本文件回答 P4 的开放问题，并给出它们对 P4 五项范围的具体影响。
 >
-> 最后更新：**2026-10-17**。状态：**调研完成，决定待评审**。六项决定以「草案」形式给出（§2.4、§3.5、§4.5、§5.4、§6.4、§7.4）——**评审拍板前不得据以实现**。
+> 最后更新：**2026-10-18**。状态：**调研完成，决定已定（评审通过）**。本文件给出的各项决定已由评审拍板（§2.4、§3.5、§4.5、§5.4、§6.4/§6.6、§7.4），并已全部落成 **ADR-035~043**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）。其中 **ADR-041 的形状由评审直接拍板**——用量进日志用**独立的 `model.usage` 事件**，不挂在 `model.message` 上。
 > 前置：[`dev-plan-v2.md`](../dev-plan-v2.md) 的 `## P4` 段、[`HANDOFF.md`](../HANDOFF.md) §3、[`architecture/04-dependencies.md`](../architecture/04-dependencies.md)。
 >
 > **本文件的证据边界（必须先说清）**：
 > - **本次没有新增探针**，因此本文件**关于协议行为的结论没有一条是【实测】**——那些结论是【源码】与【上游】。P4 的实测对象是「协议在流上的实际行为」，而适配器还不存在，仓库里也没有录制夹具——**先把夹具做出来，实测才有落脚点**。这不是省略：§8 把「T1 必须先钉住的断言」逐条列出，那些断言连同夹具就是本阶段的实测入口。
-> - 唯一真正跑过的是**仓库既有的测试套件**（§1），它不是新证据，只用来固定「调研开工时基线是绿的」这个事实。
+> - 除仓库既有测试套件（§1）外，本文件只有**一次新增实测**：为了给 ADR-036 的依赖预算一个真实数字，在仓库外的隔离目录装了一次两家 SDK 并数了依赖树（§1、§9 注）。**协议行为本身仍然没有实测。**
 > - 【源码】分两类，**都给出 `文件:行号`**：v2 现状（`packages/cowcat/`）与 v1 旧版对照（`agent/`）。厂商清单一节的数据来自仓库自带的 `agent/assets/providers.json`，属【源码】。
 > - 【上游】来自官方文档与官方 SDK 源码（出处见**附录 B**）。本轮 `websearch` 不可用（HTTP 402），全部上游证据走 `webfetch` 与 Context7 的官方文档库；凡只有单方来源的结论都标了出处，未交叉验证的另有标注。
 > - 【推断】是尚未验证的推论，**不得作为决策依据**。
@@ -25,7 +25,7 @@
 
 ## 0. 结论摘要
 
-| # | 问题 | 决定（草案） | 依据 |
+| # | 问题 | 决定（已定 → ADR） | 依据 |
 |---|---|---|---|
 | 二 | `ModelPort` 契约是否够用 | **不够**。`ModelRequest` 缺 model 标识与 system；`ModelChunk` 缺用量与结束原因 | §2、【源码】`ports/index.ts:54-65` |
 | 三 | 流式归一化能否做到协议无关 | **能**，但必须处理三处形态差异：工具调用**按 index 拼装**、结束信号**不看 `finish_reason`**、assistant 消息的**线格式回放** | §3、【源码】`llm/openai.js:69-71` |
@@ -53,7 +53,7 @@
 | 仓库状态 | `main = 0d7a1f1`（P4 调研开工前刚合并 PR #25），与 `origin/main` 一致，工作区干净 |
 | 测试套件 | **【实测】** 本轮开工时在 `3b28b3e` 上跑过一次：`packages/cowcat` = `347 tests / 331 pass / 0 fail / 16 skipped`（8.4s）；`agent` = `762 tests / 742 pass / 0 fail / 20 skipped`（34.6s）。此后 main 只前进了一个 **docs-only** 提交（`0d7a1f1`，仅改 `docs/` 两个文件），不可能改变测试结果 |
 | 三个探针 | **【实测】** `tools/policy-decide-probe.mjs` 16/16、`tools/legacy-config-probe.mjs` 10/10、`tools/legacy-trust-probe.mjs` 8/8。这是 P3 的探针，本次重跑只为确认它们仍然全绿 |
-| 本次新增实测 | **无**（见头部证据边界） |
+| 本次新增实测 | **依赖树实测**（为 ADR-036）：仓库外隔离目录跑 `npm i zod@4.6.7 openai@7.36.0 @anthropic-ai/sdk@0.135.0` → **added 10 packages**；枚举与由此暴露的口径问题见 §9 注。**协议行为仍无实测** |
 | 本次**未**做 | 未访问任何真实模型端点（无凭据）；未安装 `openai` / `@anthropic-ai/sdk` 做行为对照；未录任何夹具；未在 Linux/macOS 上跑东西 |
 
 **一条方法说明**：§7 的「逐家核实」不是靠印象，而是**读仓库自带的 provider catalog**。【源码】`agent/src/llm/presets.js:9-15` 从 `agent/assets/providers.json` 读入——那是从 models.dev 蒸馏的 209 家快照，每家带 `protocol` / `api` / `env` / `models[]`。这条比搜网页更可信（它就在仓库里、可复现、有版本），所以厂商协议归属一律以它为准，网页只用来核实**线上行为的细节差异**。**注意**：蒸馏脚本本身**不在仓库里**（`presets.js:2` 的注释指向 `tools/distill-providers.mjs`，该文件不存在，见 §7.3）——所以能沿用的是**数据的形状**，不是产出它的流程。
@@ -105,7 +105,7 @@ export interface ModelPort {
 - **「靠组合根闭包注入模型名，不加字段」**：否决。模型切换（P7 的「模型预设」要支持用户改）就会变成重建适配器；而且 `max_tokens` / system 缺失是**功能缺口**不是风格问题。
 - **「在 `ModelRequest` 里塞一个自由的 `options: Record<string, unknown>`」**：否决。厂商扩展（§7 的 `thinking`、`reasoning_effort`）确实需要逃生口，但把**通用**字段也塞进去，等于放弃类型；通用字段显式列，厂商扩展单独走一个明确命名的字段。
 
-### 2.4 决定（草案）
+### 2.4 决定（评审通过）
 
 1. `ModelRequest` 增加：`model: string`、`system?: string`、`maxTokens?: number`（以及 §7 需要的厂商扩展逃生口）。
 2. `ModelChunk` 增加两个成员：用量（`{ type: 'usage'; usage: ModelUsage }`）与结束原因（`{ type: 'stop'; reason: StopReason }`）。
@@ -164,7 +164,7 @@ v2 内部的 `Message` 是扁平的（`messages.ts:7-10`），由 `state.ts:59-6
 - **「自己写 SSE 解析，不引 SDK」**：**未否决，但要按判断标准 1 重新算账**。v1 手写了**两套** SSE 解析：LLM 层是 `agent/src/llm/client.js:59-88` 的 `parseSSE`（自己处理跨 chunk 断行、多行 `data:` 拼接、`[DONE]` 哨兵、以及**JSON 解析失败静默丢帧**），`agent/src/sse.js:12-85` 是**第二套**、只服务 MCP 传输——`sse.js:9-11` 的注释说明它存在的理由。也就是说「自己写」在这里的实际代价是**两套实现**。判断标准 1 说的是「承担协议责任」→ 优先官方库。§8 把它作为 T1 的第一件事去核对（含「SDK 是否真的省掉了这些活」）。
 - **「统一走 OpenAI 协议，Anthropic 也用一个兼容层」**：否决。Claude 的官方端点没有 OpenAI 兼容层；`@anthropic-ai/sdk` 是协议实现方。§7 的数据也说明 Anthropic 不是长尾（`anthropic` 本体 + MiniMax 四条目）。
 
-### 3.5 决定（草案）
+### 3.5 决定（评审通过）
 
 1. 归一化**以 `ModelChunk` 为唯一出口**，两家适配器各自完成「拼装 → 归一」，内核看不到 `delta` / `content_block` / `index` 这些词。
 2. **完成信号一律取「流结束」**，不取 `finish_reason` / `stop_reason`（继承 v1 `openai.js:69-71` 的实测结论）；`stop_reason` 只用于**分类**（正常 / 工具调用 / 截断），不用于判断结束。
@@ -212,10 +212,11 @@ v1 的做法（`agent/src/llm/`）：
 - **「用量烂在适配器里，不往上报」**：否决。`/cost` 是 v1 已有的用户可见能力（`loop.js:417-425` 的注释就是「aggregate usage for /cost」），P8 不得功能回退。
 - **「每条 chunk 都带一份累计用量」**：否决。流式下多数 chunk 没有用量；只在**拿到时**发一条 `usage` chunk，语义更诚实（与「工具没上报 ≠ 没施加沙箱」同构）。
 
-### 4.5 决定（草案）
+### 4.5 决定（评审通过）
 
 1. 适配器在拿到用量时**发一条 `{type:'usage'}` chunk**；一条流里可以出现一次或多次（后者取最后一次为最终值，因为 Anthropic 是累积量）。
 2. 归一为四项 `input/output/cacheRead/cacheCreation`，缺失按 §4.1 的规则处理并在 ADR 里写明「协议无此概念」与「厂商没上报」的区别。
+3. **用量进日志，形状是独立的 `model.usage` 事件**（评审拍板 → ADR-041），**不挂在 `model.message` 上**。取舍写清楚：独立事件让「流在拿到用量之后被取消」**也留下用量**，代价是新增事件变体、触发 ADR-031 记的三处编译期硬失败；挂在 `model.message` 上则只触发编译期等价断言一处，但**取消即丢用量**。v2 日志格式从未发布，**不升 `schemaVersion`**（ADR-019）。
 
 ### 4.6 待验证
 
@@ -259,7 +260,7 @@ v1 的做法（`agent/src/llm/`）：
 - **「重试次数与退避可配置，默认对齐 v1 的 3 次」**：否决「可配置」这一步。先固定一个值（**建议 2，与两家 SDK 的默认一致**），把配置面留到真有需求时。理由是 v1 的 3 次没有任何依据，而 2 有两个独立来源。
 - **「取消只在 chunk 边界生效」**：否决。见 5.4 决定 3。
 
-### 5.4 决定（草案）
+### 5.4 决定（评审通过）
 
 1. **重试在适配器内**，只对可重试错误；错误分类表以「连接失败 / 408 / 409 / 429 / 5xx / 厂商自定可重试码」为准。
 2. 重试次数默认 **2**，指数退避，**尊重 `Retry-After`**。
@@ -296,7 +297,7 @@ P4 的出口标准要求**两种协议的录制夹具产出相同的事件序列
 - **「录解析后的 chunk 序列」**：否决，理由同 6.1。
 - **「照抄现成的录制库（如 VCR 类）」**：否决。判断标准 2/3：这是一个几十行的「读文件 → 返回 Response」适配器，不值得一个依赖，且它必须能被端口隔离。
 
-### 6.4 决定（草案）
+### 6.4 决定（评审通过）
 
 1. 夹具 = **原始 SSE 字节流 + 一份请求侧的期望**（方法、URL 路径、以及关键请求字段的快照），按「厂商 / 协议 / 场景」命名存放在 `test/fixtures/`。
 2. 适配器构造参数接受注入的 transport；**录制模式下**由开发期脚本（`tools/` 下，不进 lint 门禁与发布包）在显式给定凭据时抓一次真实流并落盘。
@@ -307,7 +308,7 @@ P4 的出口标准要求**两种协议的录制夹具产出相同的事件序列
 - 凭据从哪来（录制脚本读环境变量，且**不得**写进仓库）。仓库已有 `.keys.env` 忽略规则（`AGENTS.md`），录制脚本必须沿用。
 - 夹具里若含真实请求的 header（如 `Authorization`），**落盘前必须裁剪**；这条要写进录制脚本而不是靠人记得〔见 §9 的「需同步修改」〕。
 
-### 6.6 决定（草案）——夹具的目录与命名
+### 6.6 决定（评审通过）——夹具的目录与命名
 
 ```
 packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.sse     # 录制的字节流
@@ -382,7 +383,7 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 - **「预设随包发一份 209 家的大表」**：否决。v2 是内核库（`private: true`，从未发布），预设应该由**组合根**注入数据；内核只认形状（`ModelPreset` 类型），不认某一家。
 - **「靠失败探测厂商能力（发一次看报不报错）」**：否决。§7.2 第 4 行正是反例：参数被**静默忽略**时探测结果与「支持」无法区分，而 MiniMax 的 `400` 又会让探测本身失败。
 
-### 7.4 决定（草案）
+### 7.4 决定（评审通过）
 
 1. **首个适配器做 OpenAI 兼容（Chat Completions）**，不做 Responses API。理由：201/209 家是它；【上游】OpenAI 自己也说 Responses 是新项目推荐，但**兼容端点只实现 Chat Completions**。
 2. **第二个适配器做 Anthropic 原生**，走 `messages` + `stream: true` + 6 种 `RawMessageStreamEvent`。
@@ -432,27 +433,46 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 
 ## 9. 需要落的文档与 ADR
 
-ADR 编号从 **ADR-035** 起（当前最后一篇是 ADR-034，见 `architecture/README.md`）。
+ADR 编号从 **ADR-035** 起。**八条已全部落地为 ADR-035~043**（评审通过，见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）。
 
-| 建议 ADR | 内容 | 来源 |
+| 已落 ADR | 内容 | 来源 |
 |---|---|---|
-| ADR-035 | `ModelPort` 契约扩展：`ModelRequest` 增 `model` / `system` / `maxTokens`；`ModelChunk` 增 `usage` 与 `stop` | §2.4 |
-| ADR-036 | 协议选型：OpenAI 兼容（Chat Completions，**不用 Responses**）为主力 + Anthropic 原生；数据 201/8 | §7.1、§7.4 |
-| ADR-037 | 模型预设以**数据**形式存在，形状沿用 providers.json（protocol/api/env/models + limit/tool_call/reasoning/cost）；内核只认类型 | §7.3、§7.4 |
-| ADR-038 | 厂商扩展不猜默认值；**只发预设声明过的档位**；`toolCall:false` 不发 tools | §7.2、§7.4 |
-| ADR-039 | 重试在适配器内、默认 2 次、尊重 `Retry-After`；**取消涵盖退避等待**；每次尝试的监听器必须移除 | §5.4 |
+| ADR-035 | `ModelPort` 契约扩展：`ModelRequest` 增 `model` / `system` / `maxTokens` / 厂商扩展逃生口；`ModelChunk` 增 `usage` 与 `stop`；`StopReason` 归一但**保留厂商原值**（`{ unified, raw }`） | §2.4 |
+| ADR-036 | 协议选型：OpenAI 兼容（Chat Completions，**不用 Responses**）为主力 + Anthropic 原生；数据 201/8；**采用 `openai` + `@anthropic-ai/sdk`**，两者只许出现在 `adapters/` | §7.1、§7.4 |
+| ADR-037 | 模型预设以**数据**形式存在，形状沿用 providers.json（protocol/api/env/models + limit/tool_call/reasoning/cost）；内核只认类型，数据由组合根注入 | §7.3、§7.4 |
+| ADR-038 | 厂商扩展不猜默认值；**只发预设声明过的档位**；`toolCall:false` 不发 `tools`；逃生口按协议分别映射 | §7.2、§7.4 |
+| ADR-039 | 重试在适配器内、默认 2 次、尊重 `Retry-After`；**取消涵盖退避等待**；监听器在 `finally` 移除；**不重试已开始输出的流** | §5.4 |
 | ADR-040 | 用量归一为四项、合并而非覆盖、可多次出现；「协议无此概念」与「厂商没上报」的区分 | §4.1、§4.5 |
-| ADR-041 | 录制-回放夹具：录**原始字节**、注入 transport 使 CI 不访问网络、夹具兼作厂商差异钉板 | §6.4 |
-| ADR-042 | 出口标准的比对口径：比对「归一后的事件序列」，且 tool call id 用夹具稳定值替换 | §8 |
+| ADR-041 | **用量进日志，形状是独立的 `model.usage` 事件**（评审拍板）；代价是三处编译期硬失败，按 ADR-019 不升 `schemaVersion` | §4.5 |
+| ADR-042 | 录制-回放夹具：录**原始字节**、注入 transport 使 CI 不访问网络、夹具兼作厂商差异钉板 | §6.4、§6.6 |
+| ADR-043 | 出口标准的比对口径：比「已提交事实」不比 delta；显式投影剥掉易变字段；**配对夹具必须是同一逻辑回合的两种编码**；tool call id 由 harness 归一 | §8 |
 
-**需同步修改的既有文档与代码**：
+**注：ADR-036 的依赖预算实测**（这是本文件唯一一次新增实测）。为了不凭印象说「加两个依赖」，在仓库外的隔离目录跑了一次：
 
-- `architecture/04-dependencies.md:37`——「计划中的依赖」表里 `openai` / `@anthropic-ai/sdk` 的「P4 调研后定」必须**在 ADR-042 之前给出结论**；采用则同表 `:27` 的「运行时依赖：1 个」要改（上限 6，见 `:14`）。
-- `architecture/04-dependencies.md`——若「不引 SDK、自己写 SSE」被选中，需新增一条「明确不引入」并说明理由与 v1 手写实现的对照。
-- `architecture/01-layers.md:18` 的端口清单、「包结构」段——P4 会新增 `ports/model.ts`（或留在 `index.ts`）与 `adapters/model/*`。
-- `dev-plan-v2.md` 的 `## P4` 段——补「调研已完成」标记与本文件的链接，并登记 §8 的出口标准口径。
-- `packages/cowcat/test/support.ts` 的 `ScriptedModel`（`:103-121`）——契约一改必改；它是「新增依赖只改这里」那条约定的落点。
-- **录制脚本必须裁剪请求头**（`Authorization` 等）才能落盘；这条属于 `tools/` 的实现约束，不进仓库的发布包（`tools/check-tarball.mjs` 是守卫）。
+```
+npm i zod@4.6.7 openai@7.36.0 @anthropic-ai/sdk@0.135.0   →  added 10 packages
+```
+
+| 层 | 包 |
+|---|---|
+| 直接（3） | `zod`（已有）、`openai`、`@anthropic-ai/sdk` |
+| 传递（7） | `standardwebhooks` → `fast-sha256`、`@stablelib/base64`；`json-schema-to-ts` → `@babel/runtime`、`ts-algebra`；`@opentelemetry/api` |
+
+`openai@7.36.0` **零运行时依赖**，6 个 peer 全为 `optional: true` 故不会自动安装（已核对 `peerDependenciesMeta`）。**这带出一个必须回答的问题**：`04-dependencies.md:14` 写「运行时依赖的上限：不超过 6 个，每一个都必须有 ADR」——**「6」数的是直接依赖还是整棵树，本表此前没有说明**。按整棵树算是 10（超限），按直接依赖是 3（未超限），且传递依赖不可能各有 ADR。**建议在 T1 之前定死口径**；另有 7 个传递依赖里「哪些真在运行时被加载」待核实（`json-schema-to-ts` 是类型层库、`@opentelemetry/api` 默认空实现）。
+
+**本次 PR 已同步的**：
+
+- `architecture/README.md`——**ADR-035~043 已落表**，状态行改为「P4 调研完成、ADR 已定、实现未开始」。
+- `architecture/04-dependencies.md`——「计划中的依赖」表里 `openai` / `@anthropic-ai/sdk` 一行已改为「**已定采用（ADR-036）**」，带上实测版本与依赖树；`:27` 的「运行时依赖：1 个」一段已补上「P4 已定再引入 2 个直接依赖、整棵树实测 10 个包」以及**上限口径待明确**的说明。
+- `dev-plan-v2.md` 的 `## P4` 段——已补「调研已完成、ADR-035~043 已定」标记与本文件链接。
+- 本文件自身的状态与 ADR 编号已同步。
+
+**仍需随实现走（本 PR 未做）**：
+
+- `architecture/01-layers.md:18` 的端口清单与「包结构」段——P4 会新增 `ports/model.ts`（或留在 `index.ts`）与 `adapters/model/*`，随 T1 一起改。
+- `packages/cowcat/test/support.ts` 的 `ScriptedModel`（`:103-121`）——契约一改必改（ADR-035）；它是「新增依赖只改这里」那条约定的落点。
+- **录制脚本必须裁剪请求头**（`Authorization` 等）才能落盘（ADR-042）；这条属于 `tools/` 的实现约束，不进发布包（`tools/check-tarball.mjs` 是守卫）。
+- 上一版此处写的「若『不引 SDK、自己写 SSE』被选中」已随 **ADR-036 采用两家 SDK** 而作废，不再需要「明确不引入」条目。
 
 ---
 
@@ -464,7 +484,7 @@ ADR 编号从 **ADR-035** 起（当前最后一篇是 ADR-034，见 `architectur
 | 2 | 工具调用在 `finish_reason` 之后继续到达 | 【源码·v1 注释】+【未验证】 | §3.5 决定 4；复刻不出则降级为防御性写法 |
 | 3 | SDK 是否已替我们按 index 拼装 tool_calls | 【未验证】 | §3.6；直接决定「要不要自己拼」的工作量 |
 | 4 | `Retry-After` 在国产端点的存在率 | 【未验证】 | §5.4 决定 2 |
-| 5 | 流式请求中途断开的可重试性 | 【未验证】 | §5.5；本文件倾向「不重试已开始输出的流」 |
+| 5 | 流式请求中途断开的可重试性 | 【未验证】 | §5.5；**ADR-039 决定 ③ 已定为「不重试已开始输出的流」**，待夹具验证 |
 | 6 | `stream_options` 在 OpenAI 兼容端点的支持率 | 【未验证】 | §4.6；解析必须容忍「开了也不给」 |
 | 7 | Anthropic 流式下 `cache_creation_input_tokens` 是否出现 | 【未验证】 | §4.6 |
 | 8 | 其余 200 家端点的流式细节一致性 | 【未验证】 | §7.5；只能逐家夹具覆盖 |
@@ -473,6 +493,7 @@ ADR 编号从 **ADR-035** 起（当前最后一篇是 ADR-034，见 `architectur
 | 11 | **厂商 catalog 怎么更新**——蒸馏脚本不在仓库里 | 【未验证】 | §7.3；沿用「数据形状」可行，沿用「更新流程」没有现成答案 |
 | 12 | 8 家 openai 协议厂商（`deepinfra` / `groq` / `cerebras` / `perplexity` / `xai` / `mistral` / `togetherai` / `openai`）**没有 `api` 字段**，按 `agent/src/config.js:311` 会回落到 `https://api.openai.com/v1` | 【未验证】 | §7.1；是蒸馏缺口还是有意为之，未定 |
 | 13 | 流 body 读取阶段的取消路径（v1 没有；候选 SDK 有没有） | 【未验证】 | §5.5、§8 断言 6 |
+| 14 | **「运行时依赖上限 6」数直接依赖还是整棵树**；7 个传递依赖里哪些真在运行时被加载 | 【未验证】 | §9 注、[`04-dependencies.md`](../architecture/04-dependencies.md)；**T1 之前要有定论**（整棵树算 10，超限） |
 
 ---
 

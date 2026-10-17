@@ -26,6 +26,10 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 运行时依赖：**1 个**（`zod`）。上限 6，每引入一个都要有 ADR。
 
+**口径已定（评审，2026-10-18）：数直接依赖。** 上限 **6 不变**——P4 按 ADR-036 再引入 2 个直接依赖（`openai`、`@anthropic-ai/sdk`）后为 **3 / 6**。理由：传递依赖不是我们的选择，「每一个都必须有 ADR」这句在传递依赖上无从执行；而判断标准 1（协议与安全责任）要求的是**引入方说明自己带进来了什么**，不是给每个传递依赖立一份 ADR。
+
+但引入方**要登记**传递依赖并核实它们**是否真的进运行时**——这一条在 T1 落实，清单见上表 `@anthropic-ai/sdk` 与 `openai` 行。**已知的可疑项**：`json-schema-to-ts` 是类型层库（运行时应为零负担）、`@opentelemetry/api` 默认是空实现门面。若 T1 实测发现某个传递依赖真的在运行时被加载且带分发负担，**按判断标准 4 重新评估，而不是当作没看见**。
+
 **边界纪律**（ADR-009）：`zod` 只允许出现在 `src/adapters/`。日志解码是适配器的职责，内核／策略／端口三层必须只看到类型化的事件。这条由 lint 强制——`eslint.config.js` 里给 `zod` 单独加了一条 `no-restricted-imports` pattern，**不能**把它并进 `node:*` 那一组，否则报错文案会指向「运行时相关」这个错误的原因。
 
 内核的事件联合类型与适配器的 schema 是同一个格式的两份手写描述，因此用**编译期等价断言**钉住（`test/schema.test.ts`）：两份一旦漂移就构建失败，而不是等到某天把内核自己写的日志报成「损坏」。
@@ -34,7 +38,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
-| `@anthropic-ai/sdk` 与 `openai` | P4 | 模型协议 | 候选。两者负责协议、流式解析与重试，符合判断标准 1。国产厂商大多提供 OpenAI 兼容端点，故 `openai` 是主力。**是否采用、是否需要 Anthropic 官方 SDK 才能覆盖 Claude 端点，P4 调研后定** |
+| `@anthropic-ai/sdk` 与 `openai` | P4 | 模型协议 | **已定采用（ADR-036）**。版本实测：`openai@7.36.0`（engines `node >=22.0.0`，与包一致；**零运行时依赖**，6 个 peer 全部 `optional: true` 故不自动安装）、`@anthropic-ai/sdk@0.135.0`。**依赖预算要重新算**：在仓库外隔离目录实测 `npm i zod@4.6.7 openai@7.36.0 @anthropic-ai/sdk@0.135.0` → **added 10 packages**（直接 3：zod/openai/sdk；传递 7：`standardwebhooks`→`fast-sha256`/`@stablelib/base64`、`json-schema-to-ts`→`@babel/runtime`/`ts-algebra`、`@opentelemetry/api`）。**「上限 6」到底数直接依赖还是数整棵树，本表此前没有说明，现在必须明确**——按整棵树算是 10（超限），按直接依赖是 3（未超限）。另需在 T1 核实这 7 个传递依赖里**哪些真在运行时被加载**（`json-schema-to-ts` 是类型层库、`@opentelemetry/api` 默认是空实现）。 |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
 ## 明确不引入的
