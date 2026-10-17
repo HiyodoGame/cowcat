@@ -24,7 +24,7 @@
 
 | # | 问题 | 决定 | 依据 |
 |---|---|---|---|
-| 二 | 裁决顺序是否保留 `deny > ask > allow` | **保留**（评审通过）。补充：**`deny` 永不被短路**，无人值守只影响 `ask` 的归宿 | §2.5、探针 `policy-decide-probe`（14/14） |
+| 二 | 裁决顺序是否保留 `deny > ask > allow` | **保留**（评审通过）。补充：**`deny` 永不被短路**，无人值守只影响 `ask` 的归宿 | §2.5、探针 `policy-decide-probe`（15/15） |
 | 三 | 配置分层与合并语义 | **层：用户 → 项目 → 会话**（评审通过）；环境变量**不作层**，逐键决定；**不再有 STATE_KEYS 这类隐式最高层**；**列表键合并**而非替换 | §3.6、探针 `legacy-config-probe`（10/10） |
 | 四 | 规则语言 | **结构化字段**（`{tool, path?, command?, risk?, network?}`），否决纯文本 DSL 与函数式 `matches` | §4.4、【源码】`perrules.js:67` |
 | 五 | 信任模型 | 信任按**目录身份精确匹配、无继承**；门控改**不对称**（allow 等信任，deny/ask 立即生效）；指令文件统一为 **`AGENTS.md`**，且**未信任时不注入** | §5、探针 `legacy-trust-probe`（8/8）、**附录 E** |
@@ -48,7 +48,7 @@
 | Node | `v24.18.0` |
 | 仓库状态 | `main = aa1b88d`，与 `origin/main` 一致，工作区干净 |
 | 测试套件 | **【实测】** `npm test`（build + lint + test）：`tests 219 / pass 204 / fail 0 / skipped 15`，9.6s。skip 的 15 项是需要真后端的沙箱用例 |
-| 本次新增实测 | **三个探针，32 条断言全部通过**：`tools/policy-decide-probe.mjs`（14）、`tools/legacy-config-probe.mjs`（10）、`tools/legacy-trust-probe.mjs`（8） |
+| 本次新增实测 | **三个探针，33 条断言全部通过**（P3 T1 后：`policy-decide-probe` 由 14 增至 15，见附录 B）：`tools/policy-decide-probe.mjs`（15）、`tools/legacy-config-probe.mjs`（10）、`tools/legacy-trust-probe.mjs`（8） |
 | 本次**未**做 | 未重跑旧版测试套件；未在 Linux/macOS 上跑任何东西；未做跨版本回放实测 |
 
 **平台差异提示**：三个探针都在 Windows 上跑。`legacy-config-probe` 断言的是**优先级与合并语义**，与平台无关；`legacy-trust-probe` 的 T2 断言「存的是 canonical 路径」，在 Windows 上由 `realpathSync.native` 的大小写折叠实现（`canonical.js:69`），**POSIX 上的 symlink 语义未在本机验证**——旧版正因 macOS `/var` → `/private/var` 栽过一次（`trust.js:14-21`）。
@@ -81,7 +81,7 @@ return { verdict: 'ask', rule: 'no-rule-matched', reason: `no rule covers ${requ
 
 ### 2.2 实测【实测】
 
-`tools/policy-decide-probe.mjs`，14 条全过。值得单独列出的：
+`tools/policy-decide-probe.mjs`，15 条全过（P3 T1 后由 14 增至 15，见附录 B 末）。值得单独列出的：
 
 | 用例 | 期望 | 为什么它值得测 |
 |---|---|---|
@@ -89,7 +89,7 @@ return { verdict: 'ask', rule: 'no-rule-matched', reason: `no rule covers ${requ
 | P4 | 同裁决取下标最小 | 这条说明「顺序无关」只对**跨**裁决成立，裁决内顺序**是有意义的** |
 | P7 | 规则无 `reason` → 返回 `null`，且字段存在 | `?? null` 而非 `||` |
 | P8 | `reason: ''` **原样返回空串** | `??` 不触发空串。配置作者写 `""` 会得到 `""`，不是 `null` |
-| P9 | `matches` 抛异常**直接冒泡** | `decide` 无 try/catch；异常由 `run-turn.ts:48` 的回合级 catch 接住并置 `failed` |
+| ~~P9~~ | ~~`matches` 抛异常**直接冒泡**~~ | **该用例已随 ADR-027 失效**：规则从函数改为数据后，「会抛异常的匹配函数」不再可表达——这是净改善，因为规则再也不能在裁决路径上运行代码。探针里该位已换成新的 fail-closed 断言（见附录 B 末） |
 | **P10** | **`DEFAULT_RULES` 里一条 deny 都没有** | deny 分支在生产不可达，只被测试规则触发 |
 
 ### 2.3 旧版对照【源码】+【旧版实测】
@@ -736,7 +736,7 @@ ADR 编号从 **ADR-023** 起（当前最后一篇是 ADR-022，见 `HANDOFF.md`
 
 | 脚本 | 断言数 | 覆盖 |
 |---|---|---|
-| `tools/policy-decide-probe.mjs` | **14 / 14** | v2 `decide()` 的裁决矩阵、`reason` 的 `null` vs `''`、`matches` 抛异常、`DEFAULT_RULES` 的可达面 |
+| `tools/policy-decide-probe.mjs` | **15 / 15** | v2 `decide()` 的裁决矩阵、`reason` 的 `null` vs `''`、缺字段时 fail-closed、`DEFAULT_RULES` 的可达面与可校验性 |
 | `tools/legacy-config-probe.mjs` | **10 / 10** | v1 六层优先级的每一层、`STATE_KEYS` 重放（含无 `state.json` 的情形）、数组替换、`providers` 深合并 |
 | `tools/legacy-trust-probe.mjs` | **8 / 8** | `trustedProjects` 落点与形态、canonical 存储、幂等、**无子目录/父目录继承**、legacy 兼容、类型防御 |
 
@@ -748,6 +748,19 @@ ADR 编号从 **ADR-023** 起（当前最后一篇是 ADR-022，见 `HANDOFF.md`
 2. **`.mjs` 里第一版探针有 4 条失败，其中 3 条是我自己的 bug**——两个用例用了会被 `resolveModelConfig` 校验的 `model` 值（`config.js:280` 拒绝不带 `provider/` 前缀的名）；一个用例在设完环境变量**之后**才调 `enter()`，而 `enter()` 会清空 `COWCAT_*`。**只有 C5 那条失败是真的。** 这正是 HANDOFF §5 第 5 条「一次只改一个变量」的第二次应验。
 
 **未做的实测**（登记在 §10）：跨版本回放（待验证 3）、symlink 信任（待验证 5）、旧版测试套件复跑（本阶段无必要）。
+
+### B-补：P3 T1 落地后对本探针的更新（2026-10-17）
+
+ADR-027 把 `Rule.matches`（函数）换成 `Rule.when`（数据），探针的构造 API 随之改变。**本条记录改动，不覆盖上面 r2 的原文**：
+
+| 项 | r2（调研时） | P3 T1 后 |
+|---|---|---|
+| 断言数 | 14 | **15** |
+| 「不关心」的写法 | `matches: () => true` | `when: {}` |
+| P9 | 「`matches` 抛异常直接冒泡」 | **用例已失效并替换**——函数形式被移除后，规则不能再在裁决路径上运行代码，所以「抛异常的匹配函数」不可表达。新 P9 断言的是替代它的性质：**`when` 选了请求里没有的字段时必须不匹配**（fail-closed，`absent` ≠ `do not care`） |
+| 新增 P15 | — | `DEFAULT_RULES` 必须通过 `validateRules`——默认规则若会被加载器跳过，就是一个静默的策略漏洞 |
+
+新增的 `validateRules` 是 ADR-025 决定 5「单条坏 → 跳过那条、保留其余并告警」的落地通道：`decide` 必须在工具路径上永不抛，所以不可用的规则（glob 路径、相对路径、文件系统根、未知 risk）必须在**加载前**被报出来，而不是在回合中途炸掉。glob 被拒是刻意的——`policy/` 不依赖宿主运行时，无法向 `FsPort` 问文件系统，在这里另实现一套 glob 只会造出第二个可能与 ADR-017 权威实现不一致的路径匹配器。
 
 ---
 

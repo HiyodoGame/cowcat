@@ -11,7 +11,16 @@ export { runTurn, type TurnDeps, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ToolCall } from './kernel/messages.js';
-export { decide, type ActionRequest, type Decision, type Rule, type Verdict } from './policy/decide.js';
+export {
+  decide,
+  validateRules,
+  type ActionRequest,
+  type Decision,
+  type Rule,
+  type RuleProblem,
+  type RuleWhen,
+  type Verdict,
+} from './policy/decide.js';
 export { DEFAULT_RULES } from './policy/defaults.js';
 export {
   LockHeldError,

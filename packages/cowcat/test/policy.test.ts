@@ -18,9 +18,9 @@ test('an action no rule covers is asked, never allowed', () => {
 });
 
 test('deny beats ask, and ask beats allow, regardless of rule order', () => {
-  const allow: Rule = { name: 'a', matches: () => true, verdict: 'allow' };
-  const ask: Rule = { name: 'b', matches: () => true, verdict: 'ask' };
-  const deny: Rule = { name: 'c', matches: () => true, verdict: 'deny', reason: 'blocked' };
+  const allow: Rule = { name: 'a', when: {}, verdict: 'allow' };
+  const ask: Rule = { name: 'b', when: {}, verdict: 'ask' };
+  const deny: Rule = { name: 'c', when: {}, verdict: 'deny', reason: 'blocked' };
   const decision = decide(req('write'), [allow, ask, deny]);
   assert.equal(decision.verdict, 'deny');
   assert.equal(decision.rule, 'c');
@@ -29,7 +29,7 @@ test('deny beats ask, and ask beats allow, regardless of rule order', () => {
 });
 
 test('within one verdict the first matching rule is the one reported', () => {
-  const first: Rule = { name: 'first', matches: () => true, verdict: 'allow' };
-  const second: Rule = { name: 'second', matches: () => true, verdict: 'allow' };
+  const first: Rule = { name: 'first', when: {}, verdict: 'allow' };
+  const second: Rule = { name: 'second', when: {}, verdict: 'allow' };
   assert.equal(decide(req('read'), [first, second]).rule, 'first');
 });
