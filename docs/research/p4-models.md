@@ -399,7 +399,7 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 
 ### 7.6 后续（本文件之外落定）
 
-T6 的两个叉**已拍板并落成 ADR-045/046**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）：
+T6 的两个叉**已拍板并落成 ADR-045/046**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）；**推理内容的契约部分已随 T6a 实现**（`ModelChunk.reasoning` / `Message.assistant.reasoning` / `model.message.reasoning`），适配器的读写是 T6b：
 
 - **推理内容进契约，回传由预设声明**（ADR-045）。它补上了 **§3.3 第 3 条**（【上游】MiniMax 要求多轮必须带完整 assistant 消息）当时落不下的东西——那时契约里**没有推理内容的位置**（T3 的适配器注释就写着这句，把它留给了 T6）。新增的**可核实证据**是装机可查的 SDK 类型：Anthropic 的 thinking 块**回传时必须原样、保持原顺序、签名完整**，改一个字节就 **400 `invalid_request_error`**（`@anthropic-ai/sdk/resources/messages/messages.d.ts:3906-3940`），签名来自 `signature_delta`、在 `content_block_stop` 之前到达（`:3787-3794`）。因此内核里的推理是**带不透明签名的块序列**，而不是「一段文本」——**这比 §3.3 第 3 条记的要求更严**（不只是「别丢」，还得**原样回放**）。
 - **档位 → wire 参数的映射写进预设数据**（ADR-046）。因此 §7.4 决定 4 的「按协议分别映射」由**数据**承担，而不是适配器里的映射表；v1 的折叠表（`llm/openai.js:90` 把 `xhigh`/`max` 压成 `high`）与本 catalog 里 DeepSeek 自己声明的 `max` 档**直接冲突**，是「替厂商定策略」的反例。

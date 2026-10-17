@@ -1,7 +1,7 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, StopReason, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
-import type { ToolCall } from './messages.js';
+import type { ReasoningBlock, ToolCall } from './messages.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
 
@@ -104,6 +104,7 @@ async function streamModel(deps: TurnDeps, signal: AbortSignal): Promise<readonl
   let text = '';
   let stopReason: StopReason | null = null;
   const calls: ToolCall[] = [];
+  const reasoning: ReasoningBlock[] = [];
   for await (const chunk of model.stream(request, signal)) {
     switch (chunk.type) {
       case 'text':
@@ -112,6 +113,12 @@ async function streamModel(deps: TurnDeps, signal: AbortSignal): Promise<readonl
         break;
       case 'tool_call':
         calls.push(normalizeCall(chunk.call));
+        break;
+      case 'reasoning':
+        // Kept exactly as it arrived — block, signature and all (ADR-045). Nothing here
+        // may normalise it: a modified block cannot be replayed, and which fields the
+        // protocol needs back is the adapter's knowledge, not the kernel's.
+        reasoning.push(chunk.block);
         break;
       case 'usage':
         // Written when it arrives rather than held until the turn ends: usage that has
@@ -133,7 +140,7 @@ async function streamModel(deps: TurnDeps, signal: AbortSignal): Promise<readonl
   }
   if (signal.aborted) throw new TurnAborted('aborted while streaming');
 
-  await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, stopReason });
+  await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, reasoning, stopReason });
   return calls;
 }
 

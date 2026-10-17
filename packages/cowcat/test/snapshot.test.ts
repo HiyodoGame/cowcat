@@ -33,6 +33,7 @@ async function seededSession(dir: string, sessionId: string) {
     turnId: session.turnId,
     text: 'hi',
     toolCalls: [],
+    reasoning: [],
     stopReason: { kind: 'end', raw: 'stop' },
   });
   await session.transition('finishing');

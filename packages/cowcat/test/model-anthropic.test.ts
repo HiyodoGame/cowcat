@@ -180,6 +180,7 @@ test('consecutive tool results are merged into the one user turn that must carry
         {
           role: 'assistant',
           text: '',
+          reasoning: [],
           toolCalls: [
             { callId: 'toolu_1', name: 'read_file', input: { path: 'a.txt' } },
             { callId: 'toolu_2', name: 'read_file', input: { path: 'b.txt' } },

@@ -26,7 +26,7 @@
 
 **T7（出口标准，ADR-043）在 T5 之后单独一个 PR 落地**：配对夹具（`paired/text-and-tool` + `paired/final-text`，同一回合脚本的两次模型调用）过一次 `runTurn`，两个协议对**同一份写死的 golden 事件序列**；外加「流中途取消 → 零 `model.message` + 用量留痕」两个协议各一条（`test/exit-criteria.test.ts`）。**测试 406 → 413**。
 
-**T6 的决策随后落地（实现未开始）**：**ADR-045/046**——推理内容进契约（形状、回传口径、实时渲染推迟）与预设进内核的方式；T6 因此拆成 T6a/b/c。见 §3。
+**T6 的决策随后落地，契约部分已随 T6a 实现（T6b/T6c 未开始）**：**ADR-045/046**——推理内容进契约（形状、回传口径、实时渲染推迟）与预设进内核的方式；T6 因此拆成 T6a/b/c。见 §3。
 
 ### 三件值得单独记住的实测发现
 
@@ -51,13 +51,13 @@
 
 ### 已验证 —— 本机（Windows，Node 24.18.0）
 
-`npm test` **413 tests / 397 pass / 0 fail / 16 skipped**。另：`tools/lint-probe.mjs` **7 条探针全部按预期**（含 T2 新增的两条 SDK 边界探针）、`tools/check-tarball.mjs` 通过。
+`npm test` **416 tests / 400 pass / 0 fail / 16 skipped**。另：`tools/lint-probe.mjs` **7 条探针全部按预期**（含 T2 新增的两条 SDK 边界探针）、`tools/check-tarball.mjs` 通过。
 
 ### 项目状态
 
-- **P4 的 T1–T5 与 T7 落地**（只剩 T6）；`packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**，`schemaVersion` 仍是 **1**。
+- **P4 的 T1–T5、T7 与 T6a 落地**（T6b/T6c 未开始）；`packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**，`schemaVersion` 仍是 **1**。
 - **旧 `agent/` 树本次未改动一行**（P8 前只收安全修复）。
-- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 与 T7 已合（ADR-035~044），T6 的决策已落（ADR-045/046）、拆成 T6a/b/c，实现未开始」。
+- `docs/architecture/README.md` 的状态行已同步为「P4 的 T1–T5 与 T7 已合、T6 的决策已落（ADR-045/046）拆成 T6a/b/c，T6a 已合」。
 
 ### P4 六项范围的落地情况
 
@@ -67,7 +67,7 @@
 | 2 | 流式归一化 → `ModelChunk` | ✅ 含用量与结束原因 |
 | 3 | 重试与退避 | ✅ T5 |
 | 4 | 录制-回放夹具 | ✅ T4（配对夹具 + 钉板 + 录制脚本） |
-| 5 | 模型预设以数据形式存在 | ❌ **决策已落（ADR-045/046）、拆成 T6a/b/c，实现未开始** |
+| 5 | 模型预设以数据形式存在 | ⚠️ **T6a 已落（推理内容的契约与类型）；T6b/T6c 未开始** |
 
 ### P4 两条出口标准（ADR-043）—— 均已兑现
 
@@ -78,22 +78,22 @@
 
 ## 3. 项目唯一下一步
 
-**P4 的 T6。**（T7 已落地，见 §2 的两条出口标准。）范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4` 任务表。
+**P4 的 T6b 与 T6c。**（T6a 已落地；T7 见 §2 的两条出口标准。）范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4` 任务表。
 
 ### T6：模型预设为数据 —— 决策已落（ADR-045/046），拆成 T6a/b/c
 
-**两个叉的拍板**（本 PR 落的决策，实现未开始）：
+**两个叉的拍板**（PR #36 落的决策）：
 
 - **推理内容进契约，回传由预设声明**（ADR-045）。原因不是「想要 UI 展示」，而是 Anthropic 的 thinking 块**回传时必须原样、保持原顺序、签名完整**，否则 **400 `invalid_request_error`**——这条写死在装机可查的 SDK 类型文档里（`@anthropic-ai/sdk` 的 `messages.d.ts:3906-3940`、`signature_delta` 见 `:3787-3794`）。所以内核里的推理是**带不透明签名的块序列**，不是一段文本。
 - **档位→wire 参数的映射写进预设数据**（ADR-046）。预设为每个档位声明**要发的参数本身**，内核只校验「声明过吗」并透传，适配器只序列化 + 校验保留字/协议不变量。**这样不猜任何默认值**，也不用把映射表写进代码——v1 的折叠表（`llm/openai.js:90` 把 `xhigh`/`max` 压成 `high`）恰好与 DeepSeek 自己声明的 `max` 档冲突，是「替厂商定策略」的反例。
 
 **三个子任务**（一个 PR 一个）：
 
-| 任务 | 内容 |
-|---|---|
-| T6a | **契约与类型**：`ModelChunk` 增 `reasoning`（**整块**）、`Message.assistant` 增 `reasoning`、`model.message` 带上它、`ModelPreset` 类型、`TurnOutcome.notes`；连带 `state.ts` / `adapters/schema.ts` / 等价断言。**不动适配器、不动请求构造** |
-| T6b | **两个适配器**：读 `reasoning_content`/`reasoning` 与 `thinking_delta`+`signature_delta`；**只按声明回传**；`providerOptions` 序列化 + 保留字/协议不变量校验；`maxTokens` 接线 |
-| T6c | **预设进内核**：`TurnDeps.preset` 取代 `modelId`；`maxTokens ← limits.output`（**顺带闭掉 T7 记录的 Anthropic 必填缺口**）；`toolCalls:false` 不发 `tools` 并随 `notes` 上报；配对夹具补推理内容、golden 随之更新 |
+| 任务 | 内容 | 状态 |
+|---|---|---|
+| T6a | **契约与类型**：`ModelChunk` 增 `reasoning`（**整块**）、`Message.assistant` 增 `reasoning`、`model.message` 带上它；连带 `state.ts` / `adapters/schema.ts` / 等价断言。**不动适配器、不动请求构造** | **✅ 本 PR**（测试 413 → 416） |
+| T6b | **两个适配器**：读 `reasoning_content`/`reasoning` 与 `thinking_delta`+`signature_delta`；**只按声明回传**；`providerOptions` 序列化 + 保留字/协议不变量校验；`maxTokens` 接线 | 未开始 |
+| T6c | **预设进内核**：`ModelPreset` 类型与 `TurnOutcome.notes`、`TurnDeps.preset` 取代 `modelId`；`maxTokens ← limits.output`（**顺带闭掉 T7 记录的 Anthropic 必填缺口**）；`toolCalls:false` 不发 `tools` 并随 `notes` 上报；配对夹具补推理内容、golden 随之更新 | 未开始 |
 
 **仍然是遗留问题（不在 T6 解决）**：产出 catalog 的蒸馏脚本**不在仓库里**（`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不存在）；`providers.json` 只作**兼容基线**，而 **wire 参数与「回不回传」catalog 里没有**，必须由预设额外声明——「预设怎么更新」仍待定（ADR-037 已记、ADR-046 复述）。
 
@@ -168,7 +168,7 @@
 3. **配置文件与信任记录放哪里仍未定**（组合根的职责，等 P6 的 CLI）。
 4. **永久化规则机制不存在**（ADR-031 把 `always` 限在会话内）。
 5. **`execFileSync` 下的子进程挂起**（§5 第 5 条）未查明。
-6. ~~**推理内容没有归宿**~~：**已定**——进契约、形状是带签名的块序列、回传由预设声明（**ADR-045**，T6a 实现）。
+6. ~~**推理内容没有归宿**~~：**已定并已实现**——进契约、形状是带签名的块序列、回传由预设声明（**ADR-045**，契约与类型见 T6a；适配器的读写是 T6b）。
 
 ### 厂商差异：哪些有出处、哪些还没有
 

@@ -3,7 +3,7 @@ import type { Decision } from '../policy/decide.js';
 import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
-import type { ToolCall } from './messages.js';
+import type { ToolCall, ReasoningBlock } from './messages.js';
 import type { TurnState } from './turn.js';
 
 interface EventBase {
@@ -24,6 +24,16 @@ export type KernelEvent = EventBase &
         readonly type: 'model.message';
         readonly text: string;
         readonly toolCalls: readonly ToolCall[];
+        /**
+         * The reasoning the model produced on the way to the answer (ADR-045), kept as
+         * replayable blocks rather than a string: at least one protocol requires them to
+         * go back **unmodified, in order, signature intact**.
+         *
+         * Required and possibly empty, like `toolCalls`: "the model did not think out
+         * loud" and "we dropped it" are different statements, and only one of them is
+         * true here.
+         */
+        readonly reasoning: readonly ReasoningBlock[];
         /**
          * Why the stream ended (ADR-035). `null` means the adapter did not report one.
          *
