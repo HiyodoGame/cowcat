@@ -26,7 +26,7 @@ test('exp: what does traversing a symlink actually require', { skip: platform !=
 
   const canonical = fs.canonical(home);
   const friendly = spellings(canonical)[1] ?? canonical;
-  const reads = spellings([canonical, ...SEATBELT_READ_PATHS]).map((path) => `(allow file-read* (subpath ${JSON.stringify(path)}))`);
+  const reads = [canonical, ...SEATBELT_READ_PATHS].flatMap(spellings).map((path) => `(allow file-read* (subpath ${JSON.stringify(path)}))`);
 
   const base = [
     '(version 1)',
