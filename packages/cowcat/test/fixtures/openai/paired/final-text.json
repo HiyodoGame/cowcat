@@ -1,5 +1,5 @@
 {
-  "description": "同一个回合脚本第二次模型调用的 OpenAI 编码：工具结果回灌之后，模型只回一句文本，不再调用工具。与 anthropic/paired/final-text 是同一次调用的两种编码，logical 必须一致；两次调用（text-and-tool + final-text）合起来才是 P4 出口标准里那个「回合脚本」（ADR-043）。",
+  "description": "同一个回合脚本第二次模型调用的 OpenAI 编码：工具结果回灌之后，模型先推理（reasoning_content 跨两个 delta）、再回一句文本，不再调用工具。与 anthropic/paired/final-text 是同一次调用的两种编码，logical 必须一致；两次调用（text-and-tool + final-text）合起来才是 P4 出口标准里那个「回合脚本」（ADR-043）。",
   "urlPath": "/chat/completions",
   "body": {
     "model": "fixture-model",
@@ -10,6 +10,7 @@
     "text": "Done.",
     "toolCalls": [],
     "usage": { "input": 7, "output": 2, "cacheRead": 0, "cacheCreation": 0 },
-    "stopKind": "end"
+    "stopKind": "end",
+    "reasoning": [{ "type": "thinking", "text": "Now I can answer." }]
   }
 }

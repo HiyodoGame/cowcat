@@ -1,4 +1,8 @@
-data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"Done"},"finish_reason":null}]}
+data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Now I can "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"reasoning_content":"answer."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"content":"."},"finish_reason":"stop"}]}
 

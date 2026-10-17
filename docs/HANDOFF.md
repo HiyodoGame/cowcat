@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-18**（#36–#39 已全部合入；T6a 与 T6b 已实现、T6c 未开始）
-> 交接时仓库状态：`main` = `edc1ae8`（#36–#39 相加后的树）；T6b 在 `feat/p4-t6b-reasoning-adapters` 上
+> 最近一次更新：**2026-10-18**（#36–#40 已全部合入；T6 全部落地——T6a/b/c 完成，P4 五项范围全部兑现）
+> 交接时仓库状态：`main` = `210f26a`（#36–#40 相加后的树）；T6c 在 `feat/p4-t6c-preset` 上
 >
 > **证据分级**（本文件只用这几档，逐条标注）：
 > **【源码】**读代码 / 读装机类型（`node_modules` 里的 SDK 类型也算源码）；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【CI 远端】**GitHub Actions 的运行结果（**我只观察状态，未在本地复现**）；**【上游】**厂商文档，未经端点实测。
@@ -42,7 +42,7 @@
 
 ### 已验证 —— 本机【本机测试】（Windows，Node 24.18.0）
 
-- `cd packages/cowcat && npm test`（`pretest` = `tsc` 构建 + ESLint）→ **432 tests / 416 pass / 0 fail / 16 skipped**（T6b 之前是 416，T6a 之前是 413）
+- `cd packages/cowcat && npm test`（`pretest` = `tsc` 构建 + ESLint）→ **436 tests / 420 pass / 0 fail / 16 skipped**（T6c 之前是 432，T6b 之前是 416）
 - `node tools/lint-probe.mjs` **7 条探针全部按预期**；`node tools/check-tarball.mjs` 通过
 
 ### 已验证 —— CI 远端【CI 远端】（GitHub Actions，我只观察状态）
@@ -59,7 +59,7 @@
 
 ### 项目状态
 
-- `main` = `edc1ae8`（含 P4 T1–T5、T7 与 T6a；#36–#39 已全部合入）；**T6b 在未合 PR 上，T6c 未开始**。
+- `main` = `210f26a`（含 P4 T1–T5、T7 与 T6a/T6b；#36–#40 已全部合入）；**T6c 在未合 PR 上——它合入后 P4 完成**。
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019：v2 日志格式从未发布，契约变更不升版本）。
 - 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——本次会话未增删任何依赖。
 - **平台 / 工作区设置本次会话未变更**（未调用 `opencode_console` 的任何写操作）。若需确认，请单独核对工作区设置与模型开关。
@@ -72,7 +72,7 @@
 | 2 | 流式归一化 → `ModelChunk` | ✅ 含用量、结束原因与推理（T6a 契约 + T6b 适配器读写） |
 | 3 | 重试与退避 | ✅ T5 已合 |
 | 4 | 录制-回放夹具 | ✅ T4 已合（T7 又加了一对 `paired/final-text`；T6b 加了合成钉板 `synthetic/thinking-precedes`） |
-| 5 | 模型预设以数据形式存在 | ⚠️ 决策已落（ADR-045/046）；T6a/T6b 已实现契约与适配器，**T6c（预设进内核）未开始** |
+| 5 | 模型预设以数据形式存在 | ✅ T6a/b/c 全部落地（契约、适配器、预设进内核） |
 
 ### P4 两条出口标准（ADR-043）—— 均已兑现（**已合入 `main`**）
 
@@ -94,7 +94,7 @@
 
 ## 3. 项目唯一下一步
 
-**P4 的 T6b（已落地，本 PR）与 T6c（未开始）。**
+**P4 的 T6c（已落地，本 PR）——T6 随之完成，P4 五项范围全部兑现。**
 
 ### 合并顺序（已执行完毕）
 
@@ -110,9 +110,11 @@
 
 **落点**：`model-openai.ts` / `model-anthropic.ts`。两条 T6b 才定的细节：① OpenAI 侧的回传开关是预设数据里的 **`providerOptions.reasoning_replay`**（值 = wire 字段名；缺省即不回传——「哪个字段、要不要回传」属未实测，【上游】只说 MiniMax 要求，所以交给数据、不设默认）；② Anthropic 侧「声明 `thinking`（且非 `disabled`）即回传」，thinking/redacted 块放 content 首部。保留字两边各六项，`budget_tokens` 越界即抛错（不硬发）。**「thinking 前置」由合成夹具钉住（`synthetic/thinking-precedes`）——不是实测**，真实录制仍待。**【本机测试】416 → 432**。
 
-### T6c：预设进内核（ADR-046）
+### T6c：预设进内核（ADR-046）—— 已落地（本 PR）
 
 `ModelPreset` 类型与 `TurnOutcome.notes`；`TurnDeps.preset` **取代** `modelId`（单一事实源）；`maxTokens ← preset.limits.output`（**顺带闭掉 T7 记录的 Anthropic 必填缺口**）；`preset.toolCalls === false` → 不发 `tools` 并随 `notes` 上报；档位未声明则不发 + note；配对夹具补上推理内容、golden 随之更新。
+
+**落点**：`kernel/preset.ts`（类型）+ `kernel/run-turn.ts`（deps 与请求构造）。两条 T6c 才定的细节：① 档位的入口是 `TurnDeps.effort: string`（组合根给），映射是 `preset.efforts`（档位 → wire 参数对象）——内核只查「声明过吗」并透传，未声明 → `{ kind: 'effort-not-declared', model, effort }`；② notes 在 `runTurn` 打开回合前算一次、随**每个**出口返回（completed/cancelled/failed 都带）——静态配置事实，**不进日志**（与 ADR-041 的「观察到就必须留痕」正好相反的判定）。配对夹具的两个 scenario 都补了推理（OpenAI 侧 `reasoning_content` 跨 chunk、Anthropic 侧 thinking 块 + `signature_delta`），`exit-criteria` 的投影把签名剥掉后比 golden（「the projection is load-bearing」现在展示四类协议差异：id、stop 词、usage 形态、签名）。**【本机测试】432 → 436**。
 
 ---
 
@@ -170,7 +172,7 @@
 
 ### 合并与流程（**当下就要处理**）
 
-1. ~~**#36 与 #37 都未合**~~：**已全部合入**（#36 → #39 重开 → #38；`main` = `edc1ae8`），合并顺序见 §3 的过去时记录。
+1. ~~**#36 与 #37 都未合**~~：**已全部合入**（#36 → #39 重开 → #38 → #40；`main` = `210f26a`），合并顺序见 §3 的过去时记录。
 2. ~~**本交接文件与 #36/#37 改过同一批文档行**~~：三次 rebase（#38、#39 重开、T6b）都已按「以交接版本为准」解决。
 
 ### 厂商行为：有出处但**未实测**

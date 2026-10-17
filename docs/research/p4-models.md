@@ -2,7 +2,7 @@
 
 > 依据 [`dev-plan-v2.md`](../dev-plan-v2.md)「工作规则 1」：每个阶段开始前先做调研，回答阶段内的开放问题，列出被否决的方案及理由。本文件回答 P4 的开放问题，并给出它们对 P4 五项范围的具体影响。
 >
-> 最后更新：**2026-10-18**。状态：**调研完成，决定已定（评审通过）**。本文件给出的各项决定已由评审拍板（§2.4、§3.5、§4.5、§5.4、§6.4/§6.6、§7.4），并已全部落成 **ADR-035~044**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）。**T1–T5 与 T7 已实现**（契约与事件、两个适配器、夹具、重试与取消边界、出口标准）；**T6 的后续决策已落成 ADR-045/046**（见 §7.6），拆成 T6a/b/c，其中 **T6a（契约部分）与 T6b（两个适配器的读写）已实现，T6c 未开始**。
+> 最后更新：**2026-10-18**。状态：**调研完成，决定已定（评审通过）**。本文件给出的各项决定已由评审拍板（§2.4、§3.5、§4.5、§5.4、§6.4/§6.6、§7.4），并已全部落成 **ADR-035~044**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）。**T1–T5 与 T7 已实现**（契约与事件、两个适配器、夹具、重试与取消边界、出口标准）；**T6 的后续决策已落成 ADR-045/046**（见 §7.6），拆成 T6a/b/c，**三者均已落地**。
 > 前置：[`dev-plan-v2.md`](../dev-plan-v2.md) 的 `## P4` 段、[`HANDOFF.md`](../HANDOFF.md) §3、[`architecture/04-dependencies.md`](../architecture/04-dependencies.md)。
 >
 > **本文件的证据边界（必须先说清）**：
@@ -399,7 +399,7 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 
 ### 7.6 后续（本文件之外落定）
 
-T6 的两个叉**已拍板并落成 ADR-045/046**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）；**推理内容的契约部分已随 T6a 实现**（`ModelChunk.reasoning` / `Message.assistant.reasoning` / `model.message.reasoning`），**两个适配器的读写已随 T6b 实现**——读两种拼写（`reasoning_content`/`reasoning`）与 `thinking_delta` + `signature_delta`（签名原样带回、脱敏块带 `data`）；回传由预设声明：OpenAI 兼容侧用 `providerOptions.reasoning_replay` 指定字段名（**该字段名属未实测**——【上游】只证到 MiniMax 要求回传，所以由数据决定、不设默认），Anthropic 侧声明 `thinking`（且非 `disabled`）即回传；保留字与 `budget_tokens ≥ 1024 且 < max_tokens` 违反即抛错。**「thinking 前置」由合成夹具 `anthropic/synthetic/thinking-precedes` 钉住——合成字节，不是实测**；真实端点的录制出现前，回放顺序的这条依据仍是【推断】：
+T6 的两个叉**已拍板并落成 ADR-045/046**（见 [`architecture/README.md`](../architecture/README.md) 的 ADR 表）；**推理内容的契约部分已随 T6a 实现**（`ModelChunk.reasoning` / `Message.assistant.reasoning` / `model.message.reasoning`），**两个适配器的读写已随 T6b 实现**——读两种拼写（`reasoning_content`/`reasoning`）与 `thinking_delta` + `signature_delta`（签名原样带回、脱敏块带 `data`）；回传由预设声明：OpenAI 兼容侧用 `providerOptions.reasoning_replay` 指定字段名（**该字段名属未实测**——【上游】只证到 MiniMax 要求回传，所以由数据决定、不设默认），Anthropic 侧声明 `thinking`（且非 `disabled`）即回传；保留字与 `budget_tokens ≥ 1024 且 < max_tokens` 违反即抛错。**预设的形状与进内核的方式已随 T6c 落地**：`ModelPreset`（`kernel/preset.ts`——`protocol`/`model`/`limits`/`toolCalls`/`efforts`）由组合根注入；`TurnDeps.preset` 取代 `modelId`、`maxTokens ← limits.output`（闭掉 T7 记录过的 Anthropic 必填缺口）、`toolCalls:false` 与未声明档位都不发并随 `TurnOutcome.notes` 上报（静态配置事实不进日志）。**「thinking 前置」由合成夹具 `anthropic/synthetic/thinking-precedes` 钉住——合成字节，不是实测**；真实端点的录制出现前，回放顺序的这条依据仍是【推断】：
 
 - **推理内容进契约，回传由预设声明**（ADR-045）。它补上了 **§3.3 第 3 条**（【上游】MiniMax 要求多轮必须带完整 assistant 消息）当时落不下的东西——那时契约里**没有推理内容的位置**（T3 的适配器注释就写着这句，把它留给了 T6）。新增的**可核实证据**是装机可查的 SDK 类型：Anthropic 的 thinking 块**回传时必须原样、保持原顺序、签名完整**，改一个字节就 **400 `invalid_request_error`**（`@anthropic-ai/sdk/resources/messages/messages.d.ts:3906-3940`），签名来自 `signature_delta`、在 `content_block_stop` 之前到达（`:3787-3794`）。因此内核里的推理是**带不透明签名的块序列**，而不是「一段文本」——**这比 §3.3 第 3 条记的要求更严**（不只是「别丢」，还得**原样回放**）。
 - **档位 → wire 参数的映射写进预设数据**（ADR-046）。因此 §7.4 决定 4 的「按协议分别映射」由**数据**承担，而不是适配器里的映射表；v1 的折叠表（`llm/openai.js:90` 把 `xhigh`/`max` 压成 `high`）与本 catalog 里 DeepSeek 自己声明的 `max` 档**直接冲突**，是「替厂商定策略」的反例。

@@ -1,5 +1,5 @@
 {
-  "description": "同一个逻辑回合的 OpenAI 编码：一句文本 + 一次工具调用（参数跨 chunk）+ 用量。与 anthropic/paired/text-and-tool 是同一回合的两种编码，logical 必须一致。",
+  "description": "同一个逻辑回合的 OpenAI 编码：一段推理（reasoning_content 跨两个 delta）+ 一句文本 + 一次工具调用（参数跨 chunk）+ 用量。与 anthropic/paired/text-and-tool 是同一回合的两种编码，logical 必须一致（推理块的签名是协议生成的，不进 logical——见 test/fixtures.ts）。",
   "urlPath": "/chat/completions",
   "body": {
     "model": "fixture-model",
@@ -10,6 +10,7 @@
     "text": "Let me read that file.",
     "toolCalls": [{ "name": "read_file", "input": { "path": "a.txt" } }],
     "usage": { "input": 12, "output": 34, "cacheRead": 5, "cacheCreation": 0 },
-    "stopKind": "toolCalls"
+    "stopKind": "toolCalls",
+    "reasoning": [{ "type": "thinking", "text": "Let me read the file first." }]
   }
 }

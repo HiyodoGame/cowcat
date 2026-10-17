@@ -7,10 +7,11 @@ export {
   UnsupportedSchemaVersionError,
 } from './kernel/schema-version.js';
 export { reduce, replay, initialState, type SessionState, type TurnView } from './kernel/state.js';
-export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnOutcome } from './kernel/run-turn.js';
+export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ReasoningBlock, ToolCall } from './kernel/messages.js';
+export type { ModelLimits, ModelPreset, ModelProtocol } from './kernel/preset.js';
 export {
   decide,
   validateRules,
