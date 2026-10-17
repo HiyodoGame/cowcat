@@ -265,12 +265,67 @@ export async function settlesWithin(promise: Promise<unknown>, ms: number): Prom
     () => true,
     () => true,
   );
+  return Promise.race([settled, deadlineAfter(ms)]);
+}
+
+function deadlineAfter(ms: number): Promise<boolean> {
   // Braces on purpose: `resolve` returns void, and returning a void expression from an
   // arrow shorthand is what no-confusing-void-expression objects to.
-  const deadline = new Promise<boolean>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     setTimeout(() => {
       resolve(false);
     }, ms);
   });
-  return Promise.race([settled, deadline]);
+}
+
+export interface SequenceStep {
+  readonly status: number;
+  readonly headers?: Readonly<Record<string, string>>;
+  /** The body; for a stream step this is the SSE text. */
+  readonly body: string;
+}
+
+/**
+ * Hands out one response per request, in order — the shape a retry test needs, since the
+ * whole point is that the second request is answered differently from the first. The last
+ * step is repeated if anything asks for more.
+ */
+export function sequenceTransport(steps: readonly SequenceStep[]): ReplayTransport {
+  const requests: RecordedRequest[] = [];
+  let index = 0;
+  const impl = (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
+    const [input, init] = args;
+    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+    requests.push({ url: urlOf(input), body, signal: init?.signal });
+    const step = steps[Math.min(index, steps.length - 1)];
+    index += 1;
+    if (step === undefined) return Promise.reject(new Error('sequenceTransport: no steps'));
+    return Promise.resolve(
+      new Response(step.body, { status: step.status, headers: step.headers ?? {} }),
+    );
+  };
+  return { fetch: impl, requests };
+}
+
+/**
+ * A 200 whose body yields the given bytes and then fails. The case ADR-039 decision ③ is
+ * about: output has already left the building, so a retry would make the model say it
+ * again.
+ */
+export function failingBodyTransport(firstBytes: string): ReplayTransport {
+  const requests: RecordedRequest[] = [];
+  const impl = (...args: Parameters<typeof globalThis.fetch>): Promise<Response> => {
+    const [input, init] = args;
+    requests.push({ url: urlOf(input), body: {}, signal: init?.signal });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(firstBytes));
+        controller.error(new Error('the connection died mid-stream'));
+      },
+    });
+    return Promise.resolve(
+      new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
+    );
+  };
+  return { fetch: impl, requests };
 }

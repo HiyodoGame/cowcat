@@ -1,6 +1,7 @@
-import OpenAI from 'openai';
+import OpenAI, { APIConnectionError, APIError, APIUserAbortError } from 'openai';
 import type { Message } from '../kernel/messages.js';
 import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
+import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
 // The OpenAI-compatible adapter (ADR-036): one protocol that 201 of the 209 catalogued
 // providers speak, Chat Completions rather than the Responses API, because a compatible
@@ -8,10 +9,10 @@ import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolS
 //
 // Two things this file deliberately does NOT do:
 //
-// - It does not retry. The SDK would (twice, by default), and ADR-039 gives the retry
-//   policy a shape the SDK's own does not have (honour `Retry-After`, never retry a
-//   stream that has already produced output). Two retry policies in one path is one
-//   policy too many, so the SDK's is switched off here and T5 builds the real one.
+// - It does not let the SDK retry: the SDK would do it behind ADR-039's policy (which
+//   also covers `Retry-After`, per-attempt deadlines and never retrying a stream that has
+//   already produced output), so its own retries are switched off and T5's live in
+//   `withRetry`.
 // - It does not decide when the stream ended from `finish_reason`. Providers disagree
 //   about what follows a finishing chunk — some send a usage-only chunk, some send
 //   `[DONE]`, some keep going with tool-call deltas (`agent/src/llm/openai.js:69-71`).
@@ -27,6 +28,8 @@ export interface OpenAIModelOptions {
    * (ADR-042).
    */
   readonly fetch?: typeof globalThis.fetch;
+  /** Overrides for ADR-039's defaults. */
+  readonly retry?: RetryPolicy;
 }
 
 export function openAIModel(options: OpenAIModelOptions): ModelPort {
@@ -39,19 +42,28 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
 
   return {
     async *stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelChunk> {
-      const stream = await client.chat.completions.create(
-        {
-          model: request.model,
-          messages: toWireMessages(request),
-          stream: true,
-          // Without this the stream carries no usage at all, and the usage that does
-          // arrive comes on a chunk whose `choices` is empty (ADR-040).
-          stream_options: { include_usage: true },
-          ...(request.maxTokens === undefined ? {} : { max_tokens: request.maxTokens }),
-          ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
-        },
-        { signal },
-      );
+      // Only the response is retried. Everything below this line runs outside the retry,
+      // which is how "a stream that has already produced output is never retried" holds
+      // by construction (ADR-039 decision ③).
+      const stream = await withRetry({
+        signal,
+        attempt: (attemptSignal) =>
+          client.chat.completions.create(
+            {
+              model: request.model,
+              messages: toWireMessages(request),
+              stream: true,
+              // Without this the stream carries no usage at all, and the usage that does
+              // arrive comes on a chunk whose `choices` is empty (ADR-040).
+              stream_options: { include_usage: true },
+              ...(request.maxTokens === undefined ? {} : { max_tokens: request.maxTokens }),
+              ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
+            },
+            { signal: attemptSignal },
+          ),
+        classify: (error, attemptSignal) => classifyOpenAI(error, signal, attemptSignal),
+        ...(options.retry === undefined ? {} : { policy: options.retry }),
+      });
 
       // Tool calls arrive as fragments keyed by `index`: the first fragment carries the
       // id and name, and `arguments` is a JSON *string* assembled across fragments.
@@ -190,4 +202,21 @@ function cacheReadTokens(usage: OpenAI.CompletionUsage): number {
   // (agent/src/loop.js:424).
   const vendorSpecific = (usage as { prompt_cache_hit_tokens?: unknown }).prompt_cache_hit_tokens;
   return typeof vendorSpecific === 'number' ? vendorSpecific : 0;
+}
+
+// Which failures are worth another attempt is protocol knowledge, so it lives with the
+// protocol (ADR-039). The attempt's own signal is what separates "this attempt ran out of
+// time" — worth another go — from "a person cancelled", which never is; both arrive here
+// as abort-shaped errors.
+function classifyOpenAI(error: unknown, callerSignal: AbortSignal, attemptSignal: AbortSignal): RetryDecision {
+  if (callerSignal.aborted) return NO_RETRY;
+  if (error instanceof APIUserAbortError) return NO_RETRY;
+  if (attemptSignal.aborted) return { retry: true, afterMs: null };
+  if (error instanceof APIConnectionError) return { retry: true, afterMs: null };
+  if (error instanceof APIError) {
+    const status: unknown = error.status;
+    if (typeof status !== 'number' || !retryableStatus(status)) return NO_RETRY;
+    return { retry: true, afterMs: retryAfterMs(asHeaderReader(error.headers)) };
+  }
+  return NO_RETRY;
 }
