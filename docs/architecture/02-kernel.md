@@ -18,7 +18,9 @@
 | `policy.decided` | 对某次工具调用的策略裁决 | 不改消息，但入日志，供审计 |
 | `approval.requested` | 向用户提出的审批问题（工具名、命中的规则、理由） | 不改消息。**写在问之前**，所以停在审批上的日志能说清在等什么 |
 | `approval.answered` | 审批的回答：`{ callId, key, verdict: once\|always\|reject, by: user\|policy\|timeout }` | `always` 时把 `key` 追加进 `grants` |
-| `tool.finished` | 工具结果（成功或失败） | 追加 tool 消息 |
+| `tool.finished` | 工具结果（成功或失败）、工具名，以及**执行事实**（`facts`，见下） | 追加 tool 消息 |
+
+**`tool.finished.facts` 是让审计能看到沙箱事实的唯一通路**（ADR-033）。`ToolPort.run` 返回的是 `ToolResult` 而不是 `ProcessResult`，所以没有它，网关做过什么就停在工具边界内、审计永远看不到。`facts` **可空而非可选**（与 `turnId`/`reason` 同形，且 `exactOptionalPropertyTypes` 下 optional 的含义与类型对不上），`null` 明确表示**工具没有上报**——与「没有施加沙箱（`mode: 'off'`）」是两件不同的事实，混淆它们会让审计无法回答自己唯一要回答的问题。
 
 **`grants` 是从日志归约出来的，不是旁边的另一份状态**（ADR-031 决定 3）。这正是让「回放能够复现实时会话」这句话对授权也成立的原因：重开会话拿回它的授权，因为拿回了它的事件。授权**只活在本次会话内**——永久规则要先有撤销机制（ADR-026），那还不存在。
 

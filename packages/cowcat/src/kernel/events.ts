@@ -1,5 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
+import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
 import type { ToolCall } from './messages.js';
 import type { TurnState } from './turn.js';
@@ -40,7 +41,19 @@ export type KernelEvent = EventBase &
         readonly verdict: ApprovalVerdict;
         readonly by: ApprovalBy;
       }
-    | { readonly type: 'tool.finished'; readonly callId: string; readonly ok: boolean; readonly output: string }
+    | {
+        readonly type: 'tool.finished';
+        readonly callId: string;
+        readonly name: string;
+        readonly ok: boolean;
+        readonly output: string;
+        /**
+         * What the execution gateway actually did, when the tool ran a process
+         * (ADR-033). `null` means the tool reported NOTHING — an audit has to record
+         * that as "not known", never as "no sandbox".
+         */
+        readonly facts: ExecutionFacts | null;
+      }
   );
 
 export type KernelEventType = KernelEvent['type'];

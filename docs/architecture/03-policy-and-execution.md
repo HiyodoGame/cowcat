@@ -82,6 +82,22 @@ request.command ?? request.path ?? JSON.stringify(request.input ?? null)
 
 **两条旧版缺口在 v2 里还封不了**，因为它们依赖的功能 v2 还没有：`subagent.js:58` 从 `tools === null` 推断出 yolo 权限、`planmode.js:122` 的 `allowedPrompts` 绕过 `validateRule` 直注入 `rules.allow`。v2 既没有子 agent 工具也没有 plan 模式，**没有可封的代码**。它们记在这里作为**未来实现这两处时的约束**（ADR-032）：子 agent 不得从「没有工具列表」推断出权限，`allowedPrompts` 必须走与配置规则同样的校验与分层。
 
+### 审计（ADR-033）
+
+`ports/audit.ts` 定义 `AuditRecord` 与 `AuditSink`；`policy/audit.ts` 是消费者；`adapters/audit.ts` 给出 `JsonlAuditSink`（一行一个 JSON 对象，**追加**——一个后续运行能截断的审计线索不是审计线索）。
+
+**它是事件流的消费者，不是回合循环里的一个分支。** 它只被 `Session.subscribe` 喂数据，没有任何途径影响一个回合。这让「审计永远不会弄坏会话」在**结构上**成立，而不是一句承诺。
+
+**一行 = 一次工具调用**：把 `policy.decided` + `approval.answered` + `tool.finished` **join** 起来。这是**投影不是副本**：日志里已经有裁决、审批与结果，照抄会让同一个事实有两个家、进而可能互相矛盾。审计加的是那个 join，以及只有执行方才知道的运行时事实。
+
+**`sandbox: null` 表示「没上报」，不是「没施加沙箱」。** 这是整个消费者存在的理由——一条把「工具什么都没说」写成 `mode: 'off'` 的记录，是在断言一件它并不知道的事。
+
+**「永不抛」只约束消费者本身，不约束被审计的端口。** 实测的承诺边界是：`ProcessPort.run`（最强）、`FsPort.*`、`PlatformPort.sandboxBackends` 有「永不抛」保证，而 `ToolPort.run`、`ModelPort.stream`、`EventStore.append` 没有。把两者混为一谈会让审计失去意义——**拿不到事实时必须记录「拿不到」，而不是静默不写**（旧版 `sandbox.js:180` 的空 catch 是反例）。
+
+**写失败是计数 + 上报，不是吞掉**：`accept` 永不抛（一个坏掉的 sink 不能把会话带走），但失败计入 `summary()`/`close()` 的 `failed` 与 `lastFailure`。**静默失败的审计比没有审计更糟——它看起来像证据。** `close()` 会等在途写入落定，否则会话结尾的报告可能在写入还在失败时报出零失败。
+
+**所有档位都写实际生效的 `mode`/`backend`**（旧版只在 `system` 档写，是为了与历史日志逐字节一致；v2 从未发布，没有这个包袱）。
+
 ### 项目指令文件（ADR-029、ADR-030）
 
 `ports/instructions.ts` 定义 `InstructionPort`，`adapters/instructions.ts` 给出 `FileInstructionSource`；**哪些文件、以及能不能注入**是纯策略，在 `policy/instructions.ts`。

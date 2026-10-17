@@ -26,11 +26,35 @@ const turnStateSchema = z.enum([
 const verdictSchema = z.enum(['allow', 'ask', 'deny']);
 
 const approvalVerdictSchema = z.enum(['once', 'always', 'reject']);
-
 // `policy` is reachable here even though it is not one of the two answers a person
 // can give: it is what a standing `always` from earlier in the same session records
 // when it lets a later call through (ADR-031).
 const approvalBySchema = z.enum(['user', 'policy', 'timeout']);
+
+// The gateway's own account of what it did (ADR-033). Mirrors ports/process.ts; the
+// compile-time assertion in test/schema.test.ts holds the two together through
+// `KernelEvent`.
+const appliedSandboxSchema = z.object({
+  mode: z.enum(['off', 'light', 'system']),
+  backend: z.enum(['auto', 'bwrap', 'seatbelt', 'none']).nullable(),
+  limitations: z.readonly(z.array(z.string())),
+});
+
+const terminationRecordSchema = z.object({
+  requested: z.boolean(),
+  reason: z.enum(['timeout', 'cancel', 'shutdown', 'none']),
+  strategy: z.enum(['process-group', 'taskkill-tree', 'single-process', 'none']),
+  escalated: z.boolean(),
+  fallbackUsed: z.boolean(),
+  residuePossible: z.boolean(),
+});
+
+const executionFactsSchema = z.object({
+  sandbox: appliedSandboxSchema,
+  termination: terminationRecordSchema,
+  removedEnv: z.readonly(z.array(z.string())),
+  ignoredDeny: z.readonly(z.array(z.string())),
+});
 
 const toolCallSchema = z.object({
   callId: z.string(),
@@ -101,7 +125,19 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     verdict: approvalVerdictSchema,
     by: approvalBySchema,
   }),
-  z.object({ ...base, type: z.literal('tool.finished'), callId: z.string(), ok: z.boolean(), output: z.string() }),
+  z.object({
+    ...base,
+    type: z.literal('tool.finished'),
+    callId: z.string(),
+    name: z.string(),
+    ok: z.boolean(),
+    output: z.string(),
+    // Nullable rather than optional, for two reasons: it holds the same shape as
+    // `turnId` and `reason`, and `exactOptionalPropertyTypes` makes an optional field
+    // here mean "absent or undefined" while the type means "absent, never undefined".
+    // `null` says "the tool reported nothing" out loud.
+    facts: executionFactsSchema.nullable(),
+  }),
 ]);
 
 const messageSchema = z.discriminatedUnion('role', [

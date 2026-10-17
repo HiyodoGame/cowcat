@@ -62,14 +62,16 @@ const policyDecided: KernelEvent = {
   decision: { verdict: 'allow', rule: 'reads are allowed', reason: null },
 };
 const toolFinished: KernelEvent = {
-  seq: 6,
-  ts: 6,
+  seq: 8,
+  ts: 8,
   sessionId: 'sess',
   turnId: 'turn_1',
   type: 'tool.finished',
   callId: 'c1',
+  name: 'echo_file',
   ok: true,
   output: 'done',
+  facts: null,
 };
 
 const everyEvent: readonly KernelEvent[] = [
