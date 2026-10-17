@@ -45,6 +45,11 @@ export function quietResult(overrides: Partial<ProcessResult> = {}): ProcessResu
     stdout: '',
     stderr: '',
     truncated: false,
+    // Nothing was dropped and nothing was stripped: the baseline has to be honest
+    // about those too, or every test that asserts on them starts from a lie.
+    dropped: { stdout: 0, stderr: 0 },
+    removedEnv: [],
+    ignoredDeny: [],
     termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
     ...overrides,
   };
@@ -95,10 +100,14 @@ export function fakePlatform(options: {
   readonly termination?: TerminationStrategy;
   readonly backends?: readonly SandboxBackendVerdict[];
 } = {}): PlatformPort {
+  const id = options.platform ?? 'linux';
+  // Derived from the platform unless overridden, so a fake cannot claim to be Windows
+  // and then report a POSIX process group — the mismatch would make every test that
+  // used it prove something other than what it says.
   return {
-    platform: options.platform ?? 'linux',
-    resolveShell: () => options.shell ?? posixShell('/bin/bash'),
-    termination: () => options.termination ?? posixTermination(),
+    platform: id,
+    resolveShell: () => options.shell ?? (id === 'windows' ? windowsShell() : posixShell()),
+    termination: () => options.termination ?? (id === 'windows' ? windowsTermination() : posixTermination()),
     sandboxBackends: () => options.backends ?? [],
   };
 }

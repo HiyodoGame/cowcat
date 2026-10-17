@@ -60,6 +60,9 @@ export {
 export { ENV_ALWAYS_KEEP, ENV_SENSITIVE, redactEnv, type RedactionRequest, type RedactionResult } from './policy/env.js';
 export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
+export { NodeProcess, type NodeProcessOptions, type SandboxCommandResolver } from './adapters/process.js';
+export { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './adapters/terminate.js';
+export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
 export {
   detectPlatformId,
