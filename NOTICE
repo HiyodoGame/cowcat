@@ -1,0 +1,35 @@
+CowCat
+Copyright (c) 2026 心感科技（深圳）有限公司 (CoreScense)
+
+This product includes software developed at third parties.
+
+--------------------------------------------------------------------------------
+@anthropic-ai/sandbox-runtime
+--------------------------------------------------------------------------------
+
+`packages/cowcat/src/adapters/sandbox/backends/seatbelt.ts` contains a macOS
+Seatbelt (sandbox profile) runtime allow-list transcribed from the reference
+implementation published as `@anthropic-ai/sandbox-runtime`, licensed under the
+Apache License, Version 2.0.
+
+Changes made to that material:
+
+  * the sysctl names and mach-lookup global names are kept as explicit enumerated
+    lists rather than being widened to wildcards, so that widening them later is a
+    reviewable change;
+  * the surrounding profile assembly (rule ordering, the root-inode allowance, the
+    move-blocking denies and the tail block for denied paths inside write roots) is
+    assembled locally and follows the seven Seatbelt semantics documented at the top
+    of that file;
+  * the runtime list itself is unchanged in substance — it is verified for real by the
+    `packages/cowcat · node 22 · macos-15` CI leg, because getting it wrong is a
+    silent SIGABRT before exec rather than a permission error.
+
+The Apache License, Version 2.0 may be obtained at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.

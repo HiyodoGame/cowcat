@@ -49,6 +49,8 @@ export {
   type FileKind,
   type PathPolicyResolver,
   SandboxUnavailableError,
+  SandboxRequestRefusedError,
+  type AppliedSandbox,
   type PlatformPort,
   type PlatformId,
   type Shell,
@@ -60,7 +62,30 @@ export {
 export { ENV_ALWAYS_KEEP, ENV_SENSITIVE, redactEnv, type RedactionRequest, type RedactionResult } from './policy/env.js';
 export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
-export { NodeProcess, type NodeProcessOptions, type SandboxCommandResolver } from './adapters/process.js';
+export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';
+export { buildSandboxCommand, createSandboxExecutor, type ExecutorDeps } from './adapters/sandbox/executor.js';
+export {
+  buildBwrapCommand,
+  BWRAP_READ_PATHS,
+  type BwrapCommand,
+  type BwrapOptions,
+  type SandboxFsProbe,
+} from './adapters/sandbox/backends/bwrap.js';
+export {
+  buildSeatbeltCommand,
+  isUnder,
+  RUNTIME_ALLOWS,
+  SEATBELT_READ_PATHS,
+  type SeatbeltCommand,
+  type SeatbeltOptions,
+} from './adapters/sandbox/backends/seatbelt.js';
+export {
+  DEFAULT_HOME_READ_ALLOW,
+  DEFAULT_READ_DENY,
+  DEFAULT_WRITE_DENY,
+  SANDBOX_TMPFS_BYTES,
+} from './policy/sandbox-defaults.js';
+export { expand, isAbsolutePath, resolveEntries, type ResolveRequest, type ResolveResult } from './policy/sandbox-paths.js';
 export { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './adapters/terminate.js';
 export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';

@@ -25,20 +25,41 @@
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { SandboxUnavailableError, type PlatformPort, type ProcessPort, type ProcessResult, type ProcessSpec, type TerminationReason, type TerminationRecord } from '../ports/index.js';
+import { SandboxUnavailableError, type PlatformPort, type ProcessPort, type ProcessResult, type ProcessSpec, type SandboxBackend, type SandboxMode, type TerminationReason, type TerminationRecord } from '../ports/index.js';
 import { redactEnv } from '../policy/env.js';
 import { OutputTail } from './output-tail.js';
 import { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './terminate.js';
 
 /**
- * The `argv` a sandbox-wrapped run executes. T5 supplies one of these per backend;
- * T4 only needs the shape, which is why it is a plain function and not a port.
+ * What the executor decided to run instead of the caller's argv. It carries more than
+ * a command line because two things genuinely have to travel with it:
+ *
+ *   * `env` — macOS has no mount namespaces, so the sandbox gets its scratch space by
+ *     pointing TMPDIR at a private directory rather than by mounting a tmpfs, and the
+ *     environment is the only place that can be expressed.
+ *   * `cleanup` — that directory is created per run and must not outlive it.
  */
-export type SandboxCommandResolver = (spec: ProcessSpec) => { readonly argv: readonly string[] };
+export interface SandboxCommand {
+  readonly argv: readonly string[];
+  readonly backend: SandboxBackend;
+  readonly limitations: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+  readonly cleanup?: () => void;
+}
+
+/**
+ * The `argv` a sandbox-wrapped run executes. T5 supplies one of these per backend;
+ * the gateway refuses a `system` run when there is none rather than running it bare
+ * (ADR-016).
+ */
+export type SandboxCommandResolver = (spec: ProcessSpec) => SandboxCommand;
 
 export interface NodeProcessOptions {
   readonly platform: PlatformPort;
-  /** Supplied in T5. Without it, `system` is refused as not-implemented. */
+  /**
+   * Supplies the wrapped command for a `system` run. Supplied by T5; without it a
+   * `system` request is refused rather than run bare.
+   */
   readonly sandboxCommand?: SandboxCommandResolver;
   readonly treeKiller?: TreeKiller;
 }
@@ -55,17 +76,25 @@ export class NodeProcess implements ProcessPort {
   }
 
   async run(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessResult> {
-    const argv = this.#resolveArgv(spec);
+    // Resolved before anything else, because it can REFUSE (ADR-016) and a refusal
+    // must not have started a process first. It returns more than argv: a backend, the
+    // limitations it could not express, an env override and a cleanup hook.
+    const sandboxed = spec.sandbox.mode === 'system' ? this.#resolveSandbox(spec) : null;
+    const argv = sandboxed?.argv ?? spec.argv;
     const command = argv[0];
     // An empty argv has no executable, and spawn's own error for it says nothing
     // about which run was at fault. One line here beats a stack trace from deep inside.
     if (command === undefined) throw new Error('ProcessSpec.argv is empty: there is no executable to run');
     // `off` is the one mode whose contract is "run the command as-is"; light and
     // system both redact (ADR-015), which is the coverage the legacy version lacked.
-    const redaction =
+    const redacted =
       spec.sandbox.mode === 'off'
         ? { env: spec.env, removed: [] as readonly string[], ignoredDeny: [] as readonly string[] }
         : redactEnv(spec.env, { deny: spec.sandbox.env.deny });
+    // The sandbox's own overrides (TMPDIR on macOS) are applied AFTER redaction, not
+    // before: they are the gateway's values, not the caller's, so redaction has
+    // nothing to say about them.
+    const redaction = sandboxed?.env === undefined ? redacted : { ...redacted, env: { ...redacted.env, ...sandboxed.env } };
 
     const stdout = new OutputTail(spec.outputCap ?? Number.POSITIVE_INFINITY);
     const stderr = new OutputTail(spec.outputCap ?? Number.POSITIVE_INFINITY);
@@ -73,14 +102,23 @@ export class NodeProcess implements ProcessPort {
     // Already cancelled: do not start a process in order to kill it. The record says
     // the request was cancelled rather than claiming a termination that never ran.
     if (signal.aborted) {
-      return this.#result(null, null, stdout, stderr, redaction, {
-        requested: true,
-        reason: 'cancel',
-        strategy: 'none',
-        escalated: false,
-        fallbackUsed: false,
-        residuePossible: false,
-      });
+      return this.#result(
+        null,
+        null,
+        stdout,
+        stderr,
+        redaction,
+        {
+          requested: true,
+          reason: 'cancel',
+          strategy: 'none',
+          escalated: false,
+          fallbackUsed: false,
+          residuePossible: false,
+        },
+        sandboxed,
+        spec.sandbox.mode,
+      );
     }
 
     // A pipe we never write to must not become an uncaught exception. Node reports
@@ -181,19 +219,19 @@ const termination: { current: Promise<TerminationRecord> | null } = { current: n
       });
       const outcome = await Promise.race([closed, spawnFailure]);
       const record = termination.current === null ? noTermination() : await termination.current;
-      return this.#result(outcome.code, outcome.signal, stdout, stderr, redaction, record);
+      return this.#result(outcome.code, outcome.signal, stdout, stderr, redaction, record, sandboxed, spec.sandbox.mode);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       signal.removeEventListener('abort', onAbort);
+      // The scratch directory is created per run and must not outlive it, whether the
+      // run finished, failed to start, or was killed. In a `finally` because "the run
+      // ended" is true in all three cases.
+      sandboxed?.cleanup?.();
     }
   }
 
-  #resolveArgv(spec: ProcessSpec): readonly string[] {
-    return spec.sandbox.mode === 'system' ? this.#sandboxArgv(spec) : spec.argv;
-  }
-
-  #sandboxArgv(spec: ProcessSpec): readonly string[] {
-    if (this.#sandboxCommand !== null) return this.#sandboxCommand(spec).argv;
+  #resolveSandbox(spec: ProcessSpec): SandboxCommand {
+    if (this.#sandboxCommand !== null) return this.#sandboxCommand(spec);
 
     // Refused, never downgraded: a run that silently loses OS-level isolation while
     // reporting "sandbox on" is exactly the failure ADR-016 exists to prevent.
@@ -202,7 +240,7 @@ const termination: { current: Promise<TerminationRecord> | null } = { current: n
     // means this machine has no backend and never will — on Windows that is decided,
     // not discovered (ADR-007), so the platform answers even when the probe list is
     // empty. `not-implemented` means a backend exists and this build has no executor
-    // for it yet, which only T5 can change.
+    // for it, which no configuration can change.
     const backends = this.#platform.sandboxBackends();
     const usable = backends.find((verdict) => verdict.usable);
     const first = backends[0];
@@ -212,7 +250,7 @@ const termination: { current: Promise<TerminationRecord> | null } = { current: n
       unsupported ? 'unsupported-platform' : 'not-implemented',
       unsupported
         ? (first?.detail ?? 'no OS-level sandbox backend exists on this platform')
-        : 'the v2 sandbox executor lands in P2 T5; this build redacts but does not isolate',
+        : 'this build has no sandbox executor wired into ProcessPort, so a system-tier run cannot be honoured',
       [WSL_ALTERNATIVE, LIGHT_ALTERNATIVE],
     );
   }
@@ -224,6 +262,8 @@ const termination: { current: Promise<TerminationRecord> | null } = { current: n
     stderr: OutputTail,
     redaction: { readonly removed: readonly string[]; readonly ignoredDeny: readonly string[] },
     termination: TerminationRecord,
+    sandboxed: SandboxCommand | null,
+    mode: SandboxMode,
   ): ProcessResult {
     return {
       exitCode,
@@ -234,6 +274,17 @@ const termination: { current: Promise<TerminationRecord> | null } = { current: n
       dropped: { stdout: stdout.dropped, stderr: stderr.dropped },
       removedEnv: redaction.removed,
       ignoredDeny: redaction.ignoredDeny,
+      // What was APPLIED, not what was asked for. A `light` or `off` run has no
+      // backend, and a `system` run that was refused never reaches here — so a result
+      // carrying `backend: 'bwrap'` is a claim the gateway stands behind.
+      sandbox: {
+        // The profile's own mode, not a guess from whether a backend was used: an
+        // `off` run that reports "light" is a small lie in the one field an audit
+        // reads to answer "was this run isolated at all?".
+        mode,
+        backend: sandboxed?.backend ?? null,
+        limitations: sandboxed?.limitations ?? [],
+      },
       termination,
     };
   }

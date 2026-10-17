@@ -40,6 +40,8 @@ CowCat 是一个长期分发的 npm 编程 agent。v2 的目标不是在旧代�
 | ADR-017 | 路径身份由 `FsPort` 独占：符号链接解析 + 最深已存在祖先回退 + 永不抛 + 缓存，任何把路径当**键**的地方（信任、会话身份、白名单、策略条目）必须走同一实现；端口方法保持**同步**，以便沙箱的策略→argv 映射仍是纯函数 | 已决定（P2 T1），见 [01-layers.md](01-layers.md#端口清单) |
 | ADR-018 | shell 一律**按绝对路径真跑验证**后选取：禁止裸名、禁止只看 `exists`、禁止版本检查；候选链 Windows 为 Git Bash（`bin\bash.exe` 优先 `usr\bin\bash.exe`，安装根由 `git.exe` **上溯**发现，注册表与 `C:\Program Files\Git` 仅作补充）→ `pwsh` → `powershell` → `ComSpec`，POSIX 为 `/bin/bash` → `$SHELL` → `/bin/sh`；沙箱后端同样**真跑**并分类失败原因。探测**同步**且**按会话记忆一次**；全部候选都不通过时报错，不静默退到 `cmd` | 已决定（P2 T2），见 [05-platforms.md](05-platforms.md#shell-解析p2-已实现) 与调研 `p2-shell-detection.md` |
 | ADR-019 | 会话头记录**实际 shell**（`kind` + 绝对 `executable`，不记可推导的 `baseArgs`/`commandFlag`），**不升 `schemaVersion`**——v2 日志格式从未发布（包为 `private: 0.0.0`），升版本是为不存在的兼容性付代价；此后**改动必填头字段即升 `schemaVersion`** | 已决定（P2 T2），见 [02-kernel.md](02-kernel.md#会话头与-schema-版本) |
+| ADR-020 | 沙箱后端的**加固能力与可用性分开探测**：bwrap 能跑 ≠ 能禁用嵌套 user namespace（实测默认能建，`--disable-userns` 能堵，0.9.0 可用）。内核拒绝加固时**照常沙箱化但写进限制项**，不报成不可用；未探测就发 flag 会让第一条真实命令失败 | 已决定（P2 T5），见 [03-policy-and-execution.md](03-policy-and-execution.md#沙箱执行器p2-t5) 与调研 `p2-sandbox.md` §4.1 |
+| ADR-021 | 沙箱执行器的两种拒绝分属不同错误类：**后端跑不了**（`SandboxUnavailableError`）与**后端能跑但请求满足不了**（`SandboxRequestRefusedError`，如 macOS `network: 'on'`）；两者都不可降级。私有 `/tmp` 固定 2 GiB + `--perms 1777`（实测默认是内存一半、0755）；写策略中尚不存在的路径被跳过时**必须**写进限制项 | 已决定（P2 T5），见 [03-policy-and-execution.md](03-policy-and-execution.md#沙箱执行器p2-t5) 与调研 `p2-sandbox.md` §4.4–§4.6 |
 
 ## 与旧文档的关系
 

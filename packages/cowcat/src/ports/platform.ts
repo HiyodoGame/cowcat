@@ -69,6 +69,15 @@ export interface SandboxBackendVerdict {
   readonly reason: string;
   readonly detail: string;
   readonly fix: string | null;
+  /**
+   * Extra restrictions this machine actually accepted, each verified by RUNNING the
+   * real flag rather than by reading a version. Separate from `usable` on purpose: a
+   * kernel that refuses to disable nested user namespaces does not make the sandbox
+   * unusable, it makes it weaker. Refusing to sandbox at all would be a worse answer
+   * than sandboxing without that one flag and saying so
+   * (research/p2-sandbox.md §4.1).
+   */
+  readonly hardening: readonly string[];
 }
 
 /** How this platform terminates a whole process tree (ADR-014). */
@@ -120,6 +129,34 @@ export class SandboxUnavailableError extends Error {
     // The field is there so a caller can branch without parsing the message.
     this.mode = 'system';
     this.backend = backend;
+    this.reason = reason;
+    this.detail = detail;
+    this.alternatives = alternatives;
+  }
+}
+
+/**
+ * Thrown when the sandbox IS available but THIS request cannot be honoured — the
+ * canonical case being `network: 'on'` on macOS, where name resolution never comes
+ * back inside a Seatbelt sandbox however much is allowed (research/p2-sandbox.md §5).
+ *
+ * Deliberately a different class: reusing `SandboxUnavailableError` would say
+ * "sandbox \"system\" is not available here" about a machine whose sandbox is working
+ * perfectly, which sends the user looking at the wrong thing. And the refusal is not
+ * degradable — falling back to `light` would drop the filesystem isolation AND keep
+ * the network, which is strictly worse than what was asked for (ADR-016).
+ */
+export class SandboxRequestRefusedError extends Error {
+  /** Which part of the request cannot be satisfied, e.g. 'network: on'. */
+  readonly request: string;
+  readonly reason: string;
+  readonly detail: string;
+  readonly alternatives: readonly string[];
+
+  constructor(request: string, reason: string, detail: string, alternatives: readonly string[]) {
+    super(`sandbox "system" cannot satisfy ${request} [${reason}]: ${detail}`);
+    this.name = 'SandboxRequestRefusedError';
+    this.request = request;
     this.reason = reason;
     this.detail = detail;
     this.alternatives = alternatives;
