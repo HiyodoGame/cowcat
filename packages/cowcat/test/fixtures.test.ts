@@ -154,6 +154,27 @@ test('pinned: message_delta usage does not erase the input and cache counts', as
   assert.deepEqual(usagesOf(parts)[0], { input: 10, output: 1, cacheRead: 4, cacheCreation: 2 });
 });
 
+test('pinned: a thinking block arrives ahead of the text and tool call it precedes', async () => {
+  // Hand-authored bytes pinning the one protocol fact replay leans on: the contract does
+  // not store a reasoning block's position, and the Anthropic adapter puts the blocks
+  // back at the head of the content — so "thinking precedes text and tool use" has to
+  // hold (ADR-045). Unlike the paired fixtures this one has no recorded counterpart; a
+  // real recording is what should confirm it, and this test should then be re-pointed
+  // at it (docs/research/p4-models.md §7.6).
+  const fixture = loadFixture('anthropic', 'synthetic', 'thinking-precedes');
+  const { parts } = await drive('anthropic', fixture);
+
+  assert.deepEqual(
+    parts.flatMap((p) => (p.type === 'reasoning' ? [p.block] : [])),
+    fixture.expectation.logical.reasoning,
+  );
+  // The block is whole by the time it is emitted, and it is first: both are the shape
+  // the replay depends on.
+  assert.deepEqual(parts.map((p) => p.type), ['usage', 'reasoning', 'text', 'tool_call', 'usage', 'stop']);
+  assert.equal(textOf(parts), fixture.expectation.logical.text);
+  assert.deepEqual(callsOf(parts), fixture.expectation.logical.toolCalls);
+});
+
 test('a fixture is loaded from the package root, not from dist', async () => {
   // Fixtures are data: tsconfig compiles `src` and `test`, so nothing copies `.sse` or
   // `.json` into `dist/`. The tests themselves run from `dist/test`, which is exactly why

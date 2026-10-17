@@ -1,5 +1,5 @@
 import OpenAI, { APIConnectionError, APIError, APIUserAbortError } from 'openai';
-import type { Message } from '../kernel/messages.js';
+import type { Message, ReasoningBlock } from '../kernel/messages.js';
 import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
@@ -17,6 +17,11 @@ import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, typ
 //   about what follows a finishing chunk — some send a usage-only chunk, some send
 //   `[DONE]`, some keep going with tool-call deltas (`agent/src/llm/openai.js:69-71`).
 //   The end of the iterator is the end.
+//
+// Reasoning (ADR-045) is read from the two vendor spellings in `reasoningDeltaOf` and
+// written back only when the preset names a field for it (see `splitProviderOptions`):
+// whether an endpoint wants the reasoning back in the request is not in the catalogue
+// and not measured here, so the preset's data decides, never a default (ADR-038/046).
 
 export interface OpenAIModelOptions {
   readonly apiKey: string;
@@ -42,6 +47,8 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
 
   return {
     async *stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelChunk> {
+      const { wire, reasoningReplayField } = splitProviderOptions(request.providerOptions);
+
       // Only the response is retried. Everything below this line runs outside the retry,
       // which is how "a stream that has already produced output is never retried" holds
       // by construction (ADR-039 decision ③).
@@ -51,13 +58,17 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
           client.chat.completions.create(
             {
               model: request.model,
-              messages: toWireMessages(request),
+              messages: toWireMessages(request, reasoningReplayField),
               stream: true,
               // Without this the stream carries no usage at all, and the usage that does
               // arrive comes on a chunk whose `choices` is empty (ADR-040).
               stream_options: { include_usage: true },
               ...(request.maxTokens === undefined ? {} : { max_tokens: request.maxTokens }),
               ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
+              // What the preset declared goes last; the reserved-field check above is
+              // what keeps a declared parameter from colliding with the fields this
+              // adapter just built.
+              ...wire,
             },
             { signal: attemptSignal },
           ),
@@ -70,14 +81,32 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
       const pending = new Map<number, { id: string; name: string; args: string }>();
       let finished: string | null = null;
 
+      // Reasoning arrives as deltas, but the contract records whole blocks (ADR-045): a
+      // block is flushed the moment the run of reasoning ends — on the first chunk that
+      // carries text or tool calls, or at the end of the stream — because a recorded
+      // fragment is not a fact the kernel could replay.
+      let reasoning = '';
+      let reasoningOpen = false;
+
       for await (const chunk of stream) {
         // `choices` is empty on a usage-only chunk, so it has to be read before it is
         // indexed — that chunk is the normal way usage arrives, not an edge case.
         const [choice] = chunk.choices;
         if (choice !== undefined) {
           const { delta } = choice;
-          if (typeof delta.content === 'string' && delta.content !== '') {
-            yield { type: 'text', text: delta.content };
+          const reasoningDelta = reasoningDeltaOf(delta);
+          if (reasoningDelta !== '') {
+            reasoning += reasoningDelta;
+            reasoningOpen = true;
+          }
+          const text = typeof delta.content === 'string' ? delta.content : '';
+          if (reasoningOpen && (text !== '' || (delta.tool_calls ?? []).length > 0)) {
+            yield reasoningChunk(reasoning);
+            reasoning = '';
+            reasoningOpen = false;
+          }
+          if (text !== '') {
+            yield { type: 'text', text };
           }
           for (const fragment of delta.tool_calls ?? []) {
             const call = pending.get(fragment.index) ?? { id: '', name: '', args: '' };
@@ -95,6 +124,9 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
         }
       }
 
+      // A stream that reasoned and then simply stopped still has its block to report.
+      if (reasoningOpen) yield reasoningChunk(reasoning);
+
       // Assembled calls are emitted once they are complete: a `ModelChunk` carries a
       // whole call, because the kernel normalises and records one as a single fact.
       // Index order, so the same bytes always produce the same sequence.
@@ -106,18 +138,79 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
   };
 }
 
+// The preset's one non-wire key (ADR-038, ADR-046): it names the field the model's own
+// reasoning is replayed under (`'reasoning_content'` for the endpoints that ask for it).
+// Whether a vendor wants reasoning back is not in the catalogue and not measured here —
+// so absence means "do not send reasoning back", and that is the default for every
+// endpoint.
+const REASONING_REPLAY = 'reasoning_replay';
+
+// What this adapter constructs itself; a preset that names one of these is refused
+// rather than silently overwritten (ADR-044, ADR-046).
+const RESERVED_BODY_FIELDS = ['model', 'messages', 'stream', 'stream_options', 'tools', 'max_tokens'] as const;
+
+// Where `reasoning_replay` may not point: the request-level fields above, plus the ones
+// this adapter writes into a message. Replay *adds* a field, so a name that collides
+// would silently corrupt the message it rides on (`role`, `content`, `tool_calls`) — a
+// malformed request built out of a preset typo is exactly what "refuse, do not send"
+// exists for (ADR-044).
+const REPLAY_FORBIDDEN_FIELDS: ReadonlySet<string> = new Set([
+  ...RESERVED_BODY_FIELDS,
+  'role',
+  'content',
+  'tool_calls',
+]);
+
+/**
+ * Splits the preset's escape hatch into what the wire should carry and how reasoning
+ * should be sent back: every key is relayed as declared (ADR-046) except
+ * `reasoning_replay`, which this adapter consumes instead of sending.
+ */
+function splitProviderOptions(options: Readonly<Record<string, unknown>> | undefined): {
+  readonly wire: Readonly<Record<string, unknown>>;
+  readonly reasoningReplayField: string | null;
+} {
+  if (options === undefined) return { wire: {}, reasoningReplayField: null };
+  for (const field of RESERVED_BODY_FIELDS) {
+    if (field in options) {
+      throw new Error(
+        `providerOptions may not set "${field}": the adapter builds that field from the request (ADR-046)`,
+      );
+    }
+  }
+  const { [REASONING_REPLAY]: replay, ...wire } = options;
+  if (replay === undefined) return { wire, reasoningReplayField: null };
+  if (typeof replay !== 'string' || replay === '') {
+    throw new Error(
+      `providerOptions.${REASONING_REPLAY} must name a non-empty wire field, got ${JSON.stringify(replay)}`,
+    );
+  }
+  if (REPLAY_FORBIDDEN_FIELDS.has(replay)) {
+    throw new Error(
+      `providerOptions.${REASONING_REPLAY} may not name "${replay}": the adapter builds that field`,
+    );
+  }
+  return { wire, reasoningReplayField: replay };
+}
+
 // The internal history is flat (messages.ts) and the wire format is not: a tool result
 // is its own message paired by id, and an assistant turn carries its calls inline. The
 // mapping lives here because it is protocol knowledge, and it is the whole reason the
 // internal shape can stay flat.
-function toWireMessages(request: ModelRequest): OpenAI.Chat.ChatCompletionMessageParam[] {
+function toWireMessages(
+  request: ModelRequest,
+  reasoningReplayField: string | null,
+): OpenAI.Chat.ChatCompletionMessageParam[] {
   const wire: OpenAI.Chat.ChatCompletionMessageParam[] = [];
   if (request.system !== undefined) wire.push({ role: 'system', content: request.system });
-  for (const message of request.messages) wire.push(toWireMessage(message));
+  for (const message of request.messages) wire.push(toWireMessage(message, reasoningReplayField));
   return wire;
 }
 
-function toWireMessage(message: Message): OpenAI.Chat.ChatCompletionMessageParam {
+function toWireMessage(
+  message: Message,
+  reasoningReplayField: string | null,
+): OpenAI.Chat.ChatCompletionMessageParam {
   switch (message.role) {
     case 'user':
       return { role: 'user', content: message.text };
@@ -129,12 +222,23 @@ function toWireMessage(message: Message): OpenAI.Chat.ChatCompletionMessageParam
         // stringifying it cannot fail here.
         function: { name: call.name, arguments: JSON.stringify(call.input ?? null) },
       }));
+      // The reasoning goes back only when the preset named a field for it (ADR-045/046):
+      // whether an endpoint wants it back is not something this adapter can know, so
+      // absence — the default — means "do not send reasoning back". The text of the
+      // blocks is rejoined because this protocol's field is one string; a block the way
+      // Anthropic means it does not exist here.
+      const replay: Record<string, string> = {};
+      if (reasoningReplayField !== null) {
+        const reasoningText = reasoningTextOf(message);
+        if (reasoningText !== '') replay[reasoningReplayField] = reasoningText;
+      }
       return {
         role: 'assistant',
         // `null`, not an empty string: a turn that only called tools has no text, and
         // sending `''` alongside `tool_calls` is a shape some endpoints reject.
         content: message.text === '' ? null : message.text,
         ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+        ...replay,
       };
     }
     case 'tool':
@@ -142,6 +246,27 @@ function toWireMessage(message: Message): OpenAI.Chat.ChatCompletionMessageParam
       // by `tool_call_id`, and the call is the only place the name belongs.
       return { role: 'tool', tool_call_id: message.callId, content: message.output };
   }
+}
+
+// The two vendor spellings for streamed reasoning, neither of which the SDK's chunk type
+// carries because both are extensions: DeepSeek/GLM/Kimi say `reasoning_content`, the
+// o-series says `reasoning` (the same pair v1 read — agent/src/llm/openai.js:6-12). An
+// unrecognised spelling simply reads as no reasoning at all.
+function reasoningDeltaOf(delta: unknown): string {
+  const wire = delta as { readonly reasoning_content?: unknown; readonly reasoning?: unknown };
+  if (typeof wire.reasoning_content === 'string') return wire.reasoning_content;
+  if (typeof wire.reasoning === 'string') return wire.reasoning;
+  return '';
+}
+
+// This protocol has no signature concept, so a block arrives with an empty one — which
+// is exactly what the contract's `signature: ''` means (ADR-045).
+function reasoningChunk(text: string): ModelChunk {
+  return { type: 'reasoning', block: { type: 'thinking', text, signature: '' } };
+}
+
+function reasoningTextOf(message: { readonly reasoning: readonly ReasoningBlock[] }): string {
+  return message.reasoning.flatMap((block) => (block.type === 'thinking' ? [block.text] : [])).join('');
 }
 
 function toWireTool(spec: ToolSpec): OpenAI.Chat.ChatCompletionTool {

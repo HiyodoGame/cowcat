@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ModelUsage, StopReasonKind } from '../src/index.js';
+import type { ModelUsage, ReasoningBlock, StopReasonKind } from '../src/index.js';
 
 // Fixture loading for the model adapters (ADR-042).
 //
@@ -30,6 +30,12 @@ export interface FixtureExpectation {
     readonly toolCalls: readonly { readonly name: string; readonly input: unknown }[];
     readonly usage: ModelUsage;
     readonly stopKind: StopReasonKind;
+    /**
+     * Present only where a scenario exercises reasoning (the paired fixtures predate it,
+     * so absent means "none", not "unspecified"): the blocks a faithful normalisation
+     * must produce, in order (ADR-045).
+     */
+    readonly reasoning?: readonly ReasoningBlock[];
   };
 }
 

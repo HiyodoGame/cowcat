@@ -10,6 +10,12 @@ import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, typ
 // Same two omissions as the OpenAI adapter, for the same reasons: retries live in
 // `withRetry` under ADR-039's policy rather than in the SDK, and the end of the iterator —
 // not `stop_reason` — is what ends the stream.
+//
+// Reasoning (ADR-045) is read from thinking blocks — text from `thinking_delta`, the
+// opaque signature from `signature_delta` (which arrives just before the block stops),
+// redacted payloads as they came — and sent back only when the preset enables thinking,
+// because that is exactly when this protocol requires the blocks: unmodified, in order,
+// signatures intact, or the request is a 400.
 
 export interface AnthropicModelOptions {
   readonly apiKey: string;
@@ -42,6 +48,7 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
       // Hoisted because the closure below is where the compiler stops tracking the check
       // above, and `max_tokens` is not optional in the wire type.
       const maxTokens = request.maxTokens;
+      const { wire, carryReasoning } = splitProviderOptions(request.providerOptions, maxTokens);
 
       // Only the response is retried; the iteration below runs outside the retry, which
       // is how "a stream that has already produced output is never retried" holds by
@@ -53,10 +60,13 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
             {
               model: request.model,
               max_tokens: maxTokens,
-              messages: toWireMessages(request.messages),
+              messages: toWireMessages(request.messages, carryReasoning),
               stream: true,
               ...(request.system === undefined ? {} : { system: request.system }),
               ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
+              // What the preset declared goes last; the reserved-field check above is
+              // what keeps it from colliding with the fields this adapter just built.
+              ...wire,
             },
             { signal: attemptSignal },
           ),
@@ -68,7 +78,7 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
       // of by `tool_calls[].index`: `content_block_start` carries id and name, and
       // `input_json_delta` carries `partial_json` fragments. `input` is a *string* here
       // and has to be parsed once the block stops.
-      const blocks = new Map<number, { id: string; name: string; json: string }>();
+      const blocks = new Map<number, PendingBlock>();
       let usage: ModelUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
       let finished: string | null = null;
 
@@ -79,30 +89,54 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
             usage = startUsage(event.message.usage);
             yield { type: 'usage', usage };
             break;
-          case 'content_block_start':
-            if (event.content_block.type === 'tool_use') {
-              blocks.set(event.index, { id: event.content_block.id, name: event.content_block.name, json: '' });
+          case 'content_block_start': {
+            const block = event.content_block;
+            if (block.type === 'tool_use') {
+              blocks.set(event.index, { kind: 'tool', id: block.id, name: block.name, json: '' });
+            } else if (block.type === 'thinking') {
+              // The text and the signature arrive as deltas; whatever this event already
+              // carries is kept, so the block stays faithful if a stream starts
+              // delivering content here.
+              blocks.set(event.index, { kind: 'thinking', text: block.thinking, signature: block.signature });
+            } else if (block.type === 'redacted_thinking') {
+              // Whole the moment it starts: a redacted block has no deltas.
+              blocks.set(event.index, { kind: 'redacted', data: block.data });
             }
             break;
-          case 'content_block_delta':
+          }
+          case 'content_block_delta': {
+            const block = blocks.get(event.index);
             if (event.delta.type === 'text_delta') {
               yield { type: 'text', text: event.delta.text };
-            } else if (event.delta.type === 'input_json_delta') {
-              const block = blocks.get(event.index);
-              if (block !== undefined) block.json += event.delta.partial_json;
+            } else if (event.delta.type === 'input_json_delta' && block?.kind === 'tool') {
+              block.json += event.delta.partial_json;
+            } else if (event.delta.type === 'thinking_delta' && block?.kind === 'thinking') {
+              block.text += event.delta.thinking;
+            } else if (event.delta.type === 'signature_delta' && block?.kind === 'thinking') {
+              // The signature arrives just before the block stops (messages.d.ts:3787-3794).
+              // Appended rather than assigned: the contract records the signature whole,
+              // and this is the one place it is assembled.
+              block.signature += event.delta.signature;
             }
-            // `thinking_delta` / `signature_delta` are deliberately not mapped yet: T6a
-            // gave the contract a `reasoning` chunk, and emitting it here — reading the
-            // deltas, assembling the block, carrying the opaque signature — is T6b.
             break;
+          }
           case 'content_block_stop': {
+            // A block becomes one chunk — and one recorded fact — when it stops, the
+            // same way `tool_call` does: a fragment is not replayable, a whole block is
+            // (ADR-045).
             const block = blocks.get(event.index);
             if (block !== undefined) {
               blocks.delete(event.index);
-              yield {
-                type: 'tool_call',
-                call: { callId: block.id, name: block.name, input: parseInput(block) },
-              };
+              if (block.kind === 'tool') {
+                yield {
+                  type: 'tool_call',
+                  call: { callId: block.id, name: block.name, input: parseInput(block) },
+                };
+              } else if (block.kind === 'thinking') {
+                yield { type: 'reasoning', block: { type: 'thinking', text: block.text, signature: block.signature } };
+              } else {
+                yield { type: 'reasoning', block: { type: 'redacted', data: block.data } };
+              }
             }
             break;
           }
@@ -124,12 +158,81 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
   };
 }
 
+// What this adapter constructs itself; a preset that names one of these is refused
+// rather than silently overwritten (ADR-044, ADR-046).
+const RESERVED_BODY_FIELDS = ['model', 'messages', 'stream', 'tools', 'max_tokens', 'system'] as const;
+
+/**
+ * The preset's escape hatch (ADR-046): every key is relayed as declared, and the mere
+ * presence of `thinking` is also what turns reasoning replay on — this protocol requires
+ * the thinking blocks back precisely when a request enables thinking (ADR-045).
+ */
+function splitProviderOptions(
+  options: Readonly<Record<string, unknown>> | undefined,
+  maxTokens: number,
+): { readonly wire: Readonly<Record<string, unknown>>; readonly carryReasoning: boolean } {
+  if (options === undefined) return { wire: {}, carryReasoning: false };
+  for (const field of RESERVED_BODY_FIELDS) {
+    if (field in options) {
+      throw new Error(
+        `providerOptions may not set "${field}": the adapter builds that field from the request (ADR-046)`,
+      );
+    }
+  }
+  const thinking = options['thinking'];
+  if (thinking === undefined) return { wire: options, carryReasoning: false };
+  assertThinkingWithinLimits(thinking, maxTokens);
+  // `disabled` is the one declaration that says the model will not think this turn, so
+  // there is nothing to carry back — replaying a block while telling the endpoint not to
+  // produce one is a combination no recording covers. Every other value (`enabled`,
+  // `adaptive`, anything a future SDK adds) may produce thinking blocks, and this
+  // protocol requires them back unmodified; that is the side of the line where guessing
+  // costs a broken chain rather than an unnecessary field.
+  const carryReasoning = (thinking as { type?: unknown }).type !== 'disabled';
+  return { wire: options, carryReasoning };
+}
+
+/**
+ * The one invariant this adapter knows about the escape hatch, and it is a documented
+ * fact rather than adapter policy: `budget_tokens` "Must be ≥1024 and less than
+ * `max_tokens`" (the SDK's own type documentation, messages.d.ts:3958-3970). A preset
+ * that gets this wrong would be a 400 from the endpoint; failing here names the culprit
+ * instead (ADR-044).
+ */
+function assertThinkingWithinLimits(thinking: unknown, maxTokens: number): void {
+  if (typeof thinking !== 'object' || thinking === null || Array.isArray(thinking)) {
+    throw new Error(`providerOptions.thinking must be an object, got ${JSON.stringify(thinking)}`);
+  }
+  const { type, budget_tokens: budget } = thinking as { type?: unknown; budget_tokens?: unknown };
+  // `adaptive` and `disabled` carry no budget; only `enabled` has the documented bound.
+  if (type !== 'enabled') return;
+  if (budget === undefined) {
+    throw new Error('thinking.budget_tokens is required when thinking.type is "enabled"');
+  }
+  if (typeof budget !== 'number' || !Number.isInteger(budget)) {
+    throw new Error(`thinking.budget_tokens must be an integer, got ${JSON.stringify(budget)}`);
+  }
+  if (budget < 1024 || budget >= maxTokens) {
+    throw new Error(
+      `thinking.budget_tokens must be >= 1024 and < max_tokens (${String(maxTokens)}), got ${String(budget)}`,
+    );
+  }
+}
+
+// A content block being assembled. Tool use arrives as `input_json_delta` fragments;
+// thinking arrives as `thinking_delta` text plus a `signature_delta` signature; a
+// redacted block is whole the moment it starts.
+type PendingBlock =
+  | { kind: 'tool'; id: string; name: string; json: string }
+  | { kind: 'thinking'; text: string; signature: string }
+  | { kind: 'redacted'; data: string };
+
 // The internal history is flat; the wire format is not. Two things have to happen here:
 // an assistant turn becomes content blocks, and **consecutive tool results are merged
 // into the single user turn that must carry them** — this protocol pairs results with
 // their calls through that one message, and a `role: 'tool'` per result is an OpenAI
 // shape it does not have.
-function toWireMessages(messages: readonly Message[]): Anthropic.MessageParam[] {
+function toWireMessages(messages: readonly Message[], carryReasoning: boolean): Anthropic.MessageParam[] {
   const wire: Anthropic.MessageParam[] = [];
   for (const message of messages) {
     if (message.role === 'tool') {
@@ -152,6 +255,20 @@ function toWireMessages(messages: readonly Message[]): Anthropic.MessageParam[] 
       continue;
     }
     const blocks: Anthropic.ContentBlockParam[] = [];
+    if (carryReasoning) {
+      // Thinking blocks go back first — the contract deliberately does not store their
+      // position, and the protocol fact replay leans on is that they precede text and
+      // tool use — unmodified and in their original order, because anything else is a
+      // 400 `invalid_request_error` (ADR-045). Whether they go back at all was the
+      // preset's call (`carryReasoning`, ADR-046).
+      for (const block of message.reasoning) {
+        blocks.push(
+          block.type === 'thinking'
+            ? { type: 'thinking', thinking: block.text, signature: block.signature }
+            : { type: 'redacted_thinking', data: block.data },
+        );
+      }
+    }
     if (message.text !== '') blocks.push({ type: 'text', text: message.text });
     for (const call of message.toolCalls) {
       blocks.push({ type: 'tool_use', id: call.callId, name: call.name, input: call.input ?? {} });
