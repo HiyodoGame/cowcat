@@ -50,6 +50,9 @@ export function quietResult(overrides: Partial<ProcessResult> = {}): ProcessResu
     dropped: { stdout: 0, stderr: 0 },
     removedEnv: [],
     ignoredDeny: [],
+    // No backend was applied, and the baseline must say so rather than implying a tier
+    // it never had.
+    sandbox: { mode: 'light', backend: null, limitations: [] },
     termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
     ...overrides,
   };

@@ -235,9 +235,26 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: packages/cowcat/package-lock.json
+      # bubblewrap is what the v2 system tier drives on Linux. Without it the sandbox
+      # enforcement tests SKIP (with the probe's own classification as the reason), which
+      # is honest but means this leg would stop covering the one thing only a real
+      # kernel can prove.
+      #
+      # Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor, so bwrap fails
+      # until the profile is loaded — the same fix our own preflight tells users about,
+      # applied here so the documented path is exercised rather than assumed.
+      - name: Install sandbox deps (Linux)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y apparmor-profiles 2>/dev/null || true
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)
+        # The sandbox tests print the probe's own classification when they skip, so this
+        # log already says whether bwrap was usable here.
         run: npm test
 
   cowcat-windows:

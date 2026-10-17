@@ -151,7 +151,22 @@ export interface ProcessResult {
   readonly removedEnv: readonly string[];
   /** Deny entries that were not usable, e.g. an invalid `/regex/`. Surfaced, never dropped. */
   readonly ignoredDeny: readonly string[];
+  /**
+   * What the gateway ACTUALLY applied, not what was asked for. An audit that records
+   * the requested mode cannot answer "was this run really sandboxed?", which is the
+   * only question anyone asks afterwards (03-policy-and-execution.md, failure-mode
+   * principle 2). `backend` is null when the request was refused — and a refusal
+   * never becomes a silent downgrade (ADR-016).
+   */
+  readonly sandbox: AppliedSandbox;
   readonly termination: TerminationRecord;
+}
+
+export interface AppliedSandbox {
+  readonly mode: SandboxMode;
+  readonly backend: SandboxBackend | null;
+  /** Rules the backend could not express, plus the ones it was configured to accept. Surfaced, never dropped. */
+  readonly limitations: readonly string[];
 }
 
 export interface ProcessPort {

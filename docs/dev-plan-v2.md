@@ -129,7 +129,7 @@
 | T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**）。shell 探测方式见 [research/p2-shell-detection.md](research/p2-shell-detection.md) | ✅ PR 见 §P2 交付 |
 | T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | ✅ PR 见 §P2 交付 |
 | T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | ✅ PR 见 §P2 交付 |
-| T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | 未开始 |
+| T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | ✅ PR 见 §P2 交付 |
 | T6 | G1/G2/G3 与「`rm` 可用」「私有临时目录」「拒绝被解释成沙箱」迁移为 v2 测试；**`packages/cowcat` 的 Linux 腿要装 bubblewrap**（现在只有 `agent/` 的腿装了） | 未开始 |
 
 **交付（T1）**
@@ -178,9 +178,43 @@
 **T2 已知缺口（不声称已解决）**
 
 - **`FsPort` / `ProcessPort` 适配器仍未写**：终止、脱敏、截断的真实行为要到 T4 才有测试覆盖 → `FsPort` 已在 T3 补上，只剩 `ProcessPort`
-- **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6
+- **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6 → T5 已交付执行器与 CI 安装，**完整 G1/G2/G3 矩阵仍在 T6**
 - **`pwsh` 分支仍未实测**：本机没装 PowerShell 7，`pwsh` 优先于 5.1 这条只有链序测试覆盖，没有真机验证
-- **沙箱探测只到「能不能用」**：profile 本身的正确性（G1/G2/G3）属于 T5；v2 包的 Linux 腿也还没装 bubblewrap（T6）
+- **沙箱探测只到「能不能用」**：profile 本身的正确性（G1/G2/G3）属于 T5；v2 包的 Linux 腿也还没装 bubblewrap（T6）→ 已在 T5 完成，见下→ 已在 T5 完成，见下
+
+**交付（T5）**
+
+前置是一轮完整调研：[research/p2-sandbox.md](research/p2-sandbox.md)。用 Docker Desktop 的 Linux VM 起一次性容器，装 **bwrap 0.9.0**（与 CI 那条 `ubuntu-24.04` 腿同版本），把旧版 argv 的每条假设都真跑一遍。四条发现改了设计：
+
+| 发现 | 实测 | 决定 |
+|---|---|---|
+| 沙箱内可以创建嵌套 user namespace | `unshare -U` rc=0；加 `--disable-userns` 后 rc=1 | 加固 flag 上 argv，但**探测两次**：不带判可用、带判加固。不带就发会让第一条命令失败，报成不可用会逼用户关沙箱（ADR-020） |
+| 沙箱不是它自己调用者的权限边界 | root 调用者：`uid_map 0 0 4294967295`，沙箱内 uid=0，`/etc/shadow` 可读；非特权调用者：被拒绝 | 不拒绝，但在 root 下把这件事写进限制项上报 |
+| 沙箱里 `&` 起来的后台任务活不过那条命令 | 三种网络配置下均死亡（沙箱活性已证明） | 写进文档，属预期而非 bug |
+| 私有 `/tmp` 是内存一半、RAM 支撑、0755 | 20487492 KB / 40014 MiB 宿主；`--size` 实测真限流 | 固定 2 GiB + `--perms 1777`（ADR-021） |
+
+代码分层：`policy/sandbox-defaults.ts` 与 `policy/sandbox-paths.ts`（纯）→ `adapters/sandbox/backends/{bwrap,seatbelt}.ts`（纯 argv/SBPL）→ `adapters/sandbox/executor.ts`（唯一不纯：后端选择、拒绝判定、私有临时目录生命周期）。
+
+**契约修订**（三处，都有依据）：`SandboxCommand` 加 `env`/`cleanup`（macOS 无挂载命名空间，`TMPDIR` 是唯一表达方式）；`ProcessResult` 加 `sandbox: { mode, backend, limitations }`（架构文档原则 2 要求审计记**实际生效**的模式与后端）；新增 `SandboxRequestRefusedError`（macOS `network: 'on'` 是「请求满足不了」而非「沙箱不可用」）。
+
+**合规**：Seatbelt 运行时白名单转写自 Apache-2.0 的 `@anthropic-ai/sandbox-runtime`，仓库是 MIT 且原本**无任何署名**。已加 `NOTICE` 并在常量处标注来源与修改。
+
+**T5 的出口标准与验证结果**
+
+- [x] `npm run build` / `npm run lint` 通过
+- [x] `npm test` 152 → **203**，0 失败（本机 Windows：5 项按平台 skip，其中沙箱真机两条带探测分类原因）
+- [x] 两条后端生成器都是**纯函数**，因此在 Windows 上完整单测了 ~150 条 SBPL 规则与 bwrap 全部 flag
+- [x] 执行器测试钉住**两种拒绝**、显式点名不可用后端时的响亮失败（此测试抓到并修掉一个真缺口）、以及临时目录的生命周期
+- [x] `ci.yml` 的 `packages/cowcat` Linux 腿装上 bubblewrap + AppArmor profile（T6 的前置提前到这里）
+- [ ] **真机烟测待 CI**：生成的 argv 真跑、项目内写入到达宿主、项目外写入未到达宿主、被拒读取报 ENOENT、DNS 不可解析
+
+**T5 已知缺口（不声称已解决）**
+
+- **完整的 G1/G2/G3 矩阵仍在 T6**：本任务只证明 argv 能跑且基本隔离成立
+- **AppArmor 与 `--disable-userns` 的交互未验证**：WSL2 内核没有 Ubuntu 24.04 那条限制，只有 CI 能验。若加固被拒，会自动降级为「不加固 + 上报限制项」，不会失败
+- **root 调用者下还剩哪些隔离未量化**：文件权限不再保护，但挂载隔离与网络隔离仍在。需要一次以 root 跑完整矩阵的实验
+- **worktree 兄弟目录未自动纳入写策略**：旧版会扫描父目录；v2 里它应由调用方作为额外写路径传入（P3 接入 worktree 功能时）
+- **Seatbelt 的 profile 正确性只在 macOS 腿验证**：生成器是纯函数，可在任意机器单测结构；但「macOS 接受这个 profile」只有 `macos-15` 腿能证明
 
 **交付（T3）**
 

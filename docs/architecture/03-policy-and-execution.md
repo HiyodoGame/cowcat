@@ -98,6 +98,41 @@ ProcessPort.run(spec, signal)
 - Seatbelt 的 profile 语义（last-match-wins、specific deny 压过 wildcard allow、根 inode 与 `/etc` `/var` 符号链接等）以旧版 `docs/fix-plan-2026-10-15.md` 第二十轮为准；
 - macOS 的 `network: 'on'` 不可用且不可降级，这一结论来自真实 macOS 15 的夹逼实验，v2 保持相同的拒绝语义。
 
+## 沙箱执行器（P2 T5）
+
+`system` 档由执行器决定**怎么跑**，生成器是纯函数，只有执行器本身不纯（要建目录、要问探测结果）。分层：`policy/` 决定策略的**含义**，`adapters/sandbox/backends/` 把策略变成命令行，`adapters/sandbox/executor.ts` 做后端选择与拒绝判定。
+
+| 文件 | 职责 | 纯？ |
+|---|---|---|
+| `policy/sandbox-defaults.ts` | 默认拒绝/允许清单、私有 `/tmp` 上限 | 纯 |
+| `policy/sandbox-paths.ts` | `~` / 相对 / glob 拒绝 / 规范化 | 纯（经 `FsPort` 问文件系统） |
+| `adapters/sandbox/backends/bwrap.ts` | 策略 → `bwrap` argv | 纯（文件系统探针注入） |
+| `adapters/sandbox/backends/seatbelt.ts` | 策略 → `sandbox-exec` argv + SBPL | 纯 |
+| `adapters/sandbox/executor.ts` | 后端选择、拒绝、私有临时目录生命周期 | **不纯** |
+
+### 拒绝有两种，消息必须不同
+
+| 情形 | 错误类 | 例子 |
+|---|---|---|
+| 后端**跑不了** | `SandboxUnavailableError` | Windows 没有后端；bwrap 被 AppArmor 挡住 |
+| 后端能跑，但**这个请求满足不了** | `SandboxRequestRefusedError` | macOS 的 `network: 'on'`——沙箱工作正常，但名字解析回不来 |
+
+复用同一个错误类会对着一个沙箱完全正常的机器说「sandbox "system" is not available here」，把用户引向错误的方向。两者**都不可降级**（ADR-016）。
+
+### 三条来自实测的规则
+
+- **加固单独探测**：bwrap 的可用性（不带 flag）与加固能力（`--unshare-user --disable-userns --assert-userns-disabled`）是**两次**探测。内核拒绝加固只说明沙箱更弱，不说明它坏了；把它报成不可用会逼用户关掉沙箱，不加探测就发 flag 会让第一条真实命令失败。
+- **不存在的写路径必须上报**：绑一个不存在的源会让整条命令失败，所以只能跳过——但跳过意味着沙箱永远建不出该路径，因此必须写进限制项。
+- **私有 `/tmp` 有上限**：`--tmpfs /tmp` 默认拿到内存的一半且是 RAM 支撑，实测 19.5 GiB。固定 2 GiB 并 `--perms 1777`（真实 `/tmp` 的形状，默认 tmpfs 是 0755）。上限是**实测生效**的，不是写进 `df` 的装饰。
+
+### 沙箱不是它自己调用者的权限边界
+
+实测：调用者是 root 时 bwrap 根本不建 user namespace（恒等映射 `0 0 4294967295`），沙箱内进程在内核层面就是 root，`/etc` 里的 root 属主文件照样能读；调用者非特权时同一文件被拒绝。
+
+架构文档已写明 CowCat 是 npm 分发、不要求管理员安装，所以**推荐部署下这条不成立**。但在 root 容器里跑 CowCat 的用户拿到的隔离比看上去弱，所以这类运行必须把这件事写进限制项上报——不拒绝（root 容器里往往是唯一能用的环境），但**必须让用户知道**。
+
+调研与实测见 `research/p2-sandbox.md`。
+
 ## 失败模式的设计原则
 
 1. **不可用时拒绝，不降级到更宽松的模式**。旧版 `failOpen` 把「沙箱不可用」降级到 light，这意味着用户以为有隔离实际没有。v2 默认拒绝；若某次降级是安全上更宽松的（例如去掉隔离同时保留网络），则拒绝且不可被 failOpen 覆盖。

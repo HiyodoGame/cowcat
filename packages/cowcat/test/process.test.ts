@@ -11,6 +11,7 @@ import {
   defaultSandboxProfile,
   type ProcessPort,
   type ProcessSpec,
+  type SandboxCommandResolver,
   type TerminationMethod,
 } from '../src/index.js';
 import { fakePlatform, posixShell, windowsShell } from './fakes-ports.js';
@@ -36,7 +37,7 @@ function node(script: string, args: readonly string[] = []): readonly string[] {
 // Windows gives the gateway a strategy the host cannot honour — which is precisely how
 // a successful-looking process-group kill that never happened got through the first
 // version of these tests.
-function port(overrides: { readonly sandboxCommand?: (spec: ProcessSpec) => { argv: readonly string[] } } = {}): ProcessPort {
+function port(overrides: { readonly sandboxCommand?: SandboxCommandResolver } = {}): ProcessPort {
   return new NodeProcess({ platform: new NodePlatform(), ...overrides });
 }
 
@@ -122,7 +123,7 @@ test('system mode redacts too — the coverage the legacy gateway lacked', async
   // step is upstream of it and must not change.
   const withSandbox = new NodeProcess({
     platform: new NodePlatform(),
-    sandboxCommand: (requested) => ({ argv: requested.argv }),
+    sandboxCommand: (requested) => ({ argv: requested.argv, backend: 'bwrap', limitations: [] }),
   });
 
   const result = await withSandbox.run(
@@ -391,7 +392,7 @@ test('an injected executor is what actually gets run', async () => {
   // the gateway must spawn the argv the resolver returned, not the requested one.
   const withSandbox = new NodeProcess({
     platform: fakePlatform({ shell: posixShell() }),
-    sandboxCommand: () => ({ argv: node('process.stdout.write("wrapped")') }),
+    sandboxCommand: () => ({ argv: node('process.stdout.write("wrapped")'), backend: 'bwrap', limitations: [] }),
   });
 
   const result = await withSandbox.run(spec({ sandbox: defaultSandboxProfile({ mode: 'system' }) }), new AbortController().signal);

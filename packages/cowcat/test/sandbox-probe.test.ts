@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { probeBackends, usableBackend, WINDOWS_ALTERNATIVES, type ProbeHost, type SandboxBackendVerdict } from '../src/index.js';
+import {
+  buildBwrapCommand,
+  defaultSandboxProfile,
+  probeBackends,
+  usableBackend,
+  WINDOWS_ALTERNATIVES,
+  type ProbeHost,
+  type SandboxBackendVerdict,
+  type SandboxFsProbe,
+  type SandboxProfile,
+} from '../src/index.js';
 
 // The verdict is the product contract here: "not installed", "user namespaces blocked by
 // AppArmor" and "the kernel is too old" need three different fixes, so a verdict carries
@@ -10,6 +20,8 @@ import { probeBackends, usableBackend, WINDOWS_ALTERNATIVES, type ProbeHost, typ
 function fakeProbe(options: {
   readonly which?: Record<string, string>;
   readonly result?: { code: number; stdout?: string; stderr?: string };
+  /** Per-invocation answer, for the two-pass probe. */
+  readonly perCall?: (args: readonly string[]) => { code: number; stdout?: string; stderr?: string };
 }): { host: ProbeHost; calls: { exe: string; args: readonly string[] }[] } {
   const calls: { exe: string; args: readonly string[] }[] = [];
   return {
@@ -18,11 +30,24 @@ function fakeProbe(options: {
       which: (name) => options.which?.[name] ?? null,
       run: (exe, args) => {
         calls.push({ exe, args });
-        const result = options.result;
+        const result = options.perCall?.(args) ?? options.result;
         return { code: result?.code ?? 0, stdout: '', stderr: result?.stderr ?? '' };
       },
     },
   };
+}
+
+export function systemProfile(overrides: Partial<SandboxProfile> = {}): SandboxProfile {
+  return defaultSandboxProfile({ mode: 'system', ...overrides });
+}
+
+export function fakeFsProbe(world: {
+  readonly dirs?: readonly string[];
+  readonly files?: readonly string[];
+}): SandboxFsProbe {
+  const dirs = new Set(world.dirs ?? []);
+  const files = new Set(world.files ?? []);
+  return { isDir: (path) => dirs.has(path), isFile: (path) => files.has(path) };
 }
 
 // Every platform yields exactly one verdict, so asserting the shape here beats sprinkling
@@ -54,9 +79,67 @@ test('bubblewrap is run, not version-checked', () => {
   assert.equal(verdict.reason, 'ok');
   // Installed-and-broken is the whole case this probe exists for: bwrap can be on PATH
   // and still be unable to create a user namespace. Only running it says so.
+  //
+  // Two runs, in this order: the plain one decides USABILITY, the hardened one decides
+  // whether the extra restriction is available (research/p2-sandbox.md §4.1).
   assert.deepEqual(calls, [
     { exe: '/usr/bin/bwrap', args: ['--unshare-all', '--ro-bind', '/', '/', 'true'] },
+    {
+      exe: '/usr/bin/bwrap',
+      args: ['--unshare-user', '--disable-userns', '--assert-userns-disabled', '--unshare-all', '--ro-bind', '/', '/', 'true'],
+    },
   ]);
+  assert.deepEqual(verdict.hardening, ['disable-userns']);
+});
+
+test('a kernel that refuses the hardening still gives a usable, weaker sandbox', () => {
+  // The distinction the two-pass probe exists for. Reporting this as unusable would push
+  // the user towards switching the sandbox OFF, which is strictly worse than sandboxing
+  // without one flag.
+  const { host, calls } = fakeProbe({
+    which: { bwrap: '/usr/bin/bwrap' },
+    perCall: (args) => (args.includes('--disable-userns') ? { code: 1, stderr: 'bwrap: Operation not permitted' } : { code: 0 }),
+  });
+
+  const verdict = only(probeBackends('linux', host));
+
+  assert.equal(verdict.usable, true, 'the sandbox itself works');
+  assert.deepEqual(verdict.hardening, [], 'but the extra restriction is unavailable');
+  assert.match(verdict.detail, /without: disable-userns/, 'and the verdict says so');
+  assert.equal(calls.length, 2);
+});
+
+test('a sandbox with no hardening emits no user-namespace flags at all', () => {
+  // The builder's side of the same contract: emitting the flags unprobed would make the
+  // first real command fail on a kernel that does not accept them.
+  const profile = systemProfile();
+  const built = buildBwrapCommand(profile, {
+    command: 'true',
+    cwd: '/proj',
+    fs: fakeFsProbe({ dirs: ['/usr', '/bin', '/proj'], files: [] }),
+    hardening: [],
+  });
+
+  assert.equal(built.args.includes('--disable-userns'), false);
+  assert.equal(built.args.includes('--unshare-user'), false);
+  // ...and says the sandbox is weaker, so the caller can tell the user.
+  assert.ok(built.limitations.some((entry) => entry.includes('nested user namespaces')));
+});
+
+test('a probed kernel gets the user-namespace flags', () => {
+  const built = buildBwrapCommand(systemProfile(), {
+    command: 'true',
+    cwd: '/proj',
+    fs: fakeFsProbe({ dirs: ['/usr', '/bin', '/proj'], files: [] }),
+    hardening: ['disable-userns'],
+  });
+
+  // Order matters: --unshare-user before --disable-userns, and the assertion that it
+  // took effect before the command runs.
+  const user = built.args.indexOf('--unshare-user');
+  const disable = built.args.indexOf('--disable-userns');
+  const verify = built.args.indexOf('--assert-userns-disabled');
+  assert.ok(user >= 0 && disable > user && verify > disable, built.args.join(' '));
 });
 
 test('an AppArmor-blocked user namespace gets the AppArmor fix, not "install it"', () => {
@@ -137,8 +220,8 @@ test('an unknown platform gets no fix, because there is nothing to paste', () =>
 });
 
 test('the backend a run should use is the first usable one', () => {
-  const missing = { name: 'bwrap', usable: false, reason: 'missing', detail: '', fix: null } as const;
-  const ok = { name: 'bwrap', usable: true, reason: 'ok', detail: '/usr/bin/bwrap', fix: null } as const;
+  const missing = { name: 'bwrap', usable: false, reason: 'missing', detail: '', fix: null, hardening: [] } as const;
+  const ok = { name: 'bwrap', usable: true, reason: 'ok', detail: '/usr/bin/bwrap', fix: null, hardening: ['disable-userns'] } as const;
 
   assert.equal(usableBackend([missing, ok]), ok);
   assert.equal(usableBackend([missing]), null);
