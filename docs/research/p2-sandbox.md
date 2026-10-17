@@ -162,6 +162,28 @@ quoted     :  exit 1   stdout ""   stderr "node:fs:441"      ← 脚本跑起来
 
 顺带验证过：含空格与单引号的路径经 `shellQuote` 后由真 shell 原样还原。
 
+### 4.10 `existsSync` 是个坏探针：存在性看得见，内容看不见【实测】
+
+补上 4.9 的 SYMLINK 规则之后，「宿主临时文件不可见」那条断言翻成了可见。追下去发现是**断言本身错了**，而且之前是**错因通过**。
+
+先用六个变体定位（同一 profile，`proj`/`home` 授权，marker 是它们的兄弟目录，既未授权也未拒绝）：
+
+| 变体 | exists-marker | stat-marker | read-marker | read-proj |
+|---|---|---|---|---|
+| 有 SYMLINK 规则 | **true** | EPERM | EPERM | OK |
+| 仅 DIRECTORY | false | EPERM | EPERM | **EPERM** |
+
+两条结论：
+
+1. **内容隔离一直是好的**。`read-marker` 与 `read-secret` 在两个变体里都是 EPERM，已授权的项目可读。没有洞。
+2. **`existsSync` 在 `statSync` 与 `readFileSync` 都 EPERM 的地方返回 true**。它不是一个「能不能读」的判据。写隔离测试时拿它当探针，等于在测一个和被测性质无关的信号。
+
+而且在补 SYMLINK 规则之前，`exists-marker=false` 是因为**查找在 `/var` 就失败了**，策略根本没被问到——通过的原因是遍历失败，不是策略生效。
+
+**已上报的限制**：macOS 上**读面之外路径的存在性可以被观察，内容不行**。这是 agent 可用的一个小侧信道（可以探测某路径是否有文件），不影响内容机密性。测的是 Node 的 `existsSync`；没有单独测裸 `access(2)`，所以不宣称更多。
+
+教训与 T5 踩过的同一条：`research/p2-sandbox.md` §2.1——**断言落在语义上，不要落在信号上**。这里的信号本身是坏的。
+
 ### 4.9 遍历符号链接需要 SYMLINK vnode 的读权限【实测】
 
 现象：profile 正确授权了家目录，命令读**它自己会用的那种拼写**却得到 EPERM。

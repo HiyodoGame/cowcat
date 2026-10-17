@@ -377,20 +377,27 @@ test('the sandbox has its own scratch space, and the host\'s is not it', { skip 
 
   // The legacy suite caught this in CI on its first run: the host temp directory was in
   // write.allow, the later bind silently undid the tmpfs, and "writes stay inside the
-  // project" became a half-truth. Two halves: the host's files are NOT visible, and ours
+  // project" became a half-truth. Two halves: the host's files do not come out, and ours
   // IS writable.
+  //
+  // ASSERT ON THE CONTENTS, NOT ON EXISTENCE. This used to ask whether the marker was
+  // "visible", which is a probe that lies: measured on macOS 15, `existsSync` returns true
+  // for a path where both `statSync` and `readFileSync` return EPERM (research §4.10). It
+  // also passed for the wrong reason for a while — the lookup died at `/var` before the
+  // policy was ever consulted, so the strategy was never actually being tested. What is
+  // guaranteed, and what is worth a regression test, is that the bytes do not arrive.
   const hostMarker = join(f.root, 'host-marker.txt');
   writeFileSync(hostMarker, 'host-only\n');
 
   const { result, applied } = await run(
     f,
     `const fs=require("fs");const p=process.env.TMPDIR||"/tmp";` +
-      `process.stdout.write(JSON.stringify({visible:fs.existsSync(${JSON.stringify(hostMarker)}),` +
+      `process.stdout.write(JSON.stringify({leaked:(()=>{try{return fs.readFileSync(${JSON.stringify(hostMarker)},"utf8")}catch{return ""}})(),` +
       `writable:(()=>{try{fs.writeFileSync(p+"/probe","x");fs.unlinkSync(p+"/probe");return true}catch{return false}})()}))`,
   );
 
-  const probe = JSON.parse(result.stdout || '{}') as { visible?: boolean; writable?: boolean };
-  assert.equal(probe.visible, false, `the host's temp files must not be readable from inside: ${stateOf(result, applied, hostMarker)} stdout=${result.stdout}`);
+  const probe = JSON.parse(result.stdout || '{}') as { leaked?: string; writable?: boolean };
+  assert.equal(probe.leaked, '', `the host's temp contents must not come out: ${stateOf(result, applied, hostMarker)} stdout=${result.stdout}`);
   assert.equal(probe.writable, true, `the sandbox needs a writable scratch space or every build tool breaks: ${stateOf(result, applied, '(TMPDIR)')} stdout=${result.stdout}`);
 });
 
