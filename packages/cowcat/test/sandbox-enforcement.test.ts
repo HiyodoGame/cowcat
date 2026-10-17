@@ -99,16 +99,22 @@ test('a sandboxed run really is sandboxed', { skip }, async (t) => {
   assert.equal(wrote.exitCode, 0, wrote.stderr);
   assert.equal(existsSync(join(project, 'written.txt')), true, 'writes inside the project must reach the host');
 
-  // 3. G2: a path outside the read surface is unreachable, and it reads as MISSING
-  //    rather than as a permission error — a denial that says "the file does not exist"
-  //    is the one a model does not try to work around.
+  // 3. G2: a path outside the read surface is unreachable, and its CONTENTS never
+  //    appear. The refusal is spelled differently by the two backends, and the spelling
+  //    is a property of the platform, not of our code:
+  //      bwrap    → ENOENT, because an unbound path is simply ABSENT
+  //      seatbelt → EPERM, because the profile denies an operation on a real path
+  //    Both mean the same thing to the user, and both are refusals the tool layer has to
+  //    explain rather than let the model read as "the file does not exist" or "try
+  //    another way" (research/p2-sandbox.md §2, §5).
   const denied = await port.run(
     systemSpec(project, `process.stdout.write(require("fs").readFileSync(${JSON.stringify(join(outside, 'secret.txt'))}, "utf8"))`, home),
     new AbortController().signal,
   );
-  assert.equal(denied.stdout, '');
+  assert.equal(denied.stdout, '', 'the contents must never reach the caller');
+  assert.doesNotMatch(denied.stdout, /must-not-be-readable/);
   assert.notEqual(denied.exitCode, 0);
-  assert.match(denied.stderr, /ENOENT|No such file|permission denied/i);
+  assert.match(denied.stderr, /ENOENT|EACCES|EPERM|No such file|not permitted|Permission denied/i, denied.stderr);
 
   // 4. G1: a write outside the project does not appear on the host.
   const escaped = join(root, 'escaped.txt');
