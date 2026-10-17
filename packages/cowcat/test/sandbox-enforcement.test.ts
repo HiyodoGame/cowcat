@@ -275,7 +275,10 @@ test('G1 boundary: destruction INSIDE the granted scope is NOT prevented', { ski
   // Separated by ';' rather than '&&': unlinkSync returns undefined, so '&&' would
   // short-circuit after the first delete and the second assertion would then pass for
   // the wrong reason — which is exactly what happened the first time.
-  const { result, applied } = await run(f, node('unlinkSync("victim.txt"); unlinkSync("readable.txt")'));
+  // `node()` prefixes the whole expression with `require("fs").`, so two statements need
+  // two prefixes — and the second unlink needs `;` rather than `&&`, because unlinkSync
+  // returns undefined and `&&` short-circuits after the first delete.
+  const { result, applied } = await run(f, node('unlinkSync("victim.txt"); require("fs").unlinkSync("readable.txt")'));
 
   assert.equal(result.exitCode, 0, result.stderr);
   gone(result, applied, join(f.project, 'victim.txt'), 'in-scope deletion is not prevented');
