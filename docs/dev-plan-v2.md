@@ -19,7 +19,7 @@
 |---|---|---|
 | P0 | 架构基线与内核骨架 | **已完成**（PR #24，`dca0d31`） |
 | P1 | 内核加固与工程基线 | **已完成**（PR #31–#38，测试 22 → 69） |
-| P2 | 端口与执行网关（含沙箱执行器迁移） | 未开始 |
+| P2 | 端口与执行网关（含沙箱执行器迁移） | **已完成**（T1–T5 已合；T6 见下） |
 | P3 | 策略、配置与审批协议 | 未开始 |
 | P4 | 模型层 | 未开始 |
 | P5 | 工具层 | 未开始 |
@@ -235,16 +235,25 @@
 
 Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生效后 `--disable-userns` 是否可用」——若 `hardening` 为空，日志会显示，且每次运行的 limitations 都会说明沙箱更弱（这是预期的降级，不是失败）。
 
+**T6 在两条真机腿上又挖出四个真问题**（这是它真正的价值——写完测试不等于跑过测试）
+
+1. **私有临时目录没走 canonical 化**：mkdtemp 的结果直接进了 Seatbelt 的 `(subpath …)`，而它不经过 `resolveEntries`。macOS 上前者是 `/var/…`、内核报 `/private/var/…`，于是规则什么都没授予，实测**沙箱自己的 TMPDIR 不可写**。
+2. **遍历符号链接需要对 SYMLINK vnode 的读权限**：`/var`、`/etc`、`/tmp` 本身是符号链接，而 profile 只授了 DIRECTORY 的 metadata，于是**任何人会写的绝对路径全部 EPERM**，而 profile 看起来完全正确。补 `file-read-metadata (vnode-type SYMLINK)`（ADR-022）。中途我误判成「`subpath` 匹配字面路径」并实现了「每条路径发两种拼写」——实测**无效**，且把 deny 面扩大一倍（每条 deny 要手工复制两份，漏一处就是绕过），已删除并由一条测试钉住。
+3. **隔离断言不能拿 `existsSync` 当探针**：它在 `statSync` 与 `readFileSync` 都 EPERM 的路径上返回 true。且之前那个 `false` 是**错因通过**——查找在 `/var` 就失败了，策略从没被问到。断言改为看**内容是否到达**。
+4. 顺带修掉自己两个测试 bug：`unlinkSync` 返回 undefined 所以 `&&` 会短路；`node()` 只给整串加一次 `require("fs").`。
+
 **T6 的出口标准与验证结果**
 
 - [x] `npm run build` / `npm run lint` 通过
-- [x] `npm test` 205 → **217**，0 失败
-- [ ] **两条真机腿待 CI**：`ubuntu-24.04`（bubblewrap 0.9.0 + AppArmor profile）与 `macos-15`（seatbelt）
+- [x] `npm test` 205 → **219**，0 失败
+- [x] **两条真机腿全绿**：`packages/cowcat · node 22 · ubuntu-latest`（bubblewrap 0.9.0 + AppArmor profile）与 `macos-15`（seatbelt）
+- [x] 必过检查 9 条全绿
 
 **T6 已知缺口（不声称已解决）**
 
 - **没有 seccomp 过滤**：目前最大的加固缺口。bwrap 支持 `--seccomp FD`，但需要一份编译好的 BPF 程序与允许清单维护策略。依据 SysComb（[2608.26871](https://arxiv.org/abs/2608.26871)）——限制可用系统调用可缩小内核攻击面。记为 R1
 - **G1/G2/G3 停在 L2**：没有可判定的完备性论证，平台换了也不会有人被提醒
+- **macOS 上读面之外路径的存在性可被观察，内容不可**（实测：Node 的 `existsSync` 返回 true 而 `statSync`/`readFileSync` 是 EPERM）。这是 agent 可用的小侧信道，已写进限制项。未单独测裸 `access(2)`
 - **root 调用者下还剩哪些隔离未量化**：文件权限不再保护，但挂载与网络隔离仍在
 - **worktree 兄弟目录未自动纳入写策略**：应由调用方作为额外写路径传入（P3 接入 worktree 时）
 - **`setsid()` 逃逸仍是推断**（附录 B 实证它能逃，但「前台超时孤儿」一类无样本）
