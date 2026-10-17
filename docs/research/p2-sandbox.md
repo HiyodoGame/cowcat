@@ -162,32 +162,33 @@ quoted     :  exit 1   stdout ""   stderr "node:fs:441"      ← 脚本跑起来
 
 顺带验证过：含空格与单引号的路径经 `shellQuote` 后由真 shell 原样还原。
 
-### 4.9 Seatbelt 匹配字面路径，不匹配解析后的路径【实测】
+### 4.9 遍历符号链接需要 SYMLINK vnode 的读权限【实测】
 
-在 macOS 15 上，用一个**已经授权了家目录**的 profile 实测：
+现象：profile 正确授权了家目录，命令读**它自己会用的那种拼写**却得到 EPERM。
 
 ```
 read-canonical-home    = OK      /private/var/folders/…/home/n.txt
 read-friendly-home     = EPERM   /var/folders/…/home/n.txt
-read-canonical-project = OK
-read-friendly-project  = EPERM
-read-relative          = OK      ./r.txt
-stat-canonical-home    = OK
-stat-friendly-home     = EPERM
-readdir-canonical-home = OK
-readdir-friendly-home  = EPERM
+read-relative          = OK      ./r.txt（相对路径不受影响）
+readlink /var          = EPERM
 ```
 
-即 `subpath` 匹配**调用方传入的字面路径**，`/var` → `/private/var` 的解析发生在策略检查**之后**。这推翻了本文件早前的一条判断：当时写的是「`subpath` 匹配内核报告的路径，所以 profile 必须用 kernel 拼写」——前半句对，后半句的推论错了一半。真正的结论有两条，缺一不可：
+最初的判断是「`subpath` 匹配字面路径，所以要给两种拼写」。**这个判断错了**，而且第一版修复（`spellings()`）也因此无效：加了双拼写、跑 CI，仍然 EPERM。
 
-1. **profile 侧**：授权要用 canonical 拼写，否则什么都没授予。
-2. **命令侧**：即使 profile 完全正确，用 friendly 拼写的**绝对路径**照样 EPERM，而相对路径不受影响。
+把两组变量分开跑才拿到答案（六个变体，同一 profile、同一文件）：
 
-第 2 条是先前没意识到的部分，而且它**躲得过去**：用相对路径的测试全绿，用绝对路径的模型撞墙。
+| 变体 | profile 里的拼写 | SYMLINK 规则 | friendly |
+|---|---|---|---|
+| A | 双拼写 | 无 | EPERM |
+| B | 双拼写 | 有 | OK |
+| G | 仅 canonical | 无 | EPERM |
+| **F** | **仅 canonical** | **有** | **OK** |
 
-顺带也修正了另一条：缺读授权的表现**不是** dyld 的 SIGABRT（那是 note 7 的「`subpath` allow-list 不覆盖 `/` 本身」），而是一个普通的 EPERM。两种失败容易混淆，修法也不同。
+所以真正的机制是：解析从调用方写的拼写开始，而 `/var` 是符号链接，解析它需要读 SYMLINK vnode；`subpath` 本身匹配的是**内核解析后**的路径（原本的判断成立）。修法是补一条 `file-read-metadata (vnode-type SYMLINK)`。
 
-处理：每条路径以两种拼写发出（`spellings()`）。**allow 与 deny 必须同步**——只授予一种拼写而只拒绝一种，凭据拒绝就只剩一个绕过。Linux/Windows 上是 no-op。
+**记下走错的那一步**，因为它看起来非常像对的：双拼写不但无效，还把 deny 面扩大了一倍——每条 deny 都要手工复制两份，漏一处就是绕过。为了零收益扩大拒绝面，比不做更糟。现在有一条测试钉住「不生成双拼写」。
+
+它之所以能一路错到 CI：`subpath` 是对的、profile 是对的、相对路径是对的，只有「人写的绝对路径」这一条不对。
 
 ### 4.8 挂载顺序会静默吃掉授权【实测】
 

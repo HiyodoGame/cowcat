@@ -76,7 +76,6 @@ export {
   isUnder,
   RUNTIME_ALLOWS,
   SEATBELT_READ_PATHS,
-  spellings,
   type SeatbeltCommand,
   type SeatbeltOptions,
 } from './adapters/sandbox/backends/seatbelt.js';

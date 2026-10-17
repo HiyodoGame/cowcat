@@ -142,21 +142,24 @@ ProcessPort.run(spec, signal)
 
 因此 `system` 档在文案与文档里都**不得**被表述为安全保证；它是纵深防御的一层（Red-Teaming the Agentic Red-Team 指出，即使在沙箱容器内，agent 工具仍可能被攻陷操作者机器）。
 
-### Seatbelt 的拼写是承重的
+### Seatbelt 的符号链接遍历是承重的
 
-`subpath` 匹配的是**调用方传入的字面路径**，不是内核解析后的路径。实测（macOS 15，profile 已经授权了家目录）：
+macOS 上 `/var`、`/etc`、`/tmp` 本身是符号链接。解析一条路径从**调用方写的那个拼写**开始，于是走 `/var/folders/…` 就必须先读 `/var` 这个 SYMLINK vnode。profile 只授了 `file-read-metadata (vnode-type DIRECTORY)`，所以缺的就是这一条。
+
+实测（macOS 15，同一个 profile、同一个文件）：
 
 ```
 read /private/var/folders/…/n.txt   OK
-read /var/folders/…/n.txt          EPERM
-read ./r.txt（相对）               OK
+read /var/folders/…/n.txt          EPERM   ← 没有 SYMLINK 规则
+read /var/folders/…/n.txt          OK      ← 有
+readlink /var                      EPERM / OK:private/var
 ```
 
-`/var` 是指向 `/private/var` 的符号链接，而**解析发生在策略检查之后**。所以同一个文件、同一个 profile，答案取决于怎么拼；而那个 EPERM 里没有任何关于拼写的线索。
+修法是在 DIRECTORY 那条规则旁边补一条 `file-read-metadata (vnode-type SYMLINK)`，同理由、同位置（读拒绝之后）。**代价**：`readlink()` 全局可用，会暴露符号链接的目标——那是一个路径字符串，不含文件内容，与 note 7 已经接受的目录 metadata 属于同一类披露。这是让一个正常文件系统可被遍历的最小代价。
 
-这一点最阴险的地方在于**它躲得过去**：相对路径不受影响，所以一套用相对路径的测试会全绿，而一个用绝对路径的模型会撞上它。
+它之所以难被发现，是因为 `subpath` 匹配的是**内核解析后**的路径，所以 profile 看起来完全正确；又因为**相对路径不受影响**，所以一套用相对路径的测试会全绿，而一个用绝对路径的模型撞墙。
 
-因此 `spellings()` 让**每条路径以两种拼写发出**。这不是为了方便——**allow 与 deny 必须同步**：只授予 `/private/var/…` 而只拒绝这一种拼写，`/var/…` 就是通的，凭据拒绝会变成两个字符的绕过。Linux 与 Windows 上是 no-op（没有 `/private` 下的路径），profile 逐字节不变。
+**一次走错的修法，留作记录**：中途我判定「`subpath` 匹配字面路径」，于是让每条路径发两种拼写。实测它**不解决问题**（双拼写 + 无 SYMLINK 规则仍然 EPERM），而代价是真实的——每条 deny 都要手工复制两份，漏一处就是把凭据拒绝变成两个字符的绕过。为了零收益把拒绝面扩大一倍，比不做更糟。这条结论现在由一条测试钉住。
 
 ### 沙箱不能阻止范围内的破坏
 

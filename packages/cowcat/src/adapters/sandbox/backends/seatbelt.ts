@@ -63,36 +63,26 @@ const sub = (path: string): string => `(subpath ${lit(path)})`;
 const literal = (path: string): string => `(literal ${lit(path)})`;
 
 /**
- * Every path leaves here in BOTH spellings: the canonical one and, on macOS, the one a
- * person actually types.
+ * Metadata on symlinks — note 8, and the one rule whose absence breaks every absolute
+ * path on macOS that a person would type.
  *
- * MEASURED, and the measurement overturned what this file used to assume. Seatbelt's
- * `subpath` matches the LITERAL path the caller passes, not the one the kernel resolves
- * to. Inside the sandbox, with a profile that granted the home directory:
+ * `subpath` matches the path the KERNEL resolves to, so a profile written in the
+ * canonical spelling is correct. But the walk to that path starts at whatever the caller
+ * typed, and on macOS `/var`, `/etc` and `/tmp` are themselves symlinks. Resolving one
+ * needs read access to a SYMLINK vnode, and the DIRECTORY rule above does not cover it.
+ * Measured, same profile, same file:
  *
- *     read /private/var/folders/…/home/n.txt   OK
- *     read /var/folders/…/home/n.txt          EPERM
- *     read ./r.txt (relative)                 OK
+ *     read /private/var/folders/…/n.txt   OK
+ *     read /var/folders/…/n.txt          EPERM     <- no symlink rule
+ *     read /var/folders/…/n.txt          OK        <- with this rule
  *
- * `/var` is a symlink to `/private/var`, and the resolution happens after the policy
- * check. So the same file, under the same profile, answers differently depending on how
- * it was spelled — and the refusal is a bare EPERM that says nothing about spelling.
- *
- * This is NOT a convenience, and the reason matters more than the effect: allows and
- * denies have to move TOGETHER. Granting `/private/var/…` while denying only that
- * spelling would leave `/var/…` open, which turns a credential deny into a two-keystroke
- * bypass. Emitting both spellings everywhere is what keeps the deny a deny.
- *
- * A no-op everywhere else: only macOS has paths under `/private`, so Linux and Windows
- * profiles come out byte-identical to before.
+ * Metadata only, exactly like the DIRECTORY rule it sits next to, and in the same place:
+ * after the read denies, so denied paths keep denying their CONTENTS. The cost is that
+ * `readlink()` works anywhere, which reveals symlink targets — a path string, no file
+ * contents, and the same class of disclosure note 7 already accepts for directory
+ * metadata. It is the minimum for a normal filesystem to be walkable at all.
  */
-export function spellings(path: string): string[] {
-  return path.startsWith('/private/') ? [path, path.slice('/private'.length)] : [path];
-}
-
-function spellingsOf(paths: readonly string[]): string[] {
-  return uniq(paths.flatMap(spellings));
-}
+const SYMLINK_METADATA = '(allow file-read-metadata (vnode-type SYMLINK))';
 
 function rule(action: string, ops: readonly string[], filters: readonly string[]): string[] {
   if (filters.length === 0) return [];
@@ -266,18 +256,17 @@ function readSection(profile: SandboxProfile): string[] {
   const lines: string[] = [];
   const open = profile.read.profile === 'hide';
   if (open) lines.push('(allow file-read*)');
-  // Both spellings on the allows AND the denies — see spellings(). Emitting only the
-  // canonical one is what produced the measured failure: the grant was correct and the
-  // run was refused anyway.
-  else lines.push(...rule('allow', ['file-read*'], spellingsOf([...SEATBELT_READ_PATHS, ...profile.read.allow]).map(sub)));
+  else lines.push(...rule('allow', ['file-read*'], uniq([...SEATBELT_READ_PATHS, ...profile.read.allow].map(sub))));
   // AFTER the allows — note 1.
-  lines.push(...rule('deny', ['file-read*'], spellingsOf(profile.read.deny).map(sub)));
+  lines.push(...rule('deny', ['file-read*'], uniq(profile.read.deny.map(sub))));
   // Note 7: an allow-LIST of subpaths does not cover the root inode, and dyld aborts
   // before exec with no message when it is missing. What it costs: `ls /` can list
   // the top-level names. It grants no subtree content.
   if (!open) lines.push('(allow file-read* (literal "/"))');
-  // AFTER the denies — note 4.
+  // AFTER the denies — note 4. Two vnode types, not one, and the second is the whole
+  // reason this file has a note 8.
   lines.push('(allow file-read-metadata (vnode-type DIRECTORY))');
+  lines.push(SYMLINK_METADATA);
   return lines;
 }
 
@@ -285,20 +274,14 @@ function readSection(profile: SandboxProfile): string[] {
 function moveBlocking(readDeny: readonly string[]): string[] {
   const filters = new Set<string>();
   for (const path of readDeny) {
-    // Both spellings, ancestors included: blocking `mv` out of the friendly spelling of a
-    // denied path has to be exactly as thorough as blocking the canonical one.
-    for (const spelling of spellings(path)) {
-      filters.add(sub(spelling));
-      for (const ancestor of ancestorsOf(spelling)) {
-        for (const alternative of spellings(ancestor)) filters.add(literal(alternative));
-      }
-    }
+    filters.add(sub(path));
+    for (const ancestor of ancestorsOf(path)) filters.add(literal(ancestor));
   }
   return rule('deny', ['file-write-unlink', 'file-write-create'], [...filters]);
 }
 
 function writeSection(profile: SandboxProfile, tmpDir: string | null): string[] {
-  const roots = spellingsOf([...profile.write.allow, ...(tmpDir === null ? [] : [tmpDir])]);
+  const roots = uniq([...profile.write.allow, ...(tmpDir === null ? [] : [tmpDir])]);
   const lines: string[] = [];
   lines.push(...rule('allow', ['file-write*'], roots.map(sub)));
   lines.push(...rule('deny', ['file-write*'], uniq(profile.write.deny.map(sub))));
@@ -318,17 +301,11 @@ function readDenyUnlinkTail(profile: SandboxProfile): string[] {
   for (const path of profile.read.deny) {
     const under = roots.find((root) => isUnder(path, root));
     if (under === undefined) continue;
-    // Both spellings, for the same reason as everywhere else: the write section re-opened
-    // unlink/create for the friendly spelling too, so the take-back has to cover it.
-    for (const spelling of spellings(path)) {
-      filters.add(sub(spelling));
-      for (const ancestor of ancestorsOf(spelling)) {
-        // Only the ancestors strictly inside the write root: re-denying the root itself
-        // would block unrelated work in the project.
-        if (isUnder(ancestor, under)) {
-          for (const alternative of spellings(ancestor)) filters.add(literal(alternative));
-        }
-      }
+    filters.add(sub(path));
+    for (const ancestor of ancestorsOf(path)) {
+      // Only the ancestors strictly inside the write root: re-denying the root itself
+      // would block unrelated work in the project.
+      if (isUnder(ancestor, under)) filters.add(literal(ancestor));
     }
   }
   return rule('deny', ['file-write-unlink'], [...filters]);
@@ -374,7 +351,7 @@ export function buildSeatbeltCommand(profile: SandboxProfile, options: SeatbeltO
   // The private temp dir must also be READABLE, not just writable, or a build tool
   // cannot read back what it just wrote there.
   if (tmpDir !== null && profile.read.profile !== 'hide') {
-    profile2.push(`(allow file-read* ${spellings(tmpDir).map(sub).join('\n  ')})`);
+    profile2.push(`(allow file-read* ${sub(tmpDir)})`);
   }
 
   // `-p` takes the profile as ONE argv element; the command after it is exec'd

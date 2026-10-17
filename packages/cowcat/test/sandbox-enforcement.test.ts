@@ -339,11 +339,11 @@ test('G2: the home directory itself stays readable, or nothing would work', { sk
   // ever fails, the fix is in the policy, never in the test.
   //
   // The path below is the FRIENDLY spelling (`/var/folders/…`, what mkdtemp returned), and
-  // that is deliberate rather than incidental. On Seatbelt a granted path answers
-  // differently depending on how it is spelled — the profile grants `/private/var/…`, and
-  // `/var/…` is refused because `subpath` matches the literal path (measured: OK vs EPERM
-  // on the same file, same profile). Reading through the friendly spelling here is what
-  // keeps that from regressing into a rule that grants something and silently denies it.
+  // that is deliberate rather than incidental. Resolving it walks through `/var`, which is
+  // itself a symlink, and that needs read access to a SYMLINK vnode — a rule the profile
+  // did not have, so the run was refused with a bare EPERM even though the home directory
+  // was granted in full (measured on macOS 15; note 8 in seatbelt.ts). Reading through the
+  // friendly spelling here is what keeps that from regressing.
   const allowed = join(f.home, 'notes.txt');
   writeFileSync(allowed, 'home notes\n');
   const { result, applied } = await run(f, `process.stdout.write(require("fs").readFileSync(${JSON.stringify(allowed)},"utf8"))`);

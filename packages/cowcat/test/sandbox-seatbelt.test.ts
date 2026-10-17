@@ -6,7 +6,6 @@ import {
   isUnder,
   RUNTIME_ALLOWS,
   SEATBELT_READ_PATHS,
-  spellings,
   type SandboxProfile,
 } from '../src/index.js';
 
@@ -111,61 +110,52 @@ test('directory metadata is allowed after the denies, so realpath still works', 
 test('the kernel spellings are used, not the friendly ones', () => {
   const { text } = build();
 
-  // `/etc`, `/var` and `/tmp` are symlinks into /private on macOS, and the canonical form
-  // is what the kernel resolves to — so it must be the one on the allow side.
+  // `/etc`, `/var` and `/tmp` are symlinks into /private on macOS, and `subpath` matches the
+  // path the KERNEL resolves to — so the canonical form is what belongs on the allow side.
   for (const path of SEATBELT_READ_PATHS) {
     assert.ok(text.includes(`(subpath ${JSON.stringify(path)})`), `missing ${path}`);
   }
 });
 
-test('a granted path is granted under BOTH spellings', () => {
-  // Measured on macOS 15, with a profile that already granted the home directory:
+test('metadata is granted for SYMLINK vnodes, or no absolute path a person types works', () => {
+  // The rule that actually makes `/var/folders/…` work, which is why it is not optional.
+  // Measured on macOS 15, one profile, one file:
   //
   //     read /private/var/folders/…/n.txt   OK
-  //     read /var/folders/…/n.txt          EPERM
+  //     read /var/folders/…/n.txt          EPERM   without this rule
+  //     read /var/folders/…/n.txt          OK      with it
   //
-  // `subpath` matches the literal path the caller passes; the symlink is resolved after
-  // the policy check. So one spelling works and the other does not, under the same
-  // profile — which makes `/tmp/x` fail while `/private/tmp/x` succeeds, with nothing in
-  // the EPERM to say so. A relative path is unaffected, which is why this hides so well:
-  // a test suite that uses relative paths passes while a model using absolute ones does
-  // not.
-  const { text } = build({ read: { profile: 'workspace', allow: ['/private/var/folders/x/proj'], deny: [] } });
+  // The walk begins at the path the caller typed, and `/var` is a symlink; resolving it
+  // needs read access to a SYMLINK vnode. The DIRECTORY rule beside it does not cover that,
+  // and because `subpath` itself is fine the failure looks like a spelling problem rather
+  // than a missing rule — which is what sent this file down the wrong fix first (note 8).
+  const { text } = build();
 
-  assert.ok(text.includes('(subpath "/private/var/folders/x/proj")'), 'the canonical spelling');
-  assert.ok(text.includes('(subpath "/var/folders/x/proj")'), 'and the one a person types');
+  assert.ok(text.includes('(allow file-read-metadata (vnode-type SYMLINK))'), 'the symlink metadata rule');
+  // Metadata only, and after the denies: a denied path must keep denying its CONTENTS even
+  // though this rule now follows it. file-read-data is what carries contents, and this rule
+  // does not name it.
+  const denyEnd = text.indexOf('(allow file-read* (literal "/"))');
+  assert.ok(text.indexOf('(vnode-type SYMLINK)') > denyEnd, 'it has to come after the read denies');
+  assert.equal(text.includes('(allow file-read* (vnode-type SYMLINK))'), false, 'metadata only, not every read op');
 });
 
-test('a DENIED path is denied under both spellings, or the deny is a bypass', () => {
-  // The point of emitting both spellings on the allows is only defensible if the denies
-  // do the same. Grant `/private/var/…` while denying only that, and `mv ~/.ssh/id_rsa`
-  // by the friendly spelling walks straight through a credential deny.
+test('no dual-spelling rules: one path, one filter', () => {
+  // A rejected experiment, kept as a test because it is the kind of change that looks
+  // obviously right. Emitting every path under BOTH `/private/var/…` and `/var/…` does NOT
+  // make friendly spellings work — the symlink rule above is what does, and the same
+  // measurement shows a canonical-only profile succeeds once it is present.
+  //
+  // So the dual spelling bought nothing and cost something real: every deny has to be
+  // duplicated by hand in two spellings, and one missed duplicate turns a credential deny
+  // into a two-keystroke bypass. A wider deny surface for no gain is worse than none.
   const { text } = build({
     read: { profile: 'workspace', allow: ['/private/var/folders/x/proj'], deny: ['/private/var/folders/x/home/.ssh'] },
   });
 
-  const denyBlock = text.slice(text.indexOf('(deny file-read*'), text.indexOf('(allow file-read* (literal "/"))'));
-  assert.ok(denyBlock.includes('(subpath "/private/var/folders/x/home/.ssh")'), 'canonical deny');
-  assert.ok(denyBlock.includes('(subpath "/var/folders/x/home/.ssh")'), 'friendly deny — without it this is a bypass');
-
-  // Move-blocking covers the same two spellings, for the same reason: `mv` out of a
-  // denied path is a read bypass (note 5), and the friendly spelling reaches it too.
-  const moveBlock = text.slice(text.indexOf('(deny file-write-unlink'));
-  assert.ok(moveBlock.includes('(literal "/var/folders/x/home")'), 'the friendly ancestor');
-  assert.ok(moveBlock.includes('(literal "/private/var/folders/x/home")'), 'the canonical ancestor');
-});
-
-test('spellings() is a no-op off macOS, so Linux profiles do not change', () => {
-  // Not tidiness: a rule that only fires on one platform is a rule nobody can reason about
-  // from a Linux log. Everything under /private is macOS, so elsewhere this returns the
-  // input unchanged and the emitted profile is byte-identical to before.
-  assert.deepEqual(spellings('/Users/u/proj'), ['/Users/u/proj']);
-  assert.deepEqual(spellings('/etc'), ['/etc']);
-  assert.deepEqual(spellings('C:\\Users\\u'), ['C:\\Users\\u']);
-  assert.deepEqual(spellings('/private/var/folders/x'), ['/private/var/folders/x', '/var/folders/x']);
-  // The root is not under /private, and /private itself has no twin worth granting.
-  assert.deepEqual(spellings('/private'), ['/private']);
-  assert.deepEqual(spellings('/'), ['/']);
+  assert.ok(text.includes('(subpath "/private/var/folders/x/home/.ssh")'), 'the canonical deny');
+  assert.equal(text.includes('(subpath "/var/folders/x/home/.ssh")'), false, 'and no friendly twin — see the test name');
+  assert.equal(text.includes('(subpath "/var/folders/x/proj")'), false, 'nor on the allow side');
 });
 
 test('network on is refused, not rendered as a half-working profile', () => {
@@ -200,12 +190,8 @@ test('the private temp directory is writable AND readable, or a build cannot rea
 
   assert.ok(text.includes(`(subpath "/private/var/folders/x/T/cowcat-sandbox-1")`));
   // Writable from the write section, readable from the tail — the second is easy to
-  // forget and breaks every tool that writes then reads its own scratch file. Both
-  // spellings, because a tool that hardcodes /tmp must land in the same place.
-  assert.ok(
-    text.includes('(allow file-read* (subpath "/private/var/folders/x/T/cowcat-sandbox-1")\n  (subpath "/var/folders/x/T/cowcat-sandbox-1"))'),
-    'the scratch read allow covers both spellings',
-  );
+  // forget and breaks every tool that writes then reads its own scratch file.
+  assert.ok(text.includes('(allow file-read* (subpath "/private/var/folders/x/T/cowcat-sandbox-1"))'));
 });
 
 test('the open read profile admits what it costs', () => {
