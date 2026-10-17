@@ -8,6 +8,7 @@ import type { SessionState } from '../kernel/state.js';
 export * from './fs.js';
 export * from './platform.js';
 export * from './process.js';
+export * from './trust.js';
 
 export type ToolRisk = 'read' | 'write' | 'exec' | 'network';
 

@@ -67,7 +67,7 @@ node tools/check-tarball.mjs          # 发布白名单守卫（CI 会跑）
 - **`git commit -m "…"` 带引号会被截断** → 用 `git commit -F <文件>`
 - **`import('F:\\...')` 会被 ESM loader 拒绝**（`ERR_UNSUPPORTED_ESM_URL_SCHEME`）→ 用 `pathToFileURL(p).href`
 - **PowerShell 的 `Get-Content` / `Select-String` 行号在中文密集的 UTF-8 文件上不可靠**（按 ANSI 码页解码会把部分 `\n` 当尾字节吞掉，行被合并）。要准确行号用 `read`/`rg`，或 `node -e` 数
-- 嵌套引号会破坏复杂内联命令 → **写脚本文件**
+- 嵌套引号会破坏复杂内联命令 → **写脚本文件**。`node -e "..."` 里再套引号在 PowerShell 下**必然**被改写（实测三次），不要试第二次
 - 仓库统一 LF（`.gitattributes`），CRLF 的 shell 脚本在 POSIX 上会硬失败
 
 ## 别碰的东西

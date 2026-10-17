@@ -33,7 +33,8 @@ export {
   type RuleOrigin,
   type SourcedRule,
 } from './policy/config.js';
-export { trustedRules, type TrustState } from './policy/trust.js';
+export { trustedRules, isTrusted, type TrustState } from './policy/trust.js';
+export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';
 export {
   loadConfig,
   type ConfigError,
