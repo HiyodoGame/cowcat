@@ -37,6 +37,15 @@ export default tseslint.config(
               message:
                 'schemas belong to the decoding boundary; keep zod in src/adapters and let the kernel work on typed events (ADR-009)',
             },
+            {
+              // Same shape of rule, third reason: these are protocol clients, and the
+              // kernel reaches a model only through ModelPort (ADR-036). Its own
+              // pattern so the reported reason is "you crossed the port boundary",
+              // not "you touched the host runtime" or "you decoded something".
+              group: ['openai', 'openai/*', '@anthropic-ai/sdk', '@anthropic-ai/sdk/*'],
+              message:
+                'model protocol clients belong to src/adapters; the kernel talks to a model only through ModelPort (ADR-036)',
+            },
           ],
         },
       ],

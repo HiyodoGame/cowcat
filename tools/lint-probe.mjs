@@ -42,7 +42,10 @@ const PROBES = [
   { file: 'src/policy/env.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'stay runtime-agnostic' },
   { file: 'src/policy/env.ts', add: "import { z } from 'zod';", expect: 'message', match: 'decoding boundary' },
   { file: 'src/kernel/state.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'stay runtime-agnostic' },
+  { file: 'src/policy/trust.ts', add: "import OpenAI from 'openai';", expect: 'message', match: 'ModelPort' },
+  { file: 'src/ports/index.ts', add: "import Anthropic from '@anthropic-ai/sdk';", expect: 'message', match: 'ModelPort' },
   { file: 'src/adapters/node.ts', add: "import { spawn } from 'node:child_process';", expect: 'silent' },
+  { file: 'src/adapters/node.ts', add: "import OpenAI from 'openai';", expect: 'silent' },
 ];
 
 // JSON formatter, because the stylish one buries the message inside a table row — and
