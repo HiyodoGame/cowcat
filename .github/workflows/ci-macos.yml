@@ -1,4 +1,5 @@
-# CI (macOS) — the ONLY place the Seatbelt backend is verified for real.
+# CI (macOS) — the ONLY place the Seatbelt backend is verified for real, and the
+# ONLY place the v2 shell resolution is verified on a POSIX host.
 #
 # It used to run on PRs touching the sandbox and never on main pushes, because
 # macOS bills at 10x: measured 2026-10-16, 27 triggered runs cost 79 billable
@@ -12,6 +13,14 @@
 # required check safe. That puts the Seatbelt enforcement assertions
 # (test/sandbox-macos.test.mjs G1/G2/G3, private temp dir, `rm` still works) in
 # the merge gate instead of in a log nobody reads.
+#
+# Two jobs, not one: `test` is the legacy suite, `cowcat` is the v2 package. They
+# cover different ground — the legacy one needs `sandbox-exec` to actually apply a
+# profile, the v2 one needs a POSIX host to settle which shell gets picked. macOS
+# is the only place the second question can be answered, because macOS is the
+# platform where /bin/bash is NOT the default shell (docs/research/p2-shell-detection.md §3),
+# so `test/platform.test.ts`'s assertion that POSIX resolves /bin/bash is a real
+# measurement here and would pass trivially on Linux.
 #
 # Draft PRs are excluded for the same reason as ci.yml: they cannot be merged.
 # `workflow_dispatch` remains for re-running a specific case by hand.
@@ -78,3 +87,39 @@ jobs:
           node tools/seatbelt-smoke.mjs --net
       - name: Lint + tests (pretest runs eslint)
         run: npm test
+
+  cowcat:
+    # The v2 package on macOS. Same draft guard as the job above, no scope check:
+    # a required check that skips on some PRs blocks exactly those PRs, and the v2
+    # suite finishes in seconds, so there is nothing to gate.
+    name: packages/cowcat · node 22 · macos-15
+    runs-on: macos-15
+    timeout-minutes: 15
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/cowcat
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/cowcat/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+      # What this leg is really here for, printed where a reader of the log can see
+      # it: which shell the v2 resolver picks on macOS, and whether the Seatbelt
+      # probe really applies a profile here. It reads `dist/`, so it has to come
+      # after the test step — `npm test` is what builds.
+      - name: Report the resolved shell and sandbox verdict
+        run: |
+          node --input-type=module -e "
+          const { NodePlatform } = await import('./dist/src/index.js');
+          const p = new NodePlatform();
+          console.log('shell:', JSON.stringify(p.resolveShell()));
+          console.log('attempts:', JSON.stringify(p.shellAttempts()));
+          console.log('backends:', JSON.stringify(p.sandboxBackends()));
+          "

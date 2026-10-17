@@ -34,6 +34,7 @@ function aHeader(overrides: Partial<Extract<KernelEvent, { type: 'session.opened
     turnId: null,
     schemaVersion: SCHEMA_VERSION,
     cowcatVersion: '0.0.0-test',
+    shell: { kind: 'posix', executable: '/bin/sh' },
     ...overrides,
   };
 }
@@ -50,14 +51,31 @@ test('create writes the session header as the first event', async () => {
   assert.equal(header.cowcatVersion, '9.9.9');
 });
 
+test('the header records the shell the commands actually ran through', async () => {
+  const store = new MemoryEventStore();
+  // Absolute, because a bare name can resolve to a different tool entirely — on the
+  // reference machine `bash` on PATH is the WSL launcher (docs/research/p2-shell-detection.md).
+  const shell = { kind: 'git-bash', executable: 'E:\\WorkSoftwares\\Git\\bin\\bash.exe' } as const;
+  await Session.create(sessionDeps(store, { shell }), 'sess_shell');
+
+  assert.deepEqual(headerOf(store.events).shell, shell);
+});
+
 test('the header survives a round trip through disk', async () => {
   const dir = tempDir();
   try {
-    const deps = sessionDeps(new JsonlEventStore(dir), { cowcatVersion: '9.9.9' });
+    const deps = sessionDeps(new JsonlEventStore(dir), {
+      cowcatVersion: '9.9.9',
+      shell: { kind: 'git-bash', executable: 'E:\\WorkSoftwares\\Git\\bin\\bash.exe' },
+    });
     const created = await Session.create(deps, 'sess_round');
     const reopened = await Session.open(deps, 'sess_round');
 
-    assert.equal(headerOf(await deps.store.readAll('sess_round')).cowcatVersion, '9.9.9');
+    // Read back through the zod decoder, not from the object we just wrote: the field
+    // is only useful if it survives the format.
+    const decoded = headerOf(await deps.store.readAll('sess_round'));
+    assert.equal(decoded.cowcatVersion, '9.9.9');
+    assert.deepEqual(decoded.shell, { kind: 'git-bash', executable: 'E:\\WorkSoftwares\\Git\\bin\\bash.exe' });
     assert.deepEqual(reopened.state, created.state);
   } finally {
     rmSync(dir, { recursive: true, force: true });

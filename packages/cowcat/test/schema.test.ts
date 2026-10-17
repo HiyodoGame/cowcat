@@ -23,6 +23,7 @@ const header: KernelEvent = {
   type: 'session.opened',
   schemaVersion: SCHEMA_VERSION,
   cowcatVersion: '0.0.0-test',
+  shell: { kind: 'posix', executable: '/bin/sh' },
 };
 const turnOpened: KernelEvent = {
   seq: 2,

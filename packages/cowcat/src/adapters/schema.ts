@@ -44,12 +44,24 @@ const base = {
   turnId: z.string().nullable(),
 };
 
+// The shell a session's commands ran through: a durable fact, so required rather than
+// optional. That does not conflict with the "open objects" rule above, which is about
+// a NEWER build meeting an OLD log's extra keys — the opposite direction. This field
+// only appears in schemaVersion 1 because version 1 has never been released (the
+// package is `private: 0.0.0`), so no existing log is missing it; changing the
+// required header fields from here on means bumping schemaVersion (ADR-012).
+const sessionShellSchema = z.object({
+  kind: z.enum(['posix', 'git-bash', 'powershell', 'cmd']),
+  executable: z.string(),
+});
+
 export const kernelEventSchema = z.discriminatedUnion('type', [
   z.object({
     ...base,
     type: z.literal('session.opened'),
     schemaVersion: z.number().int().positive(),
     cowcatVersion: z.string(),
+    shell: sessionShellSchema,
   }),
   z.object({ ...base, type: z.literal('turn.opened'), input: z.string() }),
   z.object({
