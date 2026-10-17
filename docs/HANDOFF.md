@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-18**（本次会话：T7 已合入 `main`；T6 的决策与 T6a 在未合 PR 上）
-> 交接时仓库状态：`main` = `38acc3a`；未合分支 `feat/p4-t6a-reasoning-contract`（含 PR #36 与 #37 的提交）；本交接在 `docs/handoff-session-2026-10-18` 上
+> 最近一次更新：**2026-10-18**（#36–#39 已全部合入；T6a 与 T6b 已实现、T6c 未开始）
+> 交接时仓库状态：`main` = `edc1ae8`（#36–#39 相加后的树）；T6b 在 `feat/p4-t6b-reasoning-adapters` 上
 >
 > **证据分级**（本文件只用这几档，逐条标注）：
 > **【源码】**读代码 / 读装机类型（`node_modules` 里的 SDK 类型也算源码）；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【CI 远端】**GitHub Actions 的运行结果（**我只观察状态，未在本地复现**）；**【上游】**厂商文档，未经端点实测。
@@ -19,8 +19,8 @@
 |---|---|---|
 | **T7 出口标准**（ADR-043） | `test/exit-criteria.test.ts`、配对夹具 `paired/final-text`、`fixtures.test.ts` 扩到两个 scenario | PR **#35**，已 squash 合入 `main`（`38acc3a`） |
 | **合并上一会话的交接快照** | PR **#33** | 我只执行了合并动作，**内容不是我写的**（上一会话的 P4 T1–T5 快照，含其 8 个 PR 的记录） |
-| **T6 决策**（ADR-045/046 + 拆成 T6a/b/c） | `architecture/README.md` 两条 ADR、`dev-plan-v2.md` 任务表、HANDOFF/research 状态 | PR **#36**，**OPEN**（docs-only） |
-| **T6a 契约与类型**（推理内容进契约） | `ModelChunk.reasoning` / `Message.assistant.reasoning` / `model.message.reasoning` + 解码边界 + 等价断言 + 3 条测试 | PR **#37**，**OPEN**（base 叠在 #36 上） |
+| **T6 决策**（ADR-045/046 + 拆成 T6a/b/c） | `architecture/README.md` 两条 ADR、`dev-plan-v2.md` 任务表、HANDOFF/research 状态 | PR **#36**，已 squash 合入 `main`（`a2bb5ed`） |
+| **T6a 契约与类型**（推理内容进契约） | `ModelChunk.reasoning` / `Message.assistant.reasoning` / `model.message.reasoning` + 解码边界 + 等价断言 + 3 条测试 | PR **#37** → rebase 后以 **#39** 重开 → 已 squash 合入 `main`（`edc1ae8`） |
 
 三件工作的细节：
 
@@ -42,7 +42,7 @@
 
 ### 已验证 —— 本机【本机测试】（Windows，Node 24.18.0）
 
-- `cd packages/cowcat && npm test`（`pretest` = `tsc` 构建 + ESLint）→ **416 tests / 400 pass / 0 fail / 16 skipped**（T7 之前是 406，T6a 之前是 413）
+- `cd packages/cowcat && npm test`（`pretest` = `tsc` 构建 + ESLint）→ **432 tests / 416 pass / 0 fail / 16 skipped**（T6b 之前是 416，T6a 之前是 413）
 - `node tools/lint-probe.mjs` **7 条探针全部按预期**；`node tools/check-tarball.mjs` 通过
 
 ### 已验证 —— CI 远端【CI 远端】（GitHub Actions，我只观察状态）
@@ -59,7 +59,7 @@
 
 ### 项目状态
 
-- `main` = `38acc3a`（含 P4 T1–T5 与 T7）；**T6 的决策与 T6a 尚未合入 `main`**（#36 / #37 仍 OPEN）。
+- `main` = `edc1ae8`（含 P4 T1–T5、T7 与 T6a；#36–#39 已全部合入）；**T6b 在未合 PR 上，T6c 未开始**。
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019：v2 日志格式从未发布，契约变更不升版本）。
 - 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——本次会话未增删任何依赖。
 - **平台 / 工作区设置本次会话未变更**（未调用 `opencode_console` 的任何写操作）。若需确认，请单独核对工作区设置与模型开关。
@@ -69,17 +69,17 @@
 | # | 范围 | 状态 |
 |---|---|---|
 | 1 | `ModelPort` 适配器（OpenAI 兼容 + Anthropic） | ✅ T2/T3 已合 |
-| 2 | 流式归一化 → `ModelChunk` | ✅ 含用量与结束原因；**推理内容的契约见 T6a（未合）** |
+| 2 | 流式归一化 → `ModelChunk` | ✅ 含用量、结束原因与推理（T6a 契约 + T6b 适配器读写） |
 | 3 | 重试与退避 | ✅ T5 已合 |
-| 4 | 录制-回放夹具 | ✅ T4 已合（T7 又加了一对 `paired/final-text`） |
-| 5 | 模型预设以数据形式存在 | ⚠️ 决策已落（ADR-045/046）、**T6a 已实现契约部分**；T6b/T6c 未开始 |
+| 4 | 录制-回放夹具 | ✅ T4 已合（T7 又加了一对 `paired/final-text`；T6b 加了合成钉板 `synthetic/thinking-precedes`） |
+| 5 | 模型预设以数据形式存在 | ⚠️ 决策已落（ADR-045/046）；T6a/T6b 已实现契约与适配器，**T6c（预设进内核）未开始** |
 
 ### P4 两条出口标准（ADR-043）—— 均已兑现（**已合入 `main`**）
 
 - **「同一回合脚本在两种协议的录制夹具上得到相同的事件序列（归一化后）」**——成立：`test/exit-criteria.test.ts` 把配对夹具过一次 `runTurn`，两个协议对**同一份写死的 golden**；投影口径按 ADR-043（含其第 ⑤ 点：用量按「一次调用取最后一次」折叠后再比，报几次属传输层形态）。
 - **「取消在流式中途生效，且不产生半条 `model.message`」**——成立：同文件两个协议各一条端到端断言（真实适配器 + 开而不闭的 transport，等到 `model.usage` 进日志再 abort）：状态 `cancelled`、零 `model.message`、**用量留痕**、日志尾部是取消转移。
 
-### T6a 落地的契约点（**未合**，PR #37）
+### T6a 落地的契约点（已合，`edc1ae8`）
 
 | 落点 | 内容 |
 |---|---|
@@ -94,21 +94,21 @@
 
 ## 3. 项目唯一下一步
 
-**P4 的 T6b**，以及在它之前先把 #36 合掉并 rebase #37。
+**P4 的 T6b（已落地，本 PR）与 T6c（未开始）。**
 
-### 合并顺序（有前置，别弄反）
+### 合并顺序（已执行完毕）
 
-1. **先合 PR #36**（base 是 `main`，docs-only）。
-2. 我随后把 `feat/p4-t6a-reasoning-contract` **rebase 到 `main`** 并**重开 PR**：#37 的 base 是 `docs/p4-t6-adrs`（#36 的分支），而**base 分支被删会让 GitHub 直接关闭 PR 且无法重开**（本次在 #34 上实测过）。重开时校验「树内容与 rebase 前一致」（`git diff <旧 tip> HEAD` 为空），本机验证结论因此继续成立。
-3. 本交接（`docs/HANDOFF.md`）与 #36/#37 改过同一批文档行，合并时可能需要一次 rebase；**以本文件的版本为准**（它是最终状态的快照）。
+过去时的记录：**#36 先合**（`a2bb5ed`），`feat/p4-t6a-reasoning-contract` 随后 **rebase 到 `main` 并以 #39 重开**——#37 按预期被「base 分支删除」关闭（重开前校验过 `git diff 124bbd4 HEAD` 为空，树逐字一致），#39 与 #38（本交接）相继合入。**本交接与 #36/#37 的文档行冲突**在三次 rebase（#38、#39 重开、T6b）中都以「以交接版本为准」解决。
 
-### T6b：两个适配器的读写（ADR-038/045）
+### T6b：两个适配器的读写（ADR-038/045）—— 已落地（本 PR）
 
 1. **读**：OpenAI 兼容侧取 `delta.reasoning_content ?? delta.reasoning`（v1 的取法见 `agent/src/llm/openai.js:6-12`）→ 发 `{type:'reasoning'}`，签名填空串；Anthropic 侧聚合 `thinking_delta` 并按 **`signature_delta`** 补齐签名（签名在 `content_block_stop` **之前**到达），脱敏块发 `{type:'redacted';data}`。
 2. **写**：只在**预设声明时**把历史里的推理块回传；Anthropic 侧必须**原样、原顺序、签名完整**（改一个字节 = 400 `invalid_request_error`，SDK 类型文档写明）。
 3. **`providerOptions` 序列化** + 两类适配器才知道的检查：**保留字**（不许覆盖 `model`/`messages`/`stream`/`max_tokens`）与**协议不变量**（如 `thinking.budget_tokens ≥ 1024 且 < max_tokens`）→ 违反就抛错，不硬发。
 4. **`maxTokens` 接线**。
 5. 顺带用夹具核一条**回放假设**：thinking 块在一个 assistant 回合里**恒在文本与工具调用之前**（契约不单独存块的位置，靠这条事实重构顺序）。
+
+**落点**：`model-openai.ts` / `model-anthropic.ts`。两条 T6b 才定的细节：① OpenAI 侧的回传开关是预设数据里的 **`providerOptions.reasoning_replay`**（值 = wire 字段名；缺省即不回传——「哪个字段、要不要回传」属未实测，【上游】只说 MiniMax 要求，所以交给数据、不设默认）；② Anthropic 侧「声明 `thinking`（且非 `disabled`）即回传」，thinking/redacted 块放 content 首部。保留字两边各六项，`budget_tokens` 越界即抛错（不硬发）。**「thinking 前置」由合成夹具钉住（`synthetic/thinking-precedes`）——不是实测**，真实录制仍待。**【本机测试】416 → 432**。
 
 ### T6c：预设进内核（ADR-046）
 
@@ -170,8 +170,8 @@
 
 ### 合并与流程（**当下就要处理**）
 
-1. **#36 与 #37 都未合**；#37 的 base 是 #36 的分支，**先合 #36**（详见 §3 的合并顺序）。
-2. **本交接文件与 #36/#37 改过同一批文档行**，合并时可能需要 rebase，以本文件为准。
+1. ~~**#36 与 #37 都未合**~~：**已全部合入**（#36 → #39 重开 → #38；`main` = `edc1ae8`），合并顺序见 §3 的过去时记录。
+2. ~~**本交接文件与 #36/#37 改过同一批文档行**~~：三次 rebase（#38、#39 重开、T6b）都已按「以交接版本为准」解决。
 
 ### 厂商行为：有出处但**未实测**
 
@@ -183,7 +183,7 @@
 
 ### 已知缺口（**不声称已解决**）
 
-1. **「thinking 块恒在文本与工具调用之前」**：契约不单独存块的位置，回放靠这条协议事实——**待 T6b 用夹具核**；若某家交错出现，要扩契约。
+1. **「thinking 块恒在文本与工具调用之前」**：契约不单独存块的位置，回放靠这条协议事实。T6b 已用**合成夹具**（`synthetic/thinking-precedes`）钉住并加了回放断言，但**那不是实测**——真实端点的录制出现前它仍是【推断】；若某家交错出现，要扩契约。
 2. **`ReasoningBlock` 是厂商块的封闭子集**：厂商将来在块里加字段时，解码边界（zod 默认 strip 未知键，方向本身对）会静默丢掉 → 回放即「被修改过的块」→ 400。已记档（ADR-045），**未处理**。
 3. **产出 catalog 的蒸馏脚本不在仓库里**（`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不存在）→ **「预设怎么更新」仍未定**（ADR-037/046 都记为遗留）。
 4. **`README.md` 的状态行滞后**——【源码】已核实两处：`README.md:15` 写「已发布 `0.15.0`」而 `agent/package.json` 是 `0.16.0`；`README.md:16` 的 v2 状态还写着「P2『端口与执行网关』起继续推进」，实际已到 P4 T6。**哪个是最近一次真实发布未核实**（需要查 npm registry）。

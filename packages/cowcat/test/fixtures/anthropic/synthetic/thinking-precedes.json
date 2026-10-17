@@ -1,0 +1,12 @@
+{
+  "description": "钉板（合成字节，不是录制）：thinking 块先于文本与工具调用。契约不存推理块的位置（ADR-045），Anthropic 侧的回放靠「thinking 前置」这条协议事实把块放回 content 首部——这与 paired 夹具不同，没有真实端点为它背书。真实录制出现后应以它复核此假设；在那之前，这条夹具钉住的是我们写下的字节，不是线上的实测。",
+  "urlPath": "/v1/messages",
+  "body": { "model": "fixture-model", "max_tokens": 1024, "stream": true },
+  "logical": {
+    "text": "Reading it.",
+    "toolCalls": [{ "name": "read_file", "input": { "path": "a.txt" } }],
+    "usage": { "input": 12, "output": 34, "cacheRead": 0, "cacheCreation": 0 },
+    "stopKind": "toolCalls",
+    "reasoning": [{ "type": "thinking", "text": "Let me think.", "signature": "sig_fix_opaque" }]
+  }
+}

@@ -205,6 +205,134 @@ test('the base URL is honoured, so a compatible endpoint is the same code path',
   assert.match(r.requests[0]?.url ?? '', /^https:\/\/api\.deepseek\.com\/chat\/completions/);
 });
 
+test('reasoning arrives as one whole block, in front of the text it precedes', async () => {
+  // The contract records whole blocks, not deltas (ADR-045), so the adapter is where
+  // deltas stop being deltas: the run ends the moment real content starts, and the
+  // block goes out whole, ahead of it.
+  const r = replay([
+    chunk({ reasoning_content: 'let me ' }),
+    chunk({ reasoning_content: 'think' }),
+    chunk({ content: 'answer' }),
+    chunk({}, 'stop'),
+  ]);
+  const parts = await collect(openAIModel({ apiKey: 'k', fetch: r.fetch }), request());
+
+  assert.deepEqual(parts, [
+    { type: 'reasoning', block: { type: 'thinking', text: 'let me think', signature: '' } },
+    { type: 'text', text: 'answer' },
+    { type: 'stop', reason: { kind: 'end', raw: 'stop' } },
+  ]);
+});
+
+test('the o-series spelling `reasoning` is read the same way', async () => {
+  const r = replay([chunk({ reasoning: 'hmm' }), chunk({ content: 'ok' }, 'stop')]);
+  const parts = await collect(openAIModel({ apiKey: 'k', fetch: r.fetch }), request());
+
+  assert.deepEqual(parts.filter((p) => p.type === 'reasoning'), [
+    { type: 'reasoning', block: { type: 'thinking', text: 'hmm', signature: '' } },
+  ]);
+});
+
+test('a stream that reasons and then simply stops still flushes the open block', async () => {
+  const r = replay([chunk({ reasoning_content: 'alone' }), chunk({}, 'length')]);
+  const parts = await collect(openAIModel({ apiKey: 'k', fetch: r.fetch }), request());
+
+  assert.deepEqual(parts.filter((p) => p.type === 'reasoning'), [
+    { type: 'reasoning', block: { type: 'thinking', text: 'alone', signature: '' } },
+  ]);
+});
+
+test('reasoning is replayed only when the preset names a field for it', async () => {
+  // Whether — and under which field — an endpoint wants the reasoning back is not
+  // measured anywhere (ADR-045), so the preset declares the field and absence means
+  // "no": an adapter default would be a guess about unknown vendor behaviour.
+  const messages: Message[] = [
+    { role: 'user', text: 'hi' },
+    {
+      role: 'assistant',
+      text: 'answer',
+      toolCalls: [],
+      reasoning: [
+        { type: 'thinking', text: 'first part', signature: '' },
+        { type: 'thinking', text: ' second part', signature: '' },
+      ],
+    },
+    { role: 'user', text: 'again' },
+  ];
+
+  const withoutDeclaration = replay([chunk({ content: 'x' }, 'stop')]);
+  await collect(openAIModel({ apiKey: 'k', fetch: withoutDeclaration.fetch }), request({ messages }));
+  const plain = (withoutDeclaration.requests[0]?.body.messages as Record<string, unknown>[])[1];
+  assert.equal(plain?.reasoning_content, undefined);
+
+  const declared = replay([chunk({ content: 'x' }, 'stop')]);
+  await collect(
+    openAIModel({ apiKey: 'k', fetch: declared.fetch }),
+    request({ messages, providerOptions: { reasoning_replay: 'reasoning_content' } }),
+  );
+  const body = declared.requests[0]?.body ?? {};
+  const withReasoning = (body.messages as Record<string, unknown>[])[1];
+  // One string in arrival order: this protocol's field has no notion of blocks.
+  assert.equal(withReasoning?.reasoning_content, 'first part second part');
+  // The declaration is an instruction to this adapter, not a wire parameter.
+  assert.equal('reasoning_replay' in body, false);
+});
+
+test('declared parameters are relayed as-is; a field the adapter builds is refused', async () => {
+  const relayed = replay([chunk({ content: 'x' }, 'stop')]);
+  await collect(
+    openAIModel({ apiKey: 'k', fetch: relayed.fetch }),
+    request({ providerOptions: { reasoning_effort: 'max', temperature: 0.5 } }),
+  );
+  const relayedBody: Record<string, unknown> = relayed.requests.at(0)?.body ?? {};
+  assert.equal(relayedBody.reasoning_effort, 'max');
+  assert.equal(relayedBody.temperature, 0.5);
+
+  // The fields the adapter constructs itself (ADR-046): overwriting one would make the
+  // request disagree with the contract the kernel recorded, so it is refused instead.
+  for (const field of ['model', 'messages', 'stream', 'stream_options', 'tools', 'max_tokens']) {
+    const r = replay([chunk({ content: 'x' }, 'stop')]);
+    await assert.rejects(
+      () => collect(openAIModel({ apiKey: 'k', fetch: r.fetch }), request({ providerOptions: { [field]: 1 } })),
+      new RegExp(`may not set "${field}"`),
+      field,
+    );
+  }
+});
+
+test('a reasoning_replay declaration that names no field is refused', async () => {
+  for (const bad of [true, '']) {
+    const r = replay([chunk({ content: 'x' }, 'stop')]);
+    await assert.rejects(
+      () =>
+        collect(
+          openAIModel({ apiKey: 'k', fetch: r.fetch }),
+          request({ providerOptions: { reasoning_replay: bad } }),
+        ),
+      /reasoning_replay must name a non-empty wire field/,
+      JSON.stringify(bad),
+    );
+  }
+});
+
+test('a reasoning_replay declaration may not name a field the adapter builds', async () => {
+  // Replay adds a field to the assistant message; pointing it at `role`/`content`/
+  // `tool_calls` would overwrite the message it rides on, and the request-level names
+  // would shadow the contract (ADR-044: refuse, do not send).
+  for (const bad of ['role', 'content', 'tool_calls', 'model', 'messages', 'max_tokens']) {
+    const r = replay([chunk({ content: 'x' }, 'stop')]);
+    await assert.rejects(
+      () =>
+        collect(
+          openAIModel({ apiKey: 'k', fetch: r.fetch }),
+          request({ providerOptions: { reasoning_replay: bad } }),
+        ),
+      /may not name/,
+      bad,
+    );
+  }
+});
+
 test('aborting mid-stream ends the iteration, so cancellation really takes effect', async () => {
   const r = openEndedTransport(sse([chunk({ content: 'x' })]));
   const controller = new AbortController();

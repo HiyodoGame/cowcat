@@ -47,6 +47,37 @@ const messageDelta = (stopReason: string | null, outputTokens: number) => ({
   usage: { output_tokens: outputTokens },
 });
 
+const thinkingStart = (index: number) => ({
+  type: 'content_block_start',
+  index,
+  content_block: { type: 'thinking', thinking: '', signature: '' },
+});
+const thinkingDelta = (index: number, text: string) => ({
+  type: 'content_block_delta',
+  index,
+  delta: { type: 'thinking_delta', thinking: text },
+});
+const signatureDelta = (index: number, signature: string) => ({
+  type: 'content_block_delta',
+  index,
+  delta: { type: 'signature_delta', signature },
+});
+const redactedStart = (index: number, data: string) => ({
+  type: 'content_block_start',
+  index,
+  content_block: { type: 'redacted_thinking', data },
+});
+const textStartAt = (index: number) => ({
+  type: 'content_block_start',
+  index,
+  content_block: { type: 'text', text: '' },
+});
+const textDeltaAt = (index: number, text: string) => ({
+  type: 'content_block_delta',
+  index,
+  delta: { type: 'text_delta', text },
+});
+
 function model(r: ReplayTransport) {
   return anthropicModel({ apiKey: 'k', fetch: r.fetch });
 }
@@ -215,6 +246,173 @@ test('the base URL is honoured, so a compatible endpoint is the same code path',
   await collect(anthropicModel({ apiKey: 'k', baseURL: 'https://api.minimax.cn/anthropic', fetch: r.fetch }), request());
 
   assert.match(r.requests[0]?.url ?? '', /^https:\/\/api\.minimax\.cn\/anthropic\/v1\/messages/);
+});
+
+test('a thinking block is assembled from its deltas and flushed whole when it stops', async () => {
+  const r = replayTransport(
+    sse([
+      messageStart({ input_tokens: 5 }),
+      thinkingStart(0),
+      thinkingDelta(0, 'let me '),
+      thinkingDelta(0, 'think'),
+      // The signature arrives just before the block stops (messages.d.ts:3787-3794),
+      // which is exactly why the contract cannot record per-delta facts: a delta stream
+      // would have to be reassembled into this one block to be replayable at all.
+      signatureDelta(0, 'sig-opaque'),
+      blockStop(0),
+      textStartAt(1),
+      textDeltaAt(1, 'answer'),
+      blockStop(1),
+      messageDelta('end_turn', 4),
+      messageStop,
+    ]),
+  );
+  const parts = await collect(model(r), request());
+
+  assert.deepEqual(
+    parts.filter((p) => p.type === 'reasoning' || p.type === 'text'),
+    [
+      { type: 'reasoning', block: { type: 'thinking', text: 'let me think', signature: 'sig-opaque' } },
+      { type: 'text', text: 'answer' },
+    ],
+  );
+});
+
+test('a redacted block comes through as the payload it carried', async () => {
+  const r = replayTransport(
+    sse([messageStart({ input_tokens: 5 }), redactedStart(0, 'encrypted-blob'), blockStop(0), messageStop]),
+  );
+  const parts = await collect(model(r), request());
+
+  assert.deepEqual(parts.filter((p) => p.type === 'reasoning'), [
+    { type: 'reasoning', block: { type: 'redacted', data: 'encrypted-blob' } },
+  ]);
+});
+
+test('thinking goes back first and untouched when the preset enables it', async () => {
+  const r = replayTransport(sse([messageStart({ input_tokens: 1 }), messageStop]));
+  await collect(
+    model(r),
+    request({
+      maxTokens: 4096,
+      providerOptions: { thinking: { type: 'enabled', budget_tokens: 2048 } },
+      messages: [
+        { role: 'user', text: 'hi' },
+        {
+          role: 'assistant',
+          text: 'answer',
+          toolCalls: [],
+          reasoning: [
+            { type: 'thinking', text: 'why', signature: 'sig-opaque' },
+            { type: 'redacted', data: 'encrypted-blob' },
+          ],
+        },
+        { role: 'user', text: 'again' },
+      ],
+    }),
+  );
+
+  const body = r.requests[0]?.body ?? {};
+  assert.deepEqual(body.thinking, { type: 'enabled', budget_tokens: 2048 });
+  // Ahead of the text, in their original order, signatures intact (ADR-045).
+  assert.deepEqual((body.messages as { content: unknown }[])[1]?.content, [
+    { type: 'thinking', thinking: 'why', signature: 'sig-opaque' },
+    { type: 'redacted_thinking', data: 'encrypted-blob' },
+    { type: 'text', text: 'answer' },
+  ]);
+});
+
+test('without a thinking declaration the reasoning stays out of the request', async () => {
+  const r = replayTransport(sse([messageStart({ input_tokens: 1 }), messageStop]));
+  await collect(
+    model(r),
+    request({
+      messages: [
+        { role: 'user', text: 'hi' },
+        {
+          role: 'assistant',
+          text: 'answer',
+          toolCalls: [],
+          reasoning: [{ type: 'thinking', text: 'why', signature: 'sig-opaque' }],
+        },
+      ],
+    }),
+  );
+
+  const body = r.requests[0]?.body ?? {};
+  assert.equal('thinking' in body, false);
+  assert.deepEqual((body.messages as { content: unknown }[])[1]?.content, [{ type: 'text', text: 'answer' }]);
+});
+
+test('a disabled thinking declaration carries no reasoning back', async () => {
+  // `disabled` says the model will not think this turn, so replaying a block would
+  // contradict the declaration itself. Untested against a live endpoint either way —
+  // this is the side that cannot break a chain.
+  const r = replayTransport(sse([messageStart({ input_tokens: 1 }), messageStop]));
+  await collect(
+    model(r),
+    request({
+      providerOptions: { thinking: { type: 'disabled' } },
+      messages: [
+        { role: 'user', text: 'hi' },
+        {
+          role: 'assistant',
+          text: 'answer',
+          toolCalls: [],
+          reasoning: [{ type: 'thinking', text: 'why', signature: 'sig-opaque' }],
+        },
+      ],
+    }),
+  );
+
+  const body = r.requests[0]?.body ?? {};
+  // The declaration itself is still relayed — it is the preset's parameter, not ours.
+  assert.deepEqual(body.thinking, { type: 'disabled' });
+  assert.deepEqual((body.messages as { content: unknown }[])[1]?.content, [{ type: 'text', text: 'answer' }]);
+});
+
+test('a declared parameter that collides with a field the adapter builds is refused', async () => {
+  for (const field of ['model', 'messages', 'stream', 'tools', 'max_tokens', 'system']) {
+    const r = replayTransport(sse([messageStart({ input_tokens: 1 }), messageStop]));
+    await assert.rejects(
+      () => collect(model(r), request({ providerOptions: { [field]: 1 } })),
+      new RegExp(`may not set "${field}"`),
+      field,
+    );
+  }
+});
+
+test('budget_tokens is checked against its documented bounds before anything is sent', async () => {
+  // The SDK's own type documentation carries this bound: ≥1024 and < max_tokens
+  // (messages.d.ts:3958-3970). Failing here names the culprit; sending would be a 400.
+  const cases: readonly { readonly label: string; readonly budget: unknown }[] = [
+    { label: 'below the floor', budget: 1023 },
+    { label: 'at max_tokens', budget: 4096 },
+    { label: 'not a number', budget: 'lots' },
+    { label: 'not an integer', budget: 1024.5 },
+    { label: 'missing', budget: undefined },
+  ];
+  for (const scenario of cases) {
+    const r = replayTransport(sse([messageStart({ input_tokens: 1 }), messageStop]));
+    await assert.rejects(
+      () =>
+        collect(
+          model(r),
+          request({ maxTokens: 4096, providerOptions: { thinking: { type: 'enabled', budget_tokens: scenario.budget } } }),
+        ),
+      /budget_tokens/,
+      scenario.label,
+    );
+    assert.equal(r.requests.length, 0, `${scenario.label}: nothing may be sent`);
+  }
+});
+
+test('a thinking declaration that is not an object is refused', async () => {
+  const r = replayTransport(sse([messageStart({ input_tokens: 1 }), messageStop]));
+  await assert.rejects(
+    () => collect(model(r), request({ providerOptions: { thinking: true } })),
+    /providerOptions\.thinking must be an object/,
+  );
 });
 
 test('aborting mid-stream ends the iteration, so cancellation really takes effect', async () => {
