@@ -1,8 +1,19 @@
+import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { ToolCall } from './messages.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
+
+/**
+ * How long an approval may wait before it is refused (ADR-032).
+ *
+ * A timeout is a rejection, not an error: unattended work has to end in a recorded
+ * refusal rather than in an approval nobody gave. Five minutes because a person
+ * reading a diff or a command needs to be able to think, and an agent that treats a
+ * pause as a no would be unusable interactively.
+ */
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 300_000;
 
 export interface TurnDeps {
   readonly session: Session;
@@ -15,7 +26,14 @@ export interface TurnDeps {
    * port, so the kernel still touches no host runtime.
    */
   readonly fs: FsPort;
-  readonly approve: (request: ActionRequest, decision: Decision) => Promise<boolean>;
+  /**
+   * Asks whoever is in front of the session. The answer is a verdict, not a boolean:
+   * `once` and `always` both let the call run but mean different things afterwards
+   * (ADR-031 decision 2).
+   */
+  readonly approve: (request: ActionRequest, decision: Decision) => Promise<ApprovalVerdict>;
+  /** Overrides DEFAULT_APPROVAL_TIMEOUT_MS. Tests use a short one. */
+  readonly approvalTimeoutMs?: number;
   readonly ids: IdSource;
 }
 
@@ -138,6 +156,64 @@ function actionFields(fs: FsPort, spec: ToolSpec, input: unknown): Pick<ActionRe
   };
 }
 
+// Words for the two ways a question ends badly. They are different on purpose: a
+// user who said no and a session that waited too long are not the same fact, and the
+// model is told which one happened so it can react differently.
+const REJECTED_BY_USER = 'rejected by user';
+const REJECTED_BY_TIMEOUT = 'rejected: no answer within the approval timeout';
+
+interface ApprovalOutcome {
+  readonly verdict: ApprovalVerdict;
+  readonly by: ApprovalBy;
+}
+
+/**
+ * Waits for an answer, but not forever (ADR-032), and not past a cancellation.
+ *
+ * The abort handling is a fix rather than a port: the legacy implementation's
+ * approval was a bare `await`, so `signal` was never consulted while a question was
+ * open — a cancelled session sat on the question until the human answered it. The
+ * listener is removed in `finally`, otherwise every call would leave one behind on a
+ * long-lived signal.
+ */
+async function askForApproval(
+  deps: TurnDeps,
+  request: ActionRequest,
+  decision: Decision,
+  signal: AbortSignal,
+): Promise<ApprovalOutcome> {
+  const limit = deps.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<ApprovalOutcome>((resolve, reject) => {
+      const abort = (): void => {
+        reject(new TurnAborted('aborted while waiting for approval'));
+      };
+      timer = setTimeout(() => {
+        resolve({ verdict: 'reject', by: 'timeout' });
+      }, limit);
+      if (signal.aborted) {
+        abort();
+        return;
+      }
+      onAbort = abort;
+      signal.addEventListener('abort', onAbort, { once: true });
+      deps.approve(request, decision).then(
+        (verdict) => {
+          resolve({ verdict, by: 'user' });
+        },
+        (error: unknown) => {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
+    });
+  } finally {
+    clearTimeout(timer);
+    if (onAbort !== undefined) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
   const { session } = deps;
   const turnId = session.turnId;
@@ -158,11 +234,48 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   if (decision.verdict === 'deny') {
     return { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` };
   }
+
   if (decision.verdict === 'ask') {
-    await session.transition('awaiting_approval', decision.rule);
-    const approved = await deps.approve(request, decision);
-    await session.transition('awaiting_tools');
-    if (!approved) return { ok: false, output: 'rejected by user' };
+    const key = approvalKey(request);
+    if (session.state.grants.includes(key)) {
+      // A standing `always` from earlier in this session (ADR-031 decision 3). No
+      // question is asked — it was already answered, and asking again is theatre —
+      // but the answer IS recorded, with `by: 'policy'`, so the log does not show an
+      // `ask` that was somehow ignored. The `key` is the link back to that question.
+      await session.emit({
+        type: 'approval.answered',
+        turnId,
+        callId: call.callId,
+        key,
+        verdict: 'always',
+        by: 'policy',
+      });
+    } else {
+      await session.transition('awaiting_approval', decision.rule);
+      // The question is written before it is asked, so a log that ends here says what
+      // was being asked instead of leaving a hole.
+      await session.emit({
+        type: 'approval.requested',
+        turnId,
+        callId: call.callId,
+        name: call.name,
+        rule: decision.rule,
+        reason: decision.reason,
+      });
+      const outcome = await askForApproval(deps, request, decision, signal);
+      await session.emit({
+        type: 'approval.answered',
+        turnId,
+        callId: call.callId,
+        key,
+        verdict: outcome.verdict,
+        by: outcome.by,
+      });
+      await session.transition('awaiting_tools');
+      if (outcome.verdict === 'reject') {
+        return { ok: false, output: outcome.by === 'timeout' ? REJECTED_BY_TIMEOUT : REJECTED_BY_USER };
+      }
+    }
   }
 
   try {

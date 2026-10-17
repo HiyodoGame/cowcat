@@ -66,6 +66,22 @@
 - 判定按**目录身份精确匹配、无继承**（`isTrusted`）。子目录必须自己被信任过；父目录不会被顺带信任。这是上一阶段实测过的旧版语义（调研探针 T4/T5），不是假设。
 - **`canonical` 只能纠正真实存在目录的大小写**：最深已存在祖先回退会把尾巴原样接回去（ADR-017）。所以一个拼错的路径**保持为不同的身份**——这正是想要的，信任一个错字不该顺带信任真目录。
 
+### 审批协议（ADR-031、ADR-032）
+
+回答只有三种：`once` / `always` / `reject`（ADR-031 决定 2）。**超时是拒绝，不是错误**，`by: 'timeout'` 把它与人说的话区分开——`tool.finished` 的文案也不同（`rejected by user` vs `rejected: no answer within the approval timeout`），好让模型知道发生的是哪一件。默认等待 `DEFAULT_APPROVAL_TIMEOUT_MS = 300_000`（5 分钟，够人读完一段 diff，又不至于让无人值守挂死）。
+
+**顺带修掉一处旧版缺口**：旧实现的审批是一个裸 `await`，`signal` 全程不被检查——一个被取消的会话会一直停在问题上等人回答。现在等待期间也响应取消（监听器在 `finally` 里摘掉，否则长生命周期的 signal 上会越积越多）。
+
+**`always` 的粒度是「这一个动作」**，不是「这个工具」（ADR-031 决定 3）。键由 `approvalKey` 算：
+
+```ts
+request.command ?? request.path ?? JSON.stringify(request.input ?? null)
+```
+
+即 Bash 按整条命令、文件工具按路径、其余按整个入参——与旧版 `pickKeyInput` 的做法一致。**只按工具名做键是不安全的**：那会让「批准了一条 `Bash`」变成「本次会话内所有 `Bash` 都放行」，而旧版正是刻意避免这一点。
+
+**两条旧版缺口在 v2 里还封不了**，因为它们依赖的功能 v2 还没有：`subagent.js:58` 从 `tools === null` 推断出 yolo 权限、`planmode.js:122` 的 `allowedPrompts` 绕过 `validateRule` 直注入 `rules.allow`。v2 既没有子 agent 工具也没有 plan 模式，**没有可封的代码**。它们记在这里作为**未来实现这两处时的约束**（ADR-032）：子 agent 不得从「没有工具列表」推断出权限，`allowedPrompts` 必须走与配置规则同样的校验与分层。
+
 ### 项目指令文件（ADR-029、ADR-030）
 
 `ports/instructions.ts` 定义 `InstructionPort`，`adapters/instructions.ts` 给出 `FileInstructionSource`；**哪些文件、以及能不能注入**是纯策略，在 `policy/instructions.ts`。

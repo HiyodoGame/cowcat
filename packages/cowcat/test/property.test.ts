@@ -124,7 +124,7 @@ async function runScript(
     turnDeps(session, model, {
       tools,
       rules: generated.denyBoom ? [...DEFAULT_RULES, DENY_BOOM] : DEFAULT_RULES,
-      approve: () => Promise.resolve(generated.approve),
+      approve: () => Promise.resolve(generated.approve ? 'once' : 'reject'),
     }),
     'go',
     controller.signal,
@@ -226,7 +226,7 @@ const ALL_STATES: readonly TurnState[] = [
 ];
 
 function stateWithTurnIn(state: TurnState): SessionState {
-  return { sessionId: 'sess_matrix', lastSeq: 1, turn: { id: 'turn_1', state }, messages: [] };
+  return { sessionId: 'sess_matrix', lastSeq: 1, turn: { id: 'turn_1', state }, messages: [], grants: [] };
 }
 
 function transitionEvent(from: TurnState, to: TurnState): KernelEvent {
@@ -367,7 +367,7 @@ test('the approve callback receives the request it is deciding', async () => {
         tools,
         approve: (request) => {
           seen.push(request);
-          return Promise.resolve(true);
+          return Promise.resolve('once');
         },
       }),
       'go',

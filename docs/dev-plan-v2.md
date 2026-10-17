@@ -351,7 +351,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T3b | 信任记录的存储：独立于配置、按 canonical 路径、无继承（ADR-025 决定 3） | ✅ 本 PR。测试 289 → 306 |
 | T3c | `AGENTS.md` 加载与未信任不注入（ADR-029/030） | ✅ 本 PR。测试 306 → 323 |
 | T3 | 信任模型：门控不对称 + 记录独立存放（ADR-028）；`AGENTS.md` 加载、未信任不注入（ADR-029/030） | 见 T3a/b/c |
-| T4 | 审批协议：`approval.requested` / `answered` 进日志、超时 → auto-deny、`always` 会话内（ADR-031/032）；封子 agent yolo 与 `allowedPrompts` 两条旧版缺口 | 未开始 |
+| T4 | 审批协议：`approval.requested` / `answered` 进日志、超时 → auto-deny、`always` 会话内（ADR-031/032）；封子 agent yolo 与 `allowedPrompts` 两条旧版缺口 | ✅ 内核侧本 PR。**两条缺口在 v2 还封不了**（无子 agent、无 plan 模式），已记为未来实现的约束。测试 323 → 335 |
 | T5 | 审计作为事件消费者（ADR-033）；先扩事件让沙箱事实进日志 | 未开始 |
 
 **从 P2 带到 P3 的接口债**

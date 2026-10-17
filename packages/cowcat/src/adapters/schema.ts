@@ -25,6 +25,13 @@ const turnStateSchema = z.enum([
 
 const verdictSchema = z.enum(['allow', 'ask', 'deny']);
 
+const approvalVerdictSchema = z.enum(['once', 'always', 'reject']);
+
+// `policy` is reachable here even though it is not one of the two answers a person
+// can give: it is what a standing `always` from earlier in the same session records
+// when it lets a later call through (ADR-031).
+const approvalBySchema = z.enum(['user', 'policy', 'timeout']);
+
 const toolCallSchema = z.object({
   callId: z.string(),
   name: z.string(),
@@ -78,6 +85,22 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     toolCalls: z.readonly(z.array(toolCallSchema)),
   }),
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
+  z.object({
+    ...base,
+    type: z.literal('approval.requested'),
+    callId: z.string(),
+    name: z.string(),
+    rule: z.string(),
+    reason: z.string().nullable(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('approval.answered'),
+    callId: z.string(),
+    key: z.string(),
+    verdict: approvalVerdictSchema,
+    by: approvalBySchema,
+  }),
   z.object({ ...base, type: z.literal('tool.finished'), callId: z.string(), ok: z.boolean(), output: z.string() }),
 ]);
 
@@ -98,6 +121,10 @@ const sessionStateSchema = z.object({
   lastSeq: z.number().int().nonnegative(),
   turn: turnViewSchema.nullable(),
   messages: z.readonly(z.array(messageSchema)),
+  // The `always` answers this session has given. Part of the state, not a side
+  // table, so a snapshot that dropped them would silently re-ask questions the user
+  // already answered.
+  grants: z.readonly(z.array(z.string())),
 });
 
 // A snapshot is derived data, so it gets the same rigour as the log it accelerates:

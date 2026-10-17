@@ -5,6 +5,7 @@ import {
   replay,
   runTurn,
   type ActionRequest,
+  type ApprovalVerdict,
   type KernelEvent,
   type ToolPort,
 } from '../src/index.js';
@@ -23,7 +24,7 @@ const writeTool: ToolPort = tool({ name: 'write_file', description: 'write', ris
 async function setup(
   model: ScriptedModel,
   tools: ToolPort[],
-  approve: (r: ActionRequest) => Promise<boolean> = () => Promise.resolve(true),
+  approve: (r: ActionRequest) => Promise<ApprovalVerdict> = () => Promise.resolve('once'),
 ) {
   const store = new MemoryEventStore();
   const session = await Session.create(sessionDeps(store), 'sess_1');
@@ -98,7 +99,7 @@ test('a write tool is asked about, and a rejection is reported to the model inst
   ]);
   const { session, deps } = await setup(model, [writeTool], async (r) => {
     asked.push(r.name);
-    return false;
+    return 'reject';
   });
   await runTurn(deps, 'write it', new AbortController().signal);
 
