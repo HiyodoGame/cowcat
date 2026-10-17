@@ -140,11 +140,14 @@ const CASES = [
     why: 'reads-are-free',
   },
   {
-    id: 'P12 DEFAULT_RULES asks on write, exec and network alike',
+    id: 'P12 DEFAULT_RULES asks on write, exec and network — via the fallback, not a rule',
+    // The prompt for a mutation is not a rule with verdict `ask`: that would shadow
+    // every `allow` (ask > allow), so no configuration could ever permit a write.
+    // The fallback is where it belongs. P16 below pins the consequence.
     rules: DEFAULT_RULES,
     request: req('Bash', 'exec'),
-    expect: (d) => d.verdict === 'ask' && d.rule === 'mutations-need-approval',
-    why: 'all three mutating risks share one rule; risk is the only dimension read',
+    expect: (d) => d.verdict === 'ask' && d.rule === 'no-rule-matched',
+    why: 'the default prompt is the fallback, so allow rules stay reachable',
   },
 
   // --- risk is the only dimension the defaults look at ----------------------
@@ -170,6 +173,18 @@ const CASES = [
     request: req('Read', 'read'),
     expect: () => validateRules(DEFAULT_RULES).length === 0,
     why: 'a default that the loader would skip would be a silent policy hole',
+  },
+
+  // --- an allow has to be REACHABLE, or config cannot express a verdict --------
+  {
+    id: 'P16 an allow rule really does permit a write',
+    // The regression guard for the trap P12 documents. With a catch-all `ask` rule in
+    // the defaults this returns `ask`, and the P3 exit criterion ("every verdict can
+    // be expressed in configuration") is unreachable no matter what anyone writes.
+    rules: [...DEFAULT_RULES, rule('let-writes-through', 'allow', { risk: 'write' })],
+    request: req('Write', 'write'),
+    expect: (d) => d.verdict === 'allow' && d.rule === 'let-writes-through',
+    why: 'ask beats allow, so a rule that asks for all writes would shadow this one',
   },
 ];
 

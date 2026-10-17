@@ -39,14 +39,27 @@ test('lists concatenate in layer order: defaults, user, project, session', () =>
     session: { rules: [rule('s', 'allow')] },
   });
   assert.deepEqual(
-    config.rules.map((r) => r.name),
-    [...DEFAULT_CONFIG.rules.map((r) => r.name), 'u', 'p', 's'],
+    config.rules.map((s) => s.rule.name),
+    [...DEFAULT_CONFIG.rules.map((s) => s.rule.name), 'u', 'p', 's'],
   );
+});
+
+test('each rule remembers which layer it came from', () => {
+  const config = resolveConfig({
+    user: { rules: [rule('u', 'allow')] },
+    project: { rules: [rule('p', 'allow')] },
+    session: { rules: [rule('s', 'allow')] },
+  });
+  const originOf = (name: string): string | undefined => config.rules.find((s) => s.rule.name === name)?.origin;
+  assert.equal(originOf('u'), 'user');
+  assert.equal(originOf('p'), 'project');
+  assert.equal(originOf('s'), 'session');
+  assert.equal(config.rules[0]?.origin, 'default', 'and the built-in baseline is stamped too');
 });
 
 test('a layer that says nothing about a key does not override it', () => {
   const config = resolveConfig({ user: { rules: [rule('u', 'allow')] }, project: {}, session: {} });
-  assert.equal(config.rules.filter((r) => r.name === 'u').length, 1);
+  assert.equal(config.rules.filter((s) => s.rule.name === 'u').length, 1);
   assert.equal(config.rules.length, DEFAULT_CONFIG.rules.length + 1);
 });
 
@@ -62,7 +75,7 @@ test('a lower layer narrows a higher one, which is how an allow is revoked', () 
     user: { rules: [{ name: 'allow-docs', verdict: 'allow', when: { path: '/repo/docs' } }] },
     project: { rules: [{ name: 'deny-secrets', verdict: 'deny', when: { path: '/repo/docs/secrets' } }] },
   });
-  const names = config.rules.map((r) => r.name);
+  const names = config.rules.map((s) => s.rule.name);
   assert.ok(names.indexOf('deny-secrets') > names.indexOf('allow-docs'), 'written later, and still wins');
 });
 
@@ -136,7 +149,7 @@ test('a rule with an unknown verdict is skipped, and the others survive', () => 
     src('user', { rules: [rule('good', 'allow'), { name: 'bad', verdict: 'maybe', when: {} }, rule('also-good', 'deny')] }),
   ]);
   assert.ok(result.ok);
-  assert.deepEqual(result.config.rules.map((r) => r.name).filter((n) => n === 'good' || n === 'also-good' || n === 'bad'), ['good', 'also-good']);
+  assert.deepEqual(result.config.rules.map((s) => s.rule.name).filter((n) => n === 'good' || n === 'also-good' || n === 'bad'), ['good', 'also-good']);
   assert.equal(result.warnings.length, 1);
   assert.match(result.warnings[0]?.problem ?? '', /rules\[1\]/);
 });
@@ -146,7 +159,7 @@ test('a typo inside a rule is skipped and reported with its index', () => {
   assert.ok(result.ok);
   assert.equal(result.warnings.length, 1);
   assert.match(result.warnings[0]?.problem ?? '', /rules\[0\]/);
-  assert.equal(result.config.rules.filter((r) => r.name === 'r').length, 0);
+  assert.equal(result.config.rules.filter((s) => s.rule.name === 'r').length, 0);
 });
 
 test('a rule rule that decide cannot honour is skipped through the same channel', () => {
@@ -156,7 +169,7 @@ test('a rule rule that decide cannot honour is skipped through the same channel'
   assert.ok(result.ok);
   assert.equal(result.warnings.length, 1);
   assert.match(result.warnings[0]?.problem ?? '', /glob/);
-  assert.deepEqual(result.config.rules.filter((r) => r.verdict === 'deny').map((r) => r.name), ['ok-deny']);
+  assert.deepEqual(result.config.rules.filter((s) => s.rule.verdict === 'deny').map((s) => s.rule.name), ['ok-deny']);
 });
 
 test('a bad entry in one layer does not disturb another layer', () => {
@@ -166,7 +179,7 @@ test('a bad entry in one layer does not disturb another layer', () => {
   ]);
   assert.ok(result.ok);
   assert.equal(result.warnings.length, 1);
-  assert.equal(result.config.rules.filter((r) => r.name === 'p').length, 1);
+  assert.equal(result.config.rules.filter((s) => s.rule.name === 'p').length, 1);
 });
 
 test('warnings name the source they came from', () => {
@@ -182,7 +195,7 @@ test('warnings name the source they came from', () => {
 test('an omitted reason is absent, not present-and-undefined', () => {
   const result = loadConfig([src('user', { rules: [rule('u', 'allow')] })]);
   assert.ok(result.ok);
-  const loaded = result.config.rules.find((r) => r.name === 'u');
+  const loaded = result.config.rules.find((s) => s.rule.name === 'u')?.rule;
   assert.ok(loaded);
   assert.ok(!('reason' in loaded), 'a present-but-undefined field would survive JSON round trips differently');
 });
@@ -190,7 +203,7 @@ test('an omitted reason is absent, not present-and-undefined', () => {
 test('only the `when` fields the document set are present', () => {
   const result = loadConfig([src('user', { rules: [{ name: 'u', verdict: 'ask', when: { risk: 'exec' } }] })]);
   assert.ok(result.ok);
-  const loaded = result.config.rules.find((r) => r.name === 'u');
+  const loaded = result.config.rules.find((s) => s.rule.name === 'u')?.rule;
   assert.ok(loaded);
   assert.deepEqual(Object.keys(loaded.when), ['risk']);
 });
