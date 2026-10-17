@@ -388,6 +388,18 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 4. 录制-回放夹具：CI 中不访问网络，协议行为由夹具固定
 5. 模型预设（厂商、端点、默认模型）以数据形式存在，不写死在代码里
 
+**任务拆分**（一个 PR 一个任务；契约先于实现）
+
+| 任务 | 内容 | 状态 |
+|---|---|---|
+| T1 | **契约与事件**：`ModelRequest` / `ModelChunk` 扩展（ADR-035）、用量四项（ADR-040）与 `model.usage` 进日志（ADR-041）；连带改 `state.ts` 的 switch、`adapters/schema.ts` 的解码边界与**编译期等价断言**；`ScriptedModel` 随之改造。**不动适配器** | 未开始 |
+| T2 | **OpenAI 兼容适配器**（Chat Completions，ADR-036）+ 注入 transport（ADR-042） | 未开始 |
+| T3 | **Anthropic 适配器**（ADR-036）：六种 `RawMessageStreamEvent`、`input_json_delta` 拼装、usage **合并而非覆盖** | 未开始 |
+| T4 | **录制-回放夹具与录制脚本**（ADR-042）：录原始字节、**配对夹具**、厂商差异钉板、请求头裁剪 | 未开始 |
+| T5 | **重试、退避与取消边界**（ADR-039）：默认 2 次、尊重 `Retry-After`、取消涵盖退避等待、不重试已开始输出的流 | 未开始 |
+| T6 | **模型预设为数据**（ADR-037/038）：`ModelPreset` 类型 + 组合根注入；`toolCall:false` 不发 `tools`；厂商扩展不猜默认值 | 未开始 |
+| T7 | **出口标准**（ADR-043）：配对夹具跑出同一事件序列；取消不产生半条 `model.message` | 未开始 |
+
 **出口标准**
 
 - 同一个回合脚本，在两种协议的录制夹具上得到相同的事件序列（归一化后）
