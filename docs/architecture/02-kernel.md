@@ -82,6 +82,7 @@ loop:
 - 在**请求已完成之后**看那个 signal 有没有 `aborted`，量的是**拆除**而不是取消：Anthropic 侧此时是 `false`（正常行为），OpenAI 侧恰好是 `true`（偶然）。这两个断言以前都有过，都改成了行为断言。
 - 真正要钉住的性质是**行为**：**传输层遵守 signal 时，中途 abort 必须让流停下来（而不是挂住）**。两个适配器各有一条这样的测试（`openEndedTransport` + `settlesWithin`，见 `test/support.ts`）。
 - 因此适配器**不需要自建取消管线**：把 signal 交给 SDK 的请求选项即可，前提是传输层真的遵守它。
+- **唯一的例外是退避等待**（ADR-039 决定 ①）：重试之间的 `sleep` 是我们自己的代码，它必须自己响应 signal——旧版的 `sleep` 是裸 `setTimeout`，于是一个被取消的会话会一直睡到等待结束。实现见 `adapters/model-retry.ts` 的 `sleepAbortably`。
 
 ## 会话的打开与恢复
 

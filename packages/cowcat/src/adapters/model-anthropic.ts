@@ -1,14 +1,15 @@
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { APIConnectionError, APIError, APIUserAbortError } from '@anthropic-ai/sdk';
 import type { Message } from '../kernel/messages.js';
 import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
+import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
 // The Anthropic adapter (ADR-036). Needed for Claude itself and for the four MiniMax
 // entries in the provider catalogue — the only catalogued providers whose protocol is
 // Anthropic rather than OpenAI-compatible.
 //
-// Same two omissions as the OpenAI adapter, for the same reasons: no retry (the SDK's
-// own would run behind ADR-039's policy, so it is switched off and T5 builds the real
-// one), and the end of the iterator — not `stop_reason` — is what ends the stream.
+// Same two omissions as the OpenAI adapter, for the same reasons: retries live in
+// `withRetry` under ADR-039's policy rather than in the SDK, and the end of the iterator —
+// not `stop_reason` — is what ends the stream.
 
 export interface AnthropicModelOptions {
   readonly apiKey: string;
@@ -16,6 +17,8 @@ export interface AnthropicModelOptions {
   readonly baseURL?: string;
   /** Injected so a test can replay recorded bytes and CI cannot reach the network (ADR-042). */
   readonly fetch?: typeof globalThis.fetch;
+  /** Overrides for ADR-039's defaults. */
+  readonly retry?: RetryPolicy;
 }
 
 export function anthropicModel(options: AnthropicModelOptions): ModelPort {
@@ -36,18 +39,30 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
           `the Anthropic protocol requires max_tokens, and the request for ${request.model} did not carry one`,
         );
       }
+      // Hoisted because the closure below is where the compiler stops tracking the check
+      // above, and `max_tokens` is not optional in the wire type.
+      const maxTokens = request.maxTokens;
 
-      const stream = await client.messages.create(
-        {
-          model: request.model,
-          max_tokens: request.maxTokens,
-          messages: toWireMessages(request.messages),
-          stream: true,
-          ...(request.system === undefined ? {} : { system: request.system }),
-          ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
-        },
-        { signal },
-      );
+      // Only the response is retried; the iteration below runs outside the retry, which
+      // is how "a stream that has already produced output is never retried" holds by
+      // construction (ADR-039 decision ③).
+      const stream = await withRetry({
+        signal,
+        attempt: (attemptSignal) =>
+          client.messages.create(
+            {
+              model: request.model,
+              max_tokens: maxTokens,
+              messages: toWireMessages(request.messages),
+              stream: true,
+              ...(request.system === undefined ? {} : { system: request.system }),
+              ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
+            },
+            { signal: attemptSignal },
+          ),
+        classify: (error, attemptSignal) => classifyAnthropic(error, signal, attemptSignal),
+        ...(options.retry === undefined ? {} : { policy: options.retry }),
+      });
 
       // Tool use arrives in pieces like OpenAI's, but indexed by content block instead
       // of by `tool_calls[].index`: `content_block_start` carries id and name, and
@@ -193,4 +208,20 @@ function mapStopReason(raw: string): StopReason {
   if (raw === 'tool_use') return { kind: 'toolCalls', raw };
   if (raw === 'max_tokens') return { kind: 'maxTokens', raw };
   return { kind: 'other', raw };
+}
+
+// Same shape as the OpenAI adapter's classifier, and for the same reason: which failures
+// deserve another attempt is protocol knowledge (ADR-039). Anthropic's `overloaded_error`
+// arrives as 529, which `retryableStatus` covers as a 5xx.
+function classifyAnthropic(error: unknown, callerSignal: AbortSignal, attemptSignal: AbortSignal): RetryDecision {
+  if (callerSignal.aborted) return NO_RETRY;
+  if (error instanceof APIUserAbortError) return NO_RETRY;
+  if (attemptSignal.aborted) return { retry: true, afterMs: null };
+  if (error instanceof APIConnectionError) return { retry: true, afterMs: null };
+  if (error instanceof APIError) {
+    const status: unknown = error.status;
+    if (typeof status !== 'number' || !retryableStatus(status)) return NO_RETRY;
+    return { retry: true, afterMs: retryAfterMs(asHeaderReader(error.headers)) };
+  }
+  return NO_RETRY;
 }
