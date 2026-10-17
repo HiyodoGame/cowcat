@@ -337,6 +337,13 @@ test('G2: the home directory itself stays readable, or nothing would work', { sk
 
   // The counterpart of the test above: a deny must not swallow its whole parent. If this
   // ever fails, the fix is in the policy, never in the test.
+  //
+  // The path below is the FRIENDLY spelling (`/var/folders/…`, what mkdtemp returned), and
+  // that is deliberate rather than incidental. On Seatbelt a granted path answers
+  // differently depending on how it is spelled — the profile grants `/private/var/…`, and
+  // `/var/…` is refused because `subpath` matches the literal path (measured: OK vs EPERM
+  // on the same file, same profile). Reading through the friendly spelling here is what
+  // keeps that from regressing into a rule that grants something and silently denies it.
   const allowed = join(f.home, 'notes.txt');
   writeFileSync(allowed, 'home notes\n');
   const { result, applied } = await run(f, `process.stdout.write(require("fs").readFileSync(${JSON.stringify(allowed)},"utf8"))`);

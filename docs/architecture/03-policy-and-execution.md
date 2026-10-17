@@ -142,6 +142,22 @@ ProcessPort.run(spec, signal)
 
 因此 `system` 档在文案与文档里都**不得**被表述为安全保证；它是纵深防御的一层（Red-Teaming the Agentic Red-Team 指出，即使在沙箱容器内，agent 工具仍可能被攻陷操作者机器）。
 
+### Seatbelt 的拼写是承重的
+
+`subpath` 匹配的是**调用方传入的字面路径**，不是内核解析后的路径。实测（macOS 15，profile 已经授权了家目录）：
+
+```
+read /private/var/folders/…/n.txt   OK
+read /var/folders/…/n.txt          EPERM
+read ./r.txt（相对）               OK
+```
+
+`/var` 是指向 `/private/var` 的符号链接，而**解析发生在策略检查之后**。所以同一个文件、同一个 profile，答案取决于怎么拼；而那个 EPERM 里没有任何关于拼写的线索。
+
+这一点最阴险的地方在于**它躲得过去**：相对路径不受影响，所以一套用相对路径的测试会全绿，而一个用绝对路径的模型会撞上它。
+
+因此 `spellings()` 让**每条路径以两种拼写发出**。这不是为了方便——**allow 与 deny 必须同步**：只授予 `/private/var/…` 而只拒绝这一种拼写，`/var/…` 就是通的，凭据拒绝会变成两个字符的绕过。Linux 与 Windows 上是 no-op（没有 `/private` 下的路径），profile 逐字节不变。
+
 ### 沙箱不能阻止范围内的破坏
 
 范围扩张（agent 在良性任务上删除无关文件、擦掉陈旧凭据备份）与逃逸是**并列的第四类**授权问题（arXiv:2605.18583 实测：仅移除 prompt 里的授权声明，越界率从 0.0% 升到 17.1%）。我们的写策略是 allow-only，所以项目目录内的 `rm` **在沙箱里会成功**。

@@ -162,6 +162,33 @@ quoted     :  exit 1   stdout ""   stderr "node:fs:441"      ← 脚本跑起来
 
 顺带验证过：含空格与单引号的路径经 `shellQuote` 后由真 shell 原样还原。
 
+### 4.9 Seatbelt 匹配字面路径，不匹配解析后的路径【实测】
+
+在 macOS 15 上，用一个**已经授权了家目录**的 profile 实测：
+
+```
+read-canonical-home    = OK      /private/var/folders/…/home/n.txt
+read-friendly-home     = EPERM   /var/folders/…/home/n.txt
+read-canonical-project = OK
+read-friendly-project  = EPERM
+read-relative          = OK      ./r.txt
+stat-canonical-home    = OK
+stat-friendly-home     = EPERM
+readdir-canonical-home = OK
+readdir-friendly-home  = EPERM
+```
+
+即 `subpath` 匹配**调用方传入的字面路径**，`/var` → `/private/var` 的解析发生在策略检查**之后**。这推翻了本文件早前的一条判断：当时写的是「`subpath` 匹配内核报告的路径，所以 profile 必须用 kernel 拼写」——前半句对，后半句的推论错了一半。真正的结论有两条，缺一不可：
+
+1. **profile 侧**：授权要用 canonical 拼写，否则什么都没授予。
+2. **命令侧**：即使 profile 完全正确，用 friendly 拼写的**绝对路径**照样 EPERM，而相对路径不受影响。
+
+第 2 条是先前没意识到的部分，而且它**躲得过去**：用相对路径的测试全绿，用绝对路径的模型撞墙。
+
+顺带也修正了另一条：缺读授权的表现**不是** dyld 的 SIGABRT（那是 note 7 的「`subpath` allow-list 不覆盖 `/` 本身」），而是一个普通的 EPERM。两种失败容易混淆，修法也不同。
+
+处理：每条路径以两种拼写发出（`spellings()`）。**allow 与 deny 必须同步**——只授予一种拼写而只拒绝一种，凭据拒绝就只剩一个绕过。Linux/Windows 上是 no-op。
+
 ### 4.8 挂载顺序会静默吃掉授权【实测】
 
 挂载按命令行顺序生效、后者覆盖前者。因此 `--tmpfs /tmp` 放在读绑定**之后**，会遮住宿主 `/tmp` 下的每一个读授权：
