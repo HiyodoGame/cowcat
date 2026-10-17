@@ -178,15 +178,22 @@ test('reasoning reaches the log verbatim, in the order it arrived (ADR-045)', as
   });
 });
 
-test('a log carrying reasoning replays to the same state', async () => {
-  // Reasoning rides on `model.message`, so this is also the guarantee that the blocks
-  // survive a JSON round trip: the log is the source of truth, and a block that could not
-  // be written back faithfully would make replay differ from the live state.
+test('reasoning survives a JSON round trip and replays to the same state', async () => {
+  // The log is JSON and the log is the source of truth: a block that could not be written
+  // back faithfully would make a reopened session differ from the live one. This suite's
+  // memory store keeps object references, so the round trip is made explicit here instead
+  // of being assumed from `replay` (the real file store encodes and decodes, and the
+  // decode boundary itself is covered in schema.test.ts).
   const model = new ScriptedModel([
-    [{ type: 'reasoning', block: { type: 'thinking', text: 'thinking', signature: 'sig' } }],
+    [
+      { type: 'reasoning', block: { type: 'thinking', text: 'thinking', signature: 'sig-opaque' } },
+      { type: 'reasoning', block: { type: 'redacted', data: 'encrypted-blob' } },
+    ],
   ]);
   const { store, session, deps } = await setup(model);
   await runTurn(deps, 'hi', new AbortController().signal);
 
-  assert.deepEqual(replay('sess_1', await store.readAll('sess_1')), session.state);
+  const logged = await store.readAll('sess_1');
+  assert.deepEqual(replay('sess_1', logged), session.state);
+  assert.deepEqual(replay('sess_1', JSON.parse(JSON.stringify(logged)) as KernelEvent[]), session.state);
 });

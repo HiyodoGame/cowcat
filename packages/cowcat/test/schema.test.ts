@@ -148,16 +148,20 @@ test('a nested field is reported with its index', () => {
 });
 
 test('a malformed reasoning block is reported with its path', () => {
-  // Both arms are closed shapes at the boundary: a thinking block without its opaque
-  // signature cannot be replayed, so accepting it would push the failure to the wire
+  // Both arms are closed shapes at the boundary, and each one is its own decode rule: a
+  // thinking block without its opaque signature and a redacted block without its payload
+  // are both unreplayable, so accepting either would push the failure to the wire
   // (ADR-045).
-  const result = kernelEventSchema.safeParse({
-    ...modelMessage,
-    reasoning: [{ type: 'thinking', text: 'no signature' }],
-  });
-  if (result.success) assert.fail('expected a decode failure');
+  const malformed: readonly Record<string, unknown>[] = [
+    { type: 'thinking', text: 'no signature' },
+    { type: 'redacted' },
+  ];
+  for (const block of malformed) {
+    const result = kernelEventSchema.safeParse({ ...modelMessage, reasoning: [block] });
+    if (result.success) assert.fail(`expected ${JSON.stringify(block)} to be refused`);
 
-  assert.match(describeIssues(result.error), /reasoning\[0\]/);
+    assert.match(describeIssues(result.error), /reasoning\[0\]/);
+  }
 });
 
 test('an event type the kernel does not know is refused', () => {
