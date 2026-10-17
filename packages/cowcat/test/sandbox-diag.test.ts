@@ -21,12 +21,14 @@ const skip =
     ? `no backend on ${platform.platform}`
     : verdict.usable
       ? false
-      : `${verdict.name} unusable: ${verdict.reason} ${verdict.detail ?? ''}`;
+      : `${verdict.name} unusable: ${verdict.reason} ${verdict.detail}`;
 
 test('diag: which path spellings reach the data', { skip }, async (t) => {
   const fs = new NodeFs();
   const root = mkdtempSync(join(tmpdir(), 'cowcat-diag-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
   const project = join(root, 'proj');
   const home = join(root, 'home');
