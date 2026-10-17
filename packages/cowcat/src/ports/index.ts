@@ -2,6 +2,13 @@ import type { KernelEvent } from '../kernel/events.js';
 import type { Message, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
 
+// The P2 ports live in their own files (docs/architecture/01-layers.md) and are
+// re-exported here, so this barrel stays the single import surface for the kernel
+// and the tests.
+export * from './fs.js';
+export * from './platform.js';
+export * from './process.js';
+
 export type ToolRisk = 'read' | 'write' | 'exec' | 'network';
 
 export interface ToolSpec {

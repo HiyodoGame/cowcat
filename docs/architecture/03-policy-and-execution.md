@@ -38,31 +38,51 @@
 | `SnapshotPort` | 已实现（JSON 文件快照） | 回放加速；缺失或损坏一律回退全量回放，见 [02-kernel.md](02-kernel.md#快照) |
 | `ModelPort` | 接口已定，适配器 P4 | 流式模型调用，带 `AbortSignal` |
 | `ToolPort` | 接口已定，工具 P5 | 工具规格 + 执行 |
-| `ProcessPort` | P2 | 进程启动网关（见下） |
-| `FsPort` | P2 | 文件访问，路径规范化在这一层做 |
-| `PlatformPort` | P2 | shell 解析、路径身份、进程树终止、沙箱执行器可用性 |
+| `ProcessPort` | **契约已定**（P2 T1），适配器待做 | 唯一的子进程网关：脱敏、截断、终止都在里面（ADR-014、ADR-015） |
+| `FsPort` | **契约已定**（P2 T1），适配器待做 | 路径身份：canonical / samePath / kindOf / exists，**同步**（ADR-017） |
+| `PlatformPort` | **契约已定**（P2 T1），适配器待做 | shell 解析、进程树终止策略、沙箱后端可用性 |
 
-## 进程执行网关（P2）
+## 进程执行网关（ADR-014）
 
 旧版的问题：Bash 工具、后台任务、MCP stdio、hooks、子 agent 各自 `spawn`，沙箱只覆盖 Bash，所以 MCP 与 hooks 永远在沙箱之外。v2 的设计是：**所有子进程只能经过同一个 `ProcessPort`**。
 
 ```
 ProcessPort.run(spec, signal)
-  spec: { argv, cwd, env(已脱敏), stdin?, timeout, outputCap, sandbox: SandboxProfile }
-  → 由当前平台的 SandboxExecutor 包装 argv
-  → 启动（进程组 / Windows Job 或 taskkill /T）
-  → 输出按上限截断并记录截断事实
-  → 取消或超时：终止整棵进程树
-  → 返回 { exitCode, signal, stdout, stderr, truncated }
+  spec: { argv, cwd, env(未脱敏的输入), stdin?, timeout, outputCap, sandbox }
+  → 网关按 sandbox 档脱敏 env、截断输出（保留尾部 + 丢弃计数 + truncated 布尔）
+  → 启动（POSIX：detached 自成进程组；Windows：taskkill /T /F 的对象）
+  → 取消或超时：终止整棵进程树（与超时同一条路径）
+  → 返回 { exitCode, signal, stdout, stderr, truncated, termination }
 ```
 
-要点：
+**契约里的三条边界**，每条都来自实测（[调研 §2 与附录 B](../research/p2-ports.md)），不是推断：
 
-- 脱敏环境变量（旧版 `secret 脱敏 env` 的规则）在 ProcessPort 统一做，而不是每个调用方各做一次。
-- 进程树终止是必需能力：只杀父进程会留下孤儿，这在 Windows 上尤其常见。
-- 没有任何模块可以绕过网关直接 `child_process.spawn`；这一条由 lint 规则在 P2 加入。
+1. **Windows 必须「一次 `/T` 解决」**。`taskkill /T` 按父子关系枚举，直接子进程一旦先死，它就 exit 128（`没有找到进程`），那棵树永久够不着。所以终止路径内部禁止「先单杀、再树杀」这种两步写法。
+2. **回退必须上报**。taskkill 不可用时回退 `child.kill()` 可以，但结果里的 `termination.residuePossible` 必须为真——「我们请求过」不等于「它没了」。
+3. **自建会话的后代不在保证范围内**。一个自行 `setsid()` 的后代能逃出 `kill(-pgid)`，且父进程死后连按 ppid 都找不到它。契约写明这条边界，而不是暗示「全杀干净」。沙箱路径是例外：`bwrap --die-with-parent` 由内核 pidfd 兜底。
 
-## 沙箱执行器（P2）
+`termination` 区分两件事：平台**能**做什么（`TerminationStrategy`，来自 `PlatformPort`）与某一次运行**实际**做了什么（`TerminationMethod`）。Windows 上 `supportsGraceful: false`——实测 SIGTERM 不可捕获，没有优雅期可用。
+
+没有任何模块可以绕过网关直接 `child_process.spawn`：这条由 `packages/cowcat/eslint.config.js` 里一条独立 pattern 强制（`src/adapters/` 之外禁 `node:child_process` / `node:fs` / `node:os`），并由 `tools/lint-probe.mjs` 验证它真的会报错。
+
+## 环境变量脱敏（ADR-015）
+
+脱敏在网关内做，且按**执行档位**而不是按调用方：`light` 与 `system` 都脱敏，`off` 明确不脱敏。调用方传「想要什么环境」，不传「拼好的环境」——旧版 `background.js` 那种把已剥离的键回灌的做法，在结构上不再可能发生。
+
+规则集**沿用旧版三项**（保留列表、形状正则 `(TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL|PRIVATE)`、显式 `deny` 的精确名与 `/regex/` 两种形式），因为它们有测试、每条都有理由；**变的是覆盖面与汇报**：
+
+| | 旧版 | v2 |
+|---|---|---|
+| 覆盖路径 | 9 条子进程路径里只有 Bash 的 `light` 档 | 全部（都经 `ProcessPort`） |
+| `system` 档 | 因 `mode !== 'light'` 的分支写反而**不脱敏**（与文档矛盾） | 脱敏 |
+| 后台任务 | `{ ...process.env, ...env }` 把剥离的键**回灌** | 结构上不可能发生 |
+| 汇报 | 只有 UI 文案 | 返回 `removed`（只记名字不记值）与 `ignoredDeny`（坏正则不再静默忽略） |
+
+规则集是纯函数，放在 `src/policy/env.ts`：它决定子进程环境**允许**有什么，是策略问题而不是运行时问题；适配器只负责把它应用上去。
+
+脱敏**不是安全边界**：它减少误发。`light` 档不提供 OS 级隔离，凭据文件在 `light` 档完全可读，MCP server 以完整权限运行。这条定位同时写进 `SECURITY.md`，避免把「env 干净」读成「凭据安全」。
+
+## 沙箱执行器（P2，ADR-016）
 
 `SandboxExecutor` 是 ProcessPort 的一个包装策略，不是 Bash 的特例：
 

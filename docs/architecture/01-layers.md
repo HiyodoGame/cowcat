@@ -35,7 +35,16 @@ test/
   *.test.ts
 ```
 
-P2 起会增加 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts` 与 `adapters/node/` 下的各实现；目录名随实现调整，但依赖规则不变。
+P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/node/` 下的各实现；目录名随实现调整，但依赖规则不变。
+
+## 路径身份（ADR-017）
+
+路径身份由 `FsPort` 独占：凡是拿路径当**键**的地方——信任记录、会话身份、白名单、沙箱策略条目——必须走同一实现，否则同一个目录会有两个身份。第 19 轮的 macOS 事故就是这个：`os.tmpdir()` 给符号链接写法而 `getcwd()` 给物理写法，精确字符串比较让 7 条互不相关的测试一起变红。
+
+两个刻意的形态选择：
+
+- **方法保持同步**。它们被用在纯 argv 生成里（沙箱后端把解析好的策略变成命令行）；做成异步会把策略解析也拖成异步，而策略→argv 的映射必须是纯函数——这正是旧版能在 Windows 上单测 bwrap/seatbelt 映射的原因。
+- **内核需要的东西由组合根注入**。`cowcatVersion` 已是先例（ADR-012）；P2 起「实际使用的 shell」同样由组合根从 `PlatformPort` 取，再交给内核写进会话头（此时 `schemaVersion` **不升**——v2 的日志格式从未发布过，没有需要兼容的既有日志，该字段从一开始就是版本 1 的一部分）。
 
 ## 依赖规则
 
