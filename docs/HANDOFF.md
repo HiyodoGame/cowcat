@@ -45,7 +45,7 @@
 | `packages/cowcat · node 22 · windows-latest` | pass |
 | `test · node 22 · ubuntu-latest` / `macos-15` | pass |
 
-> 上表是 **T5 那一轮**的实跑记录；T7 的 CI 结果要等它的 PR 跑完再看（本机结果见下一节）。
+> 上表是 **T5 那一轮**的实跑记录。**T7（PR #34）在 `ubuntu-latest` / `macos-15` / `windows-latest` 三平台均已通过**（本机结果见下一节）。
 
 ### 已验证 —— 本机（Windows，Node 24.18.0）
 
