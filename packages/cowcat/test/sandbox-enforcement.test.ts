@@ -116,11 +116,30 @@ test('a sandboxed run really is sandboxed', { skip }, async (t) => {
   assert.notEqual(denied.exitCode, 0);
   assert.match(denied.stderr, /ENOENT|EACCES|EPERM|No such file|not permitted|Permission denied/i, denied.stderr);
 
-  // 4. G1: a write outside the project does not appear on the host.
+  // 4. G1, the subtle half: a path under the HOST's /tmp is a perfectly writable
+  //    location INSIDE the sandbox — because the sandbox's /tmp is a private tmpfs — and
+  //    the file still never reaches the host. Exit code 0 here is correct, so the
+  //    assertion has to be on the host side. Getting this backwards is easy and would
+  //    have made a working sandbox look broken.
   const escaped = join(root, 'escaped.txt');
-  const wrote_out = await port.run(systemSpec(project, `require("fs").writeFileSync(${JSON.stringify(escaped)}, "x")`, home), new AbortController().signal);
-  assert.notEqual(wrote_out.exitCode, 0);
-  assert.equal(existsSync(escaped), false, 'a write outside the project must not reach the host');
+  const wrote_tmp = await port.run(
+    systemSpec(project, `require("fs").writeFileSync(${JSON.stringify(escaped)}, "x")`, home),
+    new AbortController().signal,
+  );
+  assert.equal(wrote_tmp.exitCode, 0, wrote_tmp.stderr);
+  assert.equal(existsSync(escaped), false, 'a write into the sandbox\'s own /tmp must not reach the host');
+
+  // 5. G1, the blunt half: a path outside the write allow-list on a read-only surface is
+  //    refused outright. /etc is bound read-only for toolchains, so it answers EROFS
+  //    rather than the ENOENT an unbound path gives.
+  const etcTarget = '/etc/cowcat-sandbox-escape-test';
+  assert.equal(existsSync(etcTarget), false, 'the fixture must not already exist');
+  const wrote_etc = await port.run(
+    systemSpec(project, `require("fs").writeFileSync(${JSON.stringify(etcTarget)}, "x")`, home),
+    new AbortController().signal,
+  );
+  assert.notEqual(wrote_etc.exitCode, 0);
+  assert.equal(existsSync(etcTarget), false, 'a write outside the allow-list must not reach the host');
 });
 
 test('a sandboxed run cannot reach the network when the policy says off', { skip }, async (t) => {
