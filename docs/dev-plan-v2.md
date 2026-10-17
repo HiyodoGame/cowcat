@@ -126,7 +126,7 @@
 | 任务 | 内容 | 状态 |
 |---|---|---|
 | T1 | 三个端口的契约 + ADR-014～017 + 脱敏规则集（纯函数）+ lint 门禁 + `tools/lint-probe.mjs` | ✅ PR 见 §P2 交付 |
-| T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**） | 未开始 |
+| T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**）。shell 探测方式见 [research/p2-shell-detection.md](research/p2-shell-detection.md) | 未开始 |
 | T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | 未开始 |
 | T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | 未开始 |
 | T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | 未开始 |

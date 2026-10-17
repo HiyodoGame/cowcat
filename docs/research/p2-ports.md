@@ -317,7 +317,7 @@
 5. **macOS** 的 G1/G2/G3 与 `rm`/私有临时目录断言：按需触发 `macos-15`，未触发前标「未验证」（`05-platforms.md:48` 的计费约束不变）。
 6. **Windows 上 `system` 档被拒绝**且拒绝信息含替代路径（P2 出口标准的第三条）。
 7. **§4.4 的四条脱敏补充项**逐条评审；补剥离后要复跑 G7 类（项目内 `npm test`/`git commit` 仍可用）。
-8. **shell 解析**的实际探测方式（Git Bash 的路径来源：`PATH`、`Program Files\Git\bin\bash.exe`、注册表）与「探测不到时退化到 PowerShell」的判定；旧版**零实现**，这一条没有可继承的结论。
+8. ~~**shell 解析**的实际探测方式~~ **已调研**（[p2-shell-detection.md](p2-shell-detection.md)）：Windows 上唯一奏效的来源是「跟着 `git.exe` 找」→ `<git 根>\bin\bash.exe`；PATH 上的裸名 `bash` 是 WSL 启动器或 OpenSSH 的 shim，注册表与 `C:\Program Files\Git` 在本机双双失效；并且已实测两条影子劫持路径，因此契约要求**只 spawn 绝对路径**。POSIX 侧仍未验证。
 9. **会话头加字段**是否升 `schemaVersion`（§6 的待拍板项）。
 
 ---
