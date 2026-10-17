@@ -180,3 +180,9 @@ console.log('\n--- STATE_KEYS as declared by config.js:52 ---');
 console.log(JSON.stringify(STATE_KEYS));
 console.log('9 keys. USAGE.md:116 lists 7, and omits panel and sandbox.');
 console.log('Every one of these 9 is re-applied AFTER the project layer, env vars and CLI.');
+
+console.log(`\n${CASES.length - failed}/${CASES.length} expectations held`);
+if (failed > 0) {
+  console.error(`\n${failed} expectation(s) failed — do not cite this file's numbers in docs/research/p3-policy.md.`);
+  process.exit(1);
+}

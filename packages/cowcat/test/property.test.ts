@@ -86,7 +86,7 @@ const script: fc.Arbitrary<GeneratedScript> = fc.record({
 
 const DENY_BOOM: Rule = {
   name: 'no-boom',
-  matches: (request) => request.name === 'boom_file',
+  when: { tool: 'boom_file' },
   verdict: 'deny',
   reason: 'boom is never allowed',
 };

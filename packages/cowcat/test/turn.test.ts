@@ -123,7 +123,7 @@ test('a denied action never reaches the tool', async () => {
     [{ type: 'text', text: 'ok' }],
   ]);
   const { deps } = await setup(model, [guarded]);
-  deps.rules = [{ name: 'no-rm', matches: (r) => r.name === 'rm_all', verdict: 'deny', reason: 'never' }];
+  deps.rules = [{ name: 'no-rm', when: { tool: 'rm_all' }, verdict: 'deny', reason: 'never' }];
   await runTurn(deps, 'go', new AbortController().signal);
 
   assert.equal(ran, false);

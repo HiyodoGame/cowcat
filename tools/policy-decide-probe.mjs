@@ -13,6 +13,9 @@
 // against the real return value. Exits non-zero if any expectation is wrong — a
 // probe that only prints is a probe that cannot fail.
 //
+// Updated by P3 T1 (ADR-027): rules are data (`when: {...}`), not a `matches`
+// function. That makes one of the original cases unrepresentable — see P9.
+//
 // Usage: node tools/policy-decide-probe.mjs
 // Requires: npm run build in packages/cowcat (probes dist/, same as the tests).
 import { existsSync } from 'node:fs';
@@ -30,14 +33,15 @@ if (!existsSync(DECIDE) || !existsSync(DEFAULTS)) {
 
 // pathToFileURL, not the raw path: a dynamic import() of "F:\..." is rejected by
 // the ESM loader with ERR_UNSUPPORTED_ESM_URL_SCHEME. (It did, once.)
-const { decide } = await import(pathToFileURL(DECIDE).href);
+const { decide, validateRules } = await import(pathToFileURL(DECIDE).href);
 const { DEFAULT_RULES } = await import(pathToFileURL(DEFAULTS).href);
 
-// The only ActionRequest shape the kernel builds today: run-turn.ts:111 fills
-// exactly these four fields, so anything a rule reads beyond them reads undefined.
+// The ActionRequest shape the kernel builds today: run-turn.ts:111 fills four
+// fields, so anything a rule reads beyond them reads undefined.
 const req = (name, risk) => ({ kind: 'tool', callId: 'c1', name, risk });
-const rule = (name, verdict, matches, reason) => ({ name, matches, verdict, ...(reason === undefined ? {} : { reason }) });
-const always = () => true;
+// Was `matches: () => true` before ADR-027; the data form of "do not care".
+const EVERY = {};
+const rule = (name, verdict, when, reason) => ({ name, when, verdict, ...(reason === undefined ? {} : { reason }) });
 
 const CASES = [
   // --- the precedence claim itself -------------------------------------------
@@ -45,21 +49,21 @@ const CASES = [
     id: 'P1 cross-verdict precedence ignores array order',
     // Written allow-first on purpose: if decide() walked the array and returned
     // the first match, this would be `allow`.
-    rules: [rule('r-allow', 'allow', always), rule('r-ask', 'ask', always), rule('r-deny', 'deny', always)],
+    rules: [rule('r-allow', 'allow', EVERY), rule('r-ask', 'ask', EVERY), rule('r-deny', 'deny', EVERY)],
     request: req('X', 'write'),
     expect: (d) => d.verdict === 'deny' && d.rule === 'r-deny',
     why: 'allow first in the array must still lose to deny',
   },
   {
     id: 'P2 reversed array order gives the same verdict',
-    rules: [rule('r-deny', 'deny', always), rule('r-ask', 'ask', always), rule('r-allow', 'allow', always)],
+    rules: [rule('r-deny', 'deny', EVERY), rule('r-ask', 'ask', EVERY), rule('r-allow', 'allow', EVERY)],
     request: req('X', 'write'),
     expect: (d) => d.verdict === 'deny' && d.rule === 'r-deny',
     why: 'verdict priority is a property of PRECEDENCE, not of rule order',
   },
   {
     id: 'P3 ask beats allow regardless of order',
-    rules: [rule('r-allow', 'allow', always), rule('r-ask', 'ask', always)],
+    rules: [rule('r-allow', 'allow', EVERY), rule('r-ask', 'ask', EVERY)],
     request: req('X', 'write'),
     expect: (d) => d.verdict === 'ask' && d.rule === 'r-ask',
     why: 'the middle arm of PRECEDENCE',
@@ -68,7 +72,7 @@ const CASES = [
   // --- within one verdict, array order IS the tiebreak ------------------------
   {
     id: 'P4 same verdict takes the lowest array index',
-    rules: [rule('first', 'deny', always), rule('second', 'deny', always)],
+    rules: [rule('first', 'deny', EVERY), rule('second', 'deny', EVERY)],
     request: req('X', 'write'),
     expect: (d) => d.rule === 'first',
     why: 'within a verdict the order is filter-preserving and find() takes the first',
@@ -80,7 +84,7 @@ const CASES = [
     rules: [],
     request: req('X', 'write'),
     expect: (d) => d.verdict === 'ask' && d.rule === 'no-rule-matched',
-    why: 'decide.ts:35 is the only source of this fallback',
+    why: 'the fallback is the only source of `no-rule-matched`',
   },
   {
     id: 'P6 the fallback reason names the tool',
@@ -93,26 +97,31 @@ const CASES = [
   // --- reason: null vs '' — ?? vs || ----------------------------------------
   {
     id: 'P7 a rule with no reason yields null, not undefined',
-    rules: [rule('r', 'allow', always)],
+    rules: [rule('r', 'allow', EVERY)],
     request: req('X', 'read'),
     expect: (d) => d.reason === null && 'reason' in d,
-    why: 'decide.ts:33 uses ?? null; the field must still be present',
+    why: 'the field uses ?? null; it must still be present',
   },
   {
     id: 'P8 an empty-string reason survives as an empty string',
-    rules: [rule('r', 'allow', always, '')],
+    rules: [rule('r', 'allow', EVERY, '')],
     request: req('X', 'read'),
     expect: (d) => d.reason === '',
     why: '?? does not fire on "", so a config author writing "" gets "" back — not null',
   },
 
-  // --- a throwing matcher is not defended against ---------------------------
+  // --- a rule that cannot be honoured ---------------------------------------
   {
-    id: 'P9 a matcher that throws propagates out of decide',
-    rules: [rule('boom', 'allow', () => { throw new Error('matcher exploded'); })],
-    request: req('X', 'write'),
-    expectThrows: 'matcher exploded',
-    why: 'there is no try/catch in decide; run-turn.ts:48 catches it as a turn failure',
+    id: 'P9 a rule narrowing on a field the request lacks does NOT match',
+    // This case used to be "a matcher that throws propagates out of decide". ADR-027
+    // removed the function form, so that case no longer exists: a rule can no
+    // longer run code at all. What replaced it is the new fail-closed rule — a
+    // `when` selector with no corresponding request field must not match, because
+    // matching would silently widen the rule.
+    rules: [rule('needs-path', 'allow', { path: '/repo/src' })],
+    request: req('X', 'read'),
+    expect: (d) => d.verdict === 'ask' && d.rule === 'no-rule-matched',
+    why: 'absent field means "no match", never "do not care"',
   },
 
   // --- what the shipped defaults can actually reach -------------------------
@@ -140,11 +149,11 @@ const CASES = [
 
   // --- risk is the only dimension the defaults look at ----------------------
   {
-    id: 'P13 two rules differing only in name never both win',
+    id: 'P13 a tool named Bash with risk read is allowed',
     rules: DEFAULT_RULES,
     request: req('Bash', 'read'),
     expect: (d) => d.verdict === 'allow',
-    why: 'a tool named Bash with risk read is allowed — the defaults ignore the name',
+    why: 'the defaults ignore the tool name entirely',
   },
   {
     id: 'P14 the same tool name with a different risk gets a different verdict',
@@ -152,6 +161,15 @@ const CASES = [
     request: req('Bash', 'write'),
     expect: (d) => d.verdict === 'ask',
     why: 'risk alone decides; there is no conflict detection on tool names',
+  },
+
+  // --- the shipped defaults must also survive validation --------------------
+  {
+    id: 'P15 DEFAULT_RULES pass validateRules',
+    rules: DEFAULT_RULES,
+    request: req('Read', 'read'),
+    expect: () => validateRules(DEFAULT_RULES).length === 0,
+    why: 'a default that the loader would skip would be a silent policy hole',
   },
 ];
 
