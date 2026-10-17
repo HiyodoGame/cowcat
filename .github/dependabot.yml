@@ -1,8 +1,19 @@
 # Keep the dev dependency set and the workflow actions current without noise.
+#
+# Both code lines are listed: /agent is v1 (frozen except security fixes until
+# P8), /packages/cowcat is the v2 kernel and now the main development line — it
+# was missing here, which left zod / fast-check / typescript unwatched.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: npm
+    directory: /packages/cowcat
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
