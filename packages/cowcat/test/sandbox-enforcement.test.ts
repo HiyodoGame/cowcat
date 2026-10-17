@@ -116,18 +116,24 @@ test('a sandboxed run really is sandboxed', { skip }, async (t) => {
   assert.notEqual(denied.exitCode, 0);
   assert.match(denied.stderr, /ENOENT|EACCES|EPERM|No such file|not permitted|Permission denied/i, denied.stderr);
 
-  // 4. G1, the subtle half: a path under the HOST's /tmp is a perfectly writable
-  //    location INSIDE the sandbox — because the sandbox's /tmp is a private tmpfs — and
-  //    the file still never reaches the host. Exit code 0 here is correct, so the
-  //    assertion has to be on the host side. Getting this backwards is easy and would
-  //    have made a working sandbox look broken.
+  // 4. G1, the subtle half: a path under the HOST's temp directory must never produce a
+  //    host file — and what happens INSIDE differs by backend, measurably:
+  //
+  //      linux / bwrap   → exit 0. The sandbox's /tmp is a private tmpfs, so the path is
+  //                        writable in there and the write simply lands nowhere.
+  //      macOS / seatbelt → EPERM. There is no mount namespace, so nothing was granted
+  //                        and the operation is refused outright.
+  //
+  //    Both are correct isolation, which is why the assertion is on the HOST side and
+  //    deliberately says nothing about the exit code. Asserting either specific outcome
+  //    would fail the other platform — and getting this backwards is easy enough that
+  //    it happened twice.
   const escaped = join(root, 'escaped.txt');
   const wrote_tmp = await port.run(
     systemSpec(project, `require("fs").writeFileSync(${JSON.stringify(escaped)}, "x")`, home),
     new AbortController().signal,
   );
-  assert.equal(wrote_tmp.exitCode, 0, wrote_tmp.stderr);
-  assert.equal(existsSync(escaped), false, 'a write into the sandbox\'s own /tmp must not reach the host');
+  assert.equal(existsSync(escaped), false, `a write into the sandbox scratch area must not reach the host (exit ${String(wrote_tmp.exitCode)}: ${wrote_tmp.stderr})`);
 
   // 5. G1, the blunt half: a path outside the write allow-list on a read-only surface is
   //    refused outright. /etc is bound read-only for toolchains, so it answers EROFS
