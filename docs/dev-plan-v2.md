@@ -128,7 +128,7 @@
 | T1 | 三个端口的契约 + ADR-014～017 + 脱敏规则集（纯函数）+ lint 门禁 + `tools/lint-probe.mjs` | ✅ PR 见 §P2 交付 |
 | T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**）。shell 探测方式见 [research/p2-shell-detection.md](research/p2-shell-detection.md) | ✅ PR 见 §P2 交付 |
 | T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | ✅ PR 见 §P2 交付 |
-| T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | 未开始 |
+| T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | ✅ PR 见 §P2 交付 |
 | T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | 未开始 |
 | T6 | G1/G2/G3 与「`rm` 可用」「私有临时目录」「拒绝被解释成沙箱」迁移为 v2 测试；**`packages/cowcat` 的 Linux 腿要装 bubblewrap**（现在只有 `agent/` 的腿装了） | 未开始 |
 
@@ -199,9 +199,32 @@
 
 **T3 已知缺口（不声称已解决）**
 
-- **`PathPolicyResolver` 仍是接口**：`agent/src/sandbox/policy.js` 的 `expandPath` 与策略构建属于 T5，届时它会消费本任务的 `FsPort`
+- **`PathPolicyResolver` 仍是接口**：`agent/src/sandbox/policy.js` 的 `expandPath` 与策略构建属于 T5，届时它会消费 T3 的 `FsPort`
 - **Windows 8.3 短名（`RUNNER~1`）未单独测**：需要刻意创建短名目录才能构造；真实 runner 上 `realpath` 会把它还原，靠 Windows 腿间接覆盖
 - **不存在的路径在 Windows 上按大小写敏感比较**（回退到 `resolve()` 时保留调用者写法）。两侧都经过 `realpath` 的真实路径不受影响，且 `test/fs.test.ts` 的 fixture 一律先 canonicalize——但这是一处已知不对称，没有证据前不猜着「修」它
+
+**交付（T4）**
+
+- `adapters/terminate.ts`：唯一的终止路径。超时、取消、shutdown 全部经过它；`??=` 保证只启动一次终止。Windows 一次 `taskkill /T /F`（**绝不在此前单杀子进程**——父一死就 exit 128，实测 12/12 采样孤儿存活）；POSIX 进程组 SIGTERM → 宽限 → SIGKILL。`TreeKiller` 是可注入的接缝，所以升级算术与 ESRCH / 128 分支**不用真进程**也能测
+- `adapters/process.ts`：`NodeProcess implements ProcessPort`。脱敏（light 与 system 都做，off 不做——旧版 `sandboxEnv()` 只在 light 脱敏，**严格档反而漏了**，且 `background.js` 又把 `...process.env` 铺回去）、截断（保留尾部 + 丢弃计数）、超时与取消同路径、启动失败是 reject 而非结果
+- `adapters/output-tail.ts`：纯函数的尾部累加器。`kept + dropped === total` 是它唯一需要成立的恒等式，测试按恒等式断言而不是按具体数字
+- **补了 `ProcessResult` 的两个字段**（`dropped` / `removedEnv` + `ignoredDeny`）：ADR-015 要求「剥离了哪些变量名」作为事实返回、调研 §2.3 要求「丢掉的字符数」，而 T1 合并的契约里两者都没有。不补就是实现期悄悄丢掉已决定的事实
+- 测试 111 → 150
+
+**T4 的出口标准与验证结果**
+
+- [x] `npm run build` / `npm run lint` 通过；`agent/` 的 762 项未受影响；`tools/lint-probe.mjs` 复验通过
+- [x] `npm test` 150 项（147 通过 / 3 项按平台 skip / 0 失败）
+- [x] **抓到并修掉一个真 bug**：测试用了「假 POSIX 平台 + 真 Windows 宿主」，`kill(-pid)` 在 Windows 上无意义且失败形态像 ESRCH，而我把 ESRCH 当成「组已消失」= 成功，于是**报告了一次根本没发生的组杀**，子进程活到自然结束。现在的判据是「ESRCH 视为已消失」**仅在不存在的进程组的平台上成立**，Windows 上落到单杀回退并如实标记
+- [x] **真机树杀端到端验证**：孩子 → 孙进程三层，孙进程自己写 pid 文件；超时后断言该 pid 已不存在。Windows 上是 `taskkill-tree` 且 `fallbackUsed: false`
+- [x] 脱敏是真跑子进程验的：让子进程自己打印 `process.env.MY_TOKEN`，断言为 `null`，并断言结果里**不含那个值**
+
+**T4 已知缺口（不声称已解决）**
+
+- **沙箱执行器不存在**：`system` 档目前一律 `not-implemented` 拒绝（Windows 是 `unsupported-platform`）。真正的 seatbelt / bwrap 包装属于 T5
+- **`setsid()` 逃逸仍是推断**：附录 B 的实测证明它能逃，但「前台超时孤儿」这一类没有样本。终止记录对此**不置词**——`residuePossible` 的含义是「无法证明整棵树没了」，setsid 属已声明的覆盖边界而非未证明项，两者在同一条记录里无法区分
+- **终止记录没有失败原因字段**：`taskkill` 是 exit 128 还是根本起不来，记录里只能看到 `residuePossible: true`。可操作性够（意思是「可能有残留」），但排障时拿不到细节
+- **`light` 档仍无执行期提醒**：ADR-007 要求它的文案不得暗示 OS 隔离，文案属于 P5 的工具层，本任务只保证网关不越权
 
 **出口标准**
 

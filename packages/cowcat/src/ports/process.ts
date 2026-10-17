@@ -137,6 +137,20 @@ export interface ProcessResult {
   readonly stderr: string;
   /** True when either stream hit the cap. The result says so instead of the caller guessing. */
   readonly truncated: boolean;
+  /**
+   * Characters dropped from the FRONT of each stream, so "the tail you see" can be
+   * accounted for. Structured rather than an in-band `[truncated]` marker: the caller
+   * knows who is reading this output and can render the notice in the words that
+   * reader needs, and one fact should not have two renderings.
+   */
+  readonly dropped: { readonly stdout: number; readonly stderr: number };
+  /**
+   * Names the gateway stripped from the child's environment. Names only — a stripped
+   * variable's value is exactly the thing that must not travel further (ADR-015).
+   */
+  readonly removedEnv: readonly string[];
+  /** Deny entries that were not usable, e.g. an invalid `/regex/`. Surfaced, never dropped. */
+  readonly ignoredDeny: readonly string[];
   readonly termination: TerminationRecord;
 }
 
