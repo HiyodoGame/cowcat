@@ -2,7 +2,7 @@
 
 > 依据 [`dev-plan-v2.md`](../dev-plan-v2.md)「工作规则 1」：每个阶段开始前先做调研，回答阶段内的开放问题，列出被否决的方案及理由。本文件回答 P4 的开放问题，并给出它们对 P4 五项范围的具体影响。
 >
-> 最后更新：**2026-10-17**。状态：**调研完成，决定待评审**。六项决定以「草案」形式给出（§2.4、§3.5、§4.4、§5.4、§6.4、§7.4）——**评审拍板前不得据以实现**。
+> 最后更新：**2026-10-17**。状态：**调研完成，决定待评审**。六项决定以「草案」形式给出（§2.4、§3.5、§4.5、§5.4、§6.4、§7.4）——**评审拍板前不得据以实现**。
 > 前置：[`dev-plan-v2.md`](../dev-plan-v2.md) 的 `## P4` 段、[`HANDOFF.md`](../HANDOFF.md) §3、[`architecture/04-dependencies.md`](../architecture/04-dependencies.md)。
 >
 > **本文件的证据边界（必须先说清）**：
@@ -34,12 +34,13 @@
 | 六 | 录制-回放夹具 | 录**原始 SSE 字节流**而非解析后对象；CI 不访问网络由「适配器只经注入的 transport」保证 | §6 |
 | 七 | 必须支持几种协议 | **OpenAI 兼容（主力）+ Anthropic 原生**。209 家预设里 201 家是 OpenAI 协议，8 家是 Anthropic | §7、【源码】`assets/providers.json` |
 
-**四条纠正前提的发现**（都是本次读源码/上游得出的，与前一份文档的口径不同）：
+**五条纠正前提的发现**（都是本次读源码/上游得出的，与前一份文档的口径不同）：
 
 1. **v2 的 `ModelRequest` 里没有模型标识**。【源码】`ports/index.ts:58-61` 只有 `messages` 与 `tools`；`run-turn.ts:91-94` 照此构造请求。也就是说，**当前契约下内核不知道该调哪个模型**——模型选择、`max_tokens`、system 提示词都无处安放。这不是「扩字段」，是契约缺了一整类必填信息。
 2. **v1 已经踩过并在注释里写明了 P4 最大的一个坑**：【源码】`llm/openai.js:69-71` 写着「完成信号在循环之后判定，不按 `finish_reason`——各家在 finish chunk 之后是否再跟一个 usage-only chunk 或 `[DONE]` 并不一致，且部分端点在 `finish_reason` 之后仍会继续发 tool delta」。同时 `:50` 显式跳过 `choices` 为空的 chunk（那就是 usage-only chunk）。**这两条是 v1 用真实端点换来的，v2 必须原样继承**，否则会重犯。
 3. **Anthropic 的 `max_tokens` 是必填、`system` 是顶层字段**。【上游】附录 B-2 的 `MessageCreateParamsBase`。而 v2 内部 `Message` 联合类型**根本没有 system 角色**（【源码】`messages.ts:7-10`）。所以「把内部消息映射到线格式」不是机械翻译，system 提示词要作为**新增概念**进契约。
 4. **用量归一化 v1 已经做过一遍**：【源码】`loop.js:417-425` 用 `u.input_tokens ?? u.prompt_tokens` 这类写法把两家的 usage 归到同一组四字段。v2 的 `ModelChunk` 里目前**完全没有用量**，这一段必须重做，而且要把 v1 的字段对照表当基线。
+5. **v1 的协议层比想象中厚：两套 SSE 解析 + 一套错误分类**。【源码】SSE 解析器有两个——LLM 层 `llm/client.js:59-88`、MCP 传输 `sse.js:12-85`（`sse.js:9-11` 说明为何另写）；错误分类 `parseApiError`（`errfmt.js:58-80`）已有固定六类 `hint`，且**已经照顾了两家的码位差异**（OpenAI 系读 `error.code`、Anthropic 系读 `error.type`，`:65`）。这两块 P4 可以**照抄形状而不必重新发明**——但也说明「自己写协议层」在这个仓库里的实际成本已经验证过一次。
 
 ---
 
@@ -55,7 +56,7 @@
 | 本次新增实测 | **无**（见头部证据边界） |
 | 本次**未**做 | 未访问任何真实模型端点（无凭据）；未安装 `openai` / `@anthropic-ai/sdk` 做行为对照；未录任何夹具；未在 Linux/macOS 上跑东西 |
 
-**一条方法说明**：§7 的「逐家核实」不是靠印象，而是**读仓库自带的 provider catalog**。【源码】`agent/src/llm/presets.js:9-15` 从 `agent/assets/providers.json` 读入——那是从 models.dev 蒸馏的 209 家快照，每家带 `protocol` / `api` / `env` / `models[]`。这条比搜网页更可信（它就在仓库里、可复现、有版本），所以厂商协议归属一律以它为准，网页只用来核实**线上行为的细节差异**。
+**一条方法说明**：§7 的「逐家核实」不是靠印象，而是**读仓库自带的 provider catalog**。【源码】`agent/src/llm/presets.js:9-15` 从 `agent/assets/providers.json` 读入——那是从 models.dev 蒸馏的 209 家快照，每家带 `protocol` / `api` / `env` / `models[]`。这条比搜网页更可信（它就在仓库里、可复现、有版本），所以厂商协议归属一律以它为准，网页只用来核实**线上行为的细节差异**。**注意**：蒸馏脚本本身**不在仓库里**（`presets.js:2` 的注释指向 `tools/distill-providers.mjs`，该文件不存在，见 §7.3）——所以能沿用的是**数据的形状**，不是产出它的流程。
 
 ---
 
@@ -154,12 +155,13 @@ v2 内部的 `Message` 是扁平的（`messages.ts:7-10`），由 `state.ts:59-6
 
 两条必须守住的约束：
 
-- **`tool` 结果必须紧跟触发它的 assistant 消息**。【源码】`llm/openai.js:212` 的注释与实现都按这个顺序发；Anthropic 侧更严格——tool_result 必须落在**紧随其后的 user 回合**里。v2 的扁平序列天然满足（`state.ts` 追加顺序就是 assistant → tool），但**适配器不能重排或合并**。
+- **`tool` 结果必须紧跟触发它的 assistant 消息**。【源码】`llm/openai.js:212` 的注释与实现都按这个顺序发；Anthropic 侧更严格——tool_result 必须落在**紧随其后的 user 回合**里，且**必须排在该条消息 content 的头部**（`llm/anthropic.js:261-276`，注释点名这是 Kimi 的转换器要求）。v2 的扁平序列天然满足「紧随其后」（`state.ts:64-68` 的追加顺序就是 assistant → tool），但**适配器不能重排或合并**。
+- **附件让两家的消息形态进一步分叉**：OpenAI 协议的 tool result **只能是字符串**，于是图片得拆成后续 user 消息的 `image_url` data-URL（`llm/openai.js:143-165`）；Anthropic 侧图片直接进 tool_result 的 content、PDF 作为兄弟 document block（`llm/anthropic.js:228-246`）。**v2 的 `ToolResult` 现在只有 `ok` / `output: string`**（`ports/index.ts:37-47`），所以**多模态在 P4 的契约里根本表达不了**——它属于 P7 的模块，P4 只需保证契约**不会把它挡死**。
 - **不能丢推理文本**。【上游】MiniMax 明确要求多轮 function call 时必须把**完整的 assistant 消息**（含 `content` 里的 ` thinking` 标签，或 `reasoning_content`）加回历史，否则思维链断裂（附录 B-3）。这意味着适配器**对未知字段要保留而不是过滤**——与 04-dependencies「不因不认识的字段而失败」同一取向。
 
 ### 3.4 被否决的方案
 
-- **「自己写 SSE 解析，不引 SDK」**：**未否决，但要按判断标准 1 重新算账**。v1 是手写的（`agent/src/sse.js`），它有 2.9 KB 且要自己处理跨 chunk 断行、`[DONE]`、多行 `data:`。判断标准 1 说的是「承担协议责任」→ 优先官方库。§8 把它作为 T1 的第一件事去核对（含「SDK 是否真的省掉了这些活」）。
+- **「自己写 SSE 解析，不引 SDK」**：**未否决，但要按判断标准 1 重新算账**。v1 手写了**两套** SSE 解析：LLM 层是 `agent/src/llm/client.js:59-88` 的 `parseSSE`（自己处理跨 chunk 断行、多行 `data:` 拼接、`[DONE]` 哨兵、以及**JSON 解析失败静默丢帧**），`agent/src/sse.js:12-85` 是**第二套**、只服务 MCP 传输——`sse.js:9-11` 的注释说明它存在的理由。也就是说「自己写」在这里的实际代价是**两套实现**。判断标准 1 说的是「承担协议责任」→ 优先官方库。§8 把它作为 T1 的第一件事去核对（含「SDK 是否真的省掉了这些活」）。
 - **「统一走 OpenAI 协议，Anthropic 也用一个兼容层」**：否决。Claude 的官方端点没有 OpenAI 兼容层；`@anthropic-ai/sdk` 是协议实现方。§7 的数据也说明 Anthropic 不是长尾（`anthropic` 本体 + MiniMax 四条目）。
 
 ### 3.5 决定（草案）
@@ -195,17 +197,27 @@ v1 把四项累加进 `sessionArtifacts.usage`（`loop.js:313`）。**注意第�
 - Anthropic：`message_start` 给 input 与 cache 计数，`message_delta` 给累积 output。
 - MiniMax：同样的 `stream_options.include_usage`，且**思考 token 计入 `max_tokens`**——设小了会 `finish_reason: 'length'` 且 `content` 为空（附录 B-3）。这是「截断必须上报」的一个真实触发场景。
 
-### 4.3 被否决的方案
+### 4.3 上下文长度的计数：两家能力不对称【源码】+【上游】
+
+v1 的做法（`agent/src/llm/`）：
+
+- **Anthropic 有真实端点**：`POST /v1/messages/count_tokens?beta=true`，取返回的 `input_tokens`（`anthropic.js:131-141`，beta 头见 `:9`）。
+- **OpenAI 兼容端没有这个端点**，退化为本地估算（`openai.js:104-109`）。
+- 本地估算器**有两个且互不相干**：`llm/tokapprox.js`（无依赖启发式，自称 ±20%，按 CJK ≈1 token/字分段累计，`tokapprox.js:9-28`；**全仓唯一引用点是 `openai.js:108`**）与 `prompts/compact.js:160-164` 的 `estimateTokens`（`chars/4`，被 compact 阈值用，`loop.js:321-323`）。
+
+对 P4 的意义：**「估算上下文长度」不是模型层的统一能力**——一种协议能问端点、另一种只能猜，且猜的精度直接决定压缩阈值什么时候触发。这条**不放进 P4**（P4 不做压缩），但 `ModelPort` 若要暴露计数能力，**必须允许「不可用」而不是假装有个数字**（与 §2.4 决定 3 的「拿不到不得编造」同一条纪律）。
+
+### 4.4 被否决的方案
 
 - **「用量烂在适配器里，不往上报」**：否决。`/cost` 是 v1 已有的用户可见能力（`loop.js:417-425` 的注释就是「aggregate usage for /cost」），P8 不得功能回退。
 - **「每条 chunk 都带一份累计用量」**：否决。流式下多数 chunk 没有用量；只在**拿到时**发一条 `usage` chunk，语义更诚实（与「工具没上报 ≠ 没施加沙箱」同构）。
 
-### 4.4 决定（草案）
+### 4.5 决定（草案）
 
 1. 适配器在拿到用量时**发一条 `{type:'usage'}` chunk**；一条流里可以出现一次或多次（后者取最后一次为最终值，因为 Anthropic 是累积量）。
 2. 归一为四项 `input/output/cacheRead/cacheCreation`，缺失按 §4.1 的规则处理并在 ADR 里写明「协议无此概念」与「厂商没上报」的区别。
 
-### 4.5 待验证
+### 4.6 待验证
 
 - OpenAI 兼容端点里，`stream_options` 是否被普遍支持。【未验证】——`302ai` / `siliconflow` 这类聚合网关很可能支持，但**不能假定**；解析必须容忍「开了也不给」。
 - Anthropic 的 `cache_creation_input_tokens` 是否在流式下仍出现。【未验证】
@@ -214,14 +226,27 @@ v1 把四项累加进 `sessionArtifacts.usage`（`loop.js:313`）。**注意第�
 
 ## 5. 问题四：重试、退避与取消
 
-### 5.1 v1 的做法与它的两处问题【源码】
+### 5.1 v1 的做法【源码】
 
-`agent/src/llm/client.js` 是共用的 fetch/重试层：
+`postJSON(url, headers, body, { timeoutMs = 300000, retries = 3, signal })`（`agent/src/llm/client.js:16`）是两家 provider 共用的 fetch/重试层：
 
-- 重试判据：`429 / 5xx / 网络` 退避重试，**上限 3 次**；`401 / 403` 归为配置错误不重试（`:15`、`:43`）。
-- 退避：指数（`:15` 的注释）。
-- 取消：**每次尝试各建一个 `AbortController`**，进循环先看 `signal.aborted`（`:21`），并把外层 signal 的 abort 转发给本次尝试的 controller（`:22`）——**注意这里没有 `removeEventListener`**，每次重试都会在外层 signal 上留一个监听器；而 signal 通常是长寿命的（整个会话一个），所以这是**监听器泄漏**。P3 在 `run-turn.ts:217` 已经为同类问题做了 `finally { removeEventListener }`，此处是同一个坑的旧版本。
-- 超时：`setTimeout(() => ctrl.abort(), timeoutMs)`（`:24`）——**单次尝试超时**，不是整个流的总时长。流式请求下这会误杀长回答〔【推断】，未验证是否只作用于握手阶段〕。
+- **重试判据**：`429` 与 `5xx` 显式标 `retryable: true`（`:37-39`）；`401 / 403` 归为 `ConfigError`（配置问题）**不重试**（`:32-35`）；其余非 2xx 不重试（`:41-43`）；网络层只把 `AbortError`（即超时）与 `ECONNRESET` 当可重试（`:48`）。
+- **退避**：`sleep(1000 * 2 ** attempt)`（`:50`）——1s / 2s / 4s，**固定指数、无抖动、无上限**；默认 `retries = 3`（即最多 4 次请求）。
+- **超时**：每次尝试各起一个 `setTimeout(() => ctrl.abort(), timeoutMs)`（`:24`、`:52`），默认 **300 000 ms**（`:16`；config 默认同值 `agent/src/config.js:65`）。它是**单次尝试的超时**，不是整个流的总时长〔是否只作用于握手阶段未验证，见 §10〕。
+- **取消**：每次尝试各建一个 `AbortController`，进循环先查 `signal.aborted`（`:21`）；外层 signal 通过 `addEventListener('abort', () => ctrl.abort(), { once: true })` 桥接到本次尝试（`:22`）。
+- **退避等待期不看 signal**：`sleep` 是纯 `setTimeout`（`:13`、`:50`），**不会**被取消提前打断；但下一次尝试开始时 `:21` 会立刻看到 `aborted` 并放弃。**净效果是「等待期不生效、等待结束后不再发新请求」**——这正是 §5.4 决定 3 要改掉的行为。
+- **流式响应不重试**：`postJSON` 拿到响应头就返回，body 读取（`parseSSE`）在它之外；这一段失败**不重试**。`parseSSE` 的 `reader.read()` 也**不接 signal**（`client.js:60-72`），所以「流已经开始输出」之后既不能重试、也没有取消路径〔对实际中断行为的影响未实测，见 §10〕。
+
+**一处需要精确表述的监听器问题**：`:22` 的监听器带 `{ once: true }`，所以 **abort 时会自动摘除**——它不是「泄漏」。但**成功路径上永不摘除**：一次会话里重试（或失败）次数越多，挂在**会话级长寿命 signal** 上的监听器就越多。P3 在 `run-turn.ts:215-218` 用 `finally { removeEventListener }` 处理过同类问题，P4 应沿用那个写法（而不是依赖 `once`）。
+
+**v1 的错误分类已经存在，且值得照抄形状**（`agent/src/errfmt.js`）：
+
+- `parseApiError`（`:58-80`）把任意异常归一为 `{ status, code, message, hint, summary }`。
+- `hint` 是**固定六类**（`:8-33`）：`unknownModel` / `visionUnsupported` / `auth` / `rateLimit` / `server` / `network`。判定：`401/403` → auth，`429` → rateLimit，`5xx` → server，无 status 且匹配网络正则 → network（`:72-75`）；`unknownModel` 由厂商自定码触发——**注释里点名的例子是智谱的 `"1211"`**（`:3`、`:70`）。
+- `code` 的取法已经照顾了两家的差异：`err.code ?? body.error.code ?? body.error.type`（`:65`）——**OpenAI 系读 `error.code`，Anthropic 系读 `error.type`**。
+- **没有「上下文超长」与「内容过滤」两类**（全仓 grep 无匹配）；`stop_reason === 'max_tokens'` 只在 UI 侧给提示（`loop.js:435-436`），不进错误分类。
+
+这条对 P4 的直接意义：**「可重试 / 不可重试」与「给用户看什么」是两件事，v1 已经在两个层面分开做了**（`LLMError.retryable` 在 `client.js:4-11`，`hint` 在 `errfmt.js`）。P4 只做前者，后者是前端的事。
 
 ### 5.2 上游给的默认值【上游】
 
@@ -239,13 +264,16 @@ v1 把四项累加进 `sessionArtifacts.usage`（`loop.js:313`）。**注意第�
 1. **重试在适配器内**，只对可重试错误；错误分类表以「连接失败 / 408 / 409 / 429 / 5xx / 厂商自定可重试码」为准。
 2. 重试次数默认 **2**，指数退避，**尊重 `Retry-After`**。
 3. **取消必须涵盖退避等待期**：退避的 `sleep` 自身要响应 `signal`，否则「取消立即生效」在重试场景下不成立——这正是 P3 在审批等待上修过的同一类缺陷（`run-turn.ts:183-219` 的注释把旧版「`await` 期间从不看 signal」记为要修的缺陷）。
-4. **每次尝试各自持有 AbortController，且必须在 `finally` 里 `removeEventListener`**（不留 v1 那个泄漏）。
+4. **每次尝试各自持有 AbortController，并在 `finally` 里 `removeEventListener`**——不依赖 `{ once: true }`（v1 用了 `once`，abort 时会自动摘除，但**成功路径上永不摘除**，长寿命会话 signal 上会累积）。
 5. **超时语义要区分**：单次尝试的握手/首字节超时，与「整个流的总时长」是两回事；流式请求给总时长上限会误杀长回答。P4 只做前者，后者需要「空闲超时」语义〔待设计〕。
+6. **已经开始输出的流不重试**（v1 本来也不重试，见 §5.1——但那是实现的结果，不是写下来的规则；P4 要把它写成规则，并有一条夹具钉住）。
 
 ### 5.5 待验证
 
 - `Retry-After` 在国产端点上的实际存在率。【未验证】
-- 流式请求**中途断开**（而非未开始）算不算可重试。【未验证】——它不该算：部分内容已经流过，重试会导致模型重说一遍。**建议默认不重试已经开始输出的流**，并在 ADR 里写明。
+- 流式请求**中途断开**（而非未开始）算不算可重试。【未验证】——它不该算：部分内容已经流过，重试会导致模型重说一遍。**建议默认不重试已经开始输出的流**（§5.4 决定 6），并在 ADR 里写明。
+- **流 body 读取阶段有没有取消路径**。【未验证】v1 没有（`parseSSE` 的 `reader.read()` 不接 signal，§5.1）；SDK 是否提供了这一条是 T1 要核对的。
+- v1 那个 300 000 ms 超时**是否只作用于握手**（而非整个流）。【未验证】它直接决定「超时语义要区分」这条决定的形式。
 
 ---
 
@@ -320,7 +348,7 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 | `minimax-cn` | **anthropic** | `https://api.minimax.cn/anthropic/v1` | `MiniMax-M3` | true |
 | `minimax` | **anthropic** | `https://api.minimax.io/anthropic/v1` | `MiniMax-M3` | true |
 | `stepfun` / `stepfun-ai` | openai | `https://api.stepfun.com/v1` / `…/ai/v1` | `step-5-preview` | true |
-| `siliconflow-cn` / `siliconflow` | openai | `https://api.siliconflow.cn/v1` / `…/com/v1` | `zai-org/GLM-5.2` | true |
+| `siliconflow-cn` / `siliconflow` | openai | `https://api.siliconflow.cn/v1` / `…/com/v1` | `zai-org/GLM-5.2` / `zai-org/GLM-5.3-Flash` | true |
 | `xiaomi` | openai | `https://api.xiaomimimo.com/v1` | `mimo-v2.6-pro` | true |
 | `tencent-coding-plan` | openai | `https://api.lkeap.cloud.tencent.com/coding/v3` | `hunyuan-2.0-thinking` | true |
 | `sensenova` | openai | `https://token.sensenova.cn/v1` | `deepseek-v4-pro` | true |
@@ -328,10 +356,11 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 | `qiniu-ai` · `iflowcn` · `longcat` · `scnet-token-plan` · `kimi-code-plan-cn` | openai | （见 catalog） | —— | true |
 | `bailing` | openai | `https://api.tbox.cn/api/llm/v1` | `Ring-1T` | **false** |
 
-**两条从数据里直接读出来的结论**：
+**三条从数据里直接读出来的结论**：
 
 1. **同一个厂商会给两套端点**：`minimax-cn` 在 catalog 里是 `anthropic` + `…/anthropic/v1`，而 **MiniMax 官方文档同时给出了 OpenAI 兼容端点 `https://api.minimax.cn/v1`**（附录 B-3）。**「某家只支持哪种协议」是 catalog 的分类选择，不等于该家的能力上限**——这条对「预设以数据形式存在」的设计有直接影响（见决定 3）。
 2. **`tool_call: false` 的模型真的存在**（`bailing/Ring-1T`）。所以「把工具 schema 发下去」不能无条件做：模型不支持时**发与不发都是错的**，正确行为是**发之前看预设**，并把「该模型不支持工具」作为可判定的事实上报。
+3. **catalog 自身有缺口**：8 家 openai 协议厂商**没有 `api` 字段**（`deepinfra` / `groq` / `cerebras` / `perplexity` / `xai` / `mistral` / `togetherai` / `openai`），按 `agent/src/config.js:311` 会回落到 `https://api.openai.com/v1`。**所以「catalog 可信」要加限定**：条目与形状可信，**完整性未验证**（见 §10 第 12 项）。
 
 ### 7.2 线上行为的差异（有出处）【上游】
 
@@ -344,10 +373,12 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 | `max_tokens` 与 `max_completion_tokens` 并存，后者是新推荐字段 | B-3 | §2 的 `maxTokens` 映射到哪一侧需要按协议决定，不是一对一 |
 | 错误里带厂商自定码（如 MiniMax 的 `2013`） | B-3 | 可重试分类要有「厂商自定码」这一档 |
 | OpenAI `503 server_is_overloaded` + `Retry-After`；`slow_down` 独立于 `server_is_overloaded` | B-1 | §5.4 决定 2 的直接依据 |
+| **同一个「思考深度」档位在两家要映射成不同参数**：v1 的经验是 OpenAI 侧发 `reasoning_effort`（`llm/openai.js:90`、`:120`），Anthropic 侧发 thinking budget（`llm/anthropic.js:170-177`），注入点是 subagent 包装器 `withEffort`（`subagent.js:16-21`） | 【源码】 | §7.4 决定 4 的逃生口**必须按协议分别映射**，不能一个字段名走天下 |
+| Anthropic 有**协议专属**的 prompt cache 断点（system 尾块 + 最新消息尾块，`llm/anthropic.js:182-208`；开关 `config.js:66`），OpenAI 侧没有对应物 | 【源码】 | 缓存控制是协议专属能力，预设要能表达「这家有这个开关」；它正是 §4.1 里 `cacheRead` / `cacheCreation` 两项的来源 |
 
 ### 7.3 被否决的方案
 
-- **「预设写死在代码里」**：否决，且**有明确的替代品**——仓库已经有 209 家的 catalog 与从 models.dev 蒸馏的脚本（`presets.js:9-15`、`tools/distill-providers.mjs`）。P4 应当**沿用这个形状**：`protocol` / `api` / `env` + 每模型的 `limit` / `tool_call` / `reasoning_options` / `cost`。
+- **「预设写死在代码里」**：否决，且**有明确的替代品**——仓库已经有 209 家的 catalog，形状是 `protocol` / `api` / `env` + 每模型的 `limit` / `tool_call` / `reasoning_options` / `cost`（【源码】`agent/assets/providers.json`，读入点 `llm/presets.js:9-15`）。P4 应当**沿用这个形状**。**但要注意**：产出它的蒸馏脚本**不在仓库里**（`presets.js:2` 注释指向 `tools/distill-providers.mjs`，该路径不存在，`agent/tools/` 也不存在）——沿用形状可行，沿用「怎么更新它」这件事**没有现成答案**，需要另定（见 §10 第 11 项）。
 - **「预设随包发一份 209 家的大表」**：否决。v2 是内核库（`private: true`，从未发布），预设应该由**组合根**注入数据；内核只认形状（`ModelPreset` 类型），不认某一家。
 - **「靠失败探测厂商能力（发一次看报不报错）」**：否决。§7.2 第 4 行正是反例：参数被**静默忽略**时探测结果与「支持」无法区分，而 MiniMax 的 `400` 又会让探测本身失败。
 
@@ -372,7 +403,7 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 | # | 范围 | 现状 | P4 要做的事 |
 |---|---|---|---|
 | 1 | `ModelPort` 适配器（OpenAI 兼容 + Anthropic） | **不存在**：`src/adapters/` 下无任何 model 文件 | 两个适配器 + 注入式 transport；契约先改（§2.4） |
-| 2 | 流式归一化 → `ModelChunk` | `ModelChunk` 只有 text / tool_call（`ports/index.ts:54-56`） | 扩契约；按 index 拼装、按「流结束」判完成、usage 合并而非覆盖（§3.5、§4.4） |
+| 2 | 流式归一化 → `ModelChunk` | `ModelChunk` 只有 text / tool_call（`ports/index.ts:54-56`） | 扩契约；按 index 拼装、按「流结束」判完成、usage 合并而非覆盖（§3.5、§4.5） |
 | 3 | 重试与退避 | 无 | 适配器内；默认 2 次；尊重 `Retry-After`；**取消涵盖退避等待**；不留监听器泄漏（§5.4） |
 | 4 | 录制-回放夹具 | 无 | 原始 SSE 字节 + 请求期望；注入 transport 使 CI 无法访问网络（§6） |
 | 5 | 模型预设以数据形式存在 | 无（v1 有 209 家 catalog，形状可沿用） | `ModelPreset` 类型 + 组合根注入；`toolCall:false` 不发 tools；厂商扩展不猜默认（§7.4） |
@@ -394,6 +425,8 @@ packages/cowcat/test/fixtures/<protocol>/<provider>/<scenario>.json    # 请求�
 8. `401/403` **不重试**、`429` **重试**且尊重 `Retry-After`（对照 v1 `client.js:15/43`）。
 9. 预设里 `toolCall: false` 的模型**不发** `tools`。
 10. 两个协议的夹具跑出**同一事件序列**（出口标准第一条）。
+11. **拼不完的 `arguments` 怎么处理要定下来**：v1 对 `JSON.parse` 失败退回 `{ __raw: <字符串> }`（`llm/openai.js:82`），Anthropic 侧保留原始字符串（`llm/anthropic.js:94-97`）；而 v2 的 `normalizeCall`（`run-turn.ts:121-131`）对**不可序列化**的入参是**抛错**。这两个取向必须**选一个并写进 ADR**——「保留原样让模型自纠」与「直接失败」是产品决策，不能让两个模块各选一次。
+12. Anthropic 侧 tool_result **位于 content 头部**（§3.3）；这是一条**请求侧**断言，夹具必须能比对请求体，而不只是响应流。
 
 ---
 
@@ -408,7 +441,7 @@ ADR 编号从 **ADR-035** 起（当前最后一篇是 ADR-034，见 `architectur
 | ADR-037 | 模型预设以**数据**形式存在，形状沿用 providers.json（protocol/api/env/models + limit/tool_call/reasoning/cost）；内核只认类型 | §7.3、§7.4 |
 | ADR-038 | 厂商扩展不猜默认值；**只发预设声明过的档位**；`toolCall:false` 不发 tools | §7.2、§7.4 |
 | ADR-039 | 重试在适配器内、默认 2 次、尊重 `Retry-After`；**取消涵盖退避等待**；每次尝试的监听器必须移除 | §5.4 |
-| ADR-040 | 用量归一为四项、合并而非覆盖、可多次出现；「协议无此概念」与「厂商没上报」的区分 | §4.1、§4.4 |
+| ADR-040 | 用量归一为四项、合并而非覆盖、可多次出现；「协议无此概念」与「厂商没上报」的区分 | §4.1、§4.5 |
 | ADR-041 | 录制-回放夹具：录**原始字节**、注入 transport 使 CI 不访问网络、夹具兼作厂商差异钉板 | §6.4 |
 | ADR-042 | 出口标准的比对口径：比对「归一后的事件序列」，且 tool call id 用夹具稳定值替换 | §8 |
 
@@ -432,11 +465,14 @@ ADR 编号从 **ADR-035** 起（当前最后一篇是 ADR-034，见 `architectur
 | 3 | SDK 是否已替我们按 index 拼装 tool_calls | 【未验证】 | §3.6；直接决定「要不要自己拼」的工作量 |
 | 4 | `Retry-After` 在国产端点的存在率 | 【未验证】 | §5.4 决定 2 |
 | 5 | 流式请求中途断开的可重试性 | 【未验证】 | §5.5；本文件倾向「不重试已开始输出的流」 |
-| 6 | `stream_options` 在 OpenAI 兼容端点的支持率 | 【未验证】 | §4.5；解析必须容忍「开了也不给」 |
-| 7 | Anthropic 流式下 `cache_creation_input_tokens` 是否出现 | 【未验证】 | §4.5 |
+| 6 | `stream_options` 在 OpenAI 兼容端点的支持率 | 【未验证】 | §4.6；解析必须容忍「开了也不给」 |
+| 7 | Anthropic 流式下 `cache_creation_input_tokens` 是否出现 | 【未验证】 | §4.6 |
 | 8 | 其余 200 家端点的流式细节一致性 | 【未验证】 | §7.5；只能逐家夹具覆盖 |
 | 9 | 夹具目录是否被 `tsc` 扫入 / 是否复制到 `dist/` | 【推断】 | §6.6；影响测试能不能读到夹具 |
 | 10 | `client.js:24` 的超时是否只作用于握手 | 【推断】 | §5.1；影响「超时语义要区分」这条决定的形式 |
+| 11 | **厂商 catalog 怎么更新**——蒸馏脚本不在仓库里 | 【未验证】 | §7.3；沿用「数据形状」可行，沿用「更新流程」没有现成答案 |
+| 12 | 8 家 openai 协议厂商（`deepinfra` / `groq` / `cerebras` / `perplexity` / `xai` / `mistral` / `togetherai` / `openai`）**没有 `api` 字段**，按 `agent/src/config.js:311` 会回落到 `https://api.openai.com/v1` | 【未验证】 | §7.1；是蒸馏缺口还是有意为之，未定 |
+| 13 | 流 body 读取阶段的取消路径（v1 没有；候选 SDK 有没有） | 【未验证】 | §5.5、§8 断言 6 |
 
 ---
 
@@ -449,9 +485,16 @@ ADR 编号从 **ADR-035** 起（当前最后一篇是 ADR-034，见 `architectur
 | Anthropic 流式拼装与 usage 合并 | `agent/src/llm/anthropic.js:30`、`:63`、`:74-78`、`:87` |
 | 两家共用的 fetch/重试/取消 | `agent/src/llm/client.js:1`、`:5-9`、`:15`、`:19-24`、`:39`、`:43`、`:48-49` |
 | 用量归一与 `/cost` | `agent/src/loop.js:313`、`:417-425` |
+| SSE 手写解析（LLM 层；MCP 另有第二套） | `agent/src/llm/client.js:59-88`（跨 chunk、多行 `data:`、`[DONE]` 哨兵、丢帧）、`agent/src/sse.js:12-85` 与 `:9-11` 的说明 |
+| 错误分类与 `hint` 六类 | `agent/src/errfmt.js:8-33`、`:58-80`、`:65`（两家的码位取法）、`:3`（智谱 `1211`）、`:19`、`:23` |
+| 上下文长度计数（Anthropic 端点 vs OpenAI 本地估算；两个估算器） | `agent/src/llm/anthropic.js:131-141`、`agent/src/llm/openai.js:104-109`、`agent/src/llm/tokapprox.js:9-28`、`agent/src/prompts/compact.js:160-164` |
+| 思考档位 → 协议参数的映射 | `agent/src/llm/openai.js:90`、`:120`；`agent/src/llm/anthropic.js:170-177`；`agent/src/subagent.js:16-21` |
+| Anthropic prompt cache 断点与 beta 头 | `agent/src/llm/anthropic.js:182-208`、`:9`；`agent/src/config.js:66` |
+| 工具 schema 与结果消息形态（含附件分叉） | `agent/src/llm/openai.js:229-234`、`:176-178`、`:203-218`、`:143-165`；`agent/src/llm/anthropic.js:288-290`、`:252-276`、`:228-246` |
+| 两条旧版缺口（本文件不改旧树，只登记） | `agent/src/subagent.js:58`（`tools === null` → yolo）；`agent/src/tools/planmode.js:121-124`（`allowedPrompts` 直推 `rules.allow`，对照正规入口 `agent/src/perrules.js:18-40`） |
 | 厂商 catalog 的读取与端点解析 | `agent/src/llm/presets.js:9-15`、`:17-24`、`:49-52` |
 | 厂商协议归属与模型能力（209 家） | `agent/assets/providers.json`（`protocol` / `api` / `models[].tool_call` / `limit` / `cost`） |
-| 错误文案分类 | `agent/src/errfmt.js:19`、`:23` |
+| 错误文案分类 | `agent/src/errfmt.js:19`、`:23`（完整条目见上一行） |
 
 ## 附录 B：上游证据出处
 
