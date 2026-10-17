@@ -1,5 +1,6 @@
 import type { Rule } from './decide.js';
 import type { CowcatConfig } from './config.js';
+import type { FsPort } from '../ports/index.js';
 
 /**
  * Whether the workspace this session runs in has been trusted.
@@ -40,4 +41,22 @@ export function trustedRules(config: CowcatConfig, trust: TrustState): readonly 
   return config.rules
     .filter((sourced) => trust.trusted || sourced.origin !== 'project' || sourced.rule.verdict !== 'allow')
     .map((sourced) => sourced.rule);
+}
+
+/**
+ * Whether `cwd` is one of the trusted directories.
+ *
+ * Identity, not spelling: the comparison goes through `FsPort.samePath` (ADR-017),
+ * so a store written through one spelling of a directory still matches the other
+ * one the kernel reports — the failure that cost seven macOS tests in the legacy
+ * code.
+ *
+ * Exact directory only, no inheritance — and that is measured, not assumed. The
+ * legacy probe (docs/research/p3-policy.md, cases T4/T5) confirmed that trusting a
+ * directory does NOT trust its subdirectories, and does not trust its parent
+ * either. A checkout next to the project is a different directory and must be
+ * trusted on its own.
+ */
+export function isTrusted(trusted: readonly string[], cwd: string, fs: FsPort): boolean {
+  return trusted.some((path) => fs.samePath(path, cwd));
 }
