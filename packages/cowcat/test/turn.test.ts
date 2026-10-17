@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_RULES,
   Session,
   replay,
   runTurn,
@@ -9,7 +8,7 @@ import {
   type KernelEvent,
   type ToolPort,
 } from '../src/index.js';
-import { MemoryEventStore, ScriptedModel, sequentialIds, sessionDeps, tool } from './support.js';
+import { MemoryEventStore, ScriptedModel, sessionDeps, tool, turnDeps } from './support.js';
 
 const readTool: ToolPort = tool({ name: 'read_file', description: 'read', risk: 'read' }, () => ({
   ok: true,
@@ -28,14 +27,10 @@ async function setup(
 ) {
   const store = new MemoryEventStore();
   const session = await Session.create(sessionDeps(store), 'sess_1');
-  const deps = {
-    session,
-    model,
+  const deps = turnDeps(session, model, {
     tools: new Map(tools.map((t) => [t.spec.name, t])),
-    rules: DEFAULT_RULES,
     approve: (r: ActionRequest) => approve(r),
-    ids: sequentialIds(),
-  };
+  });
   return { store, session, deps };
 }
 
@@ -122,8 +117,14 @@ test('a denied action never reaches the tool', async () => {
     [{ type: 'tool_call', call: { callId: 'c1', name: 'rm_all', input: {} } }],
     [{ type: 'text', text: 'ok' }],
   ]);
-  const { deps } = await setup(model, [guarded]);
-  deps.rules = [{ name: 'no-rm', when: { tool: 'rm_all' }, verdict: 'deny', reason: 'never' }];
+  const { session } = await setup(model, [guarded]);
+  // Built here rather than mutated onto the returned deps: TurnDeps is readonly by
+  // design, and a test that needs different rules should say so where it constructs
+  // them.
+  const deps = turnDeps(session, model, {
+    tools: new Map([['rm_all', guarded]]),
+    rules: [{ name: 'no-rm', when: { tool: 'rm_all' }, verdict: 'deny', reason: 'never' }],
+  });
   await runTurn(deps, 'go', new AbortController().signal);
 
   assert.equal(ran, false);
@@ -188,7 +189,7 @@ test('a session reopened from the store continues where it stopped', async () =>
   const deps = sessionDeps(store);
   const first = await Session.create(deps, 'sess_2');
   await runTurn(
-    { session: first, model: new ScriptedModel([[{ type: 'text', text: 'one' }]]), tools: new Map(), rules: DEFAULT_RULES, approve: async () => true, ids: sequentialIds() },
+    turnDeps(first, new ScriptedModel([[{ type: 'text', text: 'one' }]])),
     'first',
     new AbortController().signal,
   );

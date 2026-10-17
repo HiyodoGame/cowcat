@@ -1,5 +1,5 @@
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { IdSource, ModelPort, ToolPort, ToolResult } from '../ports/index.js';
+import type { FsPort, IdSource, ModelPort, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { ToolCall } from './messages.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
@@ -9,6 +9,12 @@ export interface TurnDeps {
   readonly model: ModelPort;
   readonly tools: ReadonlyMap<string, ToolPort>;
   readonly rules: readonly Rule[];
+  /**
+   * Path identity (ADR-017). The kernel needs it for one thing: turning the path a
+   * tool call names into the canonical spelling a rule compares against. It is a
+   * port, so the kernel still touches no host runtime.
+   */
+  readonly fs: FsPort;
   readonly approve: (request: ActionRequest, decision: Decision) => Promise<boolean>;
   readonly ids: IdSource;
 }
@@ -102,13 +108,50 @@ function normalizeCall(call: ToolCall): ToolCall {
   return { ...call, input: typeof text === 'string' ? (JSON.parse(text) as unknown) : null };
 }
 
+// The two facts a rule can narrow on beyond the tool's own name and risk (ADR-027).
+// Both are read from the tool's declaration — `ToolSpec.pathInput` /
+// `commandInput` — so the kernel needs no knowledge of any particular tool's input
+// shape, and a tool that declares neither simply produces neither.
+//
+// The path goes through FsPort here, at the single place the request is built,
+// because ADR-017 makes FsPort the one owner of path identity: a rule compares
+// canonical paths, and must never see two spellings of the same file.
+//
+// A missing or non-string field is "no path", never an empty string: a rule
+// selecting on `path` has to fail closed (see matchesWhen), so the field must be
+// absent rather than present-and-useless.
+function actionFields(fs: FsPort, spec: ToolSpec, input: unknown): Pick<ActionRequest, 'path' | 'command'> {
+  if (spec.pathInput === undefined && spec.commandInput === undefined) return {};
+  const record = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : undefined;
+  const read = (field: string | undefined): string | undefined => {
+    if (field === undefined || record === undefined) return undefined;
+    const value = record[field];
+    return typeof value === 'string' && value !== '' ? value : undefined;
+  };
+  const path = read(spec.pathInput);
+  const command = read(spec.commandInput);
+  // exactOptionalPropertyTypes: `path: undefined` is not assignable to `path?: string`,
+  // so a field is only present when there is something to put in it.
+  return {
+    ...(path === undefined ? {} : { path: fs.canonical(path) }),
+    ...(command === undefined ? {} : { command }),
+  };
+}
+
 async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
   const { session } = deps;
   const turnId = session.turnId;
   const tool = deps.tools.get(call.name);
   if (tool === undefined) return { ok: false, output: `unknown tool: ${call.name}` };
 
-  const request: ActionRequest = { kind: 'tool', callId: call.callId, name: call.name, risk: tool.spec.risk };
+  const request: ActionRequest = {
+    kind: 'tool',
+    callId: call.callId,
+    name: call.name,
+    risk: tool.spec.risk,
+    input: call.input,
+    ...actionFields(deps.fs, tool.spec, call.input),
+  };
   const decision = decide(request, deps.rules);
   await session.emit({ type: 'policy.decided', turnId, callId: call.callId, decision });
 
