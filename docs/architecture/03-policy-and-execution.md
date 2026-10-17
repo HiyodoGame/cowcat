@@ -39,7 +39,7 @@
 | `ModelPort` | 接口已定，适配器 P4 | 流式模型调用，带 `AbortSignal` |
 | `ToolPort` | 接口已定，工具 P5 | 工具规格 + 执行 |
 | `ProcessPort` | **契约已定**（P2 T1），适配器待做 | 唯一的子进程网关：脱敏、截断、终止都在里面（ADR-014、ADR-015） |
-| `FsPort` | **契约已定**（P2 T1），适配器待做 | 路径身份：canonical / samePath / kindOf / exists，**同步**（ADR-017） |
+| `FsPort` | **已实现**（P2 T3，Node 适配器） | 路径身份：canonical / samePath / kindOf / exists，**同步**；缓存挂实例且只在找到现存祖先时写入（ADR-017） |
 | `PlatformPort` | **已实现**（P2 T2，Node 适配器） | shell 解析（绝对路径 + 真跑验证）、进程树终止策略、沙箱后端**真跑**探测；结果按会话记忆一次（ADR-018） |
 
 ## 进程执行网关（ADR-014）
