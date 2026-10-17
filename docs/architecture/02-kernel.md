@@ -90,9 +90,10 @@ loop:
 
 ## 会话头与 schema 版本
 
-> ADR-012。以下裁决已落地并有测试（`test/header.test.ts`）；逐行的结构校验（zod）仍待做。
+> ADR-012。以下裁决已落地并有测试（`test/header.test.ts`）；逐行的结构校验（zod）已由 P1 落地。
 
-- 首条事件固定为 `session.opened`（`seq = 1`），字段 `{ schemaVersion, cowcatVersion }`。**不额外存 `createdAt`**：`EventBase` 已有 `ts`，由 `emit` 用 `clock.now()` 填写，同一件事不存两份。
+- 首条事件固定为 `session.opened`（`seq = 1`），字段 `{ schemaVersion, cowcatVersion, shell }`。**不额外存 `createdAt`**：`EventBase` 已有 `ts`，由 `emit` 用 `clock.now()` 填写，同一件事不存两份。
+- **`shell` 记录的是实际执行命令的解释器**（P2 T2，ADR-019）：`{ kind, executable }` 两个字段，注入路径同 `cowcatVersion`（`SessionDeps.shell`，由 `PlatformPort.resolveShell()` 提供）。不记录 `baseArgs`/`commandFlag`——它们由 `kind` 推导，记两份就多一处会走样的地方。理由是**可复现**：一份只说「这些命令跑过」却不说在哪个 shell 里跑的日志，事后无法重放。
 - **只在创建时写入，`open` 只读校验、不回写**。否则重新打开会试图再写一次 `seq = 1`。
 - `reduce` 在该事件不是首条（`lastSeq !== 0`）时抛错，与其他损坏判定一致。
 - **`schemaVersion` 是内核常量**（`kernel/schema-version.ts`），它描述的是日志格式契约，归内核所有。**`cowcatVersion` 由组合根注入**（`SessionDeps.cowcatVersion`，来源是 `package.json`）——内核读不了文件系统（ADR-003 的 lint 禁令），所以它必须被告诉。
@@ -109,6 +110,7 @@ loop:
 | 首行不是 `session.opened` | 损坏：日志必须以头开始 |
 | `schemaVersion` 不在支持列表 | 内核报明确版本错误，列出支持版本 |
 | `create` 的目标已有事件 | **拒绝**：「会话已存在」 |
+| 头里缺必填字段（如 `shell`） | 损坏：报出字段路径（`shell: Invalid input: …`）。zod 侧必填，因此**没有**「旧日志缺这个字段」的分支——见 ADR-019 |
 
 **为什么 `open` 拒绝空日志，而不是返回一个空状态**：`open` 不写头（见上），所以若它对空日志返回一个可用状态，调用方接着 `emit` 就会在没有任何头的文件里写下 `seq = 1`，产出一份**再也打不开**的日志——首行不是头，按上表即损坏。让 `create` 成为唯一的入口，这条路就断了。
 

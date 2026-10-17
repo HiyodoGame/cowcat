@@ -1,4 +1,4 @@
-import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SnapshotPort } from '../ports/index.js';
+import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort } from '../ports/index.js';
 import type { EventInput, KernelEvent, SessionUpdate } from './events.js';
 import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
 import { initialState, reduce, replay, type SessionState } from './state.js';
@@ -18,6 +18,10 @@ export interface SessionDeps {
   // Supplied by the composition root (from package.json). The kernel cannot read
   // the filesystem, so its own version has to be handed to it — see ADR-012.
   readonly cowcatVersion: string;
+  // Which shell this session's commands run through, resolved by PlatformPort before
+  // create() and recorded in the header for the same reason: a log that says "these
+  // commands ran" without saying in what shell is not reproducible (ADR-012).
+  readonly shell: SessionShell;
 }
 
 export class Session {
@@ -73,6 +77,7 @@ export class Session {
         turnId: null,
         schemaVersion: SCHEMA_VERSION,
         cowcatVersion: deps.cowcatVersion,
+        shell: deps.shell,
       });
       return session;
     } catch (error) {

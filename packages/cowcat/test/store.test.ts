@@ -21,6 +21,7 @@ function headerLine(sessionId: string): string {
     type: 'session.opened',
     schemaVersion: SCHEMA_VERSION,
     cowcatVersion: '0.0.0-test',
+    shell: { kind: 'posix', executable: '/bin/sh' },
   });
 }
 

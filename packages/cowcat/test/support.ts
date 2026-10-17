@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type LockPort, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
+import { LockHeldError, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -59,6 +59,7 @@ export function exclusiveLock(): LockPort {
 
 export interface SessionDepsOptions {
   readonly cowcatVersion?: string;
+  readonly shell?: SessionShell;
   readonly lock?: LockPort;
   readonly snapshots?: SnapshotPort;
 }
@@ -91,6 +92,9 @@ export function sessionDeps(store: EventStore, options: SessionDepsOptions = {})
     lock: options.lock ?? noopLock(),
     snapshots: options.snapshots ?? noopSnapshots(),
     cowcatVersion: options.cowcatVersion ?? '0.0.0-test',
+    // A fact the kernel records but never decides: tests about the kernel should not
+    // have to know where any shell lives.
+    shell: options.shell ?? { kind: 'posix', executable: '/bin/sh' },
   };
 }
 

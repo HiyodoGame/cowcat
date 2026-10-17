@@ -126,7 +126,7 @@
 | 任务 | 内容 | 状态 |
 |---|---|---|
 | T1 | 三个端口的契约 + ADR-014～017 + 脱敏规则集（纯函数）+ lint 门禁 + `tools/lint-probe.mjs` | ✅ PR 见 §P2 交付 |
-| T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**）。shell 探测方式见 [research/p2-shell-detection.md](research/p2-shell-detection.md) | 未开始 |
+| T2 | `PlatformPort` 适配器：平台识别、shell 解析（Git Bash → PowerShell）、后端探测（真跑而非版本检查）；会话头记录实际 shell（**不升 `schemaVersion`**）。shell 探测方式见 [research/p2-shell-detection.md](research/p2-shell-detection.md) | ✅ PR 见 §P2 交付 |
 | T3 | `FsPort` 适配器：迁移 `canonical.js` 的语义（realpath、最深已存在祖先回退、永不抛、缓存）+ 契约测试 | 未开始 |
 | T4 | `ProcessPort` 适配器：启动、脱敏、截断（保留尾部 + `truncated`）、终止（一次 `/T` / 一次组杀）+ 契约测试 | 未开始 |
 | T5 | `SandboxExecutor`：`light` + `seatbelt` / `bwrap` 迁移（argv 生成保持纯函数）+ `system` 在不支持的平台拒绝 | 未开始 |
@@ -151,11 +151,36 @@
 
 **已知缺口（不声称已解决）**
 
-- **三个适配器都还没写**：本任务只交付契约。终止、脱敏、截断的真实行为要到 T4 才有测试覆盖。
-- **`shell` 字段与会话头尚未接线**：决定已定（不升 `schemaVersion`，因为 v2 日志格式从未发布），实现落在 T2。
+- **`FsPort` / `ProcessPort` 适配器仍未写**（`PlatformPort` 已在 T2 补上）：终止、脱敏、截断的真实行为要到 T4 才有测试覆盖
+- **`shell` 字段与会话头尚未接线**：决定已定（不升 `schemaVersion`，因为 v2 日志格式从未发布），实现落在 T2 → **T2 已完成**，见下
 - **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6。
 - **lint 新 block 目前只覆盖 `src/` 下不属于 kernel/policy/ports 的文件**（当下只有 `src/index.ts`），真正的考验是 P6 之后出现 `modules/`、`frontends/` 时它是否还拦得住。
 - 两个 lint block 覆盖同一规则时**后者整体覆盖前者**（不是合并）——这个坑已经踩过一次并被探针抓到，配置里写了注释说明 `ignores` 是承重的。
+
+**交付（T2）**
+
+- `adapters/shell.ts`：候选链与接受规则，**纯逻辑**——`which` / `exists` / `run` / 路径拼接全部注入，所以「Git Bash 优先于 PowerShell」「装了但跑不起来要跳过」「绝不接受裸名」这些决定都能在任意机器上测
+- `adapters/sandbox-probe.ts`：bwrap / seatbelt **真跑**探测 + 失败分类（missing / userns-blocked / error / unsupported-platform），每条不可用的裁决都带错误首行与可粘贴的修复命令
+- `adapters/platform.ts`：`NodePlatform implements PlatformPort`；两项探测**同步且按会话记忆一次**（PowerShell 5.1 单次启动 745ms）
+- 会话头增加 `shell: { kind, executable }`（ADR-019），由 `SessionDeps.shell` 注入，与 `cowcatVersion` 同一条注入路径
+- ADR-018（shell 绝对路径 + 真跑验证）、ADR-019（记 shell 不升 schemaVersion）
+- 测试 78 → 102
+
+**T2 的出口标准与验证结果**
+
+- [x] `npm run build` / `npm run lint` 通过
+- [x] `npm test` 102 项全通过（本机 Windows / Node `v24.18.0`）
+- [x] lint 门禁经 `tools/lint-probe.mjs` 复验：两条 block 的文案都还在，`src/adapters/` 仍豁免
+- [x] **真机跑通整条链**：本机（Git 在 `E:`，注册表三键全缺）解析出 `E:\WorkSoftwares\Git\bin\bash.exe`，kind = `git-bash`，与调研的实测一致；终止策略 `taskkill-tree`，沙箱裁决 `unsupported-platform` + WSL2 替代路径
+- [ ] CI 上 `packages/cowcat` 的 Linux / Windows 两腿（本 PR 的 checks）
+- [ ] **macOS 的 `/bin/bash` 优先于 `$SHELL`（zsh）尚未实测**——推断，需 `macos-15` 腿结清
+
+**T2 已知缺口（不声称已解决）**
+
+- **`FsPort` / `ProcessPort` 适配器仍未写**：终止、脱敏、截断的真实行为要到 T4 才有测试覆盖
+- **沙箱执行器完全未动**：G1/G2/G3 的迁移与 bubblewrap 的 CI 安装在 T5/T6
+- **macOS shell 顺序未实测**：`/bin/bash` 优先是为对齐沙箱 profile 里的写死路径，属于推断；`pwsh` 分支本机也没装，同样未实测
+- **沙箱探测只到「能不能用」**：profile 本身的正确性（G1/G2/G3）属于 T5
 
 **出口标准**
 

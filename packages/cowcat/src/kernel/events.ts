@@ -1,4 +1,5 @@
 import type { Decision } from '../policy/decide.js';
+import type { SessionShell } from '../ports/platform.js';
 import type { ToolCall } from './messages.js';
 import type { TurnState } from './turn.js';
 
@@ -13,7 +14,7 @@ interface EventBase {
 // is applied to state, so replaying the log reproduces the session exactly.
 export type KernelEvent = EventBase &
   (
-    | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string }
+    | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell }
     | { readonly type: 'turn.opened'; readonly input: string }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
     | { readonly type: 'model.message'; readonly text: string; readonly toolCalls: readonly ToolCall[] }

@@ -28,6 +28,22 @@ export type PlatformId = 'linux' | 'macos' | 'windows' | 'wsl' | 'other';
 export type ShellKind = 'posix' | 'git-bash' | 'powershell' | 'cmd';
 
 /**
+ * The two facts that make a session's log reproducible: which interpreter ran its
+ * commands, and which binary was actually invoked. This — not the whole `Shell` — is
+ * what the session header records, because `baseArgs`/`commandFlag` are derived from
+ * `kind` and recording them too would be a second place to keep in sync.
+ *
+ * It lives here rather than in the kernel so `Shell` can extend it; a session's
+ * reproducibility depends on knowing which shell interpreted its commands (ADR-012).
+ */
+export interface SessionShell {
+  readonly kind: ShellKind;
+  /** Absolute path. Never a bare name: on the reference machine `bash` on PATH is the
+   * WSL launcher and, after it, an OpenSSH shim that runs but is the wrong shell. */
+  readonly executable: string;
+}
+
+/**
  * The shell a command line is handed to. On Windows the order is Git Bash, then
  * PowerShell, then cmd.exe: Git Bash because its command semantics match the
  * POSIX toolchain this project assumes, PowerShell because it is always present
@@ -35,10 +51,7 @@ export type ShellKind = 'posix' | 'git-bash' | 'powershell' | 'cmd';
  * agent had NO detection at all — it let Node pick `ComSpec`, and the "shell" in
  * its system prompt was a hardcoded string (agent/src/prompts/system.js).
  */
-export interface Shell {
-  readonly kind: ShellKind;
-  /** Absolute path to the shell binary. */
-  readonly executable: string;
+export interface Shell extends SessionShell {
   /** Flags that make it non-interactive, before the command. */
   readonly baseArgs: readonly string[];
   /** How the command itself is passed: `-c <cmd>` for POSIX-likes, `-Command <cmd>` for PowerShell. */
