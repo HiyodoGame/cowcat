@@ -4,6 +4,7 @@ import {
   buildSandboxCommand,
   createSandboxExecutor,
   defaultSandboxProfile,
+  shellQuote,
   SandboxRequestRefusedError,
   SandboxUnavailableError,
   type ProcessSpec,
@@ -190,14 +191,53 @@ test('bwrap needs no scratch directory, because it mounts one', () => {
   assert.equal(built.cleanup, undefined);
 });
 
-test('the command reaches the sandbox as one line, in the caller\'s order', () => {
+test('the command reaches the sandbox as one shell-safe line, in the caller\'s order', () => {
   const built = buildSandboxCommand(spec({}, ['/bin/bash', '-c', 'echo hi']), {
     platform: fakePlatform({ backends: [verdict()] }),
     fsProbe,
   });
 
   const tail = built.argv.slice(built.argv.indexOf('--'));
-  assert.deepEqual(tail, ['--', '/bin/bash', '-c', '/bin/bash -c echo hi']);
+  // 'echo hi' needs its quotes — an unquoted space would split it into two words.
+  assert.deepEqual(tail, ['--', '/bin/bash', '-c', "/bin/bash -c 'echo hi'"]);
+});
+
+test('argv is quoted, because the sandbox runs it through a shell', () => {
+  // Measured: joining argv with spaces and handing it to `sh -c` re-reads every quote in
+  // it. A script containing `"` then dies with a syntax error and NO output — which looks
+  // exactly like a sandbox that blocks everything, and cost a macOS CI run.
+  const script = 'process.stdout.write("RAN:" + require("fs").readFileSync("f.txt","utf8"))';
+  const built = buildSandboxCommand(spec({}, [process.execPath, '-e', script]), {
+    platform: fakePlatform({ backends: [verdict()] }),
+    fsProbe,
+  });
+
+  const command = built.argv[built.argv.length - 1];
+  assert.ok(command !== undefined);
+  // The script arrives verbatim — nothing in it was left to be re-interpreted. (The
+  // executable is quoted too when it contains a space, which is the common case on
+  // Windows and on runner tool caches.)
+  assert.ok(command.includes(`-e '${script}'`), command);
+  assert.equal(command.split(' -e ').length, 2, 'the script must not be split by an unquoted space');
+  assert.ok(
+    command.startsWith(process.execPath) || command.startsWith(`'${process.execPath}'`),
+    `the executable must survive intact: ${command}`,
+  );
+});
+
+test('shellQuote is POSIX-correct for the awkward cases', () => {
+  // Round-trip through a real shell is the property that matters; these are the inputs
+  // that break a naive join.
+  assert.equal(shellQuote('simple'), 'simple', 'no quoting when none is needed');
+  assert.equal(shellQuote(''), "''", 'the empty string must not vanish');
+  assert.equal(shellQuote("it's"), `'it'\\''s'`);
+  assert.equal(shellQuote('two words'), "'two words'");
+  assert.equal(shellQuote('$(rm -rf /)'), "'$(rm -rf /)'", 'no expansion inside single quotes');
+  assert.equal(shellQuote('a`b`c'), "'a`b`c'", 'no command substitution');
+  assert.equal(shellQuote('a;rm -rf /'), "'a;rm -rf /'", 'no word splitting');
+  // A backslash is NOT safe to leave bare: the shell would eat it.
+  assert.equal(shellQuote('C:\\Users\\u'), "'C:\\Users\\u'");
+  assert.equal(shellQuote('/usr/bin/node'), '/usr/bin/node', 'a plain POSIX path stays readable');
 });
 
 test('a run with nothing to wrap is refused rather than sandboxed around nothing', () => {

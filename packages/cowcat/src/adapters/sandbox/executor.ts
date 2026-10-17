@@ -47,14 +47,19 @@ export function buildSandboxCommand(spec: ProcessSpec, deps: ExecutorDeps): Sand
   const profile = spec.sandbox;
   const backend = pickBackend(profile, deps.platform);
   const argv0 = spec.argv[0];
-  const command = spec.argv.slice(1);
-  if (argv0 === undefined || command.length === 0) {
+  const args = spec.argv.slice(1);
+  if (argv0 === undefined || args.length === 0) {
     throw new Error('a sandboxed run needs a command to wrap');
   }
-  // The command goes to the sandbox shell, not to the caller's argv: the gateway is
-  // handed an already-quoted command line, and re-quoting it here would be the first
-  // place quoting decisions are made twice.
-  const commandLine = [argv0, ...command].join(' ');
+  // The backend needs a COMMAND STRING because it has to hand it to a shell: the
+  // executable itself may live outside the read surface (on a CI runner `node` is under
+  // a tool cache, nowhere near /usr or /opt), so the sandbox cannot simply exec argv.
+  //
+  // Which makes the join a quoting decision, and it has to be made HERE rather than
+  // being skipped. Joining argv with spaces and handing the result to `sh -c` re-reads
+  // every quote in it: measured, a script containing `"` dies with a syntax error and
+  // no output at all, which looks exactly like a sandbox that blocks everything.
+  const commandLine = [argv0, ...args].map(shellQuote).join(' ');
 
   refuseUndeliverableNetwork(profile, backend);
 
@@ -173,6 +178,17 @@ function removeScratchDir(deps: ExecutorDeps, path: string): void {
       rmSync(target, { recursive: true, force: true });
     });
   remove(path);
+}
+
+/**
+ * POSIX single-quote escaping. Everything literal; an embedded quote is closed,
+ * escaped and reopened. Quoting nothing that needs no quotes keeps the generated
+ * command line readable in a diff, which matters because it is the product.
+ */
+export function shellQuote(value: string): string {
+  if (value === '') return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.split("'").join("'\\''")}'`;
 }
 
 const WSL_ALTERNATIVE = 'run inside WSL2 — the bubblewrap backend works there';

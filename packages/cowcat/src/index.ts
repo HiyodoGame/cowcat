@@ -63,7 +63,7 @@ export { ENV_ALWAYS_KEEP, ENV_SENSITIVE, redactEnv, type RedactionRequest, type 
 export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
 export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';
-export { buildSandboxCommand, createSandboxExecutor, type ExecutorDeps } from './adapters/sandbox/executor.js';
+export { buildSandboxCommand, createSandboxExecutor, shellQuote, type ExecutorDeps } from './adapters/sandbox/executor.js';
 export {
   buildBwrapCommand,
   BWRAP_READ_PATHS,
