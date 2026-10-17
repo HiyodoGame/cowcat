@@ -91,9 +91,9 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
               const block = blocks.get(event.index);
               if (block !== undefined) block.json += event.delta.partial_json;
             }
-            // `thinking_delta` and others are deliberately not mapped yet: the contract
-            // has no place for reasoning content, and inventing one here would decide a
-            // question that belongs with the preset work (T6).
+            // `thinking_delta` / `signature_delta` are deliberately not mapped yet: T6a
+            // gave the contract a `reasoning` chunk, and emitting it here — reading the
+            // deltas, assembling the block, carrying the opaque signature — is T6b.
             break;
           case 'content_block_stop': {
             const block = blocks.get(event.index);
