@@ -130,6 +130,7 @@ export interface TurnDepsOptions {
   readonly approve?: (request: ActionRequest, decision: Decision) => Promise<ApprovalVerdict>;
   readonly fs?: FsPort;
   readonly approvalTimeoutMs?: number;
+  readonly modelId?: string;
 }
 
 // One place to build TurnDeps, for the same reason sessionDeps exists: the shape
@@ -140,6 +141,9 @@ export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOp
   return {
     session,
     model,
+    // A model id the kernel only passes through (ADR-035). Tests that care about what
+    // the adapter was asked for assert on ScriptedModel.requests, not on this default.
+    modelId: options.modelId ?? 'test-model',
     tools: options.tools ?? new Map(),
     rules: options.rules ?? DEFAULT_RULES,
     fs: options.fs ?? fakeFs(),

@@ -1,6 +1,6 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, IdSource, ModelPort, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
+import type { FsPort, IdSource, ModelPort, StopReason, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { ToolCall } from './messages.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
@@ -18,6 +18,12 @@ export const DEFAULT_APPROVAL_TIMEOUT_MS = 300_000;
 export interface TurnDeps {
   readonly session: Session;
   readonly model: ModelPort;
+  /**
+   * The model this turn asks for (ADR-035). The kernel holds it because which model to
+   * call is a decision the session made — an adapter that had to guess would be
+   * guessing about someone else's configuration.
+   */
+  readonly modelId: string;
   readonly tools: ReadonlyMap<string, ToolPort>;
   readonly rules: readonly Rule[];
   /**
@@ -91,22 +97,43 @@ async function streamModel(deps: TurnDeps, signal: AbortSignal): Promise<readonl
   const request = {
     messages: session.state.messages,
     tools: [...tools.values()].map((tool) => tool.spec),
+    model: deps.modelId,
   };
   await session.transition('streaming');
 
   let text = '';
+  let stopReason: StopReason | null = null;
   const calls: ToolCall[] = [];
   for await (const chunk of model.stream(request, signal)) {
-    if (chunk.type === 'text') {
-      text += chunk.text;
-      session.streamDelta(chunk.text);
-    } else {
-      calls.push(normalizeCall(chunk.call));
+    switch (chunk.type) {
+      case 'text':
+        text += chunk.text;
+        session.streamDelta(chunk.text);
+        break;
+      case 'tool_call':
+        calls.push(normalizeCall(chunk.call));
+        break;
+      case 'usage':
+        // Written when it arrives rather than held until the turn ends: usage that has
+        // already been billed has to survive a cancellation (ADR-041).
+        await session.emit({ type: 'model.usage', turnId, usage: chunk.usage });
+        break;
+      case 'stop':
+        // The last one wins, and it never ends the loop — the end of the iterator is
+        // the end, because providers disagree about what follows a finishing chunk.
+        stopReason = chunk.reason;
+        break;
+      default: {
+        // A new chunk type has to be handled here rather than silently dropped in the
+        // one place that turns chunks into facts.
+        const unhandled: never = chunk;
+        throw new Error(`unhandled model chunk: ${JSON.stringify(unhandled)}`);
+      }
     }
   }
   if (signal.aborted) throw new TurnAborted('aborted while streaming');
 
-  await session.emit({ type: 'model.message', turnId, text, toolCalls: calls });
+  await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, stopReason });
   return calls;
 }
 

@@ -28,7 +28,13 @@ async function seededSession(dir: string, sessionId: string) {
   const session = await Session.create(deps, sessionId);
   await session.openTurn('first'); // idle -> requesting
   await session.transition('streaming');
-  await session.emit({ type: 'model.message', turnId: session.turnId, text: 'hi', toolCalls: [] });
+  await session.emit({
+    type: 'model.message',
+    turnId: session.turnId,
+    text: 'hi',
+    toolCalls: [],
+    stopReason: { kind: 'end', raw: 'stop' },
+  });
   await session.transition('finishing');
   await session.transition('completed');
   await session.close();

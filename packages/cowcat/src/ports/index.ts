@@ -1,14 +1,16 @@
 import type { KernelEvent } from '../kernel/events.js';
 import type { Message, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
+import type { ModelUsage, StopReason } from './model.js';
 import type { ExecutionFacts } from './process.js';
 
-// The P2 ports live in their own files (docs/architecture/01-layers.md) and are
+// The ports live in their own files (docs/architecture/01-layers.md) and are
 // re-exported here, so this barrel stays the single import surface for the kernel
 // and the tests.
 export * from './audit.js';
 export * from './fs.js';
 export * from './instructions.js';
+export * from './model.js';
 export * from './platform.js';
 export * from './process.js';
 export * from './trust.js';
@@ -53,11 +55,52 @@ export interface ToolPort {
 
 export type ModelChunk =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'tool_call'; readonly call: ToolCall };
+  | { readonly type: 'tool_call'; readonly call: ToolCall }
+  | {
+      /**
+       * Emitted when the adapter has numbers to report, which is not the same as
+       * "once per stream": most streaming chunks carry no usage at all, and Anthropic
+       * reports it twice (an initial count, then a cumulative one). A consumer that
+       * wants a single figure takes the last one (ADR-040).
+       */
+      readonly type: 'usage';
+      readonly usage: ModelUsage;
+    }
+  | {
+      /**
+       * What the stream ended on. Deliberately NOT what decides that the stream has
+       * ended: providers disagree about whether a usage-only chunk or `[DONE]`
+       * follows the finishing chunk, and some keep sending tool-call deltas after it
+       * (`agent/src/llm/openai.js:69-71`). The end of the iterator is the end.
+       */
+      readonly type: 'stop';
+      readonly reason: StopReason;
+    };
 
 export interface ModelRequest {
   readonly messages: readonly Message[];
   readonly tools: readonly ToolSpec[];
+  /**
+   * Which model to call. The kernel knows it, because "which model" is a decision the
+   * session made, not something an adapter may guess (ADR-035).
+   */
+  readonly model: string;
+  /**
+   * Instructions that go ahead of the conversation. A request field rather than a
+   * `Message`, because the two protocols disagree about where it lives: Anthropic
+   * takes a top-level `system`, OpenAI takes a `role: 'system'` message — and the
+   * internal `Message` union has no such role (ADR-035).
+   */
+  readonly system?: string;
+  /** An override; a model's own ceiling comes from its preset (ADR-037). */
+  readonly maxTokens?: number;
+  /**
+   * Vendor extensions (ADR-038). A named escape hatch rather than a free-form bag on
+   * the request itself; an adapter sends only what a preset declared, because guessing
+   * a default either 400s (MiniMax rejects `reasoning_effort: 'none'`) or is silently
+   * ignored.
+   */
+  readonly providerOptions?: Readonly<Record<string, unknown>>;
 }
 
 export interface ModelPort {

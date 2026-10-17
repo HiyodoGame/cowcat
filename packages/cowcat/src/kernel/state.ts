@@ -61,6 +61,12 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         ...base,
         messages: [...state.messages, { role: 'assistant', text: event.text, toolCalls: event.toolCalls }],
       };
+    case 'model.usage':
+      // Nothing to derive: what a call cost does not change the conversation, and
+      // putting it into the state would make every replay compare numbers that no
+      // later decision reads. The event is in the log for whoever reports or audits
+      // cost (ADR-041).
+      return base;
     case 'tool.finished':
       return {
         ...base,
