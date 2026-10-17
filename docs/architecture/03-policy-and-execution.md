@@ -66,6 +66,20 @@
 - 判定按**目录身份精确匹配、无继承**（`isTrusted`）。子目录必须自己被信任过；父目录不会被顺带信任。这是上一阶段实测过的旧版语义（调研探针 T4/T5），不是假设。
 - **`canonical` 只能纠正真实存在目录的大小写**：最深已存在祖先回退会把尾巴原样接回去（ADR-017）。所以一个拼错的路径**保持为不同的身份**——这正是想要的，信任一个错字不该顺带信任真目录。
 
+### 项目指令文件（ADR-029、ADR-030）
+
+`ports/instructions.ts` 定义 `InstructionPort`，`adapters/instructions.ts` 给出 `FileInstructionSource`；**哪些文件、以及能不能注入**是纯策略，在 `policy/instructions.ts`。
+
+- **候选名只有 `['AGENTS.md', 'CLAUDE.md']`**，`AGENTS.md` 在前。`AGENTS.md` 是被 60k+ 项目使用、由 Agentic AI Foundation 托管的开放格式；`CLAUDE.md` 作兼容回退——与外部参照同一安排。旧实现把专有的 `COWCAT.md` 排在最前（`agent/src/project.js:6`），于是一个写了标准文件的仓库**永远读不到它**。
+- **就近取一份**：从 `cwd` 向上走，第一个命中的赢（标准的规则是「closest wins」）。
+- **存在但为空的不算**：否则一个误建的空 `AGENTS.md` 会遮蔽旁边有内容的 `CLAUDE.md`。
+- **走查从 `fs.canonical(cwd)` 开始**，所以 `/var/x` 与 `/private/var/x` 走同一批目录。旧实现正是栽在这上面（7 个 macOS CI 失败）；而标准自己的迁移建议就是**建符号链接**，同一个坑换个形状又会来一次。内容取 `trim()` 后的结果。
+- **未信任时不注入，并且明确告知**（ADR-030）：`InstructionDecision` 里 `skipped-untrusted` 是**独立的一种结果**而不是并进 `none`，因为两者要区别对待——「没有文件」是安静的，「有文件但没用」必须说出来。`describeInstructionSkip` 给出带**行数**的提示（不然用户不知道被拦下多少）。
+- **未信任的理由**：`AGENTS.md` 标准明确说列在文件里的测试命令**会被 agent 自动执行**，所以它不是纯文本注入而是**命令执行的入口**。这与信任门控同一精神——指令文件是「放宽 agent 行为」的内容，未信任时不生效。
+- **信任后重载不需要缓存失效**：决策是 `(file, trust)` 的纯函数，`/act` 之后再判一次即可。
+
+**尚未实现**：ADR-029 提到的「`instructions` 式显式 glob 追加」（用于 monorepo 里把根目录与子包的 `AGENTS.md` 一起引入）。glob 展开需要目录列举，是一块更大的面；与 CLI 一起做。
+
 ## 配置（ADR-025、ADR-026）
 
 配置的层级、合并语义与错误报告。实现是 `policy/config.ts`（纯逻辑）+ `adapters/config.ts`（zod 解码边界）。
