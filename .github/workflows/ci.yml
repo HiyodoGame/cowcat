@@ -1,19 +1,28 @@
 # CI: two packages, one gate each, and a cheap scope check in front of the legacy one.
 #
-# ── Why this is shaped the way it is (cost) ──────────────────────────────────
-# This repository is PRIVATE on GitHub Pro: 3,000 included minutes per month.
-# Billing multipliers: Linux 1x, Windows 2x, macOS 10x. Measured on 2026-10-16,
-# one day of ordinary PR work (68 CI runs) cost ~795 billable minutes — 26% of
-# the monthly allowance in a single day. The largest line items were the Windows
-# job (33%) and the Node-version legs (31%).
+# ── Why this is shaped the way it is ─────────────────────────────────────────
+# This repository is PUBLIC, so GitHub Actions minutes are free on every runner
+# (Linux 1x, Windows 2x, macOS 10x multipliers no longer bill us). The shape used
+# to be dictated by a private Pro quota — measured 2026-10-16, one day of ordinary
+# PR work (68 runs) cost ~795 billable minutes, 26% of the monthly allowance, with
+# the Windows job (33%) and the Node-version legs (31%) the largest items. That
+# reasoning expired with the quota, so every leg now runs on every non-draft PR:
 #
-#   legacy agent/ (until P8)   runs only when agent/ or this file changed;
-#                              its Windows and Node 24 legs run on main only
-#   packages/cowcat (v2)       every non-draft PR on Linux / Node 22;
-#                              Windows on main only, until measured cost says otherwise
+#   legacy agent/ (until P8)   Linux on every non-draft PR; its Windows and Node 24
+#                              legs only when the scope check says agent/ changed
+#   packages/cowcat (v2)       Linux + Windows on every non-draft PR
 #   package whitelist          every non-draft PR (cheap, guards what npm publishes)
+#   CI (macOS)                 every non-draft PR + every main push — the only place
+#                              the Seatbelt backend is verified for real
 #   draft PRs                  nothing — a draft cannot be merged, and
 #                              `ready_for_review` re-triggers a full run
+#
+# Required checks are exactly the jobs that report on EVERY non-draft PR. That is
+# the whole rule: a required check that only sometimes reports blocks every PR
+# that skipped it. So `test · node 22 · windows-latest` and
+# `test · node 24 · ubuntu-latest` run on PRs but stay out of the required list
+# (the scope check may skip them), while the v2 Windows leg and the macOS leg are
+# required because they always run.
 #
 # The legacy `test` job keeps its name because branch protection requires it.
 # When `agent/` is untouched its steps are skipped inside a job that still reports
@@ -141,15 +150,14 @@ jobs:
         run: npm test
 
   test-windows:
-    # Main pushes only. Windows is a 2x multiplier and was the single largest
-    # line item (33% of a day's usage); a Windows regression is caught at merge
-    # rather than before it. Deliberately NOT a required check: see
-    # docs/CONTRIBUTING.md §3 for the trade-off.
+    # Runs on every non-draft PR, but only when the scope check says `agent/`
+    # changed — which is also why it is NOT a required check: a required check
+    # that skips on some PRs blocks exactly those PRs.
     name: test · node 22 · windows-latest
     runs-on: windows-latest
     timeout-minutes: 20
     needs: scope
-    if: github.event_name != 'pull_request' && needs.scope.outputs.legacy == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.scope.outputs.legacy == 'true'
     defaults:
       run:
         working-directory: agent
@@ -172,13 +180,13 @@ jobs:
         run: npm test
 
   test-node24:
-    # Node-version compatibility. Main pushes only: a merge-time verdict, not an
-    # every-commit one.
+    # Node-version compatibility. Same shape as the Windows leg above: every
+    # non-draft PR, but only when `agent/` is in scope, and therefore not required.
     name: test · node 24 · ubuntu-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: scope
-    if: github.event_name != 'pull_request' && needs.scope.outputs.legacy == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.scope.outputs.legacy == 'true'
     defaults:
       run:
         working-directory: agent
@@ -233,15 +241,14 @@ jobs:
         run: npm test
 
   cowcat-windows:
-    # Main only, per the cost decision (docs/CONTRIBUTING.md §3). Measured
-    # 2026-10-16: 54s wall, ~1.8 billable minutes at the 2x multiplier — cheap
-    # once per merge, but on every non-draft PR it would scale with PR frequency,
-    # which is exactly what the quota reshaping removed. Revisit if PR frequency
-    # drops to single digits per day.
+    # Every non-draft PR, and a required check. It was main-only while the repo
+    # was private and Windows billed at 2x (54s wall ≈ 1.8 billable minutes per
+    # run, paid again on every PR); minutes are free now, and a v2 regression on
+    # Windows should be caught before the merge rather than after it.
     name: packages/cowcat · node 22 · windows-latest
     runs-on: windows-latest
     timeout-minutes: 10
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     defaults:
       run:
         working-directory: packages/cowcat

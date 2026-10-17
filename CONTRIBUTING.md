@@ -53,19 +53,22 @@ gh pr checks --watch && gh pr merge --squash --delete-branch
 | job | 内容 | 何时 | 必过 |
 |---|---|---|---|
 | `packages/cowcat · node 22 · ubuntu-latest` | v2 内核：`npm test`（build + ESLint + 测试） | 每个**非草稿** PR + 每次合入 main | ✅ |
+| `packages/cowcat · node 22 · windows-latest` | v2 内核在 Windows 上 | 同上 | ✅ |
+| `test · node 22 · macos-15`（`CI (macOS)`） | v1 在 macOS 上 + Seatbelt 真实内核断言（G1/G2/G3、私有临时目录、项目里 `rm` 仍可用） | 同上 | ✅ |
 | `package whitelist` | `node tools/check-tarball.mjs`：`npm publish` 会传的东西是否越界 | 同上 | ✅ |
-| `test · node 22 · ubuntu-latest` | v1 `agent/`：`npm test` + bubblewrap/AppArmor | **仅当 `agent/` 或 `ci.yml` 有改动** | ✅ |
-| `packages/cowcat · node 22 · windows-latest` | v2 内核在 Windows 上 | 合入 main 时 | ❌ |
-| `test · node 22 · windows-latest` | v1 在 Windows 上（`.cmd` shim / 路径 / MCP stdio 依赖平台行为） | 合入 main 且 `agent/` 有改动时 | ❌ |
-| `test · node 24 · ubuntu-latest` | v1 的 Node 24 兼容 | 合入 main 且 `agent/` 有改动时 | ❌ |
+| `test · node 22 · ubuntu-latest` | v1 `agent/`：`npm test` + bubblewrap/AppArmor | 每个非草稿 PR；未触及时作业内步骤跳过 | ✅ |
+| `test · node 22 · windows-latest` | v1 在 Windows 上（`.cmd` shim / 路径 / MCP stdio 依赖平台行为） | 每个非草稿 PR，**且仅当 `agent/` 或 `ci.yml` 有改动** | ❌ |
+| `test · node 24 · ubuntu-latest` | v1 的 Node 24 兼容 | 同上 | ❌ |
 
-几点约定，改之前先读完再动：
+**必过检查的规则只有一条：必须是「每个非草稿 PR 都上报」的作业。** 一个只在部分 PR 上出现的必过检查，会把没触发它的那些 PR 全部卡死——所以 v1 的 Windows 与 Node 24 两条腿虽然每个 PR 都跑（公开后 Actions 免费），但**不进必过列表**：`scope` 作业可能判定 `agent/` 未改动而跳过它们。反过来，v2 的 Windows 腿与 macOS 腿没有任何跳过条件，所以它们是必过的。
+
+几条约定，改之前先读完再动：
 
 - **旧套件按需运行**：`scope` 作业比较 PR 基准与当前提交，只有 `agent/` 或 `.github/workflows/ci.yml` 变化才跑。**作业名保持不变**，所以分支保护不用改；无法比较时（手动触发、新分支、基准缺失）一律运行——宁可多跑，不靠猜测跳过。
 - **草稿 PR 不跑任何检查**：草稿本来就不可合并。迭代循环（提交 → 看结果 → 改 → 再推）是运行次数的主要来源，这是单项最大的节省。
 - **Linux 腿钉 `ubuntu-24.04`**：`ubuntu-latest` 自 2026-10-19 起逐步迁移到 Ubuntu 26.04。迁移期同一个提交可能落到两个镜像，而本门禁要在 Ubuntu 上装 `bubblewrap` + AppArmor profile，**装不上时沙箱测试是 skip 而不是 fail** —— 镜像漂移会让覆盖静默关闭而必过检查保持绿色。所以钉镜像。job **name** 仍写作 `ubuntu-latest`：required check 按 job name 匹配，改名必须与分支保护的 contexts 在同一窗口一起改。
 - **Node 20 已从矩阵删除**：官方 lifecycle 于 2026-04-30 EOL，测它等于宣称兼容一个不再收安全更新的运行时。要恢复请先想清楚支持承诺。
-- **macOS 单独一个 workflow**（`.github/workflows/ci-macos.yml`，`macos-15`）：它是 Seatbelt 后端唯一能做**真实内核断言**的地方（`test/sandbox-macos.test.mjs` 的 G1/G2/G3）。当前只在触及沙箱的非草稿 PR 上跑，且**不在必过检查里**——一个只是有时才上报的 required check 会把没触发它的 PR 全卡死。
+- **macOS 单独一个 workflow**（`.github/workflows/ci-macos.yml`，`macos-15`）：它是 Seatbelt 后端唯一能做**真实内核断言**的地方（`test/sandbox-macos.test.mjs` 的 G1/G2/G3、私有临时目录、项目里 `rm` 仍可用）。仓库公开前它因为 10 倍计费而只在触及沙箱的 PR 上跑、且不进必过检查；公开后分钟免费，路径过滤已去掉，改为**每个非草稿 PR + 每次合入 main 都跑**，并进入必过检查——这样 Seatbelt 的断言第一次进了合并门禁。
 - **live 脚本（`agent/test/live/*`）不进 CI**：它们需要真实 API key 或真实 MCP server，属发布前手工验证。
 
 ## 5. 本地 git 钩子（可选，推荐）

@@ -1,19 +1,20 @@
 # CI (macOS) — the ONLY place the Seatbelt backend is verified for real.
 #
-# macOS bills at 10x. Measured 2026-10-16: 27 triggered runs cost 79 billable
-# minutes (10% of that day's usage) — wall time is tiny (~20s), the multiplier is
-# not. So it runs on PRs touching the sandbox and never on main pushes: every
-# sandbox change already got verified before merge, and a merge-time macOS
-# verdict is not worth the budget. `workflow_dispatch` remains for re-running a
-# specific case by hand.
+# It used to run on PRs touching the sandbox and never on main pushes, because
+# macOS bills at 10x: measured 2026-10-16, 27 triggered runs cost 79 billable
+# minutes (10% of that day's usage) while the wall time was ~20s. It was also
+# deliberately outside branch protection, because a path-filtered check that
+# only sometimes reports blocks every PR that skipped it.
 #
-# It is deliberately NOT in the branch-protection required checks — a required
-# check that only sometimes reports blocks every PR that skipped it.
+# The repo is public now, so minutes are free on macOS runners too. Both
+# constraints are gone, so this runs on EVERY non-draft PR and every main push,
+# and it IS a required check: it reports every time, which is what makes a
+# required check safe. That puts the Seatbelt enforcement assertions
+# (test/sandbox-macos.test.mjs G1/G2/G3, private temp dir, `rm` still works) in
+# the merge gate instead of in a log nobody reads.
 #
 # Draft PRs are excluded for the same reason as ci.yml: they cannot be merged.
-# The path filter includes trust.js / session.js / bin/cowcat.mjs, not just
-# src/sandbox/**: the macOS leg exists because path identity behaves differently
-# here, and a fix for that must be able to trigger it.
+# `workflow_dispatch` remains for re-running a specific case by hand.
 #
 # `macos-15`, not `macos-latest`: latest currently tracks macOS 26, where
 # `sandbox-exec` itself still works but a shell can abort before it runs because
@@ -22,19 +23,10 @@
 name: CI (macOS)
 
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'agent/bin/cowcat.mjs'
-      - 'agent/src/sandbox.js'
-      - 'agent/src/sandbox/**'
-      - 'agent/src/tools/bash.js'
-      - 'agent/src/trust.js'
-      - 'agent/src/session.js'
-      - 'agent/test/sandbox*.test.mjs'
-      - 'agent/package.json'
-      - 'agent/package-lock.json'
-      - '.github/workflows/ci-macos.yml'
   workflow_dispatch:
 
 permissions:
@@ -49,7 +41,9 @@ jobs:
     name: test · node 22 · macos-15
     runs-on: macos-15
     timeout-minutes: 25
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    # Same draft guard as ci.yml. On a push `github.event.pull_request.draft` is
+    # null, so the first clause is what lets main pushes through.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     defaults:
       run:
         working-directory: agent
