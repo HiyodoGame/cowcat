@@ -2,139 +2,152 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-17**（P2 T6 合并之后）
-> 交接时仓库状态：`main` = `361a333`，工作区干净
+> 最近一次更新：**2026-10-17**（P3 合并之后）
+> 交接时仓库状态：`main` = `cfe38ec`，工作区干净
 
 ---
 
 ## 1. 本次实际做了什么
 
-**只做了 P2 T6**（PR #12，squash 合并 → `361a333`）。P2 的 T1–T5 是更早的会话做的，**不要记在本次账上**。
+**做了整个 P3（策略、配置与审批协议）**，从调研到 T5 全部合并。共 10 个 PR：
 
-三个部分：
+| PR | 内容 |
+|---|---|
+| #14 | P3 调研文档 `docs/research/p3-policy.md` + 三个探针（32 条断言） |
+| #15 | ADR-023~033 落地 + **仓库自己的 `AGENTS.md`**（此前缺失） |
+| #16 | T1 规则语言改为结构化字段 |
+| #17 | T2a `ActionRequest` 的生产者 |
+| #18 | T2b 配置三层分层 + 列表合并 + 两级错误报告 |
+| #19 | T3a 信任门控 + 配置层来源标注 + **ADR-034** |
+| #20 | T3b 信任记录的独立存储 |
+| #21 | T3c `AGENTS.md` 加载 + 未信任不注入 |
+| #22 | T4 审批协议 + 超时 auto-deny + `always` 限会话内 |
+| #23 | T5 审计作为事件消费者 |
 
-**① 前沿文献调研**（用户要求的前置）→ `docs/research/p2-sandbox-literature.md`
-`websearch` 集成返回 HTTP 402，改用 arXiv API 直查（`export.arxiv.org/api/query`）。七篇相关文献，两处改变了做法：
+**测试 219 → 347**（`fail` 全程为 0）。三个探针脚本的断言从 32 条增至 **34 条**，另新增一个**验证探针本身会失败**的 meta 探针（3 条断言）。
 
-- **The Same Zero**（[2610.04504](https://arxiv.org/abs/2610.04504)）：Verification Autonomy Levels，命题是「zero is an outcome, not a guarantee」。→ 把 G1/G2/G3 的证明等级标注为 **L2 客观事实，不是保证**，写进测试文件头与架构文档。
-- **Overeager Coding Agents**（[2605.18583](https://arxiv.org/abs/2605.18583)）：范围扩张是与逃逸并列的第四类授权问题；实测仅移除 prompt 授权声明，即使越界率从 0.0% 升到 **17.1%**。→ 新增一条测试断言「范围内破坏**确实能发生**」，钉住沙箱的边界。
+**两件发生在本次、且值得单独记住的事**：
 
-**② G1/G2/G3 完整矩阵** → `packages/cowcat/test/sandbox-enforcement.test.ts`
-12 条真后端用例（Linux/macOS 真跑，Windows 按平台 skip）。两条原则贯穿全部断言：断言落在**语义**上（宿主文件不存在、内容未泄漏），不落在**信号**上；每条失败信息自带退出码、stderr 和**实际生效的 argv/profile**。
-
-**③ 两条真机腿挖出四个真问题**（T6 的实际价值——写完测试不等于跑过测试）
-
-| # | 问题 | 性质 |
-|---|---|---|
-| 1 | 私有临时目录没走 canonical 化：`mkdtemp` 结果直接进 Seatbelt 的 `(subpath …)`，不经 `resolveEntries` | macOS 上沙箱自己的 TMPDIR **不可写** |
-| 2 | 遍历符号链接需要对 **SYMLINK vnode** 的读权限；profile 只授了 DIRECTORY 的 metadata | **任何人会写的绝对路径全部 EPERM**，而 profile 看起来完全正确 |
-| 3 | `existsSync` 在 `statSync` 与 `readFileSync` 都 EPERM 的路径上返回 **true** | 隔离断言的探针本身是坏的 |
-| 4 | 自己两个测试 bug：`unlinkSync` 返回 undefined 导致 `&&` 短路；`node()` 只加一次 `require("fs")` | 测试自身 |
-
-问题 2 的排查过程本身值得留着：**中途误判成「`subpath` 匹配字面路径」，实现了「每条路径发两种拼写」，跑 CI 仍然 EPERM**。把两组变量分开跑（六个变体）才拿到答案。双拼写已删除——零收益，而每条 deny 都要手工复制两份，漏一处就是绕过。该否决由一条测试钉住。
+1. **一个必须修的缺陷是写测试时暴露的**（ADR-034）。`DEFAULT_RULES` 里那条 catch-all 的 `ask`（`mutations-need-approval`）因为 `ask > allow` 而**遮蔽了所有 `allow`** —— 于是 P3 出口标准第一条「策略的全部裁决都能由配置表达」**无论怎么写配置都不可达**，信任门控也随之失去意义。根因是「默认询问」被写成了规则而不是兜底。**这条是纯靠读代码看不出来的**，它只在一条「我原以为会通过」的断言失败时现了形。
+2. **我一度把无法失败的探针当成了证据。** `tools/legacy-config-probe.mjs` 在重写时丢了汇总行与失败退出码，变成「只会打印不会失败」；而我向用户报的「10/10」是照搬重写**之前**的输出。补救是 `tools/probe-guards.mjs`：对每个探针写一份「故意改坏一条期望」的副本，要求它非零退出、点名失败用例、汇总不是 `N/N`、并打印勿引用警告。**现在 3/3 探针实测会失败。**
 
 ---
 
 ## 2. 当前状态
 
-### 已验证 —— 真机（CI 实跑，两条腿都拿到证据）
+### 已验证 —— 真机（CI 实跑）
 
-| 腿 | 后端 | 结果 |
-|---|---|---|
-| `packages/cowcat · node 22 · ubuntu-latest` | bubblewrap 0.9.0 + AppArmor profile | **219 pass / 0 fail / 0 skipped** |
-| `packages/cowcat · node 22 · macos-15` | seatbelt | **219 pass / 0 fail / 0 skipped** |
+| 腿 | 结果 |
+|---|---|
+| `packages/cowcat · node 22 · ubuntu-latest` | **347 pass / 0 fail / 0 skipped** |
+| `packages/cowcat · node 22 · macos-15` | **pass**（24s） |
+| `packages/cowcat · node 22 · windows-latest` | **pass**（33s） |
 
-两条腿的探测裁决（CI 日志原文）：
-
-```
-linux: verdicts: [{"name":"bwrap","usable":true,"reason":"ok","detail":"/usr/bin/bwrap","fix":null,"hardening":["disable-userns"]}]
-macos: backends: [{"name":"seatbelt","usable":true,"reason":"ok","detail":"/usr/bin/sandbox-exec","fix":null,"hardening":[]}]
-```
-
-**这顺带关掉了一个悬案**：T5 遗留的「AppArmor profile 生效后 `--disable-userns` 是否可用」不再是推断——CI runner 上实测 `hardening: ["disable-userns"]`，即**加固确实生效**。
+**Linux 腿的 0 skipped 值得注意**：本机因缺真后端而跳过的 16 项（bubblewrap / seatbelt 相关）在 CI 上**全部真跑通过**。所以「沙箱相关断言在 Linux 上通过」是有 CI 证据的，而本机的跳过不是失败。
 
 ### 已验证 —— 本机（Windows）
 
-`npm test` 219 项 / 0 失败 / 15 skipped（skip 的都是需要真后端的沙箱用例）。
+`npm test` **347 tests / 331 pass / 0 fail / 16 skipped**。
+
+三个探针共 **34 条断言**（16 + 10 + 8），加上 meta 探针 3 条。六个脚本（都遵循「每条先写期望、期望不符即非零退出」的约定）：
+
+| 脚本 | 结果 |
+|---|---|
+| `tools/policy-decide-probe.mjs` | **16 / 16** |
+| `tools/legacy-config-probe.mjs` | **10 / 10** |
+| `tools/legacy-trust-probe.mjs` | **8 / 8** |
+| `tools/probe-guards.mjs` | **3 / 3 探针在改坏后期望后确实非零退出** |
+| `tools/lint-probe.mjs` | `all probes behaved as expected`（验证 lint 规则真的会报错） |
+| `tools/check-tarball.mjs` | `tarball check passed` |
 
 ### 平台设置（单独核对过）
 
-分支保护 `required_status_checks` 实为 **6 条**，本次未改动：
+分支保护 `required_status_checks` 仍是 **6 条**，本次未改动：
 
 ```
 test · node 22 · ubuntu-latest          packages/cowcat · node 22 · ubuntu-latest
 packages/cowcat · node 22 · windows-latest   packages/cowcat · node 22 · macos-15
-test · node 22 · macos-15              package whitelist
+test · node 22 · macos-15               package whitelist
 ```
 
-PR 上报的作业共 9 条（多出 `test · node 24 · ubuntu-latest`、`test · node 22 · windows-latest`、`scope · does the legacy agent/ change?`），后 3 条不阻塞合并。
+PR 上报的作业共 9 条，后 3 条（`test · node 24 · ubuntu-latest`、`test · node 22 · windows-latest`、`scope · does the legacy agent/ change?`）不阻塞合并。**本次每个 PR 都跑绿了才合并，没有一次靠重试蒙过去。**
 
 ### 项目状态
 
-- `packages/cowcat` = `@corescense/cowcat-core` `0.0.0` `private: true` —— **从未发布**，v2 格式未对外，`schemaVersion` 升格问题尚未发生。
-- **P2 六个任务（T1–T6）全部完成并合并**。测试 69 → 219。
-- 旧 `agent/` 树**本次未改动**：`agent/test/sandbox-{linux,macos}.test.mjs` 最后一次改动是 PR #21（`4fc20cc`），早于整个 v2 工作。删除留给 P8。
-- `docs/changelog.md` 的 0.16.0 条目写的是**旧树**路径（`src/sandbox/backends/seatbelt.js`），描述的是旧实现，**不是 v2**。v2 未发布所以未进 changelog，这是预期状态。
+- **P3 六项范围全部落地**。ADR 表到 **ADR-034**。
+- `packages/cowcat` = `@corescense/cowcat-core` `0.0.0` `private: true` —— **从未发布**，v2 格式未对外，`schemaVersion` 仍是 **1**（ADR-019：改必需头字段才升，而没人有存量日志）。
+- 旧 `agent/` 树**本次未改动一行**（P8 前只收安全修复）。`docs/HANDOFF.md` 里上一轮提到的两处旧版缺口（`subagent.js:58` 的 yolo 推断、`planmode.js:122` 的 `allowedPrompts` 绕校验）**在 v2 里还封不了** —— v2 既没有子 agent 工具也没有 plan 模式，**没有可封的代码**。已记为未来实现这两处时的约束，而不是假装修好了。
+- 仓库现在有一份自己的 [`AGENTS.md`](../AGENTS.md)（本轮补的）。它现在是 agent 的工作说明，**改它等于改 agent 的行为**。
+
+### P3 两条出口标准的现状
+
+- 「策略的全部裁决都能由配置表达，无需改代码」—— **库层面成立**（规则是数据、数据来自配置、`allow` 真正可达）；**端到端仍未成立**，因为还没有 CLI 去读配置文件（P6）。
+- 「无人值守模式下所有 `ask` 要么按显式规则放行、要么拒绝并留审计」—— **成立**（`ask` → auto-deny + 留审计事件 + 审计消费者；`deny` 永不被短路）。
 
 ---
 
 ## 3. 项目唯一下一步
 
-**P3：策略、配置与审批协议。**
+**P4：模型层。** 范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P4`。要点：
 
-范围见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P3`。要点：
+1. `ModelPort` 适配器：OpenAI 兼容协议（主力）、Anthropic 协议
+2. 流式归一化：文本增量、工具调用拼装、用量统计，统一成内部 `ModelChunk`
+3. 重试与退避：仅对可重试错误；取消立即生效
+4. 录制-回放夹具：CI 中不访问网络，协议行为由夹具固定
+5. 模型预设以数据形式存在，不写死在代码里
 
-1. 配置 schema（zod）、分层加载与合并、错误报告带文件与路径
-2. 路径信任模型（工作区是否受信任、信任记录如何持久化；旧版 `agent/src/trust.js` 有结论可参照）
-3. 规则集从默认规则扩展为可配置规则，保留 `deny > ask > allow` 与「未命中即 ask」
-4. 审批：`approval.requested` / `approval.answered` 作为事件进日志，支持无人值守显式开关
-5. 审计：作为事件的消费者，而不是内核内的分支
+出口标准：同一回合脚本在两种协议的录制夹具上得到**相同的事件序列**（归一化后）；取消在流式中途生效且**不产生半条 `model.message`**。
 
-出口标准：策略的全部裁决都能由配置表达，无需改代码；无人值守下所有 `ask` 要么按显式规则放行、要么拒绝并留审计。
+**按工作规则 1，P4 开工前先写 `docs/research/p4-models.md`。** 调研问题里有一条要特别留意：**国产厂商的 OpenAI 兼容端点差异要逐家核实，不凭印象** —— 上一轮的教训是「文档声称」与「实现实际」经常不一致。
 
-**按工作规则 1，P3 开工前先写 `docs/research/p3-policy.md`。**
+**从 P3 带到 P4 的具体东西**：
 
-**从 P2 带到 P3 的具体接口债**：`worktree 兄弟目录`作为额外写路径传入的接口留到 P3 接入 worktree 时接（现在不自动纳入写策略）。
+- `ModelPort.stream(request, signal)` 的**取消语义是新写的要求**：P3 的审批等待已改成响应 `signal`，模型流还没有被同样地检查过。
+- P3 给 `TurnDeps` 加了 `fs` 与 `approvalTimeoutMs`；P4 若再加依赖，`test/support.ts` 的 `turnDeps()` 是唯一要改的地方（刻意集中）。
 
 ---
 
 ## 4. 关键决策
 
+本轮新增 12 条 ADR（023~034）。最该知道的几条：
+
 | 决策 | 内容 | 出处 |
 |---|---|---|
-| 三个端口方法保持同步 | `ProcessPort` / `FsPort` / `PlatformPort` | ADR-017 |
-| 会话头记 shell **不升 `schemaVersion`** | v2 格式从未发布（`private: 0.0.0`） | ADR-018 |
-| bwrap 加固**单独探测** | 不带 flag 判可用；带 `--disable-userns --assert-userns-disabled` 判加固。加固失败则**不带加固执行并上报限制**，不拒绝 | ADR-020 |
-| macOS `network: 'on'` 拒绝 | 新增 `SandboxRequestRefusedError`，不复用 `SandboxUnavailableError`；两种拒绝消息必须不同 | ADR-021 |
-| **Seatbelt 需要 SYMLINK metadata** | `/var`、`/etc`、`/tmp` 是符号链接，遍历需要 SYMLINK vnode 读权限。补 `file-read-metadata (vnode-type SYMLINK)` | **ADR-022** |
-| 私有 `/tmp` 固定 2 GiB + `--perms 1777` | 实测默认是内存的一半（19.5 GiB）且 0755 | ADR-021 |
-| **不生成双拼写规则** | 实测无效，且把 deny 面扩大一倍（漏同步即绕过） | T6 测试钉住 |
-| 隔离断言不用 `existsSync` | 它在 `statSync`/`readFileSync` 都 EPERM 处返回 true | T6 测试钉住 |
+| **`deny` 永不被短路** | 无人值守只改变 `ask` 的归宿。**有意偏离旧版**：旧版 yolo 在一切规则之前一票放行，`deny` 一并失效 | ADR-024 |
+| **「默认询问」是兜底，不是规则** | 写成规则会遮蔽所有 `allow`，让出口标准不可达。**不改变任何裁决结果**，只换个理由文案 | **ADR-034** |
+| **配置三层 + 环境变量不作层** | 内建默认 → 用户 → 项目 → 会话；环境变量逐键决定。**取消 `STATE_KEYS` 式隐式最高层** | ADR-025 |
+| **列表键合并，撤销靠更窄的 deny** | 不需要引入 `!` 负向语法 | ADR-026 |
+| **信任门控按来源不对称** | 只有 **project 层**的 `allow` 等信任；`deny`/`ask` 立即生效 | ADR-028 |
+| **指令文件统一为 `AGENTS.md`** | 去掉专有的 `COWCAT.md`（旧版把它排在最前，标准文件永远读不到）。未信任**不注入**并明确告知 | ADR-029/030 |
+| **`always` 的键是「这一个动作」** | `command ?? path ?? 整个入参`。**只按工具名做键是不安全的** | ADR-031 |
+| **审计是消费者不是分支** | 「永不抛」只约束消费者本身；**静默失败的审计比没有审计更糟** | ADR-033 |
+
+完整表见 [`architecture/README.md`](architecture/README.md)（ADR-001~034）。
 
 ---
 
 ## 5. 踩坑（都是这次真花时间换来的）
 
-**关于测量**
+**关于证据**
 
-1. **一次 CI 循环的信息量 ≫ 一次推理。** 问题 2 靠六个变体一次跑完定位；纯靠读代码我先后猜错了两次（「literal 路径」「双拼写」）。
-2. **失败的断言必须自带现场。** 加进 argv/profile 之后，「EPERM」和「这行不在 allow 列表里」才成为两个可区分的 bug。
-3. **`existsSync` 是坏探针。** 它在两个不同的失败原因下都给出误导答案——一次是策略没生效（返回 true），一次是遍历失败（返回 false）。
-4. **「错因通过」比失败更危险。** 那条断言在 `/var` 遍历失败时一直是绿的，策略从没被问过。
+1. **一个只会打印的探针是无法失败的探针。** 它看起来像证据，其实是装饰。见 §1 第二件事 —— 我为这条专门做了 `tools/probe-guards.mjs`。
+2. **「我原以为会通过」的断言，往往比失败的断言更值钱。** ADR-034 那个缺陷就是它抓到的。断言失败时先怀疑**自己的理解**，但确认之后要接着怀疑**产品**。
+3. **编译期等价断言是承重的**，不是形式主义。本轮它两次抓到真问题（T4 缺 `grants`、T5 缺 `name`/`facts`）。加事件时它会先报红 —— **那是对的**。
+4. **旧代码是行为参照，不是规范。** 旧版配置的 `readState()` 把全局 `config.json` 当 state 兜底再重放，于是其中的 STATE_KEY **被应用两次**（探针 C5 钉住）。文档从未提及这一层。
 
-**关于实验设计（自己踩自己的）**
+**关于 Windows 工具（本机 Git Bash + PowerShell）**
 
-5. **一次只改一个变量。** 第一轮把「双拼写」和「SYMLINK 规则」混在一起测，六组数据全废。
-6. **基线 profile 自己得先能跑。** 实验里 node 自己起不来（`OpenSSL configuration error`），那测的是缺 note 7 根规则，不是被测现象。
-7. **验证脚本的语法错误会伪装成被测现象。** 三轮实验里有一轮每一轮都报同一个无关的 shell 语法错误。
+5. **`Get-Content` / `Select-String` 的行号在中文密集的 UTF-8 文件上不可靠** —— 按 ANSI 码页解码会把部分 `\n` 当尾字节吞掉、行被合并。实测同一文件它数出 657 行而 `node` 数出 874 行；ASCII 为主的文件两者一致。**要准确行号用 `read` / `rg`，或 `node -e` 数。** 这条已写进 `AGENTS.md`。
+6. **`node -e "..."` 里再套引号在 PowerShell 下必然被改写**（本次实测三次）。不要试第二次，直接写脚本文件。
+7. `import('F:\\...')` 被 ESM loader 拒为 `ERR_UNSUPPORTED_ESM_URL_SCHEME` → 用 `pathToFileURL(p).href`。
+8. `git commit -m "…"` 带引号会被截断 → 用 `git commit -F <文件>`。
+9. **探针脚本从自身位置解析仓库根**，所以「故意改坏的副本」必须写在 `tools/` 内部 —— 放到 temp 里会崩溃，**而崩溃也有非零退出码**，正是 `probe-guards` 要防的假阳性。
 
-**关于工具**
+**关于 TypeScript / lint 的组合拳**
 
-8. PowerShell 嵌套引号会破坏复杂内联命令 → **写脚本文件**（`node <file>`）。
-9. `git commit -m "…"` 带双引号会被截断 → **`git commit -F <文件>`**。
-10. `npx tsc` 输出被 `execFileSync` 吞掉会给出假的「通过」→ **读 `err.stdout`**，或用 TypeScript 编译器 API 直接取 `parseDiagnostics`（还能顺带看到「错误其实在第 352 行」这种偏移信息）。
-11. 删除源文件后 `dist/` 里的旧 `.js` 会继续被测到 → 顺手清 `dist/test/`。
-12. 手写 patch 脚本时漏一个 `}` 会让模板串不闭合，解析器一路吞到下一个反引号，**报错位置离真凶很远**（真凶在 352 行，报在 372 行）。
+10. **`exactOptionalPropertyTypes` 与 zod 的 optional 不兼容**：zod 推断出 `x?: T | undefined`（「可缺省或显式 undefined」），而类型要的是「可缺省且出现时非 undefined」。解法是**逐字段构造**（`...(v === undefined ? {} : { v })`），或让字段**可空而非可选**。
+11. **`@typescript-eslint/no-unnecessary-condition` 与 `noUncheckedIndexedAccess` 会互相打架**：一边要 `?.`，另一边说 `?.` 多余。稳定的写法是 `const [x] = arr; assert.ok(x);` 之后再普通访问。
+12. `restrict-template-expressions` 不允许模板串里直接插 `number` → `${String(n)}`。
 
 ---
 
@@ -142,24 +155,23 @@ PR 上报的作业共 9 条（多出 `test · node 24 · ubuntu-latest`、`test 
 
 ### 已实测但**未在生产**验证
 
-- 全部沙箱证据都来自 **CI runner**，不是生产机器。runner 的内核、AppArmor profile、bubblewrap 版本都可能与用户机器不同。
-- bubblewrap 证据来自 `--privileged` 的 `ubuntu:24.04` 容器（本地实验）与 `ubuntu-latest` runner。**WSL2 没有 Ubuntu 24.04 的 AppArmor userns 限制**，所以 AppArmor 相关结论只能由 CI 腿给出——本次已拿到（`hardening: ["disable-userns"]`）。
+- 全部沙箱证据来自 **CI runner**（见 §2）。本机 Windows 上 16 项真后端用例是**跳过**的，不是通过。
+- `isTrusted` 的分隔符与大小写行为在两个平台上都有用例，但**POSIX 的 symlink 语义（`/var` → `/private/var` 类）本机没有验证过** —— 只验证了「尾部斜杠」与「`..`」两种等价拼写。
 
-### 已知缺口（**不声称已解决**，逐条对应 [`dev-plan-v2.md`](dev-plan-v2.md) 的 T6 缺口清单）
+### 已知缺口（**不声称已解决**）
 
-1. **没有 seccomp 过滤** —— 目前最大的加固缺口。bwrap 支持 `--seccomp FD`，但需要一份编译好的 BPF 程序 + 允许清单维护策略。记为 R1。依据 SysComb（[2608.26871](https://arxiv.org/abs/2608.26871)）
-2. **G1/G2/G3 停在 L2** —— 没有可判定的完备性论证。换平台或内核变更都可能让断言失效而**没有一个测试变红**
-3. **macOS 上读面外路径的「存在性」可被观察、内容不可** —— Node 的 `existsSync` 返回 true 而 `statSync`/`readFileSync` 是 EPERM。这是 agent 可用的小侧信道，已写进限制项。**未单独测裸 `access(2)`**，不宣称更多
-4. **root 调用者下还剩哪些隔离未量化** —— 文件权限不再保护（`uid_map` 恒等映射），但挂载与网络隔离仍在
-5. **`setsid()` 逃逸仍是推断** —— 附录 B 实证它能逃，但「前台超时孤儿」一类无样本
-6. **worktree 兄弟目录未自动纳入写策略** —— P3 接
-7. **`pwsh` 分支未验证** —— T2 只在 Windows 上确认了探测逻辑，没在真实 PowerShell 会话里跑过完整路径
-8. **终止记录没有「失败原因」字段**
+1. **两条旧版缺口在 v2 里封不了**：`subagent.js:58` 从 `tools === null` 推断 yolo、`planmode.js:122` 的 `allowedPrompts` 绕过 `validateRule`。v2 没有这两个功能，**没有可封的代码**。已记为未来实现这两处时的约束。
+2. **配置文件与信任记录放哪里，仍未定**。`loadConfig` 接受已读出的文本 + 来源标识，`FileTrustStore` 接受显式文件路径 —— 都是**组合根的职责**，等 P6 的 CLI。动工前用户提过倾向（`cowcat.json`、`~/.cowcat/`、仓库根 `.cowcat/`），但**没有定死**。
+3. **`instructions` 式显式 glob 追加未实现**（ADR-029 提到的 monorepo 用法）。glob 展开要目录列举，是一块更大的面。
+4. **永久化规则机制不存在**。ADR-031 把 `always` 限在会话内，正是因为永久规则要先有撤销设计（ADR-026）。外部参照的「按工具而异、Bash 永久」是它之后的细化。
+5. **模型流中途的取消没有被检查过**（见 §3）。
+6. **调研文档 §10 列的 9 条未验证项**仍未验证，其中 3 条标注为【推断】—— 不得作为实现依据。清单在 [`research/p3-policy.md`](research/p3-policy.md) §10。
 
-### 需要下一位核对的差异（保留，不以记忆覆盖证据）
+### 需要下一位核对的差异
 
-- `docs/changelog.md` 0.16.0 声称「效果与 Linux 侧一致：**宿主临时目录对沙箱不可见**」。那是**旧实现**（`agent/src/sandbox/`）。v2 的实测更精确：**内容不可见，存在性可观察**。两者不是同一份实现，但如果旧实现也是用 `existsSync` 验证的，那条旧声明同样经不起检验——**待确认，不在本次改动范围内**。
-- `dev-plan-v2.md:52` 写着「Windows 腿仅在 main 运行，尚无可核对的真实运行记录」。本次 PR #12 里 `packages/cowcat · node 22 · windows-latest` **在 PR 上跑过且通过**。该行已过时，未改（属于 P1 段落）。
+- `docs/research/p3-policy.md` 里 §2.2 的 **P9 用例已被 T3a 替换**（原「`matches` 抛异常直接冒泡」随 ADR-027 失效），附录 B 末尾的「B-补」记了这次改动。**不要按旧编号找它。**
+- 调研文档的探针计数是 **16 / 10 / 8**（正文与附录均已同步）。若与旧记录不符，以文件为准。
+- 仓库自己的 `AGENTS.md` 是**在 P3 期间补的**，它同时是给 agent 的指令。上一轮的 `HANDOFF` 里没有它。
 
 ---
 
@@ -167,13 +179,19 @@ PR 上报的作业共 9 条（多出 `test · node 24 · ubuntu-latest`、`test 
 
 | 路径 | 内容 |
 |---|---|
-| [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P2 的出口标准与缺口清单在 T6 段 |
-| [`architecture/README.md`](architecture/README.md) | ADR-001~022 |
-| [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 沙箱分层、拒绝语义、bwrap 挂载顺序、Seatbelt 符号链接遍历 |
-| [`research/p2-sandbox.md`](research/p2-sandbox.md) | **实测**报告。§4.1–§4.10 十条实测发现 |
-| [`research/p2-sandbox-literature.md`](research/p2-sandbox-literature.md) | **外部证据**。与实测分开，因为可信度来源不同 |
-| `packages/cowcat/test/sandbox-enforcement.test.ts` | G0/G1/G2/G3 + 边界 + 可解释性 |
-| `packages/cowcat/src/adapters/sandbox/backends/seatbelt.ts` | 纯 SBPL 生成。文件头八条实测语义 |
-| `packages/cowcat/src/adapters/sandbox/backends/bwrap.ts` | 纯 argv 生成。挂载顺序是承重的 |
-| `packages/cowcat/src/adapters/sandbox/executor.ts` | 后端选择、两种拒绝、私有临时目录生命周期 |
-| `.github/workflows/ci.yml` / `ci-macos.yml` | 三条 `packages/cowcat` 腿；Linux 腿有一步打印探测裁决 |
+| [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P3 的任务拆分表与两条出口标准已更新 |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~034** |
+| [`research/p3-policy.md`](research/p3-policy.md) | P3 调研。§0 结论摘要、§10 未验证清单、附录 B 实测、附录 E `AGENTS.md` 标准调研 |
+| `packages/cowcat/src/policy/decide.ts` | 裁决 + 结构化 `when` 匹配 + `validateRules` |
+| `packages/cowcat/src/policy/config.ts` | 三层分层、列表合并、`SourcedRule.origin` |
+| `packages/cowcat/src/adapters/config.ts` | 配置的 zod 边界（**strict**，与日志的开放对象刻意相反） |
+| `packages/cowcat/src/policy/trust.ts` | `trustedRules`（按来源门控）、`isTrusted`（无继承） |
+| `packages/cowcat/src/adapters/trust.ts` | 信任记录落盘（独立于配置） |
+| `packages/cowcat/src/policy/instructions.ts` | 候选名、未信任不注入的决定与提示 |
+| `packages/cowcat/src/policy/approval.ts` | `approvalKey`（`always` 的粒度） |
+| `packages/cowcat/src/policy/audit.ts` | `AuditConsumer`：投影、永不抛、失败可见 |
+| `packages/cowcat/src/kernel/run-turn.ts` | 审批往返、超时、`grants` 检查、`facts` 透传 |
+| `packages/cowcat/src/kernel/state.ts` | `reduce`，含 `grants` 的归约 |
+| `packages/cowcat/test/support.ts` | `sessionDeps` / `turnDeps` / `fakeFs`（**新增依赖只改这里**） |
+| `tools/probe-guards.mjs` | 验证探针本身会失败 |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | 三条 `packages/cowcat` 腿；草稿 PR 不跑检查 |
