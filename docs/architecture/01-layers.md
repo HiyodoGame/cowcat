@@ -35,7 +35,7 @@ test/
   *.test.ts
 ```
 
-P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/` 下的各实现（`node.ts`、`platform.ts`、`shell.ts`、`sandbox-probe.ts`、`fs.ts`）；目录名随实现调整，但依赖规则不变。
+P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/` 下的各实现（`node.ts`、`platform.ts`、`shell.ts`、`sandbox-probe.ts`、`fs.ts`）；**P4 起新增 `ports/model.ts`**（协议词汇：`ModelUsage`、`StopReason`、`StopReasonKind`；放在自己文件里的理由是 `ports/index.ts` 与 `kernel/events.ts` 互相需要对方的名字，见 ADR-035），以及 `adapters/` 下的模型适配器。目录名随实现调整，但依赖规则不变。
 
 ## 路径身份（ADR-017）
 

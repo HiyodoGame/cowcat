@@ -68,6 +68,21 @@ const decisionSchema = z.object({
   reason: z.string().nullable(),
 });
 
+// Mirrors the vocabulary in ports/model.ts. The compile-time assertion in
+// test/schema.test.ts holds the two descriptions together through `KernelEvent`
+// (ADR-035, ADR-040).
+const modelUsageSchema = z.object({
+  input: z.number().int().nonnegative(),
+  output: z.number().int().nonnegative(),
+  cacheRead: z.number().int().nonnegative(),
+  cacheCreation: z.number().int().nonnegative(),
+});
+
+const stopReasonSchema = z.object({
+  kind: z.enum(['end', 'toolCalls', 'maxTokens', 'other']),
+  raw: z.string(),
+});
+
 const base = {
   seq: z.number().int().positive(),
   ts: z.number().int().nonnegative(),
@@ -107,7 +122,11 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     type: z.literal('model.message'),
     text: z.string(),
     toolCalls: z.readonly(z.array(toolCallSchema)),
+    // Nullable rather than optional, for the same reason as `tool.finished.facts`:
+    // `null` says "the adapter reported nothing" out loud (ADR-035).
+    stopReason: stopReasonSchema.nullable(),
   }),
+  z.object({ ...base, type: z.literal('model.usage'), usage: modelUsageSchema }),
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
   z.object({
     ...base,

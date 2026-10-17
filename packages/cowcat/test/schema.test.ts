@@ -51,6 +51,15 @@ const modelMessage: KernelEvent = {
   type: 'model.message',
   text: 'hello',
   toolCalls: [{ callId: 'c1', name: 'read_file', input: { path: 'a' } }],
+  stopReason: { kind: 'toolCalls', raw: 'tool_calls' },
+};
+const modelUsage: KernelEvent = {
+  seq: 9,
+  ts: 9,
+  sessionId: 'sess',
+  turnId: 'turn_1',
+  type: 'model.usage',
+  usage: { input: 10, output: 4, cacheRead: 0, cacheCreation: 0 },
 };
 const policyDecided: KernelEvent = {
   seq: 5,
@@ -79,6 +88,7 @@ const everyEvent: readonly KernelEvent[] = [
   turnOpened,
   turnTransitioned,
   modelMessage,
+  modelUsage,
   policyDecided,
   toolFinished,
 ];

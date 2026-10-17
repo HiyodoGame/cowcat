@@ -1,5 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
+import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
 import type { ToolCall } from './messages.js';
@@ -19,7 +20,30 @@ export type KernelEvent = EventBase &
     | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell }
     | { readonly type: 'turn.opened'; readonly input: string }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
-    | { readonly type: 'model.message'; readonly text: string; readonly toolCalls: readonly ToolCall[] }
+    | {
+        readonly type: 'model.message';
+        readonly text: string;
+        readonly toolCalls: readonly ToolCall[];
+        /**
+         * Why the stream ended (ADR-035). `null` means the adapter did not report one.
+         *
+         * It is logged rather than kept in memory because "the answer stopped because
+         * it ran out of room" is a fact a user has to be able to learn from the
+         * session, not only from the moment it happened (`finish_reason: 'length'`
+         * with empty content is a real failure mode).
+         */
+        readonly stopReason: StopReason | null;
+      }
+    | {
+        /**
+         * What the model call cost (ADR-041). A separate event rather than a field on
+         * `model.message`, for two reasons: usage arrives before the stream ends
+         * (Anthropic reports it on `message_delta`), and a turn that is cancelled
+         * after usage has arrived still has to record it.
+         */
+        readonly type: 'model.usage';
+        readonly usage: ModelUsage;
+      }
     | { readonly type: 'policy.decided'; readonly callId: string; readonly decision: Decision }
     | {
         // Written before the question is asked, so a log that ends inside an approval

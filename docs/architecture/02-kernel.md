@@ -14,13 +14,18 @@
 | `session.opened` | 会话创建，携带日志格式版本与创建者的 CowCat 版本 | 校验它是首条事件；不产生消息（见「会话头与 schema 版本」） |
 | `turn.opened` | 用户输入开始一个回合 | 新建 turn（idle），追加 user 消息 |
 | `turn.transitioned` | Turn 状态变迁 | 更新 turn 状态（校验 from/to 合法，否则视为日志损坏） |
-| `model.message` | 模型一次完整输出（文本 + 工具调用） | 追加 assistant 消息 |
+| `model.message` | 模型一次完整输出（文本 + 工具调用 + **结束原因** `stopReason`） | 追加 assistant 消息 |
+| `model.usage` | 模型一次调用花了多少（四项：`input` / `output` / `cacheRead` / `cacheCreation`） | 不改消息、**不入 state**。独立事件而非 `model.message` 的字段（ADR-041） |
 | `policy.decided` | 对某次工具调用的策略裁决 | 不改消息，但入日志，供审计 |
 | `approval.requested` | 向用户提出的审批问题（工具名、命中的规则、理由） | 不改消息。**写在问之前**，所以停在审批上的日志能说清在等什么 |
 | `approval.answered` | 审批的回答：`{ callId, key, verdict: once\|always\|reject, by: user\|policy\|timeout }` | `always` 时把 `key` 追加进 `grants` |
 | `tool.finished` | 工具结果（成功或失败）、工具名，以及**执行事实**（`facts`，见下） | 追加 tool 消息 |
 
 **`tool.finished.facts` 是让审计能看到沙箱事实的唯一通路**（ADR-033）。`ToolPort.run` 返回的是 `ToolResult` 而不是 `ProcessResult`，所以没有它，网关做过什么就停在工具边界内、审计永远看不到。`facts` **可空而非可选**（与 `turnId`/`reason` 同形，且 `exactOptionalPropertyTypes` 下 optional 的含义与类型对不上），`null` 明确表示**工具没有上报**——与「没有施加沙箱（`mode: 'off'`）」是两件不同的事实，混淆它们会让审计无法回答自己唯一要回答的问题。
+
+**`model.usage` 是独立事件，不是 `model.message` 上的字段**（ADR-041）。两个理由：用量有**它自己的到达时刻**（Anthropic 在 `message_delta` 就到，早于流结束），以及**流在拿到用量之后被取消时也要留下用量**——挂在那条消息上就跟着一起丢了。一条流里它可以出现多次（Anthropic 报的是累积量），`reduce` 不从中派生任何状态：花了多少不改变对话，日志里的它是给报账与审计看的。
+
+**`model.message.stopReason` 可空而非可选**（`null` = 适配器没上报），与 `tool.finished.facts` 同形、同一个理由。它必须在**日志**里而不只是内存里，因为「这次回答是因为没地方了才结束」是用户要能从会话里查到的事实（`finish_reason: 'length'` 且内容为空是真实存在的失败形态）。内核只比较归一后的 `kind`，厂商原值留在 `raw` 里（ADR-035）。
 
 **`grants` 是从日志归约出来的，不是旁边的另一份状态**（ADR-031 决定 3）。这正是让「回放能够复现实时会话」这句话对授权也成立的原因：重开会话拿回它的授权，因为拿回了它的事件。授权**只活在本次会话内**——永久规则要先有撤销机制（ADR-026），那还不存在。
 
