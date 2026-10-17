@@ -26,6 +26,8 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 运行时依赖：**1 个**（`zod`）。上限 6，每引入一个都要有 ADR。
 
+**P4 已定再引入 2 个直接依赖（ADR-036）**：`openai` 与 `@anthropic-ai/sdk`，届时直接依赖为 **3 个**。但 `@anthropic-ai/sdk` 自带传递依赖，**实测整棵树为 10 个包**（见上表 `@anthropic-ai/sdk` 与 `openai` 行）。所以「上限 6」的计量口径必须写明是**直接依赖**还是**整棵依赖树**——本表此前没说过，而两种口径给出相反的结论（3 未超限 / 10 超限）。**这条在 T1 之前要有定论**，否则「每个依赖都要有 ADR」这句在传递依赖上无从执行（传递依赖没有 ADR）。
+
 **边界纪律**（ADR-009）：`zod` 只允许出现在 `src/adapters/`。日志解码是适配器的职责，内核／策略／端口三层必须只看到类型化的事件。这条由 lint 强制——`eslint.config.js` 里给 `zod` 单独加了一条 `no-restricted-imports` pattern，**不能**把它并进 `node:*` 那一组，否则报错文案会指向「运行时相关」这个错误的原因。
 
 内核的事件联合类型与适配器的 schema 是同一个格式的两份手写描述，因此用**编译期等价断言**钉住（`test/schema.test.ts`）：两份一旦漂移就构建失败，而不是等到某天把内核自己写的日志报成「损坏」。
@@ -34,7 +36,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
-| `@anthropic-ai/sdk` 与 `openai` | P4 | 模型协议 | 候选。两者负责协议、流式解析与重试，符合判断标准 1。国产厂商大多提供 OpenAI 兼容端点，故 `openai` 是主力。**是否采用、是否需要 Anthropic 官方 SDK 才能覆盖 Claude 端点，P4 调研后定** |
+| `@anthropic-ai/sdk` 与 `openai` | P4 | 模型协议 | **已定采用（ADR-036）**。版本实测：`openai@7.36.0`（engines `node >=22.0.0`，与包一致；**零运行时依赖**，6 个 peer 全部 `optional: true` 故不自动安装）、`@anthropic-ai/sdk@0.135.0`。**依赖预算要重新算**：在仓库外隔离目录实测 `npm i zod@4.6.7 openai@7.36.0 @anthropic-ai/sdk@0.135.0` → **added 10 packages**（直接 3：zod/openai/sdk；传递 7：`standardwebhooks`→`fast-sha256`/`@stablelib/base64`、`json-schema-to-ts`→`@babel/runtime`/`ts-algebra`、`@opentelemetry/api`）。**「上限 6」到底数直接依赖还是数整棵树，本表此前没有说明，现在必须明确**——按整棵树算是 10（超限），按直接依赖是 3（未超限）。另需在 T1 核实这 7 个传递依赖里**哪些真在运行时被加载**（`json-schema-to-ts` 是类型层库、`@opentelemetry/api` 默认是空实现）。 |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
 ## 明确不引入的
