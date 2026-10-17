@@ -11,8 +11,8 @@ import { replayTransport, type ReplayTransport } from './support.js';
 //
 // 1. A fixture is really a pair: two encodings of one logical turn, whose declared
 //    meanings are identical and whose normalised output therefore has to be too. That is
-//    the substance of the P4 exit criterion; T7 puts the same pair through `runTurn` and
-//    compares the kernel event sequence itself.
+//    the substance of the P4 exit criterion; exit-criteria.test.ts puts the same bytes
+//    through `runTurn` and compares the kernel event sequence itself.
 // 2. The four quirks we inherited from v1 and from the vendor docs stay pinned, so a
 //    future refactor cannot quietly drop them.
 
@@ -73,44 +73,55 @@ function assertBodyIncludes(actual: Record<string, unknown>, expected: Readonly<
 
 const PAIRED: readonly FixtureProtocol[] = ['openai', 'anthropic'];
 
+// The two model calls of one turn script (ADR-043): the turn the P4 exit criterion is
+// about is not one response but the pair of them — the model calls a tool, and the answer
+// it then gives once the result is back is what ends the turn.
+const PAIRED_SCENARIOS = ['text-and-tool', 'final-text'] as const;
+
 test('the paired fixtures declare one and the same logical turn', () => {
   // If this fails, the two files have drifted and every comparison between them is
   // meaningless — the pair has to be authored together (ADR-043).
-  const openai = loadFixture('openai', 'paired', 'text-and-tool').expectation.logical;
-  const anthropic = loadFixture('anthropic', 'paired', 'text-and-tool').expectation.logical;
+  for (const scenario of PAIRED_SCENARIOS) {
+    const openai = loadFixture('openai', 'paired', scenario).expectation.logical;
+    const anthropic = loadFixture('anthropic', 'paired', scenario).expectation.logical;
 
-  assert.deepEqual(openai, anthropic);
+    assert.deepEqual(openai, anthropic, scenario);
+  }
 });
 
 for (const protocol of PAIRED) {
-  test(`${protocol}: a fixture's bytes normalise to exactly what the fixture declares`, async () => {
-    const fixture = loadFixture(protocol, 'paired', 'text-and-tool');
-    const { parts, transport } = await drive(protocol, fixture);
-    const { logical } = fixture.expectation;
+  for (const scenario of PAIRED_SCENARIOS) {
+    test(`${protocol}/${scenario}: a fixture's bytes normalise to exactly what the fixture declares`, async () => {
+      const fixture = loadFixture(protocol, 'paired', scenario);
+      const { parts, transport } = await drive(protocol, fixture);
+      const { logical } = fixture.expectation;
 
-    assert.equal(textOf(parts), logical.text);
-    assert.deepEqual(callsOf(parts), logical.toolCalls);
-    assert.deepEqual(lastUsage(parts), logical.usage);
-    assert.equal(stopKind(parts), logical.stopKind);
-    // The request side is pinned too: a fixture records the call that produced it.
-    assert.match(transport.requests[0]?.url ?? '', new RegExp(`${fixture.expectation.urlPath.replace('/', '\\/')}$`));
-    assertBodyIncludes(transport.requests[0]?.body ?? {}, fixture.expectation.body);
-  });
+      assert.equal(textOf(parts), logical.text);
+      assert.deepEqual(callsOf(parts), logical.toolCalls);
+      assert.deepEqual(lastUsage(parts), logical.usage);
+      assert.equal(stopKind(parts), logical.stopKind);
+      // The request side is pinned too: a fixture records the call that produced it.
+      assert.match(transport.requests[0]?.url ?? '', new RegExp(`${fixture.expectation.urlPath.replace('/', '\\/')}$`));
+      assertBodyIncludes(transport.requests[0]?.body ?? {}, fixture.expectation.body);
+    });
+  }
 }
 
-test('the pair produces the same normalised content out of two different encodings', async () => {
-  // This is the property the exit criterion is about, stated at the adapter level: the
-  // same logical turn, two wire formats, one answer.
-  const results = await Promise.all(
-    PAIRED.map(async (protocol) => {
-      const { parts } = await drive(protocol, loadFixture(protocol, 'paired', 'text-and-tool'));
-      return { text: textOf(parts), calls: callsOf(parts), usage: lastUsage(parts), stop: stopKind(parts) };
-    }),
-  );
+for (const scenario of PAIRED_SCENARIOS) {
+  test(`${scenario}: the pair produces the same normalised content out of two different encodings`, async () => {
+    // This is the property the exit criterion is about, stated at the adapter level: the
+    // same logical turn, two wire formats, one answer.
+    const results = await Promise.all(
+      PAIRED.map(async (protocol) => {
+        const { parts } = await drive(protocol, loadFixture(protocol, 'paired', scenario));
+        return { text: textOf(parts), calls: callsOf(parts), usage: lastUsage(parts), stop: stopKind(parts) };
+      }),
+    );
 
-  const [openai, anthropic] = results;
-  assert.deepEqual(anthropic, openai);
-});
+    const [openai, anthropic] = results;
+    assert.deepEqual(anthropic, openai);
+  });
+}
 
 test('tool-call ids are the one thing the two encodings do not share', async () => {
   // Worth pinning explicitly: the projection rule in ADR-043 exists because of this, and

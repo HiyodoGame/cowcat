@@ -1,0 +1,360 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { anthropicModel } from '../src/adapters/model-anthropic.js';
+import { openAIModel } from '../src/adapters/model-openai.js';
+import {
+  Session,
+  runTurn,
+  type KernelEvent,
+  type ModelPort,
+  type ModelUsage,
+  type ToolPort,
+} from '../src/index.js';
+import { loadFixture, type FixtureProtocol } from './fixtures.js';
+import {
+  MemoryEventStore,
+  openEndedTransport,
+  sequenceTransport,
+  sessionDeps,
+  settlesWithin,
+  tool,
+  turnDeps,
+} from './support.js';
+
+// P4's two exit criteria (ADR-043), asserted at the level where they can actually fail:
+// the kernel's own event sequence.
+//
+// fixtures.test.ts compares the two protocols one model response at a time, at the
+// adapter boundary. This file takes the same recorded bytes through `runTurn`, so what is
+// compared is what the log committed — the answer, what it cost, which calls the policy
+// decided, and how the turn moved — rather than what a normaliser returned.
+//
+// The turn script is two model calls, not one: the model asks for a file, and the answer
+// it gives once the result is back is what ends the turn. `paired/text-and-tool` is the
+// first call, `paired/final-text` the second, and each is a pair of encodings of one
+// logical call.
+
+const MAX_TOKENS = 1024;
+
+const readTool: ToolPort = tool(
+  { name: 'read_file', description: 'read a file', risk: 'read', pathInput: 'path' },
+  () => ({ ok: true, output: 'a.txt' }),
+);
+
+// The composition root's job, not the kernel's (ADR-035): `max_tokens` belongs to a model
+// preset, and ADR-044 forbids the adapter inventing one — the Anthropic protocol has no
+// default for it. Wiring the preset in is T6/P6 work; this stands in for it so the exit
+// criterion runs on the real adapters instead of on a stand-in ModelPort. It fills the
+// gap rather than overwriting, so the day the kernel starts supplying `max_tokens` itself
+// this stops standing in and the tests exercise the kernel's own value.
+function withPreset(model: ModelPort, maxTokens: number): ModelPort {
+  return {
+    stream: (request, signal) =>
+      model.stream({ ...request, ...(request.maxTokens === undefined ? { maxTokens } : {}) }, signal),
+  };
+}
+
+function adapter(protocol: FixtureProtocol, fetchImpl: typeof globalThis.fetch): ModelPort {
+  const options = { apiKey: 'test-key', fetch: fetchImpl };
+  return withPreset(protocol === 'openai' ? openAIModel(options) : anthropicModel(options), MAX_TOKENS);
+}
+
+async function openSession(model: ModelPort, sessionId: string, tools: readonly ToolPort[] = []) {
+  const store = new MemoryEventStore();
+  const session = await Session.create(sessionDeps(store), sessionId);
+  // The id the fixtures were recorded with, so the request the adapters build is the one
+  // the bytes answer rather than one that merely resembles it.
+  const deps = turnDeps(session, model, {
+    tools: new Map(tools.map((t) => [t.spec.name, t])),
+    modelId: 'fixture-model',
+  });
+  return { store, session, deps };
+}
+
+const SSE_HEADERS: Readonly<Record<string, string>> = { 'content-type': 'text/event-stream' };
+
+/** One HTTP response per model call, in the order the turn makes them. */
+function turnScript(protocol: FixtureProtocol) {
+  return sequenceTransport([
+    { status: 200, headers: SSE_HEADERS, body: loadFixture(protocol, 'paired', 'text-and-tool').raw },
+    { status: 200, headers: SSE_HEADERS, body: loadFixture(protocol, 'paired', 'final-text').raw },
+  ]);
+}
+
+async function runScriptedTurn(protocol: FixtureProtocol) {
+  const transport = turnScript(protocol);
+  const { store, deps } = await openSession(adapter(protocol, transport.fetch), 'sess_p4', [readTool]);
+  const outcome = await runTurn(deps, 'read a.txt', new AbortController().signal);
+
+  assert.deepEqual(outcome, { state: 'completed', reason: null });
+  return { events: await store.readAll('sess_p4'), requests: transport.requests.length };
+}
+
+// The four fields a run assigns to itself, dropped from a *copy* rather than skipped while
+// rebuilding the event: that way every other field — including one added to an event later
+// — is compared by default, and only these four need a reason to be missing.
+function withoutVolatile(event: KernelEvent): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...event };
+  delete copy.seq;
+  delete copy.ts;
+  delete copy.sessionId;
+  delete copy.turnId;
+  return copy;
+}
+
+/**
+ * ADR-043's projection: compare the facts the log committed, not the deltas that produced
+ * them. Stripped are the run's own identity (`seq`, `ts`, `sessionId`, `turnId`), the
+ * tool-call id (each protocol mints its own), the vendor's stop word (only the kind is
+ * compared, ADR-035) and *how many times* usage was reported — Anthropic reports it
+ * before and after the text, OpenAI once at the end, and that difference is framing, the
+ * same kind of accident as a chunk boundary (ADR-040).
+ *
+ * Everything else is compared as the log wrote it rather than field by field, so a fact
+ * *added* to an event — a new field, or a whole new event type — turns up here as a
+ * difference; an event type this switch does not know about cannot even be compiled.
+ */
+function project(events: readonly KernelEvent[]): readonly unknown[] {
+  const out: unknown[] = [];
+  const callIds = new Map<string, string>();
+  let usage: ModelUsage | null = null;
+
+  const projectedId = (callId: string): string => {
+    const projected = callIds.get(callId);
+    // Every id in a log of this turn came from a `model.message` the loop above already
+    // walked. A miss means the projection no longer matches the event union, and failing
+    // loudly beats comparing two vendor ids that cannot be equal.
+    assert.ok(projected !== undefined, `no projected id for tool call ${callId}`);
+    return projected;
+  };
+
+  for (const event of events) {
+    switch (event.type) {
+      case 'session.opened':
+      case 'turn.opened':
+      case 'turn.transitioned':
+        out.push(withoutVolatile(event));
+        break;
+      case 'model.usage':
+        // The last report of the call wins, and it is attached to the message of the
+        // call it belongs to below.
+        usage = event.usage;
+        break;
+      case 'model.message': {
+        // The vendor's own stop word is replaced by its kind (ADR-035); everything else
+        // about the message is compared as the log wrote it.
+        const fact = withoutVolatile(event);
+        delete fact.stopReason;
+        out.push({
+          ...fact,
+          toolCalls: event.toolCalls.map((call, index) => {
+            const projected = `call_${String(index)}`;
+            callIds.set(call.callId, projected);
+            return { callId: projected, name: call.name, input: call.input };
+          }),
+          stopKind: event.stopReason?.kind ?? null,
+          usage,
+        });
+        usage = null;
+        break;
+      }
+      case 'policy.decided':
+      case 'tool.finished':
+      case 'approval.requested':
+      case 'approval.answered':
+        out.push({ ...withoutVolatile(event), callId: projectedId(event.callId) });
+        break;
+      default: {
+        const unhandled: never = event;
+        throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  }
+  return out;
+}
+
+// One golden (ADR-043), and it is written out rather than derived from one of the runs:
+// two runs agreeing with each other would also agree if both were wrong for the same
+// reason.
+const GOLDEN: readonly unknown[] = [
+  {
+    type: 'session.opened',
+    schemaVersion: 1,
+    cowcatVersion: '0.0.0-test',
+    shell: { kind: 'posix', executable: '/bin/sh' },
+  },
+  { type: 'turn.opened', input: 'read a.txt' },
+  { type: 'turn.transitioned', from: 'idle', to: 'requesting', reason: null },
+  { type: 'turn.transitioned', from: 'requesting', to: 'streaming', reason: null },
+  {
+    type: 'model.message',
+    text: 'Let me read that file.',
+    toolCalls: [{ callId: 'call_0', name: 'read_file', input: { path: 'a.txt' } }],
+    stopKind: 'toolCalls',
+    usage: { input: 12, output: 34, cacheRead: 5, cacheCreation: 0 },
+  },
+  { type: 'turn.transitioned', from: 'streaming', to: 'awaiting_tools', reason: null },
+  {
+    type: 'policy.decided',
+    callId: 'call_0',
+    decision: { verdict: 'allow', rule: 'reads-are-free', reason: null },
+  },
+  {
+    type: 'tool.finished',
+    callId: 'call_0',
+    name: 'read_file',
+    ok: true,
+    output: 'a.txt',
+    facts: null,
+  },
+  { type: 'turn.transitioned', from: 'awaiting_tools', to: 'requesting', reason: null },
+  { type: 'turn.transitioned', from: 'requesting', to: 'streaming', reason: null },
+  {
+    type: 'model.message',
+    text: 'Done.',
+    toolCalls: [],
+    stopKind: 'end',
+    usage: { input: 7, output: 2, cacheRead: 0, cacheCreation: 0 },
+  },
+  { type: 'turn.transitioned', from: 'streaming', to: 'finishing', reason: null },
+  { type: 'turn.transitioned', from: 'finishing', to: 'completed', reason: null },
+];
+
+test('the same turn script on two protocols commits the same kernel events', async () => {
+  const openai = await runScriptedTurn('openai');
+  const anthropic = await runScriptedTurn('anthropic');
+
+  // The script really is a script: both protocols made the second call, so the tool
+  // result reached the model instead of the turn ending on its first answer.
+  assert.equal(openai.requests, 2);
+  assert.equal(anthropic.requests, 2);
+
+  assert.deepEqual(project(openai.events), GOLDEN);
+  assert.deepEqual(project(anthropic.events), GOLDEN);
+});
+
+test('the projection is load-bearing: the two protocols disagree before it', async () => {
+  const [openai, anthropic] = await Promise.all([runScriptedTurn('openai'), runScriptedTurn('anthropic')]);
+
+  const ids = (events: readonly KernelEvent[]) =>
+    events.flatMap((event) => (event.type === 'model.message' ? event.toolCalls.map((call) => call.callId) : []));
+  const stopWords = (events: readonly KernelEvent[]) =>
+    events.flatMap((event) =>
+      event.type === 'model.message' && event.stopReason !== null ? [event.stopReason.raw] : [],
+    );
+
+  // Neither a tool-call id nor a vendor stop word is translated on the way into the log:
+  // both arrive as the protocol sent them, and ADR-043 — not the kernel — is what makes
+  // the two runs comparable.
+  assert.deepEqual(ids(openai.events), ['call_fix_1']);
+  assert.deepEqual(ids(anthropic.events), ['toolu_fix_1']);
+  assert.deepEqual(stopWords(openai.events), ['tool_calls', 'stop']);
+  assert.deepEqual(stopWords(anthropic.events), ['tool_use', 'end_turn']);
+});
+
+// Hand-written, and deliberately not fixtures: a fixture declares the one logical turn
+// its bytes encode (test/fixtures.ts), and these bytes encode no whole turn — they are the
+// first half of a stream whose whole point is that it never finishes.
+const openAiHalfStream = [
+  `data: ${JSON.stringify({
+    id: 'chatcmpl-fix',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'fixture-model',
+    choices: [{ index: 0, delta: { role: 'assistant', content: 'Let me read' }, finish_reason: null }],
+  })}`,
+  '',
+  `data: ${JSON.stringify({
+    id: 'chatcmpl-fix',
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'fixture-model',
+    choices: [],
+    usage: { prompt_tokens: 12, completion_tokens: 1, total_tokens: 13 },
+  })}`,
+  '',
+  '',
+].join('\n');
+
+const anthropicHalfStream = [
+  'event: message_start',
+  `data: ${JSON.stringify({
+    type: 'message_start',
+    message: {
+      id: 'msg_fix',
+      type: 'message',
+      role: 'assistant',
+      model: 'fixture-model',
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 12, output_tokens: 1, cache_read_input_tokens: 5, cache_creation_input_tokens: 0 },
+    },
+  })}`,
+  '',
+  'event: content_block_start',
+  `data: ${JSON.stringify({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })}`,
+  '',
+  'event: content_block_delta',
+  `data: ${JSON.stringify({
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'text_delta', text: 'Let me read' },
+  })}`,
+  '',
+  '',
+].join('\n');
+
+const CANCELLED: readonly { readonly protocol: FixtureProtocol; readonly bytes: string; readonly usage: ModelUsage }[] = [
+  {
+    protocol: 'openai',
+    bytes: openAiHalfStream,
+    usage: { input: 12, output: 1, cacheRead: 0, cacheCreation: 0 },
+  },
+  {
+    protocol: 'anthropic',
+    bytes: anthropicHalfStream,
+    usage: { input: 12, output: 1, cacheRead: 5, cacheCreation: 0 },
+  },
+];
+
+for (const scenario of CANCELLED) {
+  test(`${scenario.protocol}: cancelling mid-stream keeps the usage and commits no half message`, async () => {
+    const transport = openEndedTransport(scenario.bytes);
+    const { store, session, deps } = await openSession(adapter(scenario.protocol, transport.fetch), 'sess_cancel');
+
+    // Wait for facts rather than for a duration: a `model.delta` proves the abort lands
+    // mid-stream (a stream that had produced nothing would make "no half message"
+    // trivial), and a `model.usage` proves the bill arrived first. A fixed sleep would
+    // let this pass for the wrong reason, or fail on a loaded machine.
+    const seen = new Set<string>();
+    const arrived = new Promise<void>((resolve) => {
+      session.subscribe((update) => {
+        seen.add(update.type);
+        if (seen.has('model.delta') && seen.has('model.usage')) resolve();
+      });
+    });
+    const controller = new AbortController();
+    const turn = runTurn(deps, 'read a.txt', controller.signal);
+    const midStream = await settlesWithin(arrived, 2_000);
+    controller.abort();
+
+    assert.equal(midStream, true, 'the text was already streaming and the usage already billed when the abort landed');
+    assert.equal(await settlesWithin(turn, 2_000), true, 'cancelling must stop the stream, not hang it');
+    assert.equal((await turn).state, 'cancelled');
+
+    const events = await store.readAll('sess_cancel');
+    assert.equal(
+      events.filter((event) => event.type === 'model.message').length,
+      0,
+      'a cancelled stream commits no half message',
+    );
+    assert.deepEqual(
+      events.flatMap((event) => (event.type === 'model.usage' ? [event.usage] : [])),
+      [scenario.usage],
+      'usage that has already been billed survives the cancellation (ADR-041)',
+    );
+    const last = events.at(-1);
+    assert.equal(last?.type === 'turn.transitioned' ? last.to : null, 'cancelled');
+  });
+}

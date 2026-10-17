@@ -1,0 +1,15 @@
+{
+  "description": "同一个回合脚本第二次模型调用的 Anthropic 编码：工具结果回灌之后，模型只回一句文本，不再调用工具。文本跨两个 text_delta；usage 仍由 message_start 给 input、message_delta 给累积 output。logical 必须与 openai/paired/final-text 一致。",
+  "urlPath": "/v1/messages",
+  "body": {
+    "model": "fixture-model",
+    "max_tokens": 1024,
+    "stream": true
+  },
+  "logical": {
+    "text": "Done.",
+    "toolCalls": [],
+    "usage": { "input": 7, "output": 2, "cacheRead": 0, "cacheCreation": 0 },
+    "stopKind": "end"
+  }
+}
