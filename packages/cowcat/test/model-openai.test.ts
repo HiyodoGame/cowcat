@@ -167,7 +167,7 @@ test('the flat history is mapped to the wire shape, tools and results paired by 
     request({
       messages: [
         { role: 'user', text: 'hi' },
-        { role: 'assistant', text: '', toolCalls: [{ callId: 'call_a', name: 'read_file', input: { path: 'a.txt' } }] },
+        { role: 'assistant', text: '', reasoning: [], toolCalls: [{ callId: 'call_a', name: 'read_file', input: { path: 'a.txt' } }] },
         { role: 'tool', callId: 'call_a', ok: true, output: 'contents' },
       ],
     }),

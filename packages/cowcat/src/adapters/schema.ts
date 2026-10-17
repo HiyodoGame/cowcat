@@ -62,6 +62,14 @@ const toolCallSchema = z.object({
   input: z.unknown(),
 });
 
+// Mirrors `ReasoningBlock` in kernel/messages.ts (ADR-045). Both arms carry an opaque
+// vendor token — `signature` for readable thinking, `data` for a redacted block — and
+// the kernel never looks inside either one.
+const reasoningBlockSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('thinking'), text: z.string(), signature: z.string() }),
+  z.object({ type: z.literal('redacted'), data: z.string() }),
+]);
+
 const decisionSchema = z.object({
   verdict: verdictSchema,
   rule: z.string(),
@@ -122,6 +130,7 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     type: z.literal('model.message'),
     text: z.string(),
     toolCalls: z.readonly(z.array(toolCallSchema)),
+    reasoning: z.readonly(z.array(reasoningBlockSchema)),
     // Nullable rather than optional, for the same reason as `tool.finished.facts`:
     // `null` says "the adapter reported nothing" out loud (ADR-035).
     stopReason: stopReasonSchema.nullable(),
@@ -165,6 +174,7 @@ const messageSchema = z.discriminatedUnion('role', [
     role: z.literal('assistant'),
     text: z.string(),
     toolCalls: z.readonly(z.array(toolCallSchema)),
+    reasoning: z.readonly(z.array(reasoningBlockSchema)),
   }),
   z.object({ role: z.literal('tool'), callId: z.string(), ok: z.boolean(), output: z.string() }),
 ]);

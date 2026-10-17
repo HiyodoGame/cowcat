@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../kernel/events.js';
-import type { Message, ToolCall } from '../kernel/messages.js';
+import type { Message, ReasoningBlock, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
 import type { ModelUsage, StopReason } from './model.js';
 import type { ExecutionFacts } from './process.js';
@@ -64,6 +64,22 @@ export interface ToolPort {
 export type ModelChunk =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'tool_call'; readonly call: ToolCall }
+  | {
+      /**
+       * One complete reasoning block (ADR-045), emitted the way `tool_call` is and for
+       * the same reason: a chunk is a fact the kernel records, and a fragment is not.
+       *
+       * "Complete" is what makes replay possible — Anthropic's thinking blocks carry an
+       * opaque signature that arrives at the END of the block (`signature_delta`, just
+       * before `content_block_stop`), and the block has to be sent back with it, in
+       * order, unmodified. Emitting per delta would make that impossible to reconstruct.
+       *
+       * Live rendering of the reasoning as it arrives is a different concern and is not
+       * this channel: `StreamDelta` is where ephemeral display goes, and P6 owns it.
+       */
+      readonly type: 'reasoning';
+      readonly block: ReasoningBlock;
+    }
   | {
       /**
        * Emitted when the adapter has numbers to report, which is not the same as
