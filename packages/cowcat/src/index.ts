@@ -23,6 +23,23 @@ export {
 } from './policy/decide.js';
 export { DEFAULT_RULES } from './policy/defaults.js';
 export {
+  CONFIG_LAYERS,
+  DEFAULT_CONFIG,
+  mergeConfig,
+  resolveConfig,
+  type ConfigLayer,
+  type ConfigLayerName,
+  type ConfigLayers,
+  type CowcatConfig,
+} from './policy/config.js';
+export {
+  loadConfig,
+  type ConfigError,
+  type ConfigLoadResult,
+  type ConfigSource,
+  type ConfigWarning,
+} from './adapters/config.js';
+export {
   LockHeldError,
   type LockPort,
   type SessionLock,

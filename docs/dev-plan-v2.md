@@ -346,7 +346,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 |---|---|---|
 | T1 | 规则语言改为结构化字段：`Rule.matches` → `Rule.when`，`ActionRequest` 扩形状，`validateRules`（ADR-027） | ✅ 已合（#16）。测试 219 → 245 |
 | T2a | `ActionRequest` 的生产者：`ToolSpec.pathInput` / `commandInput` 声明，`run-turn.ts` 读输入并填请求，`path` 过 `FsPort.canonical` | ✅ 本 PR。测试 245 → 257 |
-| T2b | 配置 schema（zod，只许在 `adapters/`）+ 三层加载合并 + 两级错误报告（ADR-025/026） | 未开始 |
+| T2b | 配置 schema（zod，只许在 `adapters/`）+ 三层加载合并 + 两级错误报告（ADR-025/026） | ✅ 本 PR。测试 257 → 276 |
 | T3 | 信任模型：门控不对称 + 记录独立存放（ADR-028）；`AGENTS.md` 加载、未信任不注入（ADR-029/030） | 未开始 |
 | T4 | 审批协议：`approval.requested` / `answered` 进日志、超时 → auto-deny、`always` 会话内（ADR-031/032）；封子 agent yolo 与 `allowedPrompts` 两条旧版缺口 | 未开始 |
 | T5 | 审计作为事件消费者（ADR-033）；先扩事件让沙箱事实进日志 | 未开始 |
@@ -357,7 +357,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 **出口标准**
 
-- 策略的全部裁决都能由配置表达，无需改代码（**仍未成立**：`Rule.matches` 已是数据（T1），但还没有配置加载器——T2b 之前，规则只能由代码构造）
+- 策略的全部裁决都能由配置表达，无需改代码（**库层面成立**：`Rule.when` 是数据（T1），配置 schema 能表达全部裁决（T2b）。**端到端仍未成立**——还没有 CLI 去读配置文件，P6）
 - 无人值守模式下，所有 `ask` 的动作要么按显式规则放行，要么拒绝并留审计（**仍未成立**：无超时、无审批事件，T4）
 
 ---
