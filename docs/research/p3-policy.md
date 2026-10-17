@@ -24,7 +24,7 @@
 
 | # | 问题 | 决定 | 依据 |
 |---|---|---|---|
-| 二 | 裁决顺序是否保留 `deny > ask > allow` | **保留**（评审通过）。补充：**`deny` 永不被短路**，无人值守只影响 `ask` 的归宿 | §2.5、探针 `policy-decide-probe`（15/15） |
+| 二 | 裁决顺序是否保留 `deny > ask > allow` | **保留**（评审通过）。补充：**`deny` 永不被短路**，无人值守只影响 `ask` 的归宿 | §2.5、探针 `policy-decide-probe`（16/16） |
 | 三 | 配置分层与合并语义 | **层：用户 → 项目 → 会话**（评审通过）；环境变量**不作层**，逐键决定；**不再有 STATE_KEYS 这类隐式最高层**；**列表键合并**而非替换 | §3.6、探针 `legacy-config-probe`（10/10） |
 | 四 | 规则语言 | **结构化字段**（`{tool, path?, command?, risk?, network?}`），否决纯文本 DSL 与函数式 `matches` | §4.4、【源码】`perrules.js:67` |
 | 五 | 信任模型 | 信任按**目录身份精确匹配、无继承**；门控改**不对称**（allow 等信任，deny/ask 立即生效）；指令文件统一为 **`AGENTS.md`**，且**未信任时不注入** | §5、探针 `legacy-trust-probe`（8/8）、**附录 E** |
@@ -48,7 +48,7 @@
 | Node | `v24.18.0` |
 | 仓库状态 | `main = aa1b88d`，与 `origin/main` 一致，工作区干净 |
 | 测试套件 | **【实测】** `npm test`（build + lint + test）：`tests 219 / pass 204 / fail 0 / skipped 15`，9.6s。skip 的 15 项是需要真后端的沙箱用例 |
-| 本次新增实测 | **三个探针，33 条断言全部通过**（P3 T1 后：`policy-decide-probe` 由 14 增至 15，见附录 B）：`tools/policy-decide-probe.mjs`（15）、`tools/legacy-config-probe.mjs`（10）、`tools/legacy-trust-probe.mjs`（8） |
+| 本次新增实测 | **三个探针，34 条断言全部通过**（P3 T1 后 `policy-decide-probe` 由 14 增至 15，T3a 增至 16，见附录 B）：`tools/policy-decide-probe.mjs`（16）、`tools/legacy-config-probe.mjs`（10）、`tools/legacy-trust-probe.mjs`（8） |
 | 本次**未**做 | 未重跑旧版测试套件；未在 Linux/macOS 上跑任何东西；未做跨版本回放实测 |
 
 **平台差异提示**：三个探针都在 Windows 上跑。`legacy-config-probe` 断言的是**优先级与合并语义**，与平台无关；`legacy-trust-probe` 的 T2 断言「存的是 canonical 路径」，在 Windows 上由 `realpathSync.native` 的大小写折叠实现（`canonical.js:69`），**POSIX 上的 symlink 语义未在本机验证**——旧版正因 macOS `/var` → `/private/var` 栽过一次（`trust.js:14-21`）。
@@ -81,7 +81,7 @@ return { verdict: 'ask', rule: 'no-rule-matched', reason: `no rule covers ${requ
 
 ### 2.2 实测【实测】
 
-`tools/policy-decide-probe.mjs`，15 条全过（P3 T1 后由 14 增至 15，见附录 B 末）。值得单独列出的：
+`tools/policy-decide-probe.mjs`，16 条全过（P3 T1 后由 14 增至 15，T3a 增至 16，见附录 B 末）。值得单独列出的：
 
 | 用例 | 期望 | 为什么它值得测 |
 |---|---|---|
@@ -287,12 +287,16 @@ readonly risk: ToolRisk;
 
 `architecture/03-policy-and-execution.md:9` 已预告「P2 起扩展为进程、文件路径、网络域名等请求种类」——**该扩展至今未发生**。
 
-规则集在生产里也只有一个生产者：`DEFAULT_RULES`（`policy/defaults.ts:3-11`），两条规则：
+规则集在生产里也只有一个生产者：`DEFAULT_RULES`（`policy/defaults.ts`），调研当时两条规则：
 
 | # | `name` | `matches` | `verdict` | `reason` |
 |---|---|---|---|---|
 | 1 | `reads-are-free` | `r.risk === 'read'` | `allow` | 无 |
-| 2 | `mutations-need-approval` | risk ∈ {write, exec, network} | `ask` | `'this action changes state outside the conversation'` |
+| 2 | ~~`mutations-need-approval`~~ | ~~risk ∈ {write, exec, network}~~ | ~~`ask`~~ | **P3 T3a 删除，见下** |
+
+**第 2 条在 T3a 被删除，这是一个必须修的缺陷，不是偏好。** 因为 `decide` 按**类别**排序（`deny > ask > allow`，ADR-023），一条 catch-all 的 `ask` 会**遮蔽所有 `allow`**——于是没有任何配置能让一次写操作被允许，P3 出口标准第一条「策略的全部裁决都能由配置表达」**无论写什么都不可达**，信任门控也随之失去意义。
+
+修法就是外部参照的做法：**「默认询问」是兜底，不是一条规则**。`decide` 在没有规则命中时本来就返回 `ask`（`no-rule-matched`），那才是它该待的地方。见 ADR-034，探针 P12/P16 钉住。**注意这没有改变任何裁决结果**：写/执行/网络仍然被询问，只是报告的理由从那条规则的文案变成了兜底的文案。
 
 **匹配维度只有 `request.risk`。** 默认规则集里**没有任何工具名字符串**，对 `Bash`、`rm -rf` 一无所知。
 
@@ -736,7 +740,7 @@ ADR 编号从 **ADR-023** 起（当前最后一篇是 ADR-022，见 `HANDOFF.md`
 
 | 脚本 | 断言数 | 覆盖 |
 |---|---|---|
-| `tools/policy-decide-probe.mjs` | **15 / 15** | v2 `decide()` 的裁决矩阵、`reason` 的 `null` vs `''`、缺字段时 fail-closed、`DEFAULT_RULES` 的可达面与可校验性 |
+| `tools/policy-decide-probe.mjs` | **16 / 16** | v2 `decide()` 的裁决矩阵、`reason` 的 `null` vs `''`、缺字段时 fail-closed、`DEFAULT_RULES` 的可达面与可校验性、**allow 的可达性**（P16） |
 | `tools/legacy-config-probe.mjs` | **10 / 10** | v1 六层优先级的每一层、`STATE_KEYS` 重放（含无 `state.json` 的情形）、数组替换、`providers` 深合并 |
 | `tools/legacy-trust-probe.mjs` | **8 / 8** | `trustedProjects` 落点与形态、canonical 存储、幂等、**无子目录/父目录继承**、legacy 兼容、类型防御 |
 

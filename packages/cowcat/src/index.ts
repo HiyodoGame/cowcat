@@ -25,13 +25,15 @@ export { DEFAULT_RULES } from './policy/defaults.js';
 export {
   CONFIG_LAYERS,
   DEFAULT_CONFIG,
-  mergeConfig,
   resolveConfig,
   type ConfigLayer,
   type ConfigLayerName,
   type ConfigLayers,
   type CowcatConfig,
+  type RuleOrigin,
+  type SourcedRule,
 } from './policy/config.js';
+export { trustedRules, type TrustState } from './policy/trust.js';
 export {
   loadConfig,
   type ConfigError,
