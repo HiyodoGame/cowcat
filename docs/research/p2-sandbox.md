@@ -162,6 +162,22 @@ quoted     :  exit 1   stdout ""   stderr "node:fs:441"      ← 脚本跑起来
 
 顺带验证过：含空格与单引号的路径经 `shellQuote` 后由真 shell 原样还原。
 
+### 4.8 挂载顺序会静默吃掉授权【实测】
+
+挂载按命令行顺序生效、后者覆盖前者。因此 `--tmpfs /tmp` 放在读绑定**之后**，会遮住宿主 `/tmp` 下的每一个读授权：
+
+```
+顺序 A（tmpfs 在后）：GONE notes.txt    present readable.txt
+顺序 B（tmpfs 在前）：present notes.txt  present readable.txt
+```
+
+这条是在写 T6 的测试时发现的——测试夹具用 `mkdtemp` 建在 `/tmp` 下，于是「家目录可读」那条用例必然失败。真实影响比测试更大：**任何位于宿主 `/tmp` 下的读授权都会被静默丢弃**，包括 `$HOME` 落在 `/tmp` 的开发环境与 CI。那正是「策略看起来授予了、实际什么都没做」这一类。
+
+两个 profile 的顺序要求**相反**，且各有原因：
+
+- `workspace`：tmpfs **在前**，让策略自己的绑定把该暴露的重新暴露出来；
+- `hide`：`--ro-bind / /` 把宿主的 `/tmp` 一起绑了进来，所以 tmpfs 必须在它**之后**，否则沙箱会重新继承宿主的临时目录（旧版 CI 第一次跑就因为这个半真半假而失败）。
+
 ### 4.6 私有 `/tmp` 是宿主机内存的一半【实测】
 
 ```

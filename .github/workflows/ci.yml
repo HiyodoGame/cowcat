@@ -256,6 +256,18 @@ jobs:
         # The sandbox tests print the probe's own classification when they skip, so this
         # log already says whether bwrap was usable here.
         run: npm test
+      # The one fact this leg exists to establish that a test cannot: whether the AppArmor
+      # profile makes `--disable-userns` available. If `hardening` is empty here, this
+      # runner's sandbox is measurably weaker and every run in the log says so in its
+      # limitations — which is the intended degradation, not a failure.
+      - name: Report the sandbox backend verdict
+        run: |
+          node --input-type=module -e "
+          const { NodePlatform } = await import('./dist/src/index.js');
+          const platform = new NodePlatform();
+          console.log('platform:', platform.platform);
+          console.log('verdicts:', JSON.stringify(platform.sandboxBackends()));
+          "
 
   cowcat-windows:
     # Every non-draft PR, and a required check. It was main-only while the repo
