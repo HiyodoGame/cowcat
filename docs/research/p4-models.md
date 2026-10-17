@@ -488,7 +488,7 @@ npm i zod@4.6.7 openai@7.36.0 @anthropic-ai/sdk@0.135.0   →  added 10 packages
 | 6 | `stream_options` 在 OpenAI 兼容端点的支持率 | 【未验证】 | §4.6；解析必须容忍「开了也不给」 |
 | 7 | Anthropic 流式下 `cache_creation_input_tokens` 是否出现 | 【未验证】 | §4.6 |
 | 8 | 其余 200 家端点的流式细节一致性 | 【未验证】 | §7.5；只能逐家夹具覆盖 |
-| 9 | 夹具目录是否被 `tsc` 扫入 / 是否复制到 `dist/` | 【推断】 | §6.6；影响测试能不能读到夹具 |
+| 9 | 夹具目录是否被 `tsc` 扫入 / 是否复制到 `dist/` | **已解决（P4 T4）**：`tsconfig` 只 `include: ["src","test"]`，所以 `.sse`/`.json` 既不编译也不复制，而测试跑在 `dist/test`。解法是**从包根解析**（`test/fixtures.ts` 向上找 `package.json`），并有测试钉住 | §6.6；影响测试能不能读到夹具 |
 | 10 | `client.js:24` 的超时是否只作用于握手 | 【推断】 | §5.1；影响「超时语义要区分」这条决定的形式 |
 | 11 | **厂商 catalog 怎么更新**——蒸馏脚本不在仓库里 | 【未验证】 | §7.3；沿用「数据形状」可行，沿用「更新流程」没有现成答案 |
 | 12 | 8 家 openai 协议厂商（`deepinfra` / `groq` / `cerebras` / `perplexity` / `xai` / `mistral` / `togetherai` / `openai`）**没有 `api` 字段**，按 `agent/src/config.js:311` 会回落到 `https://api.openai.com/v1` | 【未验证】 | §7.1；是蒸馏缺口还是有意为之，未定 |

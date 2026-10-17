@@ -1,0 +1,11 @@
+{
+  "description": "钉板：finish_reason 之后仍有 tool-call delta 到达（v1 的实测结论，agent/src/llm/openai.js:69-71）。完成信号必须是 iterator 结束，不能是 finish_reason——否则这条调用会被静默丢弃。",
+  "urlPath": "/chat/completions",
+  "body": { "model": "fixture-model", "stream": true, "stream_options": { "include_usage": true } },
+  "logical": {
+    "text": "checking",
+    "toolCalls": [{ "name": "read_file", "input": { "path": "late.txt" } }],
+    "usage": { "input": 7, "output": 3, "cacheRead": 0, "cacheCreation": 0 },
+    "stopKind": "toolCalls"
+  }
+}

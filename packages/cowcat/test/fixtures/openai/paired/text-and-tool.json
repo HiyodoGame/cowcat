@@ -1,0 +1,15 @@
+{
+  "description": "同一个逻辑回合的 OpenAI 编码：一句文本 + 一次工具调用（参数跨 chunk）+ 用量。与 anthropic/paired/text-and-tool 是同一回合的两种编码，logical 必须一致。",
+  "urlPath": "/chat/completions",
+  "body": {
+    "model": "fixture-model",
+    "stream": true,
+    "stream_options": { "include_usage": true }
+  },
+  "logical": {
+    "text": "Let me read that file.",
+    "toolCalls": [{ "name": "read_file", "input": { "path": "a.txt" } }],
+    "usage": { "input": 12, "output": 34, "cacheRead": 5, "cacheCreation": 0 },
+    "stopKind": "toolCalls"
+  }
+}
