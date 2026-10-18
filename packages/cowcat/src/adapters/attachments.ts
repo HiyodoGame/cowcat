@@ -11,6 +11,14 @@ export interface MaterializedAttachment {
   readonly type: AttachmentType;
   readonly mediaType: string;
   readonly base64: string;
+  /**
+   * The size actually read, not the size the attachment declared.
+   *
+   * Carried because the bytes and their length are two answers to two questions: a wire
+   * builder wants the payload, and `attachment.read` has to report a `byteLength` to a
+   * frontend that will not decode base64 to count it.
+   */
+  readonly byteLength: number;
 }
 
 /**
@@ -21,12 +29,22 @@ export interface MaterializedAttachment {
 export class AttachmentUnavailableError extends Error {
   readonly path: string;
   readonly reason: string;
+  /**
+   * How large the file really was, when that is knowable — `null` when it could not be
+   * read at all.
+   *
+   * It is not derived from `reason` by a caller: "the bytes are over the limit" and "the
+   * bytes are gone" want different error codes on the wire, and a frontend that has to
+   * parse a sentence to tell them apart is a frontend that will get it wrong.
+   */
+  readonly byteLength: number | null;
 
-  constructor(attachment: Attachment, reason: string) {
+  constructor(attachment: Attachment, reason: string, byteLength: number | null = null) {
     super(`attachment ${attachment.path} cannot be sent: ${reason}`);
     this.name = 'AttachmentUnavailableError';
     this.path = attachment.path;
     this.reason = reason;
+    this.byteLength = byteLength;
   }
 }
 
@@ -53,6 +71,7 @@ export function materializeAttachment(
     throw new AttachmentUnavailableError(
       attachment,
       `declared ${String(attachment.bytes)} bytes is over the ${String(hardLimit)} byte limit`,
+      attachment.bytes,
     );
   }
 
@@ -69,8 +88,9 @@ export function materializeAttachment(
     throw new AttachmentUnavailableError(
       attachment,
       `is ${String(data.byteLength)} bytes, over the ${String(hardLimit)} byte limit`,
+      data.byteLength,
     );
   }
 
-  return { type: attachment.type, mediaType: attachment.mediaType, base64: data.toString('base64') };
+  return { type: attachment.type, mediaType: attachment.mediaType, base64: data.toString('base64'), byteLength: data.byteLength };
 }

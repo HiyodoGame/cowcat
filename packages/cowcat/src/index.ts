@@ -178,6 +178,22 @@ export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
 export { BUILTIN_PRESETS, BUILTIN_PROVIDERS, type BuiltinProvider } from './host/presets.js';
 export {
+  CONFIG_DIR_NAME,
+  PROJECT_CONFIG_FILENAME,
+  SESSIONS_DIR_NAME,
+  TRUST_FILENAME,
+  cowcatPaths,
+  type CowcatPaths,
+} from './host/paths.js';
+export {
+  HOST_BASELINE_RULES,
+  loadHostConfig,
+  withHostRules,
+  type HostConfigOptions,
+  type HostConfigResult,
+} from './host/config.js';
+export { HostConfigError, createHost, type CowcatHost, type CreateHostOptions } from './host/host.js';
+export {
   ModelConfigError,
   createModelPort,
   selectModel,
@@ -226,3 +242,12 @@ export {
   type ShellResolution,
 } from './adapters/shell.js';
 export { probeBackends, usableBackend, WINDOWS_ALTERNATIVES, type ProbeHost } from './adapters/sandbox-probe.js';
+export { fsProbeFrom } from './adapters/sandbox/fs-probe.js';
+export {
+  createConfigFileReader,
+  type ConfigFileReadResult,
+  type ConfigFileReader,
+  type ConfigFileTarget,
+  type ReadTextFile,
+} from './adapters/config-files.js';
+export { createSessionIndex, type SessionIndex, type SessionIndexEntry } from './adapters/session-index.js';
