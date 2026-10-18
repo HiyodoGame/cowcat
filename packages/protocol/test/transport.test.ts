@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { memoryTransport } from '../../src/protocol/index.js';
+import { memoryTransport } from '../src/index.js';
 import { manualDefer } from './support.js';
 
 test('a message sent before close is delivered before the close', () => {

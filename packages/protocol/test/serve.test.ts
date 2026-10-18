@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
-import { ERROR_CODES, parseResponse, type JsonRpcError, type JsonRpcResponse } from '../../src/protocol/index.js';
-import { NOT_WIRED, refusingHost } from '../../src/serve/refusing-host.js';
-import { serve, type SignalSource } from '../../src/serve/serve.js';
+import { ERROR_CODES, parseResponse, type JsonRpcError, type JsonRpcResponse } from '../src/index.js';
+import { NOT_WIRED, refusingHost } from '../src/index.js';
+import { serve, type SignalSource } from '../src/index.js';
 
 interface Harness {
   readonly input: PassThrough;

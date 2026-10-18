@@ -1,9 +1,9 @@
 # CI: two packages, one gate each, and a cheap scope check in front of the legacy one.
 #
-# ── Why this is shaped the way it is ─────────────────────────────────────────
+# 鈹€鈹€ Why this is shaped the way it is 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 # This repository is PUBLIC, so GitHub Actions minutes are free on every runner
 # (Linux 1x, Windows 2x, macOS 10x multipliers no longer bill us). The shape used
-# to be dictated by a private Pro quota — measured 2026-10-16, one day of ordinary
+# to be dictated by a private Pro quota 鈥?measured 2026-10-16, one day of ordinary
 # PR work (68 runs) cost ~795 billable minutes, 26% of the monthly allowance, with
 # the Windows job (33%) and the Node-version legs (31%) the largest items. That
 # reasoning expired with the quota, so every leg now runs on every non-draft PR:
@@ -11,20 +11,22 @@
 #   legacy agent/ (until P8)   Linux on every non-draft PR; its Windows and Node 24
 #                              legs only when the scope check says agent/ changed
 #   packages/cowcat (v2)       Linux + Windows on every non-draft PR
-#   packages/tui (P6)          Linux + Windows on every non-draft PR — same reason as
+#   packages/protocol (P6)     Linux on every non-draft PR 鈥?pure JS, on the kernel's
+#                              Node 22 floor; the tui legs build it on both platforms too
+#   packages/tui (P6)          Linux + Windows on every non-draft PR 鈥?same reason as
 #                              cowcat, plus a different Node floor: opentui needs
 #                              >=26.4 (ADR-056) and ships its native core per platform,
 #                              so the two runners answer two different questions
 #   package whitelist          every non-draft PR (cheap, guards what npm publishes)
-#   CI (macOS)                 every non-draft PR + every main push — the only place
+#   CI (macOS)                 every non-draft PR + every main push 鈥?the only place
 #                              the Seatbelt backend is verified for real
-#   draft PRs                  nothing — a draft cannot be merged, and
+#   draft PRs                  nothing 鈥?a draft cannot be merged, and
 #                              `ready_for_review` re-triggers a full run
 #
 # Required checks are exactly the jobs that report on EVERY non-draft PR. That is
 # the whole rule: a required check that only sometimes reports blocks every PR
-# that skipped it. So `test · node 22 · windows-latest` and
-# `test · node 24 · ubuntu-latest` run on PRs but stay out of the required list
+# that skipped it. So `test 路 node 22 路 windows-latest` and
+# `test 路 node 24 路 ubuntu-latest` run on PRs but stay out of the required list
 # (the scope check may skip them), while the v2 Windows leg and the macOS leg are
 # required because they always run.
 #
@@ -39,7 +41,7 @@
 # (actions/runner-images#14748), so for weeks the same commit could land on either
 # image. That matters here because this gate installs bubblewrap + an AppArmor
 # profile, and when that fails the sandbox tests SKIP instead of failing (see the
-# test job) — a moving image could switch coverage off while the required check
+# test job) 鈥?a moving image could switch coverage off while the required check
 # stays green. Pinning keeps the signal readable, the same call ci-macos.yml made
 # for macos-15.
 #
@@ -59,7 +61,7 @@ on:
     branches: [main]
   pull_request:
     # `ready_for_review` is NOT a default type, and draft PRs skip the jobs below
-    # — without this a PR promoted out of draft would never get a gate.
+    # 鈥?without this a PR promoted out of draft would never get a gate.
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -72,7 +74,7 @@ concurrency:
 
 jobs:
   scope:
-    name: scope · does the legacy agent/ change?
+    name: scope 路 does the legacy agent/ change?
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -107,7 +109,7 @@ jobs:
           echo "legacy suite: $legacy (compared with ${base:-nothing})"
 
   test:
-    name: test · node 22 · ubuntu-latest
+    name: test 路 node 22 路 ubuntu-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: scope
@@ -138,7 +140,7 @@ jobs:
         run: npm ci
       # bubblewrap is what the system-level sandbox drives on Linux. Ubuntu 23.10+
       # restricts unprivileged user namespaces via AppArmor, so bwrap fails until
-      # the profile is loaded — the same fix our preflight tells users about. If
+      # the profile is loaded 鈥?the same fix our preflight tells users about. If
       # this step stops working, test/sandbox-linux.test.mjs skips (with the
       # reason) instead of failing, and the log says which classification it hit.
       - name: Install sandbox deps (Linux)
@@ -155,9 +157,9 @@ jobs:
 
   test-windows:
     # Runs on every non-draft PR, but only when the scope check says `agent/`
-    # changed — which is also why it is NOT a required check: a required check
+    # changed 鈥?which is also why it is NOT a required check: a required check
     # that skips on some PRs blocks exactly those PRs.
-    name: test · node 22 · windows-latest
+    name: test 路 node 22 路 windows-latest
     runs-on: windows-latest
     timeout-minutes: 20
     needs: scope
@@ -186,7 +188,7 @@ jobs:
   test-node24:
     # Node-version compatibility. Same shape as the Windows leg above: every
     # non-draft PR, but only when `agent/` is in scope, and therefore not required.
-    name: test · node 24 · ubuntu-latest
+    name: test 路 node 24 路 ubuntu-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: scope
@@ -225,7 +227,7 @@ jobs:
     # to "no child processes" is test/lock-cross-process.test.ts, which spawns real
     # node processes on purpose: the session lock is a cross-process primitive, and
     # testing it in one process would not test the thing that matters.
-    name: packages/cowcat · node 22 · ubuntu-latest
+    name: packages/cowcat 路 node 22 路 ubuntu-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -245,7 +247,7 @@ jobs:
       # kernel can prove.
       #
       # Ubuntu 23.10+ restricts unprivileged user namespaces via AppArmor, so bwrap fails
-      # until the profile is loaded — the same fix our own preflight tells users about,
+      # until the profile is loaded 鈥?the same fix our own preflight tells users about,
       # applied here so the documented path is exercised rather than assumed.
       - name: Install sandbox deps (Linux)
         run: |
@@ -263,7 +265,7 @@ jobs:
       # The one fact this leg exists to establish that a test cannot: whether the AppArmor
       # profile makes `--disable-userns` available. If `hardening` is empty here, this
       # runner's sandbox is measurably weaker and every run in the log says so in its
-      # limitations — which is the intended degradation, not a failure.
+      # limitations 鈥?which is the intended degradation, not a failure.
       - name: Report the sandbox backend verdict
         run: |
           node --input-type=module -e "
@@ -275,10 +277,10 @@ jobs:
 
   cowcat-windows:
     # Every non-draft PR, and a required check. It was main-only while the repo
-    # was private and Windows billed at 2x (54s wall ≈ 1.8 billable minutes per
+    # was private and Windows billed at 2x (54s wall 鈮?1.8 billable minutes per
     # run, paid again on every PR); minutes are free now, and a v2 regression on
     # Windows should be caught before the merge rather than after it.
-    name: packages/cowcat · node 22 · windows-latest
+    name: packages/cowcat 路 node 22 路 windows-latest
     runs-on: windows-latest
     timeout-minutes: 10
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -297,13 +299,37 @@ jobs:
       - name: Build, lint and test (pretest runs build + eslint)
         run: npm test
 
+  protocol:
+    # The seam package (ADR-062): JSON-RPC, transports, `serve` lifecycle. It runs on the
+    # kernel's Node floor, not the renderer's, which is the whole reason it is a package
+    # of its own. One leg is enough: it is pure JS, and the tui legs build it on both
+    # platforms anyway (they consume it as a `file:` dependency).
+    name: packages/protocol 路 node 22 路 ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/protocol
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/protocol/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+
   tui:
     # Node 26 is opentui's floor, not ours (ADR-056): the kernel package stays on
     # Node 22, and this is the only place the frontend's floor is verified. The leg
-    # runs unconditionally for the same reason the cowcat legs do — a leg that only
-    # sometimes reports can never be a required check — and it is cheap: install,
+    # runs unconditionally for the same reason the cowcat legs do 鈥?a leg that only
+    # sometimes reports can never be a required check 鈥?and it is cheap: install,
     # a type-check, and two assertions about one rendered frame.
-    name: packages/tui · node 26 · ubuntu-latest
+    name: packages/tui 路 node 26 路 ubuntu-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -316,7 +342,16 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: packages/tui/package-lock.json
+          cache-dependency-path: |
+            packages/tui/package-lock.json
+            packages/protocol/package-lock.json
+      # The protocol is a `file:` dependency, and npm links a directory 鈥?it does not
+      # install its dependencies or build it (measured: 0 extra packages, junction).
+      # A consumer therefore has to do both itself, and this is that step.
+      - name: "Build the protocol package (file: dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)
@@ -328,7 +363,7 @@ jobs:
     # resolving @opentui/core-win32-x64 successfully is its own result. Measured
     # locally on Node 26.12.0 (opentui.dll, 5.06 MB, one 40x6 frame in 12 ms); this
     # leg is what keeps that true on a machine nobody develops on.
-    name: packages/tui · node 26 · windows-latest
+    name: packages/tui 路 node 26 路 windows-latest
     runs-on: windows-latest
     timeout-minutes: 10
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -341,7 +376,15 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: packages/tui/package-lock.json
+          cache-dependency-path: |
+            packages/tui/package-lock.json
+            packages/protocol/package-lock.json
+      # Same reason as the Linux leg: a `file:` dependency is linked, not installed or
+      # built. On Windows the path separator in `--prefix` is the only difference.
+      - name: "Build the protocol package (file: dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)

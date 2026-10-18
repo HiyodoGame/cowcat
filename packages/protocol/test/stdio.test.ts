@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
-import { stdioTransport, type Transport } from '../../src/protocol/index.js';
+import { stdioTransport, type Transport } from '../src/index.js';
 
 interface Wired {
   readonly input: PassThrough;

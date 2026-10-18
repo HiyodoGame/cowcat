@@ -8,7 +8,7 @@ import {
   settle,
   type WireEvent,
   type WireLog,
-} from '../../src/protocol/index.js';
+} from '../src/index.js';
 import { ScriptedHost, delta, event, flush, newScriptedSession, wire } from './support.js';
 
 /**

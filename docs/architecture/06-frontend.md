@@ -48,12 +48,12 @@
 
 ### T2 落地的形状（2026-10-19）
 
-方法表是**数据**（`src/protocol/methods.ts` 的 `METHODS` 与 `PARAMS`），与 ADR-060 对 CLI 子命令的要求同一手法：`switch` 的穷尽性让「加了方法却忘了处理」变成编译失败。
+方法表是**数据**（`packages/protocol/src/methods.ts` 的 `METHODS` 与 `PARAMS`），与 ADR-060 对 CLI 子命令的要求同一手法：`switch` 的穷尽性让「加了方法却忘了处理」变成编译失败。
 
 两条与直觉不同的裁剪写在这里，因为它们是**契约**而不是实现细节：
 
 1. **params 严格、事件体宽松**。客户端发来的 params 用 `strictObject` 校验（多一个字段就是 `invalidParams`——服务端不能对看不懂的请求动作），而服务端发出的事件**只校验信封**（`seq`/`ts`/`sessionId`/`turnId`/`type`）、放过其余字段。理由：事件体是内核的事件联合类型，在协议里再描述一遍等于手写第二份 `adapters/schema.ts`（内核已经为这份漂移付过一次编译期等价断言），而且它会**在内核做加法改动时把前端打死**——`tool.finished` 已经长过 `truncation` 和 `path`，T5 还要长 `attachments`，这些都不该要协议陪着改。代价写在明处：`type` 是普通字符串，前端遇到不认识的事件走「显示为不支持」而不是崩掉。
-2. **协议层既不 import 内核、也不 import opentui**，由 `packages/tui/eslint.config.js` 强制。前者是 ADR-059 ③；后者是为了让这个模块能**整体挪进独立包**——`serve` 与未来的 IDE 插件都需要一个没有渲染器的客户端，而「挪」只有在今天这条规则为真时才是机械动作。ADR-059 ③ 要求的「lint 探针证明规则真的会报错」按计划在 T10 复核（见 `dev-plan-v2.md` 的 T10 行）。
+2. **协议层既不 import 内核、也不 import opentui**，由 `packages/protocol/eslint.config.js` 强制（**T4a 1/3 之后它真的独立成包了**）。前者是 ADR-059 ③；后者当时是为了让这个模块能整体挪走——`serve` 与未来的 IDE 插件都需要一个没有渲染器的客户端，而「挪」只有在今天这条规则为真时才是机械动作。ADR-059 ③ 要求的「lint 探针证明规则真的会报错」按计划在 T10 复核（见 `dev-plan-v2.md` 的 T10 行）。
 
 其余落地细节：
 
@@ -64,7 +64,7 @@
 | 错误 | JSON-RPC 保留码之外用实现定义段：`versionMismatch`/`notInitialized`/`noSuchSession`/`hostRefused`/`attachmentTooLarge`。客户端按**码**分支，不按文案 |
 | `session.open` | 回 `{sessionId, lastSeq, replayed}`，**然后**按序补发日志里的每条事件：前端靠重放重建屏幕，不需要第二种「现在长什么样」的查询（ADR-059 ②） |
 | `attachment.read` | 超限一律**拒绝并带数字**（`{id, byteLength, limit}`），不截断字节；调用方的 `maxBytes` 只会更严、不会更松（ADR-057 的 5MB 口径在 T5/T6 落到真实附件上） |
-| 宿主端口 | `ProtocolHost`（`src/protocol/host.ts`）是「会话持有者」的端口：T3/T4 拿它接内核，协议层因此完全不认识内核。`attach()` 的原子性（replay 与 subscribe 之间不丢不重）写在端口注释里，因为那是**实现者的义务**，协议无法在运行时检查它 |
+| 宿主端口 | `ProtocolHost`（`packages/protocol/src/host.ts`）是「会话持有者」的端口：T3/T4 拿它接内核，协议层因此完全不认识内核。`attach()` 的原子性（replay 与 subscribe 之间不丢不重）写在端口注释里，因为那是**实现者的义务**，协议无法在运行时检查它 |
 
 ### T3 落地的形状（2026-10-19）
 
@@ -79,15 +79,29 @@ T3 交付的是**进程**，不是宿主：`stdioTransport`（行帧）+ `serve(
 | 信号 | 注入（`SignalSource`），因为 Windows 上没法真发信号；测试断言的是「收到信号就关，且返回前把进程级 handler 摘干净」 |
 | stdin | 服务端可以自己决定关闭（`shutdown`）而 stdin 还开着：关闭前 pause + unref，否则进程挂在一个再也不会有人写的 stdin 上——**挂住的 `serve` 比报错的 `serve` 更糟** |
 
-`src/serve/` 与 `src/protocol/` 受同一条 lint 约束（既不 import 内核、也不 import opentui），理由同上：进程与协议都是将来会被搬进别的包的部分，而「搬」只有在今天这条规则为真时才是机械动作。
+`packages/protocol/src/serve.ts`（进程）与协议本身受同一条 lint 约束（既不 import 内核、也不 import opentui）——迁移时这条规则为真，所以 T4a 1/3 的搬迁是机械动作。
 
-## 前端分层（ADR-056）
+## 前端分层（ADR-056、ADR-062）
 
-前端是**独立 workspace 包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
+前端是**独立包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
+
+**包结构（ADR-062，T4a 1/3 已落地）**——协议从 `tui` 里独立出来了：
+
+```
+packages/protocol/   @corescense/cowcat-protocol   Node >=22   wire + 传输 + serve 生命周期 + ProtocolHost 端口
+                     ↑ 不 import opentui、不 import 内核（自己的 eslint 强制）
+packages/cowcat/     @corescense/cowcat-core       Node >=22   内核 + 适配器 +（T4a 2/3）组合根 src/host/
+packages/tui/        @corescense/cowcat-tui        Node >=26   opentui 渲染器 + 协议客户端 + CLI（3/3 后只剩渲染器）
+packages/cli/        （T4a 3/3）                    Node >=26   bin + 子命令表 + doctor
+
+依赖方向：protocol ← cowcat ← cli，protocol ← tui ← cli（无环）
+```
+
+`packages/tui/src/`（协议搬走后）与将要加进来的目录：
 
 ```
 packages/tui/src/
-  protocol/     客户端：stdio 与内存两种传输、方法类型（zod 解码边界在适配器一侧）
+  cli/          子命令表（数据）、帮助、doctor——3/3 会搬去 packages/cli
   app/          project()（KernelEvent → view model，纯函数）、命令、键位、屏幕表
   ui/           无状态原语：box / text / list / dialog / input / toast / status-bar / tabs / spinner
   components/   特性组件：session-frame / message / tool-card / approval-card / todo-panel / diff-card / image-preview

@@ -1,6 +1,6 @@
 import type { Readable, Writable } from 'node:stream';
-import { createServer, type ProtocolHost } from '../protocol/index.js';
-import { stdioTransport, type StdioTransportOptions } from '../protocol/stdio.js';
+import { createServer, type ProtocolHost } from './index.js';
+import { stdioTransport, type StdioTransportOptions } from './stdio.js';
 
 /** Where the stop signals come from. Injectable so the lifecycle is testable off-Windows. */
 export interface SignalSource {

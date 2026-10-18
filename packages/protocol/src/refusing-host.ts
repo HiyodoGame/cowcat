@@ -1,4 +1,4 @@
-import { ERROR_CODES, ProtocolHostError, type ProtocolHost } from '../protocol/index.js';
+import { ERROR_CODES, ProtocolHostError, type ProtocolHost } from './index.js';
 
 export const NOT_WIRED =
   'the serve host has no composition root yet: sessions, turns and attachments need the kernel wiring that lands with the composition root';

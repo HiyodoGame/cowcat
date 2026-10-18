@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { WireDelta, WireEvent, WireLog } from '../../src/protocol/index.js';
+import type { WireDelta, WireEvent, WireLog } from '../src/index.js';
 import { ScriptedHost, delta, event, flush, newScriptedSession, wire } from './support.js';
 
 /**

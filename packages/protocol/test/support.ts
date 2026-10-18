@@ -14,7 +14,7 @@ import {
   type ProtocolServer,
   type SessionSummary,
   type Transport,
-} from '../../src/protocol/index.js';
+} from '../src/index.js';
 
 /**
  * A host made of arrays. The point of the contract tests is the wire: what a client

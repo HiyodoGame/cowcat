@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
-import { COMMANDS, EXIT, parseResponse, runCli } from '../../src/index.js';
+import { parseResponse } from '@corescense/cowcat-protocol';
+import { COMMANDS, EXIT, runCli } from '../../src/index.js';
 
 interface Run {
   readonly code: number;

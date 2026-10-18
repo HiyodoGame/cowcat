@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION } from '../protocol/index.js';
+import { PROTOCOL_VERSION } from '@corescense/cowcat-protocol';
 import { COMMANDS, type CommandContext } from './spec.js';
 import { readVersion } from './version.js';
 

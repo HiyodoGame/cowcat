@@ -6,7 +6,7 @@ import {
   parseResponse,
   type JsonRpcError,
   type JsonRpcResponse,
-} from '../../src/protocol/index.js';
+} from '../src/index.js';
 import { ScriptedHost, flush, newScriptedSession, wire } from './support.js';
 
 const HANDSHAKE = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1 } };

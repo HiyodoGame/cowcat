@@ -80,4 +80,8 @@ export { createServer, type ProtocolServer, type ServerOptions } from './server.
 
 export { ProtocolClientError, createClient, onNotification, type ClientOptions, type ProtocolClient } from './client.js';
 
+export { NOT_WIRED, refusingHost } from './refusing-host.js';
+
+export { SERVE_SIGNALS, serve, type ServeOptions, type SignalSource } from './serve.js';
+
 export { PROTOCOL_VERSION } from './version.js';

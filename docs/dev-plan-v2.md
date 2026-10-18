@@ -479,7 +479,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 >
 > **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
 >
-> **包结构待定（T3 暴露，T4a 决定）**：T3 要落 `serve`，而 `serve` 必须有一个用内核 `Session` 实现的宿主。查清的事实是：仓库**没有 npm workspace**（根目录没有 `package.json`），而 `@corescense/cowcat-core` 是 `private: true`、**从未发布** → 跨包依赖只能 `file:../cowcat`，而 `file:` 依赖在 CI 里要求先构建内核（现在 `packages/tui` 那条腿只有 `npm ci && npm test`）。三个选项：**A** 新建 `packages/protocol`（Node ≥22、无 opentui、无内核）+ `packages/cli`（组合根与 `serve`），`packages/tui` 退回纯渲染与客户端——这是 ADR-059「前端只允许 import 协议包」的字面读法；**B** `packages/tui` 直接 `file:../cowcat`（少一个包，但 opentui 与内核同包，ADR-056 的「依赖方向天然单向」变糊）；**C** 只交付传输与生命周期、把宿主做成注入点（**T3 本轮选的就是 C**）。**T4a 必须在动组合根之前把 A/B 定下来**，并把结论写进 `04-dependencies.md` 与 ADR。
+> **包结构已定（ADR-062 = 选项 A′，T4a 分三步落）**：`packages/protocol`（协议，Node ≥22，无 opentui 无内核）→ `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现）→ `packages/cli`（`bin` + 子命令表 + `doctor`）；`packages/tui` 退回渲染器 + 协议客户端，**不依赖内核**。**第 1 步已落地**（本 PR）。查清的事实：仓库**没有 npm workspace**，`@corescense/cowcat-core` 是 `private` 且从未发布 → 跨包依赖只能 `file:`，而 `file:` 是**链接**（实测：npm 既不装目标的依赖也不构建它），所以消费者那条腿要自己 `npm --prefix ../protocol ci && run build`。三个选项（A′/B/D）的比较与理由写在 ADR-062 正文里。
 
 **调研问题**
 
@@ -503,7 +503,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | ✅ 本 PR |
 | T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | ✅ 本 PR（宿主是**拒绝型占位**，见 T4a） |
 | T4 | **CLI 入口**：子命令表（数据）、帮助文本、`doctor` 最小版本 | T2 | ✅ 本 PR（`serve`/`doctor` 可用，其余四个动词在表里说明缺什么） |
-| T4a | **组合根**（T3 的宿主缺口）：模型预设目录（v1 的 209 家 catalog 从哪来）+ 模型/供应商配置键（**需一条 ADR**）+ 从 `packages/cowcat` 公共 API 导出 `openAIModel`/`anthropicModel` + 七个工具 + 策略 + 审批桥，实现 `ProtocolHost`；**同一 PR 定包结构**（见下「包结构待定」） | T3、T4 | 未开始 |
+| T4a | **组合根**（T3 的宿主缺口），按 ADR-062 分三步：**① 协议独立成包（`packages/protocol`，Node ≥22，无 opentui 无内核）**；② `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现：模型预设目录、模型/供应商配置键（**需一条 ADR**）、七个工具、策略、审批桥）；③ `packages/cli`（`bin` + 子命令表 + `doctor`，动态 import 取 serve 与 tui） | T3、T4 | 🔄 1/3 本 PR（`packages/protocol` + CI 腿已落地） |
 | T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | ✅ 本 PR（Read 真的读图见 T6） |
 | T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 口径 | T5 | ✅ 本 PR |
 | T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | 未开始 |
