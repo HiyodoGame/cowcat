@@ -22,7 +22,7 @@
 | P2 | 端口与执行网关（含沙箱执行器迁移） | **已完成**（T1–T5 已合；T6 见下） |
 | P3 | 策略、配置与审批协议 | **已完成**（PR #14–#23，测试 219 → 347） |
 | P4 | 模型层 | **已完成**（T1–T7 全部落地、T6 拆 T6a/b/c；测试 347 → 436；ADR-035~046） |
-| P5 | 工具层 | **调研完成、ADR-047~052 已定（评审通过）**；T0 落表，T1 起未开工 |
+| P5 | 工具层 | **进行中**：ADR-047~052 已定（评审通过），T0 落表、T1 契约已落（测试 436 → 448）；T2 起未开工 |
 | P6 | 前端：headless 协议与 TUI | 未开始 |
 | P7 | 功能模块（逐个调研） | 未开始 |
 | P8 | 发布切换与旧代码删除 | 未开始 |
@@ -412,7 +412,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P5 工具层
 
-> **调研已完成、ADR-047~052 已定（评审通过，2026-10-18），T0 落表，T1 起未开工**：[`research/p5-tools.md`](research/p5-tools.md)。三条调研问题的答案依次见该文 §3（zod 入参 → wire JSON Schema，含 31 项实测）、§4（截断作为结构化事实进日志）、§5（纯 JS Glob/Grep 的性能实测，以及**不引入 ripgrep** 的理由）；任务拆分、每条的验收证据与「不做什么」见其 §14.2/§14.3。
+> **调研已完成、ADR-047~052 已定（评审通过，2026-10-18）；T0 与 T1 已落地，T2 起未开工**：[`research/p5-tools.md`](research/p5-tools.md)。三条调研问题的答案依次见该文 §3（zod 入参 → wire JSON Schema，含 31 项实测）、§4（截断作为结构化事实进日志）、§5（纯 JS Glob/Grep 的性能实测，以及**不引入 ripgrep** 的理由）；任务拆分、每条的验收证据与「不做什么」见其 §14.2/§14.3。
 >
 > **一处必须知道的前提**：厂商侧对 JSON Schema 子集的接受度**零实测**（无凭据/端点），因此 ADR-047 决定的是**机制**（一处常量 + 语言子集约定），校准留在 P6 第一次真连端点时做（调研 §3.5）。
 
@@ -435,7 +435,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | 任务 | 内容 | 依赖 | 状态 |
 |---|---|---|---|
 | T0 | **决定落表**（纯文档）：调研 §11 的六条落成 ADR-047~052；本段补上任务表；三处架构文档的待改点写进对应任务 | 六条已评审通过（2026-10-18） | ✅ 本 PR |
-| T1 | **契约与事件**（ADR-048/049/051）：`ToolResult` 增 `truncation`；`tool.finished` 增 `truncation`（可空）+ **canonical `path`**；`ToolPort.run` 增**第三参数**（只描述本次授予）；`reduce` 派生「本会话已读文件」集合；连带改 `adapters/schema.ts` 的解码边界、编译期等价断言、`state.ts`、`test/support.ts`。**不动任何具体工具**；同 PR 改 `02-kernel.md` | T0 | 未开始 |
+| T1 | **契约与事件**（ADR-048/049/051）：`ToolResult` 增 `truncation`；`tool.finished` 增 `truncation`（可空）+ **canonical `path`**；`ToolPort.run` 增**第三参数**（只描述本次授予）；`reduce` 派生「本会话已读文件」集合；连带改 `adapters/schema.ts` 的解码边界、编译期等价断言、`state.ts`、`test/support.ts`。**不动任何具体工具**；同 PR 改 `02-kernel.md` | T0 | ✅ 本 PR（测试 436 → 448） |
 | T2 | **工具定义 API 与 wire schema 派生器**（ADR-047/052）：一处产出的 `toJSONSchema({ io:'input', target })` + 剥 `$schema`；被禁词汇（联合 / nullable / record / literal）的**执行点**；`defineTool()`（zod 校验 → `ok:false` + 字段级原因，不抛）。同 PR 改 `01-layers.md`（`adapters` 加「工具实现」） | T0（可与 T1 并行） | 未开始 |
 | T3a | **Glob + 文件遍历**（ADR-050）：`.gitignore` 语义子集（六种模式；三条不支持且**必须上报**）、保留硬跳过、100 上限 + 结构化截断事实 | T2 | 未开始 |
 | T3b | **Grep**：三种模式与上下文参数、单文件 1MB / 二进制跳过、250 上限、**`files_with_matches` 与 `count` 达到 `head_limit` 即停** | T3a | 未开始 |

@@ -213,6 +213,11 @@ const GOLDEN: readonly unknown[] = [
     ok: true,
     output: 'a.txt',
     facts: null,
+    // The tool reported neither, so both are `null` — the same "nothing said" a missing
+    // `facts` makes (ADR-048/049).
+    truncation: null,
+    // Canonicalised by the FsPort double (ADR-017/049): the fake normalises separators.
+    path: 'a.txt',
   },
   { type: 'turn.transitioned', from: 'awaiting_tools', to: 'requesting', reason: null },
   { type: 'turn.transitioned', from: 'requesting', to: 'streaming', reason: null },

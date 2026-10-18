@@ -17,6 +17,53 @@ export * from './trust.js';
 
 export type ToolRisk = 'read' | 'write' | 'exec' | 'network';
 
+/**
+ * What a cap left out of a tool's output (ADR-048).
+ *
+ * The arithmetic is the gateway's, not a second one: `dropped` is the amount that is
+ * missing, never an independent running total, so it cannot drift from what was kept
+ * (`adapters/output-tail.ts` records the same lesson for process output).
+ *
+ * This is a structured fact rather than an in-band `[truncated]` note because the same
+ * omission has two readers with two renderings: the model reads the note the tool put
+ * in `output`, and an audit reads this field.
+ */
+export interface Truncation {
+  /**
+   * True when a cap removed something. `false` is a real answer — "asked, nothing was
+   * dropped" — and is different from `ToolResult` reporting no `truncation` at all.
+   */
+  readonly truncated: boolean;
+  /** How much is missing, in the unit `reason` names. Always `total - kept`. */
+  readonly dropped: number;
+  /**
+   * Which cap applied, in words an audit can print (`read: 2000 lines`), or `null` when
+   * nothing was dropped. It names the unit `dropped` counts in, because different tools
+   * cap different things (lines, matches, characters).
+   */
+  readonly reason: string | null;
+}
+
+/**
+ * What the kernel granted for THIS call, and nothing else (ADR-051).
+ *
+ * The verdict is decided per call inside `runTurn`, so a tool cannot read it from
+ * configuration; this is the carrier. Only the grant belongs here — no rules, no
+ * opinions — mirroring `ToolResult.facts`, where the tool reports back what it actually
+ * did.
+ */
+export interface ToolGrant {
+  /**
+   * True only when the user's `once`/`always` answer granted network for this call,
+   * including a standing `always` from earlier in the same session.
+   *
+   * `false` means "no grant was given for this call"; it does **not** mean network is
+   * off. A tool whose sandbox profile asks for network must therefore refuse and say so
+   * rather than quietly treating `ask` as `off` (ADR-051, ADR-016).
+   */
+  readonly networkApproved: boolean;
+}
+
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
@@ -54,11 +101,22 @@ export interface ToolResult {
    * whole point of an audit trail.
    */
   readonly facts?: ExecutionFacts;
+  /**
+   * What a cap left out of `output` (ADR-048). Absent means the tool reported NOTHING —
+   * the same statement `facts` makes and for the same reason: "this tool does not
+   * truncate" and "nobody said" are different facts, and only one of them is true here.
+   */
+  readonly truncation?: Truncation;
 }
 
 export interface ToolPort {
   readonly spec: ToolSpec;
-  run(input: unknown, signal: AbortSignal): Promise<ToolResult>;
+  /**
+   * `grant` describes what the kernel granted for this call (ADR-051). It is required
+   * rather than optional so an implementation has to decide what it does with an `ask`
+   * profile instead of silently ignoring it.
+   */
+  run(input: unknown, signal: AbortSignal, grant: ToolGrant): Promise<ToolResult>;
 }
 
 export type ModelChunk =

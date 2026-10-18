@@ -62,6 +62,23 @@ const toolCallSchema = z.object({
   input: z.unknown(),
 });
 
+// Mirrors `Truncation` in ports/index.ts (ADR-048). `dropped` is the amount missing, so
+// it can never be negative, and `reason` names the unit it counts in.
+const truncationSchema = z.object({
+  truncated: z.boolean(),
+  dropped: z.number().int().nonnegative(),
+  reason: z.string().nullable(),
+});
+
+// A field added after schemaVersion 1 was already being written by dev builds
+// (ADR-048/049). Absent decodes to `null`, which is the same statement a present `null`
+// makes: "nothing reported". Plain `.optional()` would infer `undefined`, and
+// `exactOptionalPropertyTypes` makes that a different type from the kernel's.
+const nullableFromAbsent = <T extends z.ZodType>(schema: T): z.ZodType<z.output<T> | null> =>
+  schema
+    .nullish()
+    .transform((value: z.output<T> | null | undefined): z.output<T> | null => value ?? null);
+
 // Mirrors `ReasoningBlock` in kernel/messages.ts (ADR-045). Both arms carry an opaque
 // vendor token — `signature` for readable thinking, `data` for a redacted block — and
 // the kernel never looks inside either one.
@@ -165,6 +182,9 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // here mean "absent or undefined" while the type means "absent, never undefined".
     // `null` says "the tool reported nothing" out loud.
     facts: executionFactsSchema.nullable(),
+    // Added after dev logs already existed (ADR-048/049), hence absent-tolerating.
+    truncation: nullableFromAbsent(truncationSchema),
+    path: nullableFromAbsent(z.string()),
   }),
 ]);
 
@@ -190,6 +210,10 @@ const sessionStateSchema = z.object({
   // table, so a snapshot that dropped them would silently re-ask questions the user
   // already answered.
   grants: z.readonly(z.array(z.string())),
+  // Derived from `tool.finished` (ADR-049). A snapshot is an accelerator: one written
+  // before this field existed fails validation and the caller replays instead, which is
+  // the documented answer to "a snapshot we cannot fully understand" (ADR-013).
+  readFiles: z.readonly(z.array(z.string())),
 });
 
 // A snapshot is derived data, so it gets the same rigour as the log it accelerates:

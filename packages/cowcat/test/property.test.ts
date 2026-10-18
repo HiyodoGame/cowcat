@@ -226,7 +226,7 @@ const ALL_STATES: readonly TurnState[] = [
 ];
 
 function stateWithTurnIn(state: TurnState): SessionState {
-  return { sessionId: 'sess_matrix', lastSeq: 1, turn: { id: 'turn_1', state }, messages: [], grants: [] };
+  return { sessionId: 'sess_matrix', lastSeq: 1, turn: { id: 'turn_1', state }, messages: [], grants: [], readFiles: [] };
 }
 
 function transitionEvent(from: TurnState, to: TurnState): KernelEvent {
