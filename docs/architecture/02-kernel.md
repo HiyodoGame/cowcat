@@ -27,6 +27,8 @@
 
 **`tool.finished.path` 是「先读后改」闸门的唯一来源**（ADR-049）。它由 `runTurn` 在构造 `ActionRequest` 的同一处产出，因此**已经过 `FsPort.canonical`**（ADR-017），日志里记的是策略层比较过的那个身份，不是模型的原始字符串。`reduce` 由此维护 `SessionState.readFiles`：只有 `ok` 且 `name === 'Read'` 的调用才登记，重复读同一路径只留一份。**这条必须进日志**：旧版把闸门放在内存（`agent/src/init.js:12` 的 `ctx.readSet`），而 v2 的承诺是「回放与实时状态逐字段相等」——内存集合会让恢复会话后的闸门**静默消失**，同一条「不许盲改」的规则在新会话里悄悄不再成立。理由与 ADR-033 让 `facts` 进日志同源：**重构不出来的事实必须进日志**。
 
+**闸门本身在 `runTurn`，不在工具里**。`ToolPort.run` 只拿到 `input`、`signal` 与 `grant`（ADR-051 的方向是「内核把决定交给执行方」，不是把状态机交给它），所以 `Read` 之外的工具看不到 `readFiles`。`runCall` 的顺序是：`policy.decided` → **未读检查** → 审批 → 执行。检查条件是「`risk === 'write'`、有 canonical `path`、`FsPort.exists(path)` 为真、且 `readFiles` 里没有它」，全部满足才拒绝——**新建文件不需要先读**，而「文件已存在」这个判断只有文件系统知道。放在审批之前，是因为为一个注定被拒的调用弹问题是表演。
+
 **`ToolPort.run` 带一个只描述「本次授予」的第三参数**（ADR-051）。裁决是 `runTurn` 内部**逐调用**发生的，工具不可能从配置里读到结果；`ToolGrant.networkApproved` 就是那个载体：只有用户的 `once`/`always`（含本会话早先的 `always`）批准了本次调用才为 `true`。`false` 的含义是**本次没有授予**，不是「网络已关」——`SandboxProfile.network === 'ask'` 的工具必须据此**拒绝并说明**，不得把它静默当 `off`（`adapters/sandbox/executor.ts:157` 早已对用户承诺过 `ask` 会生效）。方向与 `facts` 一致：内核交出「做了什么决定」，执行方交回「实际做了什么」。
 
 **`model.usage` 是独立事件，不是 `model.message` 上的字段**（ADR-041）。两个理由：用量有**它自己的到达时刻**（Anthropic 在 `message_delta` 就到，早于流结束），以及**流在拿到用量之后被取消时也要留下用量**——挂在那条消息上就跟着一起丢了。一条流里它可以出现多次（Anthropic 报的是累积量），`reduce` 不从中派生任何状态：花了多少不改变对话，日志里的它是给报账与审计看的。

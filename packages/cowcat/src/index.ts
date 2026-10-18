@@ -123,6 +123,8 @@ export {
   READ_MAX_LINES,
   type ReadToolOptions,
 } from './adapters/tools/read.js';
+export { createWriteTool, type WriteToolOptions } from './adapters/tools/write.js';
+export { createEditTool, type EditToolOptions } from './adapters/tools/edit.js';
 export { GITIGNORE_LIMITATIONS, walkFiles, type WalkResult } from './adapters/tools/ignore.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
 export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';
