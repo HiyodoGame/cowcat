@@ -11,6 +11,10 @@
 #   legacy agent/ (until P8)   Linux on every non-draft PR; its Windows and Node 24
 #                              legs only when the scope check says agent/ changed
 #   packages/cowcat (v2)       Linux + Windows on every non-draft PR
+#   packages/tui (P6)          Linux + Windows on every non-draft PR — same reason as
+#                              cowcat, plus a different Node floor: opentui needs
+#                              >=26.4 (ADR-056) and ships its native core per platform,
+#                              so the two runners answer two different questions
 #   package whitelist          every non-draft PR (cheap, guards what npm publishes)
 #   CI (macOS)                 every non-draft PR + every main push — the only place
 #                              the Seatbelt backend is verified for real
@@ -288,6 +292,56 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: packages/cowcat/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+
+  tui:
+    # Node 26 is opentui's floor, not ours (ADR-056): the kernel package stays on
+    # Node 22, and this is the only place the frontend's floor is verified. The leg
+    # runs unconditionally for the same reason the cowcat legs do — a leg that only
+    # sometimes reports can never be a required check — and it is cheap: install,
+    # a type-check, and two assertions about one rendered frame.
+    name: packages/tui · node 26 · ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/tui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: packages/tui/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+
+  tui-windows:
+    # The platform-specific question, and a different fact from the Linux leg:
+    # @opentui/core ships its native core as per-platform optional dependencies, so
+    # resolving @opentui/core-win32-x64 successfully is its own result. Measured
+    # locally on Node 26.12.0 (opentui.dll, 5.06 MB, one 40x6 frame in 12 ms); this
+    # leg is what keeps that true on a machine nobody develops on.
+    name: packages/tui · node 26 · windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/tui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: packages/tui/package-lock.json
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)

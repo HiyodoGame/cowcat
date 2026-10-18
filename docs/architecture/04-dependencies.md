@@ -42,7 +42,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
 | `@anthropic-ai/sdk` | `^0.135.0`（当前 0.135.0） | **运行时**：Anthropic 原生协议的模型适配器（ADR-036） | P4 T3 引入。**它自带传递依赖，实测结论如下**（这是引入方必须说明「带进来了什么」）：依赖树里 7 个包，**只有 4 个真的进运行时**——`@opentelemetry/api`（9 个运行时文件引用，含 `client.js`；不注册 provider 时是空门面）、`standardwebhooks`（仅 `resources/beta/webhooks.js`，却**在 import 时就被解析**）、`fast-sha256` 与 `@stablelib/base64`（`standardwebhooks` 的下游）；**另外 3 个是纯类型层，运行时完全不加载**——`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`（源码扫描零命中 + 解析钩子 in `not resolved`）。取证方法：`registerHooks` 解析钩子记录 import 时真正被解析的裸模块，并对运行时 `.js`（排除 `.d.ts`）做源码扫描。`maxRetries: 0`，理由同 `openai` |
-| `@opentui/core` | P6（当前 0.6.6） | **运行时：仅前端包**（`packages/tui/`）：TUI 渲染（ADR-056） | **不进内核包的依赖计数**（内核仍是 3 / 6）。判断标准 4（跨平台分发负担）在此**显式豁免一次**：它带 8 个平台的原生核心（`@opentui/core-{win32,darwin,linux}-{x64,arm64}` + 两个 musl），并要求 `node >=26.4.0`——换掉的是整块渲染与图片协议的自研量。**锁版本**；`engines.node` 变化等于我们的门槛变化。平台二进制缺失时**显式报错**，不静默降级 |
+| `@opentui/core` | P6（当前 0.6.6） | **运行时：仅前端包**（`packages/tui/`）：TUI 渲染（ADR-056） | **不进内核包的依赖计数**（内核仍是 3 / 6）。判断标准 4（跨平台分发负担）在此**显式豁免一次**：它带 8 个平台的原生核心（`@opentui/core-{win32,darwin,linux}-{x64,arm64}` + 两个 musl），并要求 `node >=26.4.0`——换掉的是整块渲染与图片协议的自研量。**锁版本**；`engines.node` 变化等于我们的门槛变化。平台二进制缺失时**显式报错**，不静默降级。**T1 实测（2026-10-19）**：`0.6.6` 可安装（12 个包 / 8 秒），`@opentui/core-win32-x64` 内含 `opentui.dll`（5.06 MB）；Node **26.12.0 不需要** `--experimental-ffi`（只在 stderr 打警告），而 **Node 24 上该 flag 是启动期硬错误**——门槛是真的。取证与结论见 [`06-frontend.md`](06-frontend.md) 的「T1 前提验证」一节 |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
 ## 明确不引入的
@@ -60,7 +60,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 | 代价 | 处置 |
 |---|---|
-| `engines.node >=26.4.0`（实测 `@opentui/core@0.6.6`；Node v26.4.0 于 2026-06-24 发布） | **前端是独立 workspace 包**（`packages/tui/`），它声明自己的 `engines` 与一条 Node 26 的 CI 腿；**内核包保持 Node ≥ 22 不变** |
+| `engines.node >=26.4.0`（实测 `@opentui/core@0.6.6`；Node v26.4.0 于 2026-06-24 发布） | **前端是独立 workspace 包**（`packages/tui/`），它声明自己的 `engines` 与一条 Node 26 的 CI 腿；**内核包保持 Node ≥ 22 不变**。**T1 实测**：26 线当前 v26.12.0 可用，且**无需** `--experimental-ffi` |
 | 8 个平台的原生核心走 `optionalDependencies` | 缺失时**显式报错**，不静默降级到「没有 TUI」 |
 | 一个更新频繁的原生库 | 锁版本；`engines.node` 的变化等于我们的门槛变化，升级前先在 CI 验证 Node 腿 |
 | 与「零运行时依赖」的距离 | 判断标准 4（跨平台分发负担）**被显式豁免一次**，理由是它换掉的是整块渲染与图片协议的自研量；内核侧依赖数（3 / 6）**不受影响**，因为 opentui 只出现在前端包内 |
