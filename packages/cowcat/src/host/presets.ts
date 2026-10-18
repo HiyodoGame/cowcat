@@ -43,6 +43,15 @@ export const BUILTIN_PROVIDERS: Readonly<Record<string, BuiltinProvider>> = {
   deepseek: { protocol: 'openai', apiKeyEnv: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com' },
   moonshotai: { protocol: 'openai', apiKeyEnv: 'MOONSHOT_API_KEY', baseUrl: 'https://api.moonshot.ai/v1' },
   zai: { protocol: 'openai', apiKeyEnv: 'ZHIPU_API_KEY', baseUrl: 'https://api.z.ai/api/paas/v4' },
+  /**
+   * The same model family as `zai`, reached a different way: BigModel's **Coding Plan**
+   * serves it over the **Anthropic** protocol (`/v1/messages`), which is the endpoint a
+   * Coding Plan key belongs to. Source: the value shown in the BigModel console for that
+   * plan — not the catalog, which only records the OpenAI-compatible route. Two entries
+   * for one family is the honest shape: an endpoint and a protocol are one decision, and
+   * a key is issued for one of them.
+   */
+  bigmodel: { protocol: 'anthropic', apiKeyEnv: 'ZHIPU_API_KEY', baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
 };
 
 /**
@@ -91,6 +100,23 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
   'zai/glm-5.3-flash': {
     protocol: 'openai',
     model: 'glm-5.3-flash',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
+  /**
+   * The Coding Plan route (see `bigmodel` above): same models, Anthropic protocol. The
+   * limits are the catalog's for this family; the protocol differs because the endpoint
+   * does.
+   */
+  'bigmodel/glm-5.3-flash': {
+    protocol: 'anthropic',
+    model: 'glm-5.3-flash',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
+  'bigmodel/glm-5.3': {
+    protocol: 'anthropic',
+    model: 'glm-5.3',
     limits: { output: 131072, context: 1000000 },
     toolCalls: true,
   },
