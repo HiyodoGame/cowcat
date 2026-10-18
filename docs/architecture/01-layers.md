@@ -17,7 +17,7 @@ v2 的分层规则只有一条：**依赖只能指向更稳定的一层**。
 ├───────────────────────────────────────────────────────────────┤
 │ ports       Clock · IdSource · EventStore · ModelPort · ToolPort  │  接口定义，无实现
 ├───────────────────────────────────────────────────────────────┤
-│ adapters    Node 文件存储 · 系统时钟 · 随机 ID · 进程 · 沙箱执行器   │  唯一允许 import node:* 的地方
+│ adapters    Node 文件存储 · 系统时钟 · 随机 ID · 进程 · 沙箱执行器 · 工具实现 │  唯一允许 import node:* 的地方
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -28,7 +28,8 @@ src/
   kernel/      events.ts  state.ts  turn.ts  messages.ts  session.ts  run-turn.ts
   policy/      decide.ts  defaults.ts
   ports/       index.ts                 # 全部端口接口集中定义
-  adapters/    node.ts                  # 当前：JSONL 存储、系统时钟、随机 ID
+  adapters/    node.ts  platform.ts  shell.ts  fs.ts  process.ts        # 存储、时钟、ID、平台、路径、网关
+               tools/    wire-schema.ts  define-tool.ts                 # 工具定义 API（P5 T2 起）
   index.ts                              # 公共 API（唯一对外入口）
 test/
   support.ts                            # 测试替身：内存存储、假时钟、脚本化模型
@@ -36,6 +37,16 @@ test/
 ```
 
 P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/` 下的各实现（`node.ts`、`platform.ts`、`shell.ts`、`sandbox-probe.ts`、`fs.ts`）；**P4 起新增 `ports/model.ts`**（协议词汇：`ModelUsage`、`StopReason`、`StopReasonKind`；放在自己文件里的理由是 `ports/index.ts` 与 `kernel/events.ts` 互相需要对方的名字，见 ADR-035），以及 `adapters/` 下的模型适配器（T2 落了 `adapters/model-openai.ts`，T3 落了 `adapters/model-anthropic.ts`，T5 落了共用的 `adapters/model-retry.ts`）。目录名随实现调整，但依赖规则不变。
+
+## 工具住在 `adapters/tools/`（ADR-047）
+
+核心工具的候选只有三个落点，结论是**放进 `adapters/tools/`**，并且**不给 lint 开第二个例外**：
+
+- 新建 `src/tools/` 会落进第二个 lint block（`src/**/*.ts` 禁 `node:fs` / `node:child_process`），而「再开一个 `ignores`」等于削弱一条被 `tools/lint-probe.mjs` 钉住的规则；
+- 只经 `FsPort` 访问文件系统做不到——它的职责被 ADR-017 定成**路径身份**（`canonical` / `samePath` / `kindOf` / `exists`），没有 read / write / list，扩成完整文件系统端口会把「谁拥有路径身份」这条唯一性稀释掉；
+- `modules/` 的定义是「**不被内核认识**」，而核心工具必须被认识：`ToolSpec` 要发给模型，`risk` 要参与裁决。
+
+工具的定义 API 沿用已有的 `ToolPort` / `ToolSpec`（`defineTool()` 只是把「声明 + 实现」装配成它们），**入参只写一次**：zod schema 是唯一来源，wire JSON Schema 由 `adapters/tools/wire-schema.ts` 用 `z.toJSONSchema({ io: 'input', target })` 机械派生、剥掉 `$schema`，并在同一处拒绝被禁词汇（联合 / nullable / `record` / `literal`）。理由与「转换器不该住在适配器里」一致：这份转换与协议无关，两个协议适配器只读 `ToolSpec.inputSchema`。
 
 ## 路径身份（ADR-017）
 
