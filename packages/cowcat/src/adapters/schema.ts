@@ -105,6 +105,15 @@ const modelUsageSchema = z.object({
   cacheCreation: z.number().int().nonnegative(),
 });
 
+// Mirrors `TodoItem` in ports/index.ts (ADR-054). The status is an enum here for the
+// same reason the tool's input schema uses one: a status the kernel cannot interpret
+// must not reach the log.
+const todoItemSchema = z.object({
+  content: z.string().min(1),
+  status: z.enum(['pending', 'in_progress', 'completed']),
+  activeForm: z.string().min(1),
+});
+
 const stopReasonSchema = z.object({
   kind: z.enum(['end', 'toolCalls', 'maxTokens', 'other']),
   raw: z.string(),
@@ -156,6 +165,7 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({ ...base, type: z.literal('model.usage'), usage: modelUsageSchema }),
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
+  z.object({ ...base, type: z.literal('todo.updated'), todos: z.readonly(z.array(todoItemSchema)) }),
   z.object({
     ...base,
     type: z.literal('approval.requested'),
@@ -216,6 +226,9 @@ const sessionStateSchema = z.object({
   // before this field existed fails validation and the caller replays instead, which is
   // the documented answer to "a snapshot we cannot fully understand" (ADR-013).
   readFiles: z.readonly(z.array(z.string())),
+  // Replaced wholesale by each `todo.updated` (ADR-054). Like `readFiles`, a snapshot
+  // written before the field existed fails validation and the caller replays instead.
+  todos: z.readonly(z.array(todoItemSchema)),
 });
 
 // A snapshot is derived data, so it gets the same rigour as the log it accelerates:

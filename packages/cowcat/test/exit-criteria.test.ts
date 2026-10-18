@@ -170,6 +170,11 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
       case 'approval.answered':
         out.push({ ...withoutVolatile(event), callId: projectedId(event.callId) });
         break;
+      case 'todo.updated':
+        // Compared as the log wrote it: a list added to a turn would show up here as a
+        // difference, which is the point of projecting rather than rebuilding (ADR-043).
+        out.push(withoutVolatile(event));
+        break;
       default: {
         const unhandled: never = event;
         throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);

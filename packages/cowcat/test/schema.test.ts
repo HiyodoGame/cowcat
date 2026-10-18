@@ -136,6 +136,29 @@ test('a tool.finished logged before those fields existed decodes with null', () 
   assert.equal(result.data.path, null);
 });
 
+test('a todo.updated event survives a JSON round trip with its statuses', () => {
+  const event: KernelEvent = {
+    seq: 10,
+    ts: 10,
+    sessionId: 'sess',
+    turnId: 'turn_1',
+    type: 'todo.updated',
+    todos: [
+      { content: 'Add input validation', status: 'in_progress', activeForm: 'Adding input validation' },
+      { content: 'Write tests', status: 'completed', activeForm: 'Writing tests' },
+    ],
+  };
+
+  const result = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(event)) as unknown);
+  if (!result.success) assert.fail(describeIssues(result.error));
+  if (result.data.type !== 'todo.updated') assert.fail('expected a todo.updated event');
+  assert.deepEqual(result.data.todos, event.todos);
+
+  // A status the kernel cannot interpret must not reach the log (ADR-054).
+  const bogus = { ...event, todos: [{ content: 'x', status: 'done', activeForm: 'x' }] };
+  assert.equal(kernelEventSchema.safeParse(bogus).success, false);
+});
+
 test('every event the kernel writes decodes', () => {
   for (const event of everyEvent) {
     const result = kernelEventSchema.safeParse(event);

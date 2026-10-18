@@ -59,6 +59,8 @@ export {
   type ToolResult,
   type ToolGrant,
   type ToolRisk,
+  type TodoItem,
+  type TodoStatus,
   type Truncation,
   type ModelPort,
   type ModelChunk,
@@ -125,6 +127,7 @@ export {
 } from './adapters/tools/read.js';
 export { createWriteTool, type WriteToolOptions } from './adapters/tools/write.js';
 export { createEditTool, type EditToolOptions } from './adapters/tools/edit.js';
+export { createTodoWriteTool, TODO_MAX_ITEMS, TODO_MIN_ITEMS } from './adapters/tools/todo.js';
 export {
   BASH_DEFAULT_OUTPUT_CAP,
   BASH_DEFAULT_TIMEOUT_MS,
