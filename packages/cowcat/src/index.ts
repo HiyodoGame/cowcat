@@ -172,6 +172,17 @@ export { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from '.
 export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
 export {
+  IMAGE_MEDIA_TYPES,
+  countPdfPages,
+  describeDimensions,
+  formatBytes,
+  isImageKind,
+  kindFromExtension,
+  sniffBuffer,
+  type ImageKind,
+  type Sniffed,
+} from './adapters/imageinfo.js';
+export {
   materializeAttachment,
   AttachmentUnavailableError,
   type MaterializeOptions,

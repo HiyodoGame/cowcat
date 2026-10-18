@@ -132,37 +132,28 @@ test('5MB is a refusal unless allow_large is set, and then the whole file is ret
   assert.deepEqual(whole.truncation, { truncated: false, dropped: 0, reason: null });
 });
 
-test('images, PDFs and notebooks are refused and pointed at P7, never half-read', async (t) => {
-  const root = tree({
-    'shot.png': Buffer.from([0x89, 0x50, 0x4e, 0x47]),
-    'doc.pdf': '%PDF-1.4\n',
-    'book.ipynb': '{"cells":[]}',
-  });
-  t.after(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  for (const [file, kind] of [
-    ['shot.png', /cannot read images yet/],
-    ['doc.pdf', /cannot read PDFs yet/],
-    ['book.ipynb', /cannot read Jupyter notebooks yet/],
-  ] as const) {
-    const result = await runRead(root, { file_path: file });
-    assert.equal(result.ok, false);
-    assert.match(result.output, kind);
-    assert.match(result.output, /planned for P7/);
-  }
-});
-
-test('a PDF renamed to .txt is still refused: magic beats extension', async (t) => {
-  const root = tree({ 'looks-like.txt': '%PDF-1.7\n' });
+test('a PDF renamed to .txt is still read as a PDF: magic beats extension', async (t) => {
+  const root = tree({ 'looks-like.txt': '%PDF-1.7\n/Type /Page\n' });
   t.after(() => {
     rmSync(root, { recursive: true, force: true });
   });
 
   const result = await runRead(root, { file_path: 'looks-like.txt' });
+  assert.equal(result.ok, true);
+  assert.match(result.output, /\[pdf\] looks-like\.txt — application\/pdf, 1 page/);
+  assert.equal(result.attachments?.[0]?.type, 'document');
+});
+
+test('a file whose name promises an image but whose content is text is refused', async (t) => {
+  const root = tree({ 'shot.png': 'this is not a png at all' });
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const result = await runRead(root, { file_path: 'shot.png' });
   assert.equal(result.ok, false);
-  assert.match(result.output, /cannot read PDFs yet/);
+  // Handing these bytes over as text is how a transcript gets silently corrupted.
+  assert.match(result.output, /the name promises a png but the content is not one/);
 });
 
 test('binary content, a directory and a missing path are ordinary failures', async (t) => {
