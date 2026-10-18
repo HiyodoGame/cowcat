@@ -273,6 +273,19 @@ interface CompletedCall {
   readonly path: string | null;
 }
 
+// Refusal text when a write-risk tool is about to overwrite an existing file the
+// session has not read, or `null` when the call may proceed.
+//
+// Creating a file needs no prior read (`exists` is false), and a tool that declares no
+// `pathInput` has no target to gate. Everything else is the rule the legacy in-memory
+// `readSet` enforced — now reconstructible from the log, so a reopened session still
+// has it.
+function unreadTarget(deps: TurnDeps, spec: ToolSpec, path: string | null): string | null {
+  if (spec.risk !== 'write' || path === null || !deps.fs.exists(path)) return null;
+  if (deps.session.state.readFiles.some((known) => deps.fs.samePath(known, path))) return null;
+  return `${path} already exists and has not been read in this session; read it before writing over it`;
+}
+
 /**
  * Waits for an answer, but not forever (ADR-032), and not past a cancellation.
  *
@@ -344,6 +357,14 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   if (decision.verdict === 'deny') {
     return { result: { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` }, path };
   }
+
+  // The "read before write" gate (ADR-049). It lives in the kernel because that is
+  // where `readFiles` is: a tool cannot see the session state, and passing the state
+  // into a tool would give it a window onto the state machine the layers forbid.
+  // Checked before an approval prompt is raised — asking about a write that will be
+  // refused is theatre.
+  const unread = unreadTarget(deps, tool.spec, path);
+  if (unread !== null) return { result: { ok: false, output: unread }, path };
 
   // Whether THIS call was granted by a person — the only thing `ToolGrant.networkApproved`
   // reports (ADR-051). A `deny` or a `reject` never reaches the tool at all; an `allow`

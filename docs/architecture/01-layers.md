@@ -52,6 +52,8 @@ P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已�
 
 **Read 只做文本**（`adapters/tools/read.ts`）：分页 2000 行、5MB 软限（`allow_large` 可读到 20MB 硬顶）；**图像 / PDF / notebook 显式拒绝并指向 P7**——v2 的 `Message` 联合没有附件通路，假装能读等于在错误的层发明一个通道。**CRLF 作为事实告知而不规范化字节**：返回的行仍带 `\r`（模型看不见），所以结果里写明行尾风格；Edit 必须按字节匹配，自动规范化会让「改了什么」不可预测（ADR-050，调研 §6.2）。
 
+**「先读后改」闸门不在 `Write` / `Edit` 里**：工具只看得到自己的入参与 `grant`，看不到会话状态。闸门在 `runTurn`（`kernel/run-turn.ts` 的 `unreadTarget`），数据来自 `readFiles`（ADR-049）；`Write` / `Edit` 只是把 `pathInput: 'file_path'` 声明出来，让内核有路径可比、让日志有路径可记。
+
 ## 路径身份（ADR-017）
 
 路径身份由 `FsPort` 独占：凡是拿路径当**键**的地方——信任记录、会话身份、白名单、沙箱策略条目——必须走同一实现，否则同一个目录会有两个身份。第 19 轮的 macOS 事故就是这个：`os.tmpdir()` 给符号链接写法而 `getcwd()` 给物理写法，精确字符串比较让 7 条互不相关的测试一起变红。
