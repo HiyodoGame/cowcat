@@ -1,6 +1,15 @@
 import { z } from 'zod';
 import { validateRules, type Rule, type RuleWhen } from '../policy/decide.js';
-import { resolveConfig, type ConfigLayer, type ConfigLayerName, type CowcatConfig, type SandboxSettings } from '../policy/config.js';
+import {
+  resolveConfig,
+  type ConfigLayer,
+  type ConfigLayerName,
+  type CowcatConfig,
+  type CustomPresetSettings,
+  type ModelSettings,
+  type ProviderSettings,
+  type SandboxSettings,
+} from '../policy/config.js';
 
 // Config decoding lives in the adapter layer, next to the code that reads the files
 // (ADR-009).
@@ -69,9 +78,37 @@ const sandboxSchema = z.strictObject({
   write: sandboxWriteSchema.optional(),
 });
 
+const providerSettingsSchema = z.strictObject({
+  baseUrl: z.string().min(1).optional(),
+  apiKeyEnv: z.string().min(1).optional(),
+});
+
+// A preset the config declares itself (ADR-063 D1). Strict like everything else here: a
+// typo in `protocol` must not fall back to a default adapter.
+const customPresetSchema = z.strictObject({
+  protocol: z.enum(['openai', 'anthropic']),
+  model: z.string().min(1),
+  limits: z
+    .strictObject({
+      output: z.number().int().positive().optional(),
+      context: z.number().int().positive().optional(),
+    })
+    .optional(),
+  toolCalls: z.boolean().optional(),
+  efforts: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+});
+
+const modelSchema = z.strictObject({
+  preset: z.string().min(1).optional(),
+  effort: z.string().min(1).optional(),
+  presets: z.record(z.string(), customPresetSchema).optional(),
+  providers: z.record(z.string(), providerSettingsSchema).optional(),
+});
+
 const documentSchema = z.strictObject({
   rules: z.array(z.unknown()).optional(),
   sandbox: sandboxSchema.optional(),
+  model: modelSchema.optional(),
 });
 
 export interface ConfigSource {
@@ -177,9 +214,45 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
       layer: {
         ...(rules.length === 0 ? {} : { rules }),
         ...(document.data.sandbox === undefined ? {} : { sandbox: toSandbox(document.data.sandbox) }),
+        ...(document.data.model === undefined ? {} : { model: toModel(document.data.model) }),
       },
       warnings,
     },
+  };
+}
+
+// Same bridge as `toSandbox`, one level deeper: a custom preset's `limits` are rebuilt
+// field by field so an absent key stays absent rather than present-and-undefined.
+function toCustomPreset(input: z.infer<typeof customPresetSchema>): CustomPresetSettings {
+  return {
+    protocol: input.protocol,
+    model: input.model,
+    ...(input.toolCalls === undefined ? {} : { toolCalls: input.toolCalls }),
+    ...(input.efforts === undefined ? {} : { efforts: input.efforts }),
+    limits: {
+      ...(input.limits?.output === undefined ? {} : { output: input.limits.output }),
+      ...(input.limits?.context === undefined ? {} : { context: input.limits.context }),
+    },
+  };
+}
+
+function toModel(input: z.infer<typeof modelSchema>): ModelSettings {
+  return {
+    ...(input.preset === undefined ? {} : { preset: input.preset }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
+    ...(input.presets === undefined
+      ? {}
+      : { presets: Object.fromEntries(Object.entries(input.presets).map(([key, preset]) => [key, toCustomPreset(preset)])) }),
+    ...(input.providers === undefined
+      ? {}
+      : { providers: Object.fromEntries(Object.entries(input.providers).map(([key, provider]) => [key, toProviderSettings(provider)])) }),
+  };
+}
+
+function toProviderSettings(input: z.infer<typeof providerSettingsSchema>): ProviderSettings {
+  return {
+    ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
+    ...(input.apiKeyEnv === undefined ? {} : { apiKeyEnv: input.apiKeyEnv }),
   };
 }
 

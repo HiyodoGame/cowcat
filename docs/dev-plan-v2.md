@@ -503,7 +503,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | ✅ 本 PR |
 | T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | ✅ 本 PR（宿主是**拒绝型占位**，见 T4a） |
 | T4 | **CLI 入口**：子命令表（数据）、帮助文本、`doctor` 最小版本 | T2 | ✅ 本 PR（`serve`/`doctor` 可用，其余四个动词在表里说明缺什么） |
-| T4a | **组合根**（T3 的宿主缺口），按 ADR-062 分三步：**① 协议独立成包（`packages/protocol`，Node ≥22，无 opentui 无内核）**；② `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现：模型预设目录、模型/供应商配置键（**需一条 ADR**）、七个工具、策略、审批桥）；③ `packages/cli`（`bin` + 子命令表 + `doctor`，动态 import 取 serve 与 tui） | T3、T4 | 🔄 1/3 本 PR（`packages/protocol` + CI 腿已落地） |
+| T4a | **组合根**（T3 的宿主缺口），按 ADR-062 分三步：**① 协议独立成包（`packages/protocol`，Node ≥22，无 opentui 无内核）**；② `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现：模型预设目录与配置键按 **ADR-063**、七个工具、策略、审批桥）；③ `packages/cli`（`bin` + 子命令表 + `doctor`，动态 import 取 serve 与 tui） | T3、T4 | 🔄 2/3 进行中（ADR-063 配置层 + 内置预设 + 模型解析已落地；宿主未写） |
 | T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | ✅ 本 PR（Read 真的读图见 T6） |
 | T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 口径 | T5 | ✅ 本 PR |
 | T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | 未开始 |

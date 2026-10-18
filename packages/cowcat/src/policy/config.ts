@@ -1,6 +1,7 @@
 import type { Rule } from './decide.js';
 import { DEFAULT_RULES } from './defaults.js';
 import { DEFAULT_HOME_READ_ALLOW, DEFAULT_READ_DENY, DEFAULT_WRITE_DENY } from './sandbox-defaults.js';
+import type { ModelLimits, ModelProtocol } from '../kernel/preset.js';
 import type { SandboxBackend, SandboxMode, SandboxNetwork } from '../ports/index.js';
 
 /**
@@ -91,12 +92,106 @@ function mergeSandbox(base: ResolvedSandboxSettings, next: SandboxSettings | und
 }
 
 /**
+ * Which model to call, and how to reach it (ADR-063).
+ *
+ * The shape follows the three conventions the survey found in current clients: the model
+ * is **one `provider/preset` string** (opencode, aider), the key is a **reference** to an
+ * environment variable and never the secret itself (Codex's `env_key`), and everything
+ * about the endpoint lives in a provider entry rather than beside the model.
+ */
+export interface ProviderSettings {
+  /** Overrides the built-in endpoint. A self-hosted gateway needs this. */
+  readonly baseUrl?: string;
+  /** The environment variable that holds the key. A name, never the key (ADR-063). */
+  readonly apiKeyEnv?: string;
+}
+
+/**
+ * A preset the config declares itself, so the built-in table never has to be the whole
+ * world (ADR-063 D1). Keyed by `provider/name`, which is also what `preset` names.
+ */
+export interface CustomPresetSettings {
+  readonly protocol: ModelProtocol;
+  readonly model: string;
+  readonly limits?: ModelLimits;
+  /**
+   * Whether the model can call tools at all. Absent means `true` here — the built-in
+   * table is only for tool-calling models — but a custom preset must say so because a
+   * model that cannot take tools needs a different request (ADR-046 decision ③).
+   */
+  readonly toolCalls?: boolean;
+  /**
+   * Wire parameters behind each reasoning level (ADR-046 decision ④). Deliberately
+   * uninterpreted: this layer does not know any vendor's vocabulary.
+   */
+  readonly efforts?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+export interface ModelSettings {
+  /** `provider/preset`, resolved against the built-in table plus `presets`. */
+  readonly preset?: string;
+  /** The reasoning level the caller asked for; the preset decides what it means. */
+  readonly effort?: string;
+  readonly presets?: Readonly<Record<string, CustomPresetSettings>>;
+  readonly providers?: Readonly<Record<string, ProviderSettings>>;
+}
+
+/** The same settings after merging. `preset: null` means "not configured", not "default". */
+export interface ResolvedModelSettings {
+  readonly preset: string | null;
+  readonly effort: string | null;
+  readonly presets: Readonly<Record<string, CustomPresetSettings>>;
+  readonly providers: Readonly<Record<string, ProviderSettings>>;
+}
+
+/**
+ * Layer 0 has no model on purpose: there is no honest default. Picking one would send a
+ * request to a vendor the user never chose, with a key they may not have — so "not
+ * configured" stays a state the host can report instead of a guess it makes.
+ */
+export const DEFAULT_MODEL_SETTINGS: ResolvedModelSettings = {
+  preset: null,
+  effort: null,
+  presets: {},
+  providers: {},
+};
+
+function mergeModel(base: ResolvedModelSettings, next: ModelSettings | undefined): ResolvedModelSettings {
+  if (next === undefined) return base;
+  return {
+    // Scalars: the last layer that named them. Maps: merged per key, the same rule the
+    // sandbox lists follow — a later layer must not delete an entry by not mentioning it.
+    preset: next.preset ?? base.preset,
+    effort: next.effort ?? base.effort,
+    // A custom preset is a unit: naming one replaces it wholesale, because redefining a
+    // model is one decision. A provider entry is a bag of settings, so it merges field by
+    // field — otherwise a project that only names `apiKeyEnv` would erase the user's
+    // `baseUrl`.
+    presets: { ...base.presets, ...next.presets },
+    providers: mergeProviders(base.providers, next.providers),
+  };
+}
+
+function mergeProviders(
+  base: ResolvedModelSettings['providers'],
+  next: Readonly<Record<string, ProviderSettings>> | undefined,
+): ResolvedModelSettings['providers'] {
+  if (next === undefined) return base;
+  const merged: Record<string, ProviderSettings> = { ...base };
+  for (const [id, entry] of Object.entries(next)) {
+    merged[id] = { ...base[id], ...entry };
+  }
+  return merged;
+}
+
+/**
  * What one source contributes. Every key is optional: a source that says nothing
  * about a key does not override it (ADR-025 decision 1).
  */
 export interface ConfigLayer {
   readonly rules?: readonly Rule[];
   readonly sandbox?: SandboxSettings;
+  readonly model?: ModelSettings;
 }
 
 // Three layers, lowest first. The legacy implementation had seven, one of which —
@@ -127,12 +222,14 @@ export interface SourcedRule {
 export interface CowcatConfig {
   readonly rules: readonly SourcedRule[];
   readonly sandbox: ResolvedSandboxSettings;
+  readonly model: ResolvedModelSettings;
 }
 
 /** Layer 0. Not a file, and not overridable by omission. */
 export const DEFAULT_CONFIG: CowcatConfig = {
   rules: DEFAULT_RULES.map((rule) => ({ rule, origin: 'default' as const })),
   sandbox: DEFAULT_SANDBOX_SETTINGS,
+  model: DEFAULT_MODEL_SETTINGS,
 };
 
 export interface ConfigLayers {
@@ -170,6 +267,7 @@ export function resolveConfig(layers: ConfigLayers): CowcatConfig {
       mergeSandbox(mergeSandbox(DEFAULT_SANDBOX_SETTINGS, layers.user?.sandbox), layers.project?.sandbox),
       layers.session?.sandbox,
     ),
+    model: mergeModel(mergeModel(mergeModel(DEFAULT_MODEL_SETTINGS, layers.user?.model), layers.project?.model), layers.session?.model),
   };
 }
 

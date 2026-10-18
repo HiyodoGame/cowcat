@@ -26,11 +26,16 @@ export { DEFAULT_RULES } from './policy/defaults.js';
 export {
   CONFIG_LAYERS,
   DEFAULT_CONFIG,
+  DEFAULT_MODEL_SETTINGS,
   resolveConfig,
   type ConfigLayer,
   type ConfigLayerName,
   type ConfigLayers,
   type CowcatConfig,
+  type CustomPresetSettings,
+  type ModelSettings,
+  type ProviderSettings,
+  type ResolvedModelSettings,
   type RuleOrigin,
   type SourcedRule,
 } from './policy/config.js';
@@ -171,6 +176,15 @@ export { expand, isAbsolutePath, resolveEntries, type ResolveRequest, type Resol
 export { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './adapters/terminate.js';
 export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
+export { BUILTIN_PRESETS, BUILTIN_PROVIDERS, type BuiltinProvider } from './host/presets.js';
+export {
+  ModelConfigError,
+  createModelPort,
+  selectModel,
+  type CreateModelOptions,
+  type ModelConfigProblem,
+  type ModelSelection,
+} from './host/model.js';
 export {
   IMAGE_MEDIA_TYPES,
   countPdfPages,
