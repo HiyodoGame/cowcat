@@ -2,7 +2,9 @@
 
 > 依据 [`dev-plan-v2.md`](../dev-plan-v2.md)「工作规则 1」：每个阶段开始前先做调研，回答阶段内的开放问题，列出被否决的方案及理由。本文件回答 P6 的开放问题，并给出它们对 P6 四项范围的具体影响。
 >
-> 最后更新：**2026-10-19**。状态：**调研完成，决定草案待评审**。本文件只出决定草案与 ADR 清单（工作规则 2/3）；**ADR 表与源码都不在本 PR 里改**——ADR 由本阶段的 T0 落表，实现从 T1 起。
+> 最后更新：**2026-10-19**。状态：**调研完成；两处关键选型已由用户裁定（见下）**。本文件只出决定草案与 ADR 清单（工作规则 2/3）；**ADR 表与源码都不在本 PR 里改**——ADR 由本阶段的 T0 落表，实现从 T1 起。
+>
+> **评审裁定（2026-10-19，用户拍板）**：① **TUI 渲染采纳 opentui**（`@opentui/core`，opencode 用的那个渲染器）——**§3.4 的自研草案作废**；② **工具结果里的内联图片进 P6**，即「附件通路」的契约工作**提前到本阶段**——§5.3 第 1 条「只在预览模态」作废。两处裁定已并入正文（§3.5、§5.7），并连带改写了 ADR 清单（§9）与任务拆分（§10）；**§3.4 与 §5.3 的原文保留**，以便看出它们原本是什么、为什么被推翻。
 > 前置：[`dev-plan-v2.md`](../dev-plan-v2.md) 的 `## P6` 段、[`architecture/01-layers.md`](../architecture/01-layers.md)（分层与「前端只经协议」）、[`architecture/02-kernel.md`](../architecture/02-kernel.md)（事件表与 `SessionUpdate`）、[`HANDOFF.md`](../HANDOFF.md) §3（P5 交给 P6 的接线点清单）。
 >
 > **本文件的证据边界（必须先说清）**：
@@ -28,9 +30,9 @@
 | # | 问题 | 决定草案（→ 建议 ADR） | 依据 |
 |---|---|---|---|
 | 一 | headless 协议形态 | **JSON-RPC 2.0 over stdio（换行分隔），版本化**；一个 `cowcat serve` 子进程持有内核，TUI 与未来的 IDE 都是它的客户端。**不做 HTTP/SSE/WebSocket** | §2；【上游】opencode 用 HTTP+SSE+SDK，因为它有 web/desktop/console 三个远程客户端；我们只有本机前端 |
-| 二 | TUI 自研还是现成框架 | **自研渲染 + 组件分层**，沿用旧版 `screen.js` / `region.js` / `wcwidth.js` 作底座。**不引入 ink，也不引入 opentui** | §3；【上游】`@opentui/core` 的 `engines.node` 是 **>=26.4.0** 且带各平台原生二进制 |
+| 二 | TUI 自研还是现成框架 | **采纳 `@opentui/core`**（opencode 的渲染器）；不采用自研草案（原 §3.4），也不引入 ink | §3.5；【上游】opentui 原生支持图片与 flexbox——这正是「内联图片」这条新范围所需要的 |
 | 三 | TUI 的组件与框架抽象 | 三层：`render/`（纯 cell 与 diff）→ `ui/`（无状态原语）→ `components/`（特性组件）；状态**单向**：`SessionUpdate` → view model → 帧；上行只发命令 | §4；【上游】opencode 的 `ui/` 与 `component/` 正是这两层，`routes/`+`context/` 是第三层 |
-| 四 | 终端图像渲染 | **`ImageRenderable` 抽象 + 三级回退**（kitty / iTerm2 原生协议 → 半块/octant 降采样 → 只给元信息）；**P6 只在「图像预览」模态里渲染**，工具结果里保持文本 + 元信息 | §5；【上游】kitty 的 Unicode placeholder（U+10EEEE）能让图片跟着文本走，iTerm2 没有等价物 |
+| 四 | 终端图像渲染 | **协议与回退链照做**（kitty / iTerm2 → 半块·octant → 元信息），但**范围扩到工具结果的内联图片**——这要求 v2 契约新增附件通路（§5.7） | §5；【上游】kitty 的 Unicode placeholder（U+10EEEE）能让图片跟着文本走，iTerm2 没有等价物 |
 | 五 | CLI 入口与子命令 | `cowcat`（进 TUI）/ `cowcat serve`（headless）/ `cowcat doctor` / `cowcat sessions`；参数解析沿用旧版 `cliargs.js` 的「显式子命令表」 | §6；【源码】`agent/src/cliargs.js` |
 | 六 | 怎么在没有终端的情况下测 | **协议层契约测试 + 帧快照测试**（同一套协议跑内存传输）；不启动真实终端 | §7；【上游】opencode 有 `packages/simulation` + `protocol/src/simulation.ts` |
 
@@ -99,9 +101,9 @@ opencode 的仓库有 `packages/server`、`packages/client`、`packages/protocol
 
 | 候选 | 形态 | 关键代价 |
 |---|---|---|
-| **A. 自研 + 组件分层**（取） | 沿用旧版 `screen.js`（备用屏 + 行 diff + 绝对寻址）、`region.js`（区域刷新）、`wcwidth.js`（grapheme 宽度） | 组件要自己写；没有 flexbox |
-| **B. ink**（React 渲染到终端） | 生态成熟、声明式 | 引入 React 运行时；图片协议要自己实现；与「事件→帧」的既有模型重叠 |
-| **C. opentui**（opencode 用的） | Zig 原生核心 + TS 绑定 + React/Solid 渲染器；flexbox；**原生支持图片与 3D** | 【上游】`@opentui/core` 的 `engines`：`bun >=1.3.14`、**`node >=26.4.0`**；依赖 8 个平台原生二进制（`@opentui/core-win32-x64` 等）；依赖树含 `bun-ffi-structs` |
+| A. 自研 + 组件分层（**原草案取，2026-10-19 作废**） | 沿用旧版 `screen.js`（备用屏 + 行 diff + 绝对寻址）、`region.js`（区域刷新）、`wcwidth.js`（grapheme 宽度） | 组件要自己写；没有 flexbox |
+| B. ink（React 渲染到终端） | 生态成熟、声明式 | 引入 React 运行时；图片协议要自己实现；与「事件→帧」的既有模型重叠 |
+| C. **opentui**（opencode 用的，**2026-10-19 裁定取**） | Zig 原生核心 + TS 绑定 + React/Solid 渲染器；flexbox；**原生支持图片与 3D** | 【上游】`@opentui/core` 的 `engines`：`bun >=1.3.14`、**`node >=26.4.0`**；依赖 8 个平台原生二进制（`@opentui/core-win32-x64` 等）；依赖树含 `bun-ffi-structs` |
 
 ### 3.2 为什么不是 C（这是本次唯一一个「上游数字否决一个选项」的地方）
 
@@ -119,12 +121,32 @@ ink 把「渲染」变成「React 组件的副作用」，而我们的输入已�
 
 ink 也没有图片协议；它同样要靠自己写 ANSI 序列。**否决 B 的理由是「收益与我们的输入模型不匹配」，不是「它不好」。**
 
-### 3.4 决定草案
+### 3.4 决定草案（**自研；2026-10-19 已被 §3.5 推翻，保留原文**）
 
 1. **自研**，并把旧版拆成三层（§4）：`render/`（纯，可单测）、`ui/`（原语）、`components/`（特性）。
 2. **宽度与切片必须只有一份实现**：旧版 `wcwidth.js` 是**正确方向**（grapheme-aware + 二分表），但**表有缺陷**（§0 发现 2），迁移时必须修：`RANGES_EMOJI` 排序，或改成排序后合并成一张表。**P6 的第一条实现任务就是给它补测试**（用 §1 的探针语料当种子）。
 3. **性能不作为选型理由**：一帧 0.39/0.68ms、diff 0.06ms（§0 发现 3）。真要在真实终端里做「刷新率与闪烁」的测量（`dev-plan-v2.md:481` 的要求），那是 **T7 的验收动作**，不是选型依据；本文件不假装测过。
 4. **依赖预算**：P6 的运行时依赖**目标仍是 0 新增**。若最终需要图片解码（§5），先评估「自写 PNG 降采样」与「引入一个纯 JS 解码器」的成本，作为一条独立 ADR 决策。
+
+### 3.5 评审裁定：采纳 opentui（2026-10-19）
+
+用户裁定**采纳 `@opentui/core`**（opencode 的渲染器），§3.4 的自研草案作废。裁定之后需要回答的不再是「要不要」，而是**怎么把它接进来而不污染内核**——以下是随之而来的四条约束与一个待验证前提：
+
+1. **Node 门槛**：`@opentui/core` 要求 `node >=26.4.0`（`bun >=1.3.14`）。本仓库 v2 包声明 **Node ≥ 22**、CI 跑 22/24。因此：
+   - **前端必须是一个独立的 workspace 包**（例如 `packages/tui`，`private: true`），它声明自己的 `engines.node`；`packages/cowcat` 的 Node 22 门槛**保持不变**（内核是库，不该被前端的渲染器拖走）。
+   - CI 需要给这个包**加一条 Node 26 的腿**；「Node 26.4 在 GitHub Actions 上可用」是**开工前必须验证的前提**（§5.6 第 5 项）。
+2. **原生二进制与平台**：opentui 走 `optionalDependencies` 分发 8 个平台的原生核心（darwin/linux/win32 × x64/arm64 + musl 两个）。于是：
+   - 安装失败**必须显式报错**（缺失平台二进制时不能静默降级到「没有 TUI」）——与 ADR-016 同一种纪律；
+   - Windows 上 `@opentui/core-win32-x64` 的可用性是**未验证**的（本机没装，§5.6）。
+3. **渲染器选择**：opentui 提供 `@opentui/react` 与 `@opentui/solid` 两个渲染器，opencode 用 Solid。我们的决定草案：**先用 `@opentui/core` 的命令式 renderable**，不引入 React/Solid——理由是内核侧的输入已经是事件流（§4.3），组件层的收益可以从「view model + 原语」里拿；**若组件数量增长到难以手写布局**（尤其是会话帧与 diff 卡片），再评估引入 `@opentui/solid`，那时它是**第二个**决定而不是第一个。
+4. **分层不变**：opentui 只出现在前端包内。`packages/cowcat`（内核 + 适配器）**不认识 opentui**；前端仍然**只经协议**（§4.3 的四条硬规则一条不改）。这正是把前端拆成独立包的第二个理由：**依赖方向天然单向**。
+
+**仍然保留的自研资产**（不因为采纳 opentui 而作废）：
+
+- 旧版 `wcwidth.js` 的表缺陷（§0 发现 2）**依然要修**——opentui 有它自己的宽度实现（依赖 `string-width`），但**我们的模型侧与工具输出侧**（例如 `Grep` 的行号对齐、工具结果的截断提示）仍然要按 cell 宽度算；
+- 旧版 `capabilities.js` 的纯函数探测（§12）依然有用：**图片协议的能力探测**（§5）与 opentui 的能力探测是两件事，后者只覆盖「它自己能渲染什么」。
+
+**被采纳后新增的风险**（进 §5.6 待验证）：Node 26.4 的 CI 可用性、Windows 原生二进制、opentui 的图片协议覆盖面（它是否实现了 iTerm2 与 sixel，还是只有 kitty）、以及**升级节奏**——前端现在依赖一个 13k star、更新频繁的原生库，需要一条「锁版本 + 升级由谁决定」的纪律（ADR 候选）。
 
 ---
 
@@ -228,13 +250,36 @@ ImageRenderable：{ source, fit, width, height }
    └─ 都没有     → 半块/四分之一块降采样成文本行（本身就是普通文本）
 ```
 
-### 5.3 决定草案
+### 5.3 决定草案（**第 1 条已被 §5.7 推翻，保留原文**）
 
-1. **P6 只在一处渲染图片：「图像预览」模态**（opencode 的 `dialog-image-preview` 是同一个形态）。理由：工具结果里的内联图片要先把「附件」变成 v2 契约的一部分，而那是 **P7 的契约工作**（P5 的 `Read` 已经因为同一原因显式拒绝了图像/PDF/notebook）。**P6 提前做内联图片会与 P7 冲突。**
+1. ~~**P6 只在一处渲染图片：「图像预览」模态**~~（2026-10-19 作废：用户裁定内联图片进 P6，见 §5.7）。原理由：工具结果里的内联图片要先把「附件」变成 v2 契约的一部分，而那是 **P7 的契约工作**（P5 的 `Read` 已经因为同一原因显式拒绝了图像/PDF/notebook）。
 2. **抽象先行**：`ui/` 提供 `ImageRenderable` 与能力探测；组件不直接写转义序列（与 §4.2 的 `<image protocol="auto">` 同一种分工）。
 3. **探测顺序**：环境变量（`KITTY_WINDOW_ID`、`TERM_PROGRAM=iTerm.app`、`WEZTERM_*`）→ 主动查询（kitty 的 `a=q` + DA1）→ 回退。**查询必须静默**（`q=2`），否则终端的应答会混进输入流，被我们的按键解析当成用户输入——这是本任务最容易踩的一个坑。
 4. **降采样用纯 JS**：把 PNG 解到 RGBA 需要解码器。**这是 P6 唯一一个可能需要新依赖的地方**，因此单列一条 ADR：优先「自写一个只支持 PNG 的最小解码器」（PNG 是 deflate + 过滤，Node 自带 `zlib`，**零依赖可做**），若成本过高再评估引入纯 JS 解码器；**不引入原生依赖**（与 §3.2 同一条纪律）。
 5. **不做的事**：不做动画 GIF、不做 3D、不做音频（opentui 有，我们不需要）。
+
+### 5.7 评审裁定：内联图片进 P6（2026-10-19）
+
+用户裁定**工具结果里的内联图片也在 P6 做**，于是「附件通路」的契约工作从 P7 **提前到本阶段**。这条裁定的代价不在渲染层（opentui 原生支持图片），而在**契约与协议**——它把 P6 从「加一个前端」变成「加一个前端 + 扩一次契约」：
+
+**必须新增的契约（草案，T0 落 ADR）**：
+
+| 位置 | 新增 | 理由 |
+|---|---|---|
+| `ToolResult` | `attachments?: readonly Attachment[]`（`{ type: 'image' \| 'document'; mediaType; path; bytes; width?; height?; pages? }`，形状沿用旧版 `agent/src/attach.js:4`） | 工具把「我读到了一个二进制」交给内核，方向与 `facts`/`truncation`/`todos` 完全一致 |
+| `tool.finished` | `attachments` 进日志（可空） | ADR-033/048/049 的同一条纪律：**可判定的事实必须能重放**——「这次回答里有一张图」是事实，不是渲染细节 |
+| `Message`（assistant/tool 的内容） | 附件引用（**不是字节**） | 日志是 JSON，不能塞 base64 大块；引用 + 长度上限，字节留在磁盘上 |
+| `ModelRequest` | 内容部件（image part / document part），两个协议各自映射 | 这是 P4 契约的自然延伸：模型要能**看见**那张图，否则「内联图片」只是给人看的装饰 |
+| 协议（§2） | `attachment.read(id)`（按需取字节，带大小上限） | 前端与内核是两个进程：TUI 不能直接读内核侧的路径（沙箱/权限），必须走协议 |
+
+**必须改的行为**：
+
+- `Read` 现在**显式拒绝**图像 / PDF / notebook（P5 T3c 的决定，`read.ts` 的 `notYet()` 指向 P7）——本裁定之后它要**真的读**，并把附件交给内核；
+- 于是 P5 的「Read 只做文本」这条范围**被本阶段修改**：`dev-plan-v2.md` 的 P5 交付记录与 P7 模块表都要在同一批文档里更正（不能只在 P6 段里加一句）。
+
+**仍然成立的部分**：§5.1 的协议矩阵与回退链、§5.2 的 kitty 细节、§5.4 的安全约束（大小上限、`q=2` 静默、退出清理）**一条不改**；`ImageRenderable` 的抽象仍然要做，只是它现在服务两个位置（工具结果与预览模态）。
+
+**新增的待验证项**（进 §5.6）：opentui 的 `<image protocol="auto">` 究竟覆盖哪些协议（kitty / iTerm2 / sixel，还是只有 kitty）、它在**滚动容器内**的行为（kitty placeholder 与 iTerm2 屏幕坐标两种模式的差异是否由它处理）、以及大图在协议里的分块上限。
 
 ### 5.4 安全与稳定
 
@@ -255,6 +300,10 @@ ImageRenderable：{ source, fit, width, height }
 2. **octant 码位的字体覆盖**：`U+1CD00` 那一块是否在常见等宽字体里有字形——【未验证】，回退方案因此以半块为主。
 3. **闪烁与刷新率**：`dev-plan-v2.md:481` 要求的实测没有做（需要真实终端 + 人眼）。
 4. **iTerm2 图片与滚动的交互**：协议文档没有承诺图片跟随文本，我们的假设（会错位）是【推断】，需要在 macOS 上确认。
+5. **Node 26.4 在 CI 上可用**（**采纳 opentui 后的第一前提**）：`actions/setup-node` 能否装到满足 `>=26.4.0` 的版本，决定了前端包能不能进 CI；装不到就只能本机开发 + 手动验收。
+6. **Windows 上的原生二进制**：`@opentui/core-win32-x64` 在本机与 CI 的 windows 腿上能否安装并运行（本机**未安装**，一次都没跑过）。
+7. **opentui 的图片协议覆盖面**：它的 `<image protocol="auto">` 实现的是 kitty / iTerm2 / sixel 中的哪些？滚动容器内用的是 placeholder 还是屏幕坐标？（§5.7 末尾）
+8. **升级节奏**：前端从此依赖一个更新频繁的原生库，需要一条「锁版本 + 谁决定升级」的纪律；`engines.node` 的变化会直接变成我们的门槛变化。
 
 ---
 
@@ -297,7 +346,7 @@ ImageRenderable：{ source, fit, width, height }
 | 3. TUI 只通过协议工作，不持有会话状态副本 | 三层 + 单向流（§4.3）；`project` 是纯函数；lint 禁止直接 import 内核（§7 第 3 条） |
 | 4. `cowcat` 命令行入口 | 子命令表（§6）；`serve` 是协议的服务端，也是测试入口 |
 
-**图片渲染不在 P6 的四项范围里**，是本次调研额外提出的、用户明确要的（「TUI 内的图像渲染你也要调研一下」）。因此它**不阻塞出口标准**，落成一条**独立任务**（见 §9 的 T6），并且**只在预览模态里**实现（§5.3）。
+**图片渲染原本不在 P6 的四项范围里**，是本次调研额外提出的（用户明确要求）。**2026-10-19 裁定之后，它连同「工具结果的内联图片」一起成为 P6 的范围**（§5.7），并带来一次契约扩展（附件通路）——因此 P6 的范围从「四项」扩到「四项 + 契约扩展 + 图像渲染」，任务拆分见 §10（T0–T10）。**出口标准两条不变**，但 T5 的契约测试与 T10 的验收都要把附件通路算进去。
 
 ---
 
@@ -305,14 +354,15 @@ ImageRenderable：{ source, fit, width, height }
 
 | 编号（建议） | 内容 | 落在哪 |
 |---|---|---|
-| **ADR-055** | headless 协议 = JSON-RPC 2.0 over stdio、`initialize` 版本化、协议与传输分离；**不做 HTTP/SSE/WebSocket** | `architecture/README.md` 表尾 + 新增 `06-frontend.md` |
-| **ADR-056** | TUI 自研渲染 + 三层分层（`render/` / `ui/` / `components/`）+ 单向投影；不引入 ink/opentui（含 Node 门槛与原生依赖的理由） | 同上 |
-| **ADR-057** | 终端图像渲染：`ImageRenderable` + 三级回退；**P6 只在预览模态渲染**；PNG 解码优先自写（零依赖） | 同上 |
-| **ADR-058** | 无终端测试：协议契约测试 + 帧快照；`frontends/` 禁 import 内核的 lint 保证 | 同上 + `tools/lint-probe.mjs` 加一条探针 |
-| **ADR-059** | CLI 子命令表是数据；六个动词，不做嵌套 | 同上 |
-| **ADR-060**（可选） | 主题与设计 token：颜色语义化（success/warn/danger/muted）、不硬编码色值；`NO_COLOR` 与 256/24bit 降级 | 同上 |
+| **ADR-055** | headless 协议 = JSON-RPC 2.0 over stdio、`initialize` 版本化、协议与传输分离；**不做 HTTP/SSE/WebSocket**；新增 `attachment.read(id)` 方法（§5.7） | `architecture/README.md` 表尾 + 新增 `06-frontend.md` |
+| **ADR-056** | **前端采纳 `@opentui/core`**：前端是**独立 workspace 包**（`private: true`，自己的 `engines.node`），内核包保持 Node ≥ 22 不变；opentui 只出现在前端包内；先用命令式 renderable，React/Solid 渲染器留作第二个决定；缺失平台原生二进制时**显式报错**（§3.5） | 同上 |
+| **ADR-057** | 附件通路：`ToolResult.attachments` + `tool.finished.attachments` + `Message` 的附件引用 + `ModelRequest` 的内容部件；**字节不进日志**，协议按需取（§5.7） | 同上 |
+| **ADR-058** | 终端图像渲染：`ImageRenderable` + 三级回退（opentui 原生协议 → 半块/octant → 元信息）；能力探测（env + `a=q` 查询，`q=2` 静默）；大小上限与退出清理（§5.1/§5.4） | 同上 |
+| **ADR-059** | 无终端测试：协议契约测试 + 帧快照；`frontends/` 禁 import 内核的 lint 保证（§7） | 同上 + `tools/lint-probe.mjs` 加一条探针 |
+| **ADR-060** | CLI 子命令表是数据；六个动词，不做嵌套（§6） | 同上 |
+| **ADR-061**（可选） | 主题与设计 token：颜色语义化、`NO_COLOR` 与 256/24bit 降级；**opentui 的主题系统怎么用**（用它的还是我们自己的） | 同上 |
 
-另外要落的文档：**`architecture/06-frontend.md`**（新文件：协议表、前端分层、图像协议矩阵）、`01-layers.md` 的 frontends 行补「只经协议」的实际形状、`dev-plan-v2.md` 的 P6 段补任务表。
+另外要落的文档：**`architecture/06-frontend.md`**（新文件：协议表、前端分层、图像协议矩阵、附件通路）、`01-layers.md` 的 frontends 行补「只经协议」的实际形状与**新包的位置**、`04-dependencies.md` 记 opentui 的准入理由与 Node 门槛、`dev-plan-v2.md` 的 P6 段补任务表、**P5 段与 P7 模块表更正**（Read 的图像/PDF/notebook 从「推迟到 P7」改为「P6 交付」，§5.7）。
 
 ---
 
@@ -320,15 +370,17 @@ ImageRenderable：{ source, fit, width, height }
 
 | 任务 | 内容 | 依赖 |
 |---|---|---|
-| T0 | 决定落表：ADR-055~059（+060）进 ADR 表；新增 `06-frontend.md`；P6 段补任务表 | 本文件评审通过 |
-| T1 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消） | T0 |
-| T2 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T1 |
-| T3 | **CLI 入口**：子命令表、帮助文本、`doctor` 的最小版本（复用 P5 的配置与 profile 解析） | T1 |
-| T4 | **渲染底座**：`render/`（cells/width/diff/screen），修 `RANGES_EMOJI` 排序缺陷，宽度语料测试；备用屏与 SIGINT 恢复 | T0 |
-| T5 | **`ui/` 原语**：box / text / list / dialog / input / toast / status-bar / tabs / spinner | T4 |
-| T6 | **`components/` 与投影**：`project()` 纯函数 + session-frame / message / tool-card / approval-card / todo-panel / diff-card；帧快照测试 | T5 |
-| T7 | **图像预览（模态）**：能力探测 + kitty 分块与 placeholder + iTerm2 直发 + 半块回退 + PNG 最小解码器 | T6 |
-| T8 | 收口：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁记录（**需要人眼**）、`06-frontend.md` 定稿 | T1–T7 |
+| T0 | 决定落表：ADR-055~060（+061）进 ADR 表；新增 `06-frontend.md`；P6 段补任务表；**更正 P5 段与 P7 模块表**（Read 的非文本分支改为 P6 交付）；`04-dependencies.md` 记 opentui 准入 | 本文件评审通过 |
+| T1 | **前提验证**：CI 能否提供 Node ≥26.4（`actions/setup-node`）；`@opentui/core` 在本机与 windows CI 腿能否安装并跑起一个最小界面；**装不上就地降级为「本机开发 + 手动验收」并把结论写回文档** | T0 |
+| T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 |
+| T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 |
+| T4 | **CLI 入口**：子命令表、帮助文本、`doctor` 的最小版本（复用 P5 的配置与 profile 解析） | T2 |
+| T5 | **附件契约**（§5.7）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两个协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 |
+| T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 的口径（5MB / 20MB） | T5 |
+| T7 | **前端骨架**（独立包）：opentui 接入、三层目录（`ui/` / `components/` / `app/`）、`project()` 纯函数与帧快照测试 | T1、T2 |
+| T8 | **组件**：session-frame / message / tool-card / approval-card / todo-panel / diff-card / status-bar / command-palette | T7 |
+| T9 | **图片渲染**：`ImageRenderable` + 能力探测 + 三级回退；**两个位置**（工具结果内联 + 预览模态） | T8、T5 |
+| T10 | 收口：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁与图片协议验收（**需要人眼与支持协议的终端**）、`06-frontend.md` 定稿 | T2–T9 |
 
 ---
 
