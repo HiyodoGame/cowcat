@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**。这不是阶段收尾——P6 才刚开始（调研与 T0 落表完成，T1 起未开工）。
-> 交接时仓库状态：**`main` = `14bb122`**，工作区干净，与 `origin/main` 一致。本会话跨 **2026-10-18 → 2026-10-19**，产出 **13 个已合并 PR（#42–#54）**，`main` 从 `e33b654` 走到 `14bb122`（提交日期见 §1 表，取自 `git log --date=short`）。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：P6 T1 前提验证完成（`packages/tui` + 两条 Node 26 CI 腿，结论见 §3）**。这不是阶段收尾——P6 才刚开始（调研、T0 落表、T1 前提验证完成，T2 起未开工）。
+> 交接时仓库状态：**`main` = `35a11c9`**（#55 交接合入），工作区干净，与 `origin/main` 一致。本会话跨 **2026-10-18 → 2026-10-19**，产出 **13 个已合并 PR（#42–#54）**，`main` 从 `e33b654` 走到 `14bb122`（提交日期见 §1 表，取自 `git log --date=short`）；T1 在 `35a11c9` 之上开的新分支上。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -51,15 +51,25 @@
 - 【本机命令】上游事实核实（`npm view` / `nodejs.org/dist/index.json`）：`@opentui/core@0.6.6` 的 `engines` 是 `bun >=1.3.14`、**`node >=26.4.0`**，8 个平台原生核心走 `optionalDependencies`（含 `win32-x64`）；**Node `v26.4.0` 已于 2026-06-24 发布**，26 线当前 `v26.12.0`（2026-10-14），24 线是 LTS（Krypton）
 - **工作区干净不等于没有工作**：干净对应的是 §1 的 13 个已合并 PR；`git log --oneline` 是证据，不是记忆
 
+### 已验证 —— P6 T1（Windows，Node **v26.12.0** 便携版，系统 `node` 仍是 24）
+
+- 【本机命令】`npm install @opentui/core@0.6.6` → 12 个包 / 8 秒；`@opentui/core-win32-x64` 落下 `opentui.dll`（5.06 MB）
+- 【本机测试】`cd packages/tui && npm test` → **2 tests / 2 pass / 0 fail**（`pretest` 的 `tsc` 与 ESLint 均通过）；40×6 一帧 **12 ms**、`cellsUpdated` 240
+- 【本机命令】捕获到的字符帧**落盘后**逐行核对：框线对齐、每行恰好 40 个字符（在 PowerShell 管道里看是乱码，见 §5 第 9 条）
+- 【本机命令】`node:ffi`：26.12.0 **无需** `--experimental-ffi`（只把 `ExperimentalWarning` 写到 stderr）；**Node 24 上该 flag 是 `bad option` 启动期硬错误**
+- 【本机命令】`npm view @opentui/core-{linux-x64,win32-x64,darwin-arm64,linux-arm64-musl}@0.6.6` 四个平台包都存在；以 `--os=linux --cpu=x64` 装出 `libopentui.so`（5.02 MB）——**只是解析到，未在 Linux 上加载**
+- 【本机命令】CI YAML 用 `yaml` 解析校验：9 个 job；两条 tui 腿 `node-version=26`、`working-directory=packages/tui`、非草稿 PR 必跑
+- 【CI 远端】**PR #56 全 pass**（11 项）：`packages/tui · node 26` 的 ubuntu **22 s** / windows **38 s**，其余（legacy 三腿、`packages/cowcat` 三腿 + macOS 腿、`package whitelist`、`scope`）也都 pass
+
 ### CI 远端【CI 远端】
 
 本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
 
 ### 项目状态
 
-- `main` = **`14bb122`**；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060），T1 起未开工**
+- `main` = **`35a11c9`**（#55 交接合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1 前提验证完成（本 PR），T2 起未开工**
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
-- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——本会话**未增删任何依赖**（opentui 只落表，**尚未安装**）
+- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——**内核包本会话仍未增删**；`@opentui/core@0.6.6` **已装进新包 `packages/tui/`**（独立包，不进内核的依赖计数）
 - 【registry】npm 上 v1 的最新版仍是 **`0.15.0`**——这是**前序会话**核实的结论，**本会话未复查**
 - **平台 / 工作区设置本会话未变更**：未调用 `opencode_console` 的任何写操作。若需确认工作区设置与模型开关，**请单独核对**，不要以本文件为据
 - 本会话的工具使用：只读检索（GitHub API / raw、kitty 与 iTerm2 官方文档、`nodejs.org` 版本索引）；`websearch` **失败（HTTP 402）**，改用 `webfetch`
@@ -68,11 +78,16 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T1：前提验证。** 它是**唯一能推翻 ADR-056 一半**的任务（`dev-plan-v2.md` 的 `## P6` 段 T1 行）：
+**P6 的 T1（前提验证）已完成（本 PR）；唯一下一步是 P6 的 T2：协议**（`dev-plan-v2.md` 的 `## P6` 段 T2 行）：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开 / 输入 / 事件 / 审批 / 取消）+ `attachment.read`。
 
-1. 本机安装 `@opentui/core`，跑起一个最小界面，确认 **Windows 原生二进制**（`@opentui/core-win32-x64`）真的可用；
-2. 建 `packages/tui/` 骨架并给它一条 **Node 26 的 CI 腿**，确认 `actions/setup-node` 能装到 ≥26.4；
-3. 结论写回 `04-dependencies.md` 与 `06-frontend.md`；**装不上就按 ADR-056 的兜底降级为「本机开发 + 手动验收」**，并把降级理由写在同一处。
+**T1 的结论**：`@opentui/core@0.6.6` 在 Node **26.12.0** / Windows x64 上装得上、跑得起来，**ADR-056 的兜底（降级为「本机开发 + 手动验收」）不触发**。
+
+- 一帧 40×6 渲染 **12 ms**、`cellsUpdated` 240；捕获到的字符帧是正确 UTF-8（框线对齐、每行恰好 40 字符）
+- **`--experimental-ffi` 不需要**（26.12.0 只在 stderr 打 `ExperimentalWarning`）；**写进脚本或 `NODE_OPTIONS` 就变成硬门槛**——同一个脚本在 Node 24 上是启动期崩溃（`bad option: --experimental-ffi`）
+- 生产路径 `createCliRenderer` 在 `isTTY: false` 下照样创建并输出 ANSI（含 kitty `a=q` 静默查询）；帧走 **stdout**、诊断走 stderr
+- 本机 Node 26 是**便携版**：`C:\Users\Con_WKK\AppData\Local\node-v26.12.0\node-v26.12.0-win-x64`（系统 `node` 仍是 24，**未改 PATH**）。跑 `packages/tui` 的测试要把该目录放到 PATH 最前
+- 两条 CI 腿（`packages/tui · node 26 · ubuntu-latest` / `windows-latest`）**在本 PR（#56）上 pass**，ubuntu 22 s / windows 38 s——Node 26 与对应平台二进制在干净 runner 上都解析到了【CI 远端】
+- 完整取证见 [`architecture/06-frontend.md`](architecture/06-frontend.md) 的「T1 前提验证」一节
 
 之后按 T2–T10 推进（T2 协议 → T3 `serve` → T4 CLI → T5 附件契约 → T6 `Read` 恢复非文本分支 → T7 前端骨架 → T8 组件 → T9 图片渲染 → T10 收口）。
 
@@ -129,6 +144,8 @@
 6. **PowerShell 的 `rg` 输出会把中文显示成乱码**（编码问题，不是文件坏了）：要确认文件内容用 `read` 工具或 `node -e`。
 7. **冷 I/O 又一次伪装成性能差异**：同一脚本 Grep 首跑 22ms、次跑 10ms；帧构建甚至**首跑比热跑更快**（0.39ms vs 0.68ms）。**计时不作断言**（与 `research/p5-tools.md` §1 的教训同源）。
 8. **`websearch` 工具返回 HTTP 402**（额度）：改用 `webfetch` 直接抓 GitHub API / raw 文件与官方文档（kitty、iTerm2、nodejs.org）——这条路在本会话是可靠的。
+9. **PowerShell 的控制台码页会把 UTF-8 的框线字符打坏，看起来像渲染错了**：T1 的 `captureCharFrame()` 走管道时 `┐` / `│` 变成 `\uFFFD?`，**落盘成 UTF-8 再 `read` 就正常**（帧本身是对的）。判断「渲染对不对」不要看 PowerShell 的 stdout；`cmd | Select-String` 也一样会改写编码。
+10. **`--experimental-ffi` 是版本相关的启动期错误，不是可选优化**：opentui 的 README 说 Node 需要它，26.12.0 实测不需要，而 Node 24 上写它直接 `bad option` 退出（见 §3 的 T1 结论）。任何「顺手加个 flag 更保险」的想法在这里都会把提示变成硬失败。
 
 ---
 
@@ -136,7 +153,7 @@
 
 ### 本会话新增（**不要读成「不成立」**）
 
-1. **opentui 在本机与 CI 上能否真的用起来**：安装、Windows 原生二进制、Node 26 的 CI 腿——**一个都没验**（T1 的第一件事）。Node 版本「存在」已核实，**「CI 装得上」未核实**。
+1. **opentui 两侧都已验证**：本机安装 + Windows 原生二进制 + 一帧渲染（见 §3），以及干净 runner 上的两条 Node 26 CI 腿（PR #56 全 pass）——T1 不再有未验证项。
 2. **没有任何真实终端证据**：本会话 stdout 不是 TTY，`COLORTERM` / `TERM_PROGRAM` / `WT_SESSION` / `KITTY_WINDOW_ID` 全缺（探针实测）。因此**刷新率、闪烁、图片协议的实际渲染效果全部未测**，调研里相关结论都标了【推断】/【未验证】。
 3. **octant 码位的字体覆盖**未验证（回退方案因此以半块为主）；**iTerm2 图片与滚动的交互**是【推断】（协议文档没有承诺跟随文本）。
 4. **opentui 的 `<image protocol="auto">` 覆盖哪些协议**（kitty / iTerm2 / sixel）未验证。

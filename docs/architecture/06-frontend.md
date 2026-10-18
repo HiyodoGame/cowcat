@@ -48,7 +48,7 @@
 
 ## 前端分层（ADR-056）
 
-前端是**独立 workspace 包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。
+前端是**独立 workspace 包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
 
 ```
 packages/tui/src/
@@ -123,8 +123,27 @@ packages/tui/src/
 
 子命令表是**数据**（名字、摘要、参数 schema、处理函数），帮助文本与补全从表生成；不做嵌套子命令。
 
+## T1 前提验证（2026-10-19）
+
+T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案是可以，ADR-056 的兜底（降级为「本机开发 + 手动验收」）不触发**；但「怎么跑起来」与 opentui 自己的 README 写的不完全一样，下面第 1 条是执行这活时最容易踩的坑。
+
+| 验证项 | 结果 | 证据 |
+|---|---|---|
+| Node 门槛 | `nodejs.org` 的 26 线当前是 **v26.12.0**，与本地装的一致 | 【上游】`dist/latest-v26.x/SHASUMS256.txt`；【实测】本地解压后 `node -v` |
+| 安装与原生核心 | `npm install @opentui/core@0.6.6` → 12 个包 / 8 秒；`@opentui/core-win32-x64` 随 `optionalDependencies` 落下，内含 `opentui.dll`（5.06 MB） | 【实测】`packages/tui/package-lock.json` 与本地安装 |
+| 一帧渲染 | 40×6 一帧 12 ms、`cellsUpdated` 240；捕获到的字符帧是正确 UTF-8，框线与文本按列对齐，每行恰好 40 个字符 | 【实测】`packages/tui/test/render.test.ts`（Windows x64 / Node 26.12.0） |
+| `node:ffi` | **26.12.0 不需要 `--experimental-ffi`**（只把 `ExperimentalWarning` 写到 **stderr**）；显式传该 flag 也无害；**Node 24 上它是启动期硬错误**（`bad option: --experimental-ffi`） | 【实测】三条命令行用例 |
+| 非 TTY | `createCliRenderer` 在 `isTTY: false` 下照样创建、照样输出 ANSI（含 kitty `a=q` 静默查询与 DA1）；帧走 **stdout**，诊断走 stderr | 【实测】探针，stdout 992 B / stderr 166 B |
+| CI 两条腿 | `packages/tui · node 26 · ubuntu-latest` **22 s**、`windows-latest` **38 s**，均 pass（Node 26 与对应平台二进制都在干净 runner 上解析到了） | 【CI 远端】PR #56 的 checks（只观察状态，未在本地复现） |
+
+三条要记住的：
+
+1. **不要把 `--experimental-ffi` 写进脚本或 `NODE_OPTIONS`**。opentui 的 README 说 Node 需要它，26.12.0 实测不需要；而一旦写进去，同一个脚本在 Node 24 上是**启动期崩溃**而不是降级——「门槛」就此从 `engines` 的提示变成硬失败。升级 Node 前先看这条 CI 腿。
+2. **`packages/tui/test/render.test.ts` 是这条前提的可重复形式**，不是一次性探针：原生二进制没解析到、没加载起来、或帧的列错位，它都会失败。因此 CI 不会在「TUI 静默不可用」时保持绿灯。
+3. **真实终端仍然没有证据**：刷新率、闪烁、图片协议的实际渲染全部未测，仍是 T10 的活（本节只证明「能装、能编帧」）。
+
 ## 待办与未验证
 
 - 主题与设计 token 的 ADR 尚未落（实现主题时再落，不提前占号）
 - **没有任何真实终端证据**：刷新率、闪烁、图片协议的实际渲染效果全部未测（调研 §5.6）
-- Node ≥26.4 与 Windows 原生二进制的可用性由 T1 验证；若装不上，ADR-056 的 CI 部分改为「本机开发 + 手动验收」
+- **T1 已验证**：Node ≥26.4 与 Windows 原生二进制可用，ADR-056 的 CI 部分**不需要**降级（见「T1 前提验证」）
