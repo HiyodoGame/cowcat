@@ -1,63 +1,82 @@
 # CowCat v2 交接
 
-> **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
+> **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19**（P5 工具层收口：T0–T7 全部落地，七个核心工具已交付）
-> 交接时仓库状态：本文件写在 `feat/p5-t7-closing` 分支上；**合并前的 `main` = `6373929`**（`#50` P5 T6 已合），本 PR 合并后即为新的 `main`。P5 的六个实现 PR 是 **#43（T1）、#44（T2）、#45（T3a）、#46（T3b）、#47（T3c）、#48（T4）、#49（T5）、#50（T6）**，加上收口的 **#51（T7）**。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**。这不是阶段收尾——P6 才刚开始（调研与 T0 落表完成，T1 起未开工）。
+> 交接时仓库状态：**`main` = `14bb122`**，工作区干净，与 `origin/main` 一致。本会话跨 **2026-10-18 → 2026-10-19**，产出 **13 个已合并 PR（#42–#54）**，`main` 从 `e33b654` 走到 `14bb122`（提交日期见 §1 表，取自 `git log --date=short`）。
 >
-> **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或官方 SDK；**【推断】**未实测的推论，不得作为决策依据。
-> **本次会话没有真机沙箱、没有模型端点、没有发布动作**：本机真实进程只跑 `mode: 'off'`；厂商对 JSON Schema 的接受度仍为零实测。
+> **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
+> **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
 
 ---
 
-## 1. P5 做了什么（T0–T7）
+## 1. 本次会话实际做了什么
 
-| 任务 | PR | 交付 | 测试 |
-|---|---|---|---|
-| T0 | #42 | P5 调研 + ADR-047~052 落表 + T0–T7 拆分（纯文档） | 436 |
-| T1 | #43 | `ToolResult.truncation`、`tool.finished.truncation` + canonical `path`、`ToolPort.run` 第三参数 `grant`、`reduce` 派生 `readFiles` | 436 → 448 |
-| T2 | #44 | `defineTool()` + `toWireSchema()`：wire schema 机械派生、剥 `$schema`、被禁词汇在**派生结果**上拒绝 | 448 → 458 |
-| T3a | #45 | Glob + 遍历器：`.gitignore` 六种写法子集、三种不支持能力上报、100 上限 + 截断事实 | 458 → 470 |
-| T3b | #46 | Grep：三模式、**默认模式早退**、上下文、超大/二进制计数；新增 **ADR-053**（早退时 `dropped: null`） | 470 → 485 |
-| T3c | #47 | Read：文本分页、5MB/20MB、**CRLF 作为事实告知**、图像/PDF/notebook 显式拒绝并指向 P7 | 485 → 500 |
-| T4 | #48 | Write + Edit；**「先读后改」闸门落在 `runTurn`**（工具看不到会话状态） | 500 → 517 |
-| T5 | #49 | Bash 薄壳（argv 不经 shell）+ **`network: 'ask'` 由 Bash 兑现** + `CowcatConfig.sandbox` 与 `resolveSandboxProfile` | 517 → 537 |
-| T6 | #50 | TodoWrite + `todo.updated` 事件（**ADR-054**：状态进日志，工具不持有状态） | 537 → 546 |
-| T7 | #51 | 七工具统一契约测试、端到端回合、v1 清单对照记录、端口表收口 | 546 → 555 |
+### 先说归属（避免把别人的工作记到本会话）
+
+**PR #42 的内容是前序会话的产出**：`docs/research/p5-tools.md`（567 行调研）、ADR-047~052 落表、P5 拆成 T0–T7，都躺在一个**未推送**的分支 `docs/p5-adr` 上（前序会话的提交 `ea5813f`、`9aac9ef`）。本会话对它只做了三件事：改掉 `README.md` 那行过期的 v2 状态、`git push -u`、以**非草稿** PR 合并。**不要把它记成本会话的调研工作。**
+
+同理：`e33b654`（#41 P4 T6c）及更早的提交都是前序会话的。
+
+### 本会话的 13 个 PR
+
+| 任务 | PR | 交付 | 测试数 | 提交日期 |
+|---|---|---|---|---|
+| P5 T0 合并 + README 修正 | #42 | 推送并合并前序会话的调研分支；`README.md` 的 v2 状态行改对 | 436 | 2026-10-18 |
+| P5 T1 | #43 | `ToolResult.truncation`、`tool.finished.truncation` + canonical `path`、`ToolPort.run` 第三参数 `grant`、`reduce` 派生 `readFiles` | 436 → 448 | 2026-10-18 |
+| P5 T2 | #44 | `defineTool()` + `toWireSchema()`（派生、剥 `$schema`、禁词汇在**派生结果**上拒绝） | 448 → 458 | 2026-10-19 |
+| P5 T3a | #45 | Glob + 遍历器：`.gitignore` 六种写法子集、三种不支持能力上报、100 上限 + 截断事实 | 458 → 470 | 2026-10-19 |
+| P5 T3b | #46 | Grep：三模式、**默认模式早退**、上下文、超大/二进制计数；**ADR-053** | 470 → 485 | 2026-10-19 |
+| P5 T3c | #47 | Read：分页、5MB/20MB、**CRLF 作为事实告知**、图像/PDF/notebook 显式拒绝（当时指向 P7） | 485 → 500 | 2026-10-19 |
+| P5 T4 | #48 | Write + Edit；**「先读后改」闸门落在 `runTurn`**（工具看不到会话状态） | 500 → 517 | 2026-10-19 |
+| P5 T5 | #49 | Bash 薄壳（argv 不经 shell）+ **`network: 'ask'` 由 Bash 兑现** + `CowcatConfig.sandbox` 与 `resolveSandboxProfile` | 517 → 537 | 2026-10-19 |
+| P5 T6 | #50 | TodoWrite + `todo.updated` 事件（**ADR-054**，用户裁定「状态进日志」） | 537 → 546 | 2026-10-19 |
+| P5 T7 | #51 | 七工具统一契约测试、端到端回合、v1 清单对照记录、端口表收口、HANDOFF 重写 | 546 → 555 | 2026-10-19 |
+| P6 调研 | #52 | `docs/research/p6-frontend.md` + `tools/p6-tui-probe.mjs` | 555（纯文档） | 2026-10-19 |
+| P6 裁定并入 | #53 | 把两处用户裁定写进调研正文（推翻自研草案与「只在预览模态」） | 555 | 2026-10-19 |
+| P6 T0 | #54 | **ADR-055~060 落表**、新增 `architecture/06-frontend.md`、P6 任务表 T0–T10、**更正 P5 交付记录与 P7 模块表** | 555 | 2026-10-19 |
+
+**三次用户拍板**（都在本会话内）：① T6 的「TodoWrite 状态存哪」→ 会话日志内的事件；② TUI 渲染 → **采纳 opentui**；③ **工具结果的内联图片进 P6**（连带把附件通路的契约工作从 P7 提前）。
 
 ---
 
 ## 2. 当前状态
 
-### 已验证 —— 【本机测试】/【构建】（Windows，Node 24.18.0）
+### 已验证 —— 【本机测试】/【本机命令】（Windows，Node v24.18.0，`main` = `14bb122`，工作区干净）
 
-- `cd packages/cowcat && npm test`（`pretest` = `tsc` + ESLint）→ **555 tests / 539 pass / 0 fail / 16 skipped**；构建与 lint 全绿
-- 七个工具住 `src/adapters/tools/`：`read.ts` / `write.ts` / `edit.ts` / `glob.ts` / `grep.ts` / `bash.ts` / `todo.ts`
-- **P5 出口标准两条都已兑现**：① 七工具统一契约测试（`test/tools-contract.test.ts`：规格完整、wire schema 无 `$schema`、非法与垃圾入参都是 `ok:false` 结果而非抛错、每个工具都上报 `truncation`）；Edit 边界用例（多处匹配、空匹配、CRLF）逐条覆盖；② v1 清单对照写进 `dev-plan-v2.md` 的「P5 交付记录」，**每个旧版 wire 名都有归属**，P5 范围内唯一被砍的是 Read 的三个非文本分支（阻塞点是 v2 契约没有附件通路）
-- 端到端：`test/end-to-end.test.ts` —— 一个回合里读 → 改 → 待办 → 审批 → 跑命令 → **两种不同的截断事实**，并且重开会话后 `todos` / `readFiles` / 消息数与实时一致
-- 本仓实测（T3a）：`walkFiles` 371 个文件 vs `rg --files` 367（调研 §5.5 第 1 项首次确认）
-- **本轮未跑**：`tools/lint-probe.mjs`（前序 7/7）、v1 的 `agent/` 套件（762 项是前序记录）
+- 【本机测试】`cd packages/cowcat && npm test`（`pretest` = `tsc` + ESLint）→ **555 tests / 539 pass / 0 fail / 16 skipped**（12330ms）
+- 【本机命令】`node tools/p6-tui-probe.mjs` → **13/13 断言通过** + 5 条 finding（其中「旧版 `RANGES_EMOJI` 未排序导致二分查找漏掉 `0x2600–0x27BF`」是纯代码事实）
+- 【本机命令】`node tools/check-tarball.mjs` → **passed**（`@corescense/cowcat@0.16.0`，109 files / 294,794 bytes）
+- 【本机命令】`node tools/lint-probe.mjs` → **all probes behaved as expected**
+- 【本机命令】上游事实核实（`npm view` / `nodejs.org/dist/index.json`）：`@opentui/core@0.6.6` 的 `engines` 是 `bun >=1.3.14`、**`node >=26.4.0`**，8 个平台原生核心走 `optionalDependencies`（含 `win32-x64`）；**Node `v26.4.0` 已于 2026-06-24 发布**，26 线当前 `v26.12.0`（2026-10-14），24 线是 LTS（Krypton）
+- **工作区干净不等于没有工作**：干净对应的是 §1 的 13 个已合并 PR；`git log --oneline` 是证据，不是记忆
 
 ### CI 远端【CI 远端】
 
-P5 每个 PR 都是**非草稿** PR，三条 `packages/cowcat` 腿（ubuntu / windows / macos-15）+ macOS Seatbelt 腿 + `check-tarball` + scope **全部 pass**。**未在本地复现 ubuntu / macOS 的结果**。
+本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
 
 ### 项目状态
 
-- `main` 合并前 = `6373929`；P5 完成。**P6 已开工**：调研与 T0 落表（ADR-055~060）已合，见 §3
+- `main` = **`14bb122`**；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060），T1 起未开工**
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
-- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——P5 **未增删任何依赖**
-- **【registry】npm 上 v1 的真实最新版仍是 `0.15.0`**（`agent/package.json` 的 `0.16.0` 是未发布的本地版本号）
+- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——本会话**未增删任何依赖**（opentui 只落表，**尚未安装**）
+- 【registry】npm 上 v1 的最新版仍是 **`0.15.0`**——这是**前序会话**核实的结论，**本会话未复查**
+- **平台 / 工作区设置本会话未变更**：未调用 `opencode_console` 的任何写操作。若需确认工作区设置与模型开关，**请单独核对**，不要以本文件为据
+- 本会话的工具使用：只读检索（GitHub API / raw、kitty 与 iTerm2 官方文档、`nodejs.org` 版本索引）；`websearch` **失败（HTTP 402）**，改用 `webfetch`
 
 ---
 
 ## 3. 项目唯一下一步
 
-**P6 前端**（headless 协议与 TUI）：调研已完成、**T0 已落表（ADR-055~060）**，下一步是 **T1 前提验证**——`@opentui/core` 要求 `node >=26.4.0`（Node v26.4.0 已于 2026-06-24 发布，已核实），要确认 CI 能装该版本、且本机与 windows CI 腿能装上原生二进制；**装不上就地降级为「本机开发 + 手动验收」并把结论写回文档**。任务表见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P6` 段（T0–T10）。
+**P6 的 T1：前提验证。** 它是**唯一能推翻 ADR-056 一半**的任务（`dev-plan-v2.md` 的 `## P6` 段 T1 行）：
 
-> **两处评审裁定（2026-10-19）**：① TUI 渲染采纳 `@opentui/core`（ADR-056，代价是前端包 `node >=26.4.0` 与原生二进制，内核包保持 Node ≥ 22）；② **工具结果的内联图片进 P6**（ADR-057 把附件通路提前），因此 `Read` 的图像/PDF/notebook 三个分支由 P6 T5–T6 交付，不再属于 P7。
+1. 本机安装 `@opentui/core`，跑起一个最小界面，确认 **Windows 原生二进制**（`@opentui/core-win32-x64`）真的可用；
+2. 建 `packages/tui/` 骨架并给它一条 **Node 26 的 CI 腿**，确认 `actions/setup-node` 能装到 ≥26.4；
+3. 结论写回 `04-dependencies.md` 与 `06-frontend.md`；**装不上就按 ADR-056 的兜底降级为「本机开发 + 手动验收」**，并把降级理由写在同一处。
 
-P5 交给 P6 的**具体接线点**（都已就位，只差组合根）：
+之后按 T2–T10 推进（T2 协议 → T3 `serve` → T4 CLI → T5 附件契约 → T6 `Read` 恢复非文本分支 → T7 前端骨架 → T8 组件 → T9 图片渲染 → T10 收口）。
+
+**P5 交给 P6 的接线点**（都已就位，只差组合根）：
 
 | 组合根要做的 | 现成的入口 |
 |---|---|
@@ -70,45 +89,79 @@ P5 交给 P6 的**具体接线点**（都已就位，只差组合根）：
 
 ---
 
-## 4. 关键决策（P5：ADR-047~054）
+## 4. 关键决策
+
+### P5（ADR-047~054，全部已实现）
 
 | ADR | 内容 |
 |---|---|
 | 047 | 工具住 `adapters/tools/`（不给 lint 开第二个例外）；wire JSON Schema 由 zod 机械派生、剥 `$schema`；工具 schema 禁用联合/nullable/`record`/`literal` |
 | 048 | 截断是结构化事实，随 `tool.finished` 进日志（`null` = 未上报） |
-| 049 | `tool.finished` 带 canonical `path`，「先读后改」由日志派生 |
+| 049 | `tool.finished` 带 canonical `path`，「先读后改」由日志派生；**闸门落在 `runTurn`**（工具看不到会话状态） |
 | 050 | Glob/Grep 保持纯 JS，但尊重 `.gitignore` 子集并上报不支持项；`files_with_matches`/`count` 达上限即停 |
-| 051 | `ToolPort.run` 增只描述「本次授予」的第三参数；**不得把 `ask` 静默当 `off`** |
+| 051 | `ToolPort.run` 增只描述「本次授予」的第三参数；**不得把 `ask` 静默当 `off`**（由 Bash 兑现） |
 | 052 | 入参校验在工具内，用同一份 zod schema，失败给字段路径 |
-| 053 | `Truncation.dropped` 可为 `null`：早退之后总量未知 |
-| 054 | TodoWrite 的状态进会话日志（事件 + `reduce` 派生），工具不持有状态 |
+| 053 | `Truncation.dropped` 可为 `null`：早退之后总量未知（`0` 只表示「问过、确实没丢」） |
+| 054 | TodoWrite 的状态进会话日志（`todo.updated` 事件 + `reduce` 派生），工具不持有状态；`todo.updated` 写在 `tool.finished` **之前** |
 
-完整表见 [`architecture/README.md`](architecture/README.md)（**ADR-001~054**）。
+### P6（ADR-055~060，已落表、**未实现**）
+
+| ADR | 内容 |
+|---|---|
+| 055 | headless 协议 = JSON-RPC 2.0 over stdio；`initialize` 版本不匹配就报错退出；**协议与传输分离**；不做 HTTP/SSE/WebSocket |
+| 056 | **前端采纳 `@opentui/core`，且前端是独立 workspace 包**（自己的 `engines.node >=26.4.0` + Node 26 CI 腿），内核包保持 Node ≥ 22；原生二进制缺失时**显式报错**；先用命令式 renderable |
+| 057 | **附件通路进契约**：`ToolResult.attachments` → `tool.finished.attachments`（进日志）→ `Message` 引用 → `ModelRequest` 内容部件 → 协议 `attachment.read(id)`；**字节不进日志** |
+| 058 | 图像渲染：`ImageRenderable` + 三级回退（kitty 占位符 / iTerm2 屏幕坐标 / 半块文本）；能力探测含 `a=q`，**必须 `q=2` 静默** |
+| 059 | 无终端测试：协议契约测试 + 帧快照 + lint 禁前端 import 内核（出口标准第 2 条） |
+| 060 | CLI 子命令表是数据，六个动词，不做嵌套 |
+
+完整表见 [`architecture/README.md`](architecture/README.md)（**ADR-001~060**）。契约文档：[`architecture/06-frontend.md`](architecture/06-frontend.md)（P6 新增）。
 
 ---
 
-## 5. 踩坑（本次会话真花时间的）
+## 5. 踩坑（本会话真花时间的）
 
-1. **提交时忘了切分支**：T5 的实现全部在 `main` 上完成，`pre-commit` 钩子直接拦下（「main 只接受 PR」）——**守卫按设计工作**，改到 `feat/p5-t5-bash` 重提即可。教训：`git status -sb` 要在大改之前看一次。
-2. **本会话的 shell 是 PowerShell，不是 AGENTS.md 写的 Git Bash**：`cmd || echo`、`node -e "…'…'…"` 这类写法直接 `ParserError`。要么拆成单条命令，要么写脚本文件（`node -e` 里套引号必坏，与 AGENTS.md 的记载一致）。
-3. **`edit` 工具的 `oldString` 结尾带换行 = 要删掉那个换行**：本轮有两次把两行并成一行（`| policy.decided | … }    | {`），都是这个原因。改完要读回来确认——Markdown 与 TS 都可能仍然"看着正常"。
-4. **`assert.equal` 会窄化类型，于是后续的 `?.` / `??` 被 lint 判为多余**：`assert.equal(result?.ok, false)` 之后再写 `result?.output ?? ''` 会报 `no-unnecessary-condition`。解法是先取局部变量 + `assert.ok(x !== undefined)`，或者用类型谓词过滤。
-5. **给真实进程的 `env` 不能伪造**：Bash 的真实进程用例一开始传了 `{ PATH: '/usr/bin' }`，在 Windows 上 Git Bash 起不来（缺 `SystemRoot`/`ComSpec`），表现为 `ok: false` 而不是报错。真实进程用例应当**不传 `env`**，让它继承本进程环境。
-6. **PowerShell 的 `rg` 输出会把中文显示成乱码**（编码问题，不是文件坏了）：要确认文件内容用 `read` 工具或 `node -e`，与 AGENTS.md 的记载一致。
-7. **冷 I/O 又一次伪装成性能差异**：同一脚本 Grep 首跑 22ms、次跑 10ms。**计时不作断言**（调研 §1 的同一教训）。
+1. **提交时忘了切分支**：T5 的全部实现是在 `main` 上写完的，`pre-commit` 钩子直接拦下（「main 只接受 PR」）——**守卫按设计工作**，改到 `feat/p5-t5-bash` 重提即可。教训：大改之前先看一眼 `git status -sb`。
+2. **本机 shell 是 PowerShell，不是 `AGENTS.md` 写的 Git Bash**：`cmd || echo`、`node -e "…'…'…"` 这类写法直接 `ParserError`。要拆成单条命令，或**写脚本文件**（`node -e` 里套引号在 PowerShell 下必坏，与 `AGENTS.md` 的记载一致）。
+3. **`edit` 工具的 `oldString` 结尾带换行 = 要删掉那个换行**：本会话**两次**把两行并成一行（一次把 `| policy.decided | … }` 与下一个 `| {` 粘在一起），都是这个原因。改完要读回来确认——Markdown 与 TS 都可能「看着正常」。
+4. **`assert.equal` 会窄化类型，于是后续的 `?.` / `??` 被 lint 判为多余**（`no-unnecessary-condition`）：`assert.equal(result?.ok, false)` 之后再写 `result?.output ?? ''` 会报错。解法是先取局部变量 + `assert.ok(x !== undefined)`，或用类型谓词过滤。
+5. **给真实进程的 `env` 不能伪造**：Bash 的真实进程用例一开始传了 `{ PATH: '/usr/bin' }`，在 Windows 上 Git Bash 起不来（缺 `SystemRoot`/`ComSpec`），表现为 `ok: false` 而**不是**报错。真实进程用例应当**不传 `env`**，让它继承本进程环境。
+6. **PowerShell 的 `rg` 输出会把中文显示成乱码**（编码问题，不是文件坏了）：要确认文件内容用 `read` 工具或 `node -e`。
+7. **冷 I/O 又一次伪装成性能差异**：同一脚本 Grep 首跑 22ms、次跑 10ms；帧构建甚至**首跑比热跑更快**（0.39ms vs 0.68ms）。**计时不作断言**（与 `research/p5-tools.md` §1 的教训同源）。
+8. **`websearch` 工具返回 HTTP 402**（额度）：改用 `webfetch` 直接抓 GitHub API / raw 文件与官方文档（kitty、iTerm2、nodejs.org）——这条路在本会话是可靠的。
 
 ---
 
 ## 6. 未验证 / 待确认
 
-1. **厂商侧对 wire JSON Schema 的接受度：零实测**（无凭据、无端点）。ADR-047 决定的是机制；校准排在 P6 第一次真连端点。已知会触发的形状差异：`type` 数组、`anyOf`、`$defs`/`$ref`、`propertyNames`——全部是【推断】。
-2. **真实沙箱后端未在本机跑过**：本机真实进程只有 `mode: 'off'`；`system` 档（bwrap / seatbelt）由 CI 的 macOS 腿与 P6 组合根覆盖。
-3. **Grep 早退的实际收益未测**：本任务主张的是「有界的工作量」，不是一个在本树上测得出的加速比（冷/热 I/O 混淆）。
-4. **TodoWrite 在默认规则下每次调用都会被问一次**（ADR-054 已记）。P6 的默认配置应加一条 `allow`，否则体感很差。
-5. **`.gitignore` 子集的三条限制**（嵌套 / 全局 excludes / `.git/info/exclude`）在真实多模块仓库上的影响未评估；隐藏目录一律跳过，也没有「想搜 `.github`」的逃生口。
-6. **Windows 上 Edit 的 CRLF 行为已有本机用例**，但**非 Windows 的 CRLF 文件**（例如从 Windows 拷到 Linux）未测。
-7. **前序遗留未关闭**：macOS flake（`agent/test/chrome.test.mjs:47` 固定 `sleep(15)`）算不算安全修复问了三轮未答；`ADR-034` 是否挪到 033 之后；**ADR-044 仍未收到显式认可**（P5 的 047/052 都引用了它）。
-8. **v1 套件（762 项）本轮未重跑**；本文件不引用其数字作为本轮证据。
+### 本会话新增（**不要读成「不成立」**）
+
+1. **opentui 在本机与 CI 上能否真的用起来**：安装、Windows 原生二进制、Node 26 的 CI 腿——**一个都没验**（T1 的第一件事）。Node 版本「存在」已核实，**「CI 装得上」未核实**。
+2. **没有任何真实终端证据**：本会话 stdout 不是 TTY，`COLORTERM` / `TERM_PROGRAM` / `WT_SESSION` / `KITTY_WINDOW_ID` 全缺（探针实测）。因此**刷新率、闪烁、图片协议的实际渲染效果全部未测**，调研里相关结论都标了【推断】/【未验证】。
+3. **octant 码位的字体覆盖**未验证（回退方案因此以半块为主）；**iTerm2 图片与滚动的交互**是【推断】（协议文档没有承诺跟随文本）。
+4. **opentui 的 `<image protocol="auto">` 覆盖哪些协议**（kitty / iTerm2 / sixel）未验证。
+5. **厂商侧对 wire JSON Schema 的接受度仍是零实测**（无凭据、无端点）；校准排在 P6 第一次真连端点。
+6. **真实沙箱后端（bwrap / seatbelt）本机没跑过**：本机真实进程只有 `mode: 'off'`；`system` 档由 CI 的 macOS 腿与 P6 组合根覆盖。
+7. **TodoWrite 在默认规则下每次调用都会被问一次**（ADR-054 记录在案）；P6 的组合根应加一条 `allow`，否则体感很差。
+8. **Grep 早退的实际收益未测**（主张的是「有界的工作量」，不是本机上测得出的加速比）。
+
+### 前序遗留、本会话**未复现**
+
+1. **macOS flake**：`agent/test/chrome.test.mjs:47` 固定 `sleep(15)` 后断言光标序列，**会随机卡住任何 PR**（它真的卡过 #26）；因 `agent/` 树冻结，「算不算安全修复」的口径问了三轮未答。
+2. **ADR-034 要不要挪到 033 之后**（ADR 表不严格单调；新 ADR 一律追加表末）。
+3. **ADR-044 仍未收到显式认可**——P5 的 047/052 与 P6 的 055/058 都**引用**了它（「不发明策略」「不读不造」），但「被引用」不等于认可。
+4. `agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` **不在仓库里**（209 家 catalog「怎么更新」仍未定，ADR-037 已记）。
+5. v1 的 `agent/` 套件（762 项）**本会话未跑**；`tools/lint-probe.mjs` 的前序记录是 7/7，本会话复跑通过（探针条数以脚本自身输出为准）。
+
+### 证据与记忆的差异（保留差异，不覆盖）
+
+| 项 | 上一版 HANDOFF 的说法 | 本会话的证据 | 处置 |
+|---|---|---|---|
+| `main` 的位置 | 上一版写「合并前 = `6373929`，本 PR 合并后即为新的 `main`」 | 【本机命令】`git log` → `main` = **`14bb122`**（#54） | 以证据为准；上一版写它时 P6 还没开始，属正常的时间差 |
+| P5 的 PR 清单 | 上一版列 #43–#51（含「#51 T7」） | 【本机命令】`git log` → P5 的 PR 是 **#42–#51**，其中 #42 的**内容**属前序会话 | 以证据为准；本版已写明归属 |
+| P6 的范围 | 上一版（以及调研初稿）说「图片渲染不在 P6 四项范围里」 | 用户 2026-10-19 裁定内联图片进 P6 → ADR-057 | 以裁定为准；调研正文保留原文并标注作废 |
+| 「本机 shell 是 Git Bash」 | `AGENTS.md` 这么写 | 本会话实测是 **PowerShell**（POSIX 链式写法直接 `ParserError`） | **标为待确认**：不改 `AGENTS.md`（可能是 OpenCode 会话的差异），但按实测操作 |
+| v1 最新发布版 | 前序会话【registry】核实 `0.15.0` | 本会话**未复查** | 保留前序结论，标注「本会话未复查」 |
 
 ---
 
@@ -116,14 +169,18 @@ P5 交给 P6 的**具体接线点**（都已就位，只差组合根）：
 
 | 路径 | 内容 |
 |---|---|
-| [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P5 段含任务表、**出口标准与交付记录**、v1 清单对照 |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~054**（047~054 是 P5 的决策） |
-| [`research/p5-tools.md`](research/p5-tools.md) | P5 调研：八个问题、被否决方案、v1 工具全量归类（§13）、T0–T7 拆分（§14） |
-| [`architecture/01-layers.md`](architecture/01-layers.md) | 分层；`adapters/tools/` 的落点理由、遍历范围、Read 口径、Bash 薄壳 |
+| [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P5 段含交付记录与 v1 清单对照；**P6 段含 T0–T10 任务表** |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~060**（047~054 是 P5，055~060 是 P6） |
+| [`architecture/06-frontend.md`](architecture/06-frontend.md) | **P6 契约文档**（协议方法表、前端分层、附件通路、图像协议矩阵、测试形态、CLI） |
+| [`research/p5-tools.md`](research/p5-tools.md) | P5 调研（前序会话产出）：八个问题、被否决方案、v1 工具全量归类、T0–T7 拆分 |
+| [`research/p6-frontend.md`](research/p6-frontend.md) | P6 调研：五个问题、两处裁定的正文、图像协议矩阵、探针实测 |
+| [`architecture/01-layers.md`](architecture/01-layers.md) | 分层；`adapters/tools/` 落点、遍历范围、Read 口径、Bash 薄壳、**P6 起多一个包** |
 | [`architecture/02-kernel.md`](architecture/02-kernel.md) | 事件表（含 `todo.updated`）、`truncation`/`path`/`readFiles`、**闸门在 `runTurn`**、为什么工具串行 |
-| [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 端口表、进程网关、沙箱执行器、**沙箱配置键与 profile 解析**、`ask` 的兑现 |
+| [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 端口表、进程网关、沙箱执行器、沙箱配置键与 profile 解析、`ask` 的兑现 |
+| [`architecture/04-dependencies.md`](architecture/04-dependencies.md) | 依赖策略；**`@opentui/core` 的准入与四项代价**（只在前端包，内核仍 3 / 6） |
 | `packages/cowcat/src/adapters/tools/` | 七个工具 + `wire-schema.ts` / `define-tool.ts` / `ignore.ts` |
-| `packages/cowcat/src/kernel/run-turn.ts` | 回合循环、`unreadTarget`（未读闸门）、`grant` 的组合、`todo.updated` 的写入点 |
+| `packages/cowcat/src/kernel/run-turn.ts` | 回合循环、`unreadTarget`（未读闸门）、`grant` 组合、`todo.updated` 写入点 |
 | `packages/cowcat/src/policy/sandbox-profile.ts` | 配置 → `SandboxProfile` 的纯解析 |
-| `packages/cowcat/test/tools-contract.test.ts` / `end-to-end.test.ts` | 统一契约与端到端回合 |
-| `tools/p5-json-schema-probe.mjs` / `tools/p5-glob-grep-probe.mjs` | P5 的两个开发期探针（不进 lint 门禁、不进发布包） |
+| `packages/cowcat/test/tools-contract.test.ts` / `end-to-end.test.ts` | 七工具统一契约与端到端回合 |
+| `tools/p5-json-schema-probe.mjs` / `tools/p5-glob-grep-probe.mjs` / `tools/p6-tui-probe.mjs` | 三个开发期探针（不进 lint 门禁、不进发布包） |
+| `tools/lint-probe.mjs` / `tools/check-tarball.mjs` | 分层禁令探针 / 发布白名单守卫（CI 会跑） |
