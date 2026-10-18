@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：P6 T1 前提验证完成（`packages/tui` + 两条 Node 26 CI 腿，结论见 §3）**。这不是阶段收尾——P6 才刚开始（调研、T0 落表、T1 前提验证完成，T2 起未开工）。
-> 交接时仓库状态：**`main` = `35a11c9`**（#55 交接合入），工作区干净，与 `origin/main` 一致。本会话跨 **2026-10-18 → 2026-10-19**，产出 **13 个已合并 PR（#42–#54）**，`main` 从 `e33b654` 走到 `14bb122`（提交日期见 §1 表，取自 `git log --date=short`）；T1 在 `35a11c9` 之上开的新分支上。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加两件：P6 T1 前提验证（#56 已合）与 P6 T2 协议（本 PR）**——两者都不是阶段收尾，P6 还在 T3 之前（结论见 §3）。
+> 交接时仓库状态：**`main` = `575b98a`**（#56 T1 合入；#55 是上一版交接）。本会话（2026-10-18 → 2026-10-19）产出 **13 个已合并 PR（#42–#54）**；此后 **#55、#56 已合**，**T2 在 `575b98a` 之上开的分支上**。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -61,15 +61,22 @@
 - 【本机命令】CI YAML 用 `yaml` 解析校验：9 个 job；两条 tui 腿 `node-version=26`、`working-directory=packages/tui`、非草稿 PR 必跑
 - 【CI 远端】**PR #56 全 pass**（11 项）：`packages/tui · node 26` 的 ubuntu **22 s** / windows **38 s**，其余（legacy 三腿、`packages/cowcat` 三腿 + macOS 腿、`package whitelist`、`scope`）也都 pass
 
+### 已验证 —— P6 T2（Windows，Node **v26.12.0** 便携版）
+
+- 【本机测试】`cd packages/tui && npm test` → **29 tests / 29 pass / 0 fail**（其中协议 27 项、T1 渲染 2 项）；`pretest` 的 `tsc` 与 ESLint 均通过
+- 【本机命令】`npm ci`（锁文件已改指官方 registry）→ 109 个包 / 9 秒
+- **测试抓到的真 bug**：客户端把通知处理器记进 Map 却**从不派发**（只有响应分支）——契约测试立刻红，28/29 失败暴露了它。没有这套测试，这个前端会「握手成功、什么都不显示」
+- 【源码】协议层不 import 内核也不 import opentui，由 `packages/tui/eslint.config.js` 的 `no-restricted-imports` 强制；`ProtocolHost` 是它认识内核的唯一方式
+
 ### CI 远端【CI 远端】
 
 本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
 
 ### 项目状态
 
-- `main` = **`35a11c9`**（#55 交接合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1 前提验证完成（本 PR），T2 起未开工**
+- `main` = **`575b98a`**（#56 T1 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1 前提验证 + T2 协议落地（本 PR），T3 起未开工**
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
-- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——**内核包本会话仍未增删**；`@opentui/core@0.6.6` **已装进新包 `packages/tui/`**（独立包，不进内核的依赖计数）
+- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——**内核包本会话仍未增删**；`packages/tui/` 两个运行时依赖：`@opentui/core@0.6.6`（T1 装）与 `zod`（T2 的解码边界），都不进内核的依赖计数
 - 【registry】npm 上 v1 的最新版仍是 **`0.15.0`**——这是**前序会话**核实的结论，**本会话未复查**
 - **平台 / 工作区设置本会话未变更**：未调用 `opencode_console` 的任何写操作。若需确认工作区设置与模型开关，**请单独核对**，不要以本文件为据
 - 本会话的工具使用：只读检索（GitHub API / raw、kitty 与 iTerm2 官方文档、`nodejs.org` 版本索引）；`websearch` **失败（HTTP 402）**，改用 `webfetch`
@@ -78,18 +85,16 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T1（前提验证）已完成（本 PR）；唯一下一步是 P6 的 T2：协议**（`dev-plan-v2.md` 的 `## P6` 段 T2 行）：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开 / 输入 / 事件 / 审批 / 取消）+ `attachment.read`。
+**P6 的 T2（协议）已完成（本 PR）；唯一下一步是 P6 的 T3：`serve` 子进程**（`dev-plan-v2.md` 的 `## P6` 段 T3 行）：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试。接线点 T2 已经留好：`createServer({ host, transport })`，`host` 是 `ProtocolHost`（会话持有者端口，`src/protocol/host.ts`），`transport` 换成 stdio 实现即可。
 
-**T1 的结论**：`@opentui/core@0.6.6` 在 Node **26.12.0** / Windows x64 上装得上、跑得起来，**ADR-056 的兜底（降级为「本机开发 + 手动验收」）不触发**。
+**T2 的结论**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试 + `attachment.read` 全部落地在 `packages/tui/src/protocol/`，**27 项协议测试全绿**（【本机测试】Windows / Node 26.12.0）。两条决定值得记住，它们都是契约：
 
-- 一帧 40×6 渲染 **12 ms**、`cellsUpdated` 240；捕获到的字符帧是正确 UTF-8（框线对齐、每行恰好 40 字符）
-- **`--experimental-ffi` 不需要**（26.12.0 只在 stderr 打 `ExperimentalWarning`）；**写进脚本或 `NODE_OPTIONS` 就变成硬门槛**——同一个脚本在 Node 24 上是启动期崩溃（`bad option: --experimental-ffi`）
-- 生产路径 `createCliRenderer` 在 `isTTY: false` 下照样创建并输出 ANSI（含 kitty `a=q` 静默查询）；帧走 **stdout**、诊断走 stderr
-- 本机 Node 26 是**便携版**：`C:\Users\Con_WKK\AppData\Local\node-v26.12.0\node-v26.12.0-win-x64`（系统 `node` 仍是 24，**未改 PATH**）。跑 `packages/tui` 的测试要把该目录放到 PATH 最前
-- 两条 CI 腿（`packages/tui · node 26 · ubuntu-latest` / `windows-latest`）**在本 PR（#56）上 pass**，ubuntu 22 s / windows 38 s——Node 26 与对应平台二进制在干净 runner 上都解析到了【CI 远端】
-- 完整取证见 [`architecture/06-frontend.md`](architecture/06-frontend.md) 的「T1 前提验证」一节
+- **params 严格、事件体宽松**：客户端发来的 params 用 `strictObject`（多一个字段就是 `invalidParams`——服务端不能对看不懂的请求动作）；服务端发出的事件**只校验信封**（`seq`/`ts`/`sessionId`/`turnId`/`type`）。后者是故意的：事件体是内核的联合类型，在协议里再描述一遍就是第二份 `adapters/schema.ts`，而且内核做**加法**改动（`tool.finished` 已长过 `truncation`/`path`，T5 还要长 `attachments`）时会把前端打死。代价写在明处：不认识的事件走「显示为不支持」，不崩。
+- **协议层既不 import 内核、也不 import opentui**（lint 强制）：前者是 ADR-059 ③，后者让这个模块将来能整体挪进独立包（`serve` 与 IDE 插件都不该需要渲染器）。ADR-059 ③ 要求的「lint 探针证明规则真的会报错」按计划在 T10 复核。
 
-之后按 T2–T10 推进（T2 协议 → T3 `serve` → T4 CLI → T5 附件契约 → T6 `Read` 恢复非文本分支 → T7 前端骨架 → T8 组件 → T9 图片渲染 → T10 收口）。
+**T1（已合入 main 的 #56）一句话结论**：opentui 在 Node 26.12.0 / Windows x64 上装得上、跑得起来，ADR-056 的兜底不触发；取证见 §1 的「已验证 —— P6 T1」。本机 Node 26 是**便携版** `C:\Users\Con_WKK\AppData\Local\node-v26.12.0\node-v26.12.0-win-x64`（系统 `node` 仍是 24，未改 PATH）。
+
+之后按 T3–T10 推进（T3 `serve` → T4 CLI → T5 附件契约 → T6 `Read` 恢复非文本分支 → T7 前端骨架 → T8 组件 → T9 图片渲染 → T10 收口）。
 
 **P5 交给 P6 的接线点**（都已就位，只差组合根）：
 
@@ -161,6 +166,7 @@
 6. **真实沙箱后端（bwrap / seatbelt）本机没跑过**：本机真实进程只有 `mode: 'off'`；`system` 档由 CI 的 macOS 腿与 P6 组合根覆盖。
 7. **TodoWrite 在默认规则下每次调用都会被问一次**（ADR-054 记录在案）；P6 的组合根应加一条 `allow`，否则体感很差。
 8. **Grep 早退的实际收益未测**（主张的是「有界的工作量」，不是本机上测得出的加速比）。
+9. **T2 只落地了协议本身**：`ProtocolHost` 没有实现（T3/T4 才把它接到内核上）、**stdio 传输未写**（T3）、`attachment.read` 只有形状（真实字节由 T5/T6 供给）。协议层因此至今**没有跑过一次真实内核的事件流**——`dist/test/protocol/` 里跑的是脚本化宿主。
 
 ### 前序遗留、本会话**未复现**
 

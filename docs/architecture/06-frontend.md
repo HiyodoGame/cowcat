@@ -46,6 +46,26 @@
 
 这条不是洁癖：旧版 TUI 直接读内核状态，于是「屏幕上显示的」「日志里记录的」「模型下一轮看到的」三者可以不一致，而排错时无法判断哪一份是对的。
 
+### T2 落地的形状（2026-10-19）
+
+方法表是**数据**（`src/protocol/methods.ts` 的 `METHODS` 与 `PARAMS`），与 ADR-060 对 CLI 子命令的要求同一手法：`switch` 的穷尽性让「加了方法却忘了处理」变成编译失败。
+
+两条与直觉不同的裁剪写在这里，因为它们是**契约**而不是实现细节：
+
+1. **params 严格、事件体宽松**。客户端发来的 params 用 `strictObject` 校验（多一个字段就是 `invalidParams`——服务端不能对看不懂的请求动作），而服务端发出的事件**只校验信封**（`seq`/`ts`/`sessionId`/`turnId`/`type`）、放过其余字段。理由：事件体是内核的事件联合类型，在协议里再描述一遍等于手写第二份 `adapters/schema.ts`（内核已经为这份漂移付过一次编译期等价断言），而且它会**在内核做加法改动时把前端打死**——`tool.finished` 已经长过 `truncation` 和 `path`，T5 还要长 `attachments`，这些都不该要协议陪着改。代价写在明处：`type` 是普通字符串，前端遇到不认识的事件走「显示为不支持」而不是崩掉。
+2. **协议层既不 import 内核、也不 import opentui**，由 `packages/tui/eslint.config.js` 强制。前者是 ADR-059 ③；后者是为了让这个模块能**整体挪进独立包**——`serve` 与未来的 IDE 插件都需要一个没有渲染器的客户端，而「挪」只有在今天这条规则为真时才是机械动作。ADR-059 ③ 要求的「lint 探针证明规则真的会报错」按计划在 T10 复核（见 `dev-plan-v2.md` 的 T10 行）。
+
+其余落地细节：
+
+| 项 | 形状 |
+|---|---|
+| 传输 | T2 只交付**内存传输**（`memoryTransport`：投递走 microtask，且 `defer` 可注入，因此顺序断言是确定的）——ADR-059 ① 的契约测试要的就是它。**stdio 传输是 T3 的活** |
+| `initialize` | 版本不匹配 → `versionMismatch` 响应**先发出**，然后服务端停止（拒绝 = 停止，不降级）；测试断言了这条顺序，也正是内存传输把 close 也排进队列的原因 |
+| 错误 | JSON-RPC 保留码之外用实现定义段：`versionMismatch`/`notInitialized`/`noSuchSession`/`hostRefused`/`attachmentTooLarge`。客户端按**码**分支，不按文案 |
+| `session.open` | 回 `{sessionId, lastSeq, replayed}`，**然后**按序补发日志里的每条事件：前端靠重放重建屏幕，不需要第二种「现在长什么样」的查询（ADR-059 ②） |
+| `attachment.read` | 超限一律**拒绝并带数字**（`{id, byteLength, limit}`），不截断字节；调用方的 `maxBytes` 只会更严、不会更松（ADR-057 的 5MB 口径在 T5/T6 落到真实附件上） |
+| 宿主端口 | `ProtocolHost`（`src/protocol/host.ts`）是「会话持有者」的端口：T3/T4 拿它接内核，协议层因此完全不认识内核。`attach()` 的原子性（replay 与 subscribe 之间不丢不重）写在端口注释里，因为那是**实现者的义务**，协议无法在运行时检查它 |
+
 ## 前端分层（ADR-056）
 
 前端是**独立 workspace 包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
@@ -104,9 +124,9 @@ packages/tui/src/
 
 | 形态 | 做法 | 覆盖 |
 |---|---|---|
-| 协议契约测试 | 内存传输 + 测试客户端，跑完整回合（打开 → 输入 → 事件 → 审批 → 取消） | 协议形状、顺序、错误路径 |
+| 协议契约测试 | 内存传输 + 测试客户端，跑完整回合（打开 → 输入 → 事件 → 审批 → 取消） | 协议形状、顺序、错误路径（**T2 已落地**：27 项，含顺序与错误路径） |
 | 帧快照测试 | `project()` 纯函数 + 写死的日志 → 逐字节比对一屏文本 | 渲染逻辑，不需要终端 |
-| lint 探针 | 前端包禁止 import 内核与适配器；`tools/lint-probe.mjs` 验证它真的会报错 | 出口标准第 2 条 |
+| lint 探针 | 前端包禁止 import 内核与适配器；`protocol/` 还禁止 import opentui（**T2 已加规则**）；`tools/lint-probe.mjs` 同款手法验证它真的会报错（**T10**） | 出口标准第 2 条 |
 | 子进程测试 | 一条：`serve` 能启动、能握手、能干净退出 | 传输与生命周期 |
 | 人工验收 | 真实终端上的刷新率、闪烁、图片协议 | **CI 覆盖不到**，记在 T10 |
 
