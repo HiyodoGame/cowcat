@@ -34,8 +34,13 @@ export interface Truncation {
    * dropped" — and is different from `ToolResult` reporting no `truncation` at all.
    */
   readonly truncated: boolean;
-  /** How much is missing, in the unit `reason` names. Always `total - kept`. */
-  readonly dropped: number;
+  /**
+   * How much is missing, in the unit `reason` names. Always `total - kept` — and
+   * `null` when the producer stopped early and the total is therefore unknown, which
+   * is the whole point of stopping early (ADR-053). `0` still means "asked, nothing
+   * was dropped"; it never stands in for "not counted".
+   */
+  readonly dropped: number | null;
   /**
    * Which cap applied, in words an audit can print (`read: 2000 lines`), or `null` when
    * nothing was dropped. It names the unit `dropped` counts in, because different tools
