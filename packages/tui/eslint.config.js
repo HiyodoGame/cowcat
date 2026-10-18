@@ -19,10 +19,13 @@ export default tseslint.config(
     // The protocol module is the part of the frontend a headless consumer would need
     // (ADR-055 keeps protocol and transport separate), so it must not need the
     // renderer — and it must not reach into the kernel, which the frontend only ever
-    // sees through this protocol (ADR-059 ③). Both are enforced here rather than left
-    // to review, because "move it into its own package later" is only a mechanical
-    // move while these stay true. `tools/lint-probe.mjs` verifies the rules fire.
-    files: ['src/protocol/**/*.ts'],
+    // sees through this protocol (ADR-059 ③). `src/serve` is held to the same rule for
+    // the same reasons: it is the process a terminal-less client connects to, and it is
+    // where the composition root will eventually hand the kernel over as a port rather
+    // than as an import. Both are enforced here rather than left to review, because
+    // "move it into its own package later" is only a mechanical move while these stay
+    // true. `tools/lint-probe.mjs` verifies the rules fire.
+    files: ['src/protocol/**/*.ts', 'src/serve/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
