@@ -74,6 +74,8 @@ export {
 
 export { memoryTransport, type Defer, type MemoryTransportPair, type Transport } from './transport.js';
 
+export { STDIO_MAX_LINE_BYTES, stdioTransport, type StdioTransportOptions } from './stdio.js';
+
 export { createServer, type ProtocolServer, type ServerOptions } from './server.js';
 
 export { ProtocolClientError, createClient, onNotification, type ClientOptions, type ProtocolClient } from './client.js';

@@ -475,9 +475,11 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P6 前端：headless 协议与 TUI
 
-> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成、T2 协议落地（本 PR），T3 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
+> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成、T2 协议落地、T3 `serve` 与 stdio 传输落地（本 PR），T4 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
 >
 > **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
+>
+> **包结构待定（T3 暴露，T4a 决定）**：T3 要落 `serve`，而 `serve` 必须有一个用内核 `Session` 实现的宿主。查清的事实是：仓库**没有 npm workspace**（根目录没有 `package.json`），而 `@corescense/cowcat-core` 是 `private: true`、**从未发布** → 跨包依赖只能 `file:../cowcat`，而 `file:` 依赖在 CI 里要求先构建内核（现在 `packages/tui` 那条腿只有 `npm ci && npm test`）。三个选项：**A** 新建 `packages/protocol`（Node ≥22、无 opentui、无内核）+ `packages/cli`（组合根与 `serve`），`packages/tui` 退回纯渲染与客户端——这是 ADR-059「前端只允许 import 协议包」的字面读法；**B** `packages/tui` 直接 `file:../cowcat`（少一个包，但 opentui 与内核同包，ADR-056 的「依赖方向天然单向」变糊）；**C** 只交付传输与生命周期、把宿主做成注入点（**T3 本轮选的就是 C**）。**T4a 必须在动组合根之前把 A/B 定下来**，并把结论写进 `04-dependencies.md` 与 ADR。
 
 **调研问题**
 
@@ -499,8 +501,9 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T0 | **决定落表**（纯文档）：ADR-055~060 进 ADR 表；新增 `architecture/06-frontend.md`；本段补任务表；**更正 P5 段与 P7 模块表**（Read 的非文本分支改为 P6 交付）；`04-dependencies.md` 记 opentui 准入 | 调研评审通过 | ✅ 本 PR |
 | T1 | **前提验证**：CI 能否提供 Node ≥26.4（**已验证：v26.4.0 存在、26 线当前 v26.12.0**）；`@opentui/core` 在本机与 windows CI 腿能否安装并跑起最小界面；**装不上就地降级为「本机开发 + 手动验收」并把结论写回文档** | T0 | ✅ 本 PR（装得上，不降级） |
 | T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | ✅ 本 PR |
-| T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | 未开始 |
+| T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | ✅ 本 PR（宿主是**拒绝型占位**，见 T4a） |
 | T4 | **CLI 入口**：子命令表（数据）、帮助文本、`doctor` 最小版本 | T2 | 未开始 |
+| T4a | **组合根**（T3 的宿主缺口）：模型预设目录（v1 的 209 家 catalog 从哪来）+ 模型/供应商配置键（**需一条 ADR**）+ 从 `packages/cowcat` 公共 API 导出 `openAIModel`/`anthropicModel` + 七个工具 + 策略 + 审批桥，实现 `ProtocolHost`；**同一 PR 定包结构**（见下「包结构待定」） | T3、T4 | 未开始 |
 | T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | 未开始 |
 | T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 口径 | T5 | 未开始 |
 | T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | 未开始 |
