@@ -22,7 +22,7 @@
 | P2 | 端口与执行网关（含沙箱执行器迁移） | **已完成**（T1–T5 已合；T6 见下） |
 | P3 | 策略、配置与审批协议 | **已完成**（PR #14–#23，测试 219 → 347） |
 | P4 | 模型层 | **已完成**（T1–T7 全部落地、T6 拆 T6a/b/c；测试 347 → 436；ADR-035~046） |
-| P5 | 工具层 | **进行中**：ADR-047~054 已定（评审通过），T0–T2 与 T3a–T3c、T4–T6 已落（测试 436 → 546）；T7 起未开工 |
+| P5 | 工具层 | **已完成**（T0–T7 全部落地；测试 436 → 555；ADR-047~054） |
 | P6 | 前端：headless 协议与 TUI | 未开始 |
 | P7 | 功能模块（逐个调研） | 未开始 |
 | P8 | 发布切换与旧代码删除 | 未开始 |
@@ -412,7 +412,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P5 工具层
 
-> **调研已完成、ADR-047~052 已定（评审通过，2026-10-18）；ADR-053/054 随实现落表；T0–T2 与 T3a–T3c、T4–T6 已落地，T7 起未开工**：[`research/p5-tools.md`](research/p5-tools.md)。三条调研问题的答案依次见该文 §3（zod 入参 → wire JSON Schema，含 31 项实测）、§4（截断作为结构化事实进日志）、§5（纯 JS Glob/Grep 的性能实测，以及**不引入 ripgrep** 的理由）；任务拆分、每条的验收证据与「不做什么」见其 §14.2/§14.3。
+> **调研已完成、ADR-047~052 已定（评审通过，2026-10-18）；ADR-053/054 随实现落表；T0–T7 全部落地（P5 收口）**：[`research/p5-tools.md`](research/p5-tools.md)。三条调研问题的答案依次见该文 §3（zod 入参 → wire JSON Schema，含 31 项实测）、§4（截断作为结构化事实进日志）、§5（纯 JS Glob/Grep 的性能实测，以及**不引入 ripgrep** 的理由）；任务拆分、每条的验收证据与「不做什么」见其 §14.2/§14.3。
 >
 > **一处必须知道的前提**：厂商侧对 JSON Schema 子集的接受度**零实测**（无凭据/端点），因此 ADR-047 决定的是**机制**（一处常量 + 语言子集约定），校准留在 P6 第一次真连端点时做（调研 §3.5）。
 
@@ -443,12 +443,33 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T4 | **Write 与 Edit**（ADR-049 的消费方）：五条替换规则照旧、**拒绝空 `old_string`**、消费日志派生的已读集合（**恢复会话后依然成立**）、Edit 报错点明 CRLF；**出口标准点名的边界用例同 PR** | T1、T2、T3c | ✅ 本 PR（测试 500 → 517；闸门落在 `runTurn`） |
 | T5 | **Bash 薄壳**：`command` → argv（经 `PlatformPort`，**不经 `shell:true`**）、`ProcessSpec` 组装、`facts` 回填、退出码非零**不是**失败、`run_in_background` **显式拒绝**、消费第三参数（`network: 'ask'` **不得静默当 `off`**）；含 `SandboxProfile` 的配置键与纯解析函数 | T1、T2 | ✅ 本 PR（测试 517 → 537；新增配置键与 `resolveSandboxProfile`） |
 | T6 | **TodoWrite**：全量替换语义与状态校验；**「状态存哪」先落一个小 ADR**（会话日志内 vs 外部文件 vs 纯事件） | T2 + 小 ADR | ✅ 本 PR（测试 537 → 546；ADR-054 取「会话日志内的事件」） |
-| T7 | **出口标准与收口**：七个工具的统一契约测试、Edit 边界用例复核、v1 清单对照记录、端到端回合（读→改→跑命令→审批→截断）；同 PR 更新 `03-policy-and-execution.md` 的端口表 | T3a–T6 | 未开始 |
+| T7 | **出口标准与收口**：七个工具的统一契约测试、Edit 边界用例复核、v1 清单对照记录、端到端回合（读→改→跑命令→审批→截断）；同 PR 更新 `03-policy-and-execution.md` 的端口表 | T3a–T6 | ✅ 本 PR（测试 546 → 555；P5 出口标准见下） |
 
 **出口标准**
 
 - 核心六个工具的契约测试通过；Edit 的边界用例（多处匹配、空匹配、CRLF）全部覆盖
 - 与旧版工具清单对照，缺失项都有明确的「推迟到 P7」记录
+
+**P5 交付记录（2026-10-19 收口）**
+
+七个工具全部落地，住 `packages/cowcat/src/adapters/tools/`：`Read`（文本）/ `Write` / `Edit` / `Glob` / `Grep` / `Bash` / `TodoWrite`。统一契约由 `test/tools-contract.test.ts` 钉住：规格完整、wire schema 是对象且无 `$schema`、被窄化字段真实存在、**非法入参与垃圾入参都变成 `ok: false` 的结果而不是抛错**、每个工具在真正跑过的一次调用里都上报 `truncation` 事实。端到端见 `test/end-to-end.test.ts`（一个回合里读 → 改 → 待办 → 审批 → 跑命令 → 两种截断，并且重开会话后状态一致）。
+
+**与旧版清单对照**（旧版 19 个工具文件 / 30 个静态 wire 名，逐条归类见 [`research/p5-tools.md`](research/p5-tools.md) §13）：
+
+| 旧版 wire 名 | P5 状态 |
+|---|---|
+| `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Bash` / `TodoWrite` | **已交付**（Read 只做文本；Bash 经 `ProcessPort`；TodoWrite 状态进日志，ADR-054） |
+| `NotebookEdit` | 推迟 **P7**（范围 5 点名） |
+| `Read` 的图像 / PDF / notebook 三个分支 | 推迟 **P7**——**阻塞点是契约**：v2 的 `Message` 联合没有附件通路 |
+| `TaskOutput` / `TaskStop` / `TaskCreate` / `TaskGet` / `TaskUpdate` / `TaskList` | 推迟 **P7**（后台任务）；`run_in_background` 因此在 P5 **显式拒绝**而不是静默忽略 |
+| `Agent`（子 agent） | 推迟 **P7** |
+| `WebFetch` / `WebSearch` | 推迟 **P7**（网络） |
+| `EnterPlanMode` / `ExitPlanMode` | 推迟 **P7**（plan 模式；ADR-032 已记既有缺口） |
+| `CronCreate` / `CronDelete` / `CronList` / `ScheduleWakeup` | 推迟 **P7**（cron） |
+| `ListMcpResources` / `ReadMcpResource` / `SubscribeMcpResource` / `UnsubscribeMcpResource` 与动态 `mcp__*` | 推迟 **P7**（MCP） |
+| `AskUserQuestion` | 推迟 **P6/P7**（自由提问与审批是两件事） |
+
+**无「无记录缺失」**：每一个旧版 wire 名都有归属，P5 范围内唯一被砍的是 Read 的三个非文本分支。
 
 ---
 
