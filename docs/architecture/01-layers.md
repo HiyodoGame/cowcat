@@ -48,6 +48,8 @@ P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已�
 
 工具的定义 API 沿用已有的 `ToolPort` / `ToolSpec`（`defineTool()` 只是把「声明 + 实现」装配成它们），**入参只写一次**：zod schema 是唯一来源，wire JSON Schema 由 `adapters/tools/wire-schema.ts` 用 `z.toJSONSchema({ io: 'input', target })` 机械派生、剥掉 `$schema`，并在同一处拒绝被禁词汇（联合 / nullable / `record` / `literal`）。理由与「转换器不该住在适配器里」一致：这份转换与协议无关，两个协议适配器只读 `ToolSpec.inputSchema`。
 
+**Glob / Grep 的遍历范围**（ADR-050，实现在 `adapters/tools/ignore.ts`）：只读搜索根那一份 `.gitignore`，支持 `pattern`、`dir/`、`/anchored`、`*`、`**`、`!negation` 六种写法；固定跳过 `node_modules` / `.git` / `.hg` / `.svn` 与**隐藏目录**（与 `rg` 默认口径一致），保留硬跳过是为了「没有 `.gitignore` 的树也安全」。三种不支持的能力——嵌套 `.gitignore`、全局 excludes、`.git/info/exclude`——由 `GITIGNORE_LIMITATIONS` 常量声明；真正遇到嵌套文件或无法解析的模式时，**结果里点名**（而不是静默漏掉）。
+
 ## 路径身份（ADR-017）
 
 路径身份由 `FsPort` 独占：凡是拿路径当**键**的地方——信任记录、会话身份、白名单、沙箱策略条目——必须走同一实现，否则同一个目录会有两个身份。第 19 轮的 macOS 事故就是这个：`os.tmpdir()` 给符号链接写法而 `getcwd()` 给物理写法，精确字符串比较让 7 条互不相关的测试一起变红。
