@@ -11,6 +11,8 @@
 #   legacy agent/ (until P8)   Linux on every non-draft PR; its Windows and Node 24
 #                              legs only when the scope check says agent/ changed
 #   packages/cowcat (v2)       Linux + Windows on every non-draft PR
+#   packages/protocol (P6)     Linux on every non-draft PR — pure JS, on the kernel's
+#                              Node 22 floor; the tui legs build it on both platforms too
 #   packages/tui (P6)          Linux + Windows on every non-draft PR — same reason as
 #                              cowcat, plus a different Node floor: opentui needs
 #                              >=26.4 (ADR-056) and ships its native core per platform,
@@ -297,6 +299,30 @@ jobs:
       - name: Build, lint and test (pretest runs build + eslint)
         run: npm test
 
+  protocol:
+    # The seam package (ADR-062): JSON-RPC, transports, `serve` lifecycle. It runs on the
+    # kernel's Node floor, not the renderer's, which is the whole reason it is a package
+    # of its own. One leg is enough: it is pure JS, and the tui legs build it on both
+    # platforms anyway (they consume it as a `file:` dependency).
+    name: packages/protocol · node 22 · ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/protocol
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/protocol/package-lock.json
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+
   tui:
     # Node 26 is opentui's floor, not ours (ADR-056): the kernel package stays on
     # Node 22, and this is the only place the frontend's floor is verified. The leg
@@ -316,7 +342,16 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: packages/tui/package-lock.json
+          cache-dependency-path: |
+            packages/tui/package-lock.json
+            packages/protocol/package-lock.json
+      # The protocol is a file dependency, and npm links a directory — it does not
+      # install its dependencies or build it (measured: 0 extra packages, a junction).
+      # A consumer therefore has to do both itself, and this is that step.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)
@@ -341,7 +376,15 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: packages/tui/package-lock.json
+          cache-dependency-path: |
+            packages/tui/package-lock.json
+            packages/protocol/package-lock.json
+      # Same reason as the Linux leg: a file dependency is linked, not installed or
+      # built; `npm --prefix` is the one spelling that works on both platforms.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)

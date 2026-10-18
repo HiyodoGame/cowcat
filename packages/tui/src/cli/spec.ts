@@ -58,8 +58,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     run: async (context) => {
       // Imported here rather than at the top of the module: `--help` and `doctor` do
       // not need the protocol graph, and the TUI verb (T7) will need the renderer.
-      const { serve } = await import('../serve/serve.js');
-      const { refusingHost } = await import('../serve/refusing-host.js');
+      const { serve, refusingHost } = await import('@corescense/cowcat-protocol');
       return serve({
         host: refusingHost(),
         ...(context.stdin === undefined ? {} : { input: context.stdin }),

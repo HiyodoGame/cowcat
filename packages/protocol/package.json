@@ -1,0 +1,36 @@
+{
+  "name": "@corescense/cowcat-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CowCat's headless protocol: JSON-RPC over stdio, the in-memory transport, and the serve() lifecycle. Knows no renderer and no kernel.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "pretest": "npm run build && npm run lint",
+    "test": "node --test \"dist/test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "eslint": "^10.13.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
