@@ -17,6 +17,21 @@ export * from './trust.js';
 
 export type ToolRisk = 'read' | 'write' | 'exec' | 'network';
 
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+
+/**
+ * One item of the session's todo list (ADR-054).
+ *
+ * `content` is imperative ("Add input validation"), `activeForm` is the present
+ * continuous of the same task ("Adding input validation") — the pair is what lets a
+ * frontend show what is being worked on without rewriting the model's words.
+ */
+export interface TodoItem {
+  readonly content: string;
+  readonly status: TodoStatus;
+  readonly activeForm: string;
+}
+
 /**
  * What a cap left out of a tool's output (ADR-048).
  *
@@ -112,6 +127,15 @@ export interface ToolResult {
    * truncate" and "nobody said" are different facts, and only one of them is true here.
    */
   readonly truncation?: Truncation;
+  /**
+   * The session's todo list as this call leaves it (ADR-054), or absent for a tool that
+   * has no such list.
+   *
+   * The tool reports the list it declared; it does not hold one. `runTurn` turns this
+   * into the `todo.updated` event, which is what makes the list survive a reopened
+   * session — the same direction `facts` and `truncation` travel.
+   */
+  readonly todos?: readonly TodoItem[];
 }
 
 export interface ToolPort {

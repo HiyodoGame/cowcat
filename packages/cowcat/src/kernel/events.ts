@@ -1,6 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
-import type { Truncation } from '../ports/index.js';
+import type { Truncation, TodoItem } from '../ports/index.js';
 import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
@@ -56,6 +56,20 @@ export type KernelEvent = EventBase &
         readonly usage: ModelUsage;
       }
     | { readonly type: 'policy.decided'; readonly callId: string; readonly decision: Decision }
+    | {
+        /**
+         * The session's todo list, replaced wholesale (ADR-054). Full replacement, not a
+         * delta: what the model sent is the complete new state, so replay never has to
+         * merge two lists to find out what the user saw.
+         *
+         * It is an event rather than a field on `tool.finished` for the same reason
+         * `model.usage` is: the list is a fact about the session, not about the call
+         * that produced it — and the ordering is chosen so a crash between the two
+         * appends leaves the list recorded rather than silently lost.
+         */
+        readonly type: 'todo.updated';
+        readonly todos: readonly TodoItem[];
+      }
     | {
         // Written before the question is asked, so a log that ends inside an approval
         // says what was being asked rather than leaving a hole.

@@ -1,5 +1,6 @@
 import type { KernelEvent } from './events.js';
 import type { Message } from './messages.js';
+import type { TodoItem } from '../ports/index.js';
 import { canTransition, type TurnState } from './turn.js';
 
 export interface TurnView {
@@ -31,10 +32,18 @@ export interface SessionState {
    * this process's memory (the legacy `ctx.readSet` was memory and silently forgot).
    */
   readonly readFiles: readonly string[];
+  /**
+   * The session's todo list (ADR-054), replaced wholesale by each `todo.updated`.
+   *
+   * Derived from the log rather than held by the tool or by a file beside the session:
+   * a reopened session gets its list back because it gets its events back, the same
+   * promise `grants` and `readFiles` keep.
+   */
+  readonly todos: readonly TodoItem[];
 }
 
 export function initialState(sessionId: string): SessionState {
-  return { sessionId, lastSeq: 0, turn: null, messages: [], grants: [], readFiles: [] };
+  return { sessionId, lastSeq: 0, turn: null, messages: [], grants: [], readFiles: [], todos: [] };
 }
 
 // Pure and total over valid logs. A log that contradicts itself (a transition
@@ -91,6 +100,9 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
     }
     case 'policy.decided':
       return base;
+    case 'todo.updated':
+      // Full replacement, and no merging: the model sent the whole list (ADR-054).
+      return { ...base, todos: event.todos };
     case 'approval.requested':
       // Nothing to derive: the question is recorded, but "being asked" is not a fact
       // about the session's policy. The answer is, and it arrives next.

@@ -17,6 +17,7 @@
 | `model.message` | 模型一次完整输出（文本 + 工具调用 + **结束原因** `stopReason`） | 追加 assistant 消息 |
 | `model.usage` | 模型一次调用花了多少（四项：`input` / `output` / `cacheRead` / `cacheCreation`） | 不改消息、**不入 state**。独立事件而非 `model.message` 的字段（ADR-041） |
 | `policy.decided` | 对某次工具调用的策略裁决 | 不改消息，但入日志，供审计 |
+| `todo.updated` | 会话待办列表的**全量替换**（ADR-054） | 整表替换 `todos`；写在 `tool.finished` **之前**，崩在中间时丢的是报告而不是用户看得见的列表 |
 | `approval.requested` | 向用户提出的审批问题（工具名、命中的规则、理由） | 不改消息。**写在问之前**，所以停在审批上的日志能说清在等什么 |
 | `approval.answered` | 审批的回答：`{ callId, key, verdict: once\|always\|reject, by: user\|policy\|timeout }` | `always` 时把 `key` 追加进 `grants` |
 | `tool.finished` | 工具结果（成功或失败）、工具名、**执行事实**（`facts`）、**截断事实**（`truncation`）与**canonical `path`**（见下） | 追加 tool 消息；`path` 是 `readFiles` 的唯一来源 |
@@ -34,6 +35,8 @@
 **`model.usage` 是独立事件，不是 `model.message` 上的字段**（ADR-041）。两个理由：用量有**它自己的到达时刻**（Anthropic 在 `message_delta` 就到，早于流结束），以及**流在拿到用量之后被取消时也要留下用量**——挂在那条消息上就跟着一起丢了。一条流里它可以出现多次（Anthropic 报的是累积量），`reduce` 不从中派生任何状态：花了多少不改变对话，日志里的它是给报账与审计看的。
 
 **`model.message.stopReason` 可空而非可选**（`null` = 适配器没上报），与 `tool.finished.facts` 同形、同一个理由。它必须在**日志**里而不只是内存里，因为「这次回答是因为没地方了才结束」是用户要能从会话里查到的事实（`finish_reason: 'length'` 且内容为空是真实存在的失败形态）。内核只比较归一后的 `kind`，厂商原值留在 `raw` 里（ADR-035）。
+
+**待办列表是事件，工具不持有状态**（ADR-054）。`TodoWrite` 只校验并回传它声明的完整列表（`ToolResult.todos`），`runTurn` 把它变成 `todo.updated`，`reduce` 整表替换 `SessionState.todos`。理由与 `readFiles`/`grants` 同源：重开会话拿回列表，是因为拿回了事件；旧版把列表写进 `~/.cowcat/todos/<session>.json`，于是「会话状态」有了第二个家，两处还可能互相矛盾。**顺序**：`todo.updated` 写在 `tool.finished` 之前——两次 append 之间总有窗口，但先写列表时崩掉丢的是报告，先写结果时丢的是用户看得见的待办。
 
 **`grants` 是从日志归约出来的，不是旁边的另一份状态**（ADR-031 决定 3）。这正是让「回放能够复现实时会话」这句话对授权也成立的原因：重开会话拿回它的授权，因为拿回了它的事件。授权**只活在本次会话内**——永久规则要先有撤销机制（ADR-026），那还不存在。
 

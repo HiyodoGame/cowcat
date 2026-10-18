@@ -94,6 +94,12 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
       await session.transition('awaiting_tools');
       for (const call of calls) {
         const { result, path } = await runCall(deps, call, signal);
+        // Before `tool.finished` on purpose (ADR-054): two appends are never atomic, and
+        // the two directions are not equal — a crash here leaves the list recorded, while
+        // the other order would lose the user-visible state and still claim success.
+        if (result.ok && result.todos !== undefined) {
+          await session.emit({ type: 'todo.updated', turnId: session.turnId, todos: result.todos });
+        }
         await session.emit({
           type: 'tool.finished',
           turnId: session.turnId,
