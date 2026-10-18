@@ -39,6 +39,9 @@ if (!existsSync(ESLINT_BIN)) {
 const PROBES = [
   { file: 'src/index.ts', add: "import { spawn } from 'node:child_process';", expect: 'message', match: 'go through ProcessPort' },
   { file: 'src/index.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'go through ProcessPort' },
+  // The composition root is the newest member of that general block: it decides WHICH
+  // files to read, but the reading itself lives in adapters (ADR-009, ADR-064 ②).
+  { file: 'src/host/host.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'go through ProcessPort' },
   { file: 'src/policy/env.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'stay runtime-agnostic' },
   { file: 'src/policy/env.ts', add: "import { z } from 'zod';", expect: 'message', match: 'decoding boundary' },
   { file: 'src/kernel/state.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'stay runtime-agnostic' },

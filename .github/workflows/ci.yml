@@ -240,7 +240,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/cowcat/package-lock.json
+          cache-dependency-path: |
+            packages/cowcat/package-lock.json
+            packages/protocol/package-lock.json
+      # The protocol is a file dependency, and npm links a directory — it does not install
+      # its dependencies or build it. The host in this package is what implements its
+      # `ProtocolHost` port (ADR-062 ③), so this leg does both itself, before `tsc` runs.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       # bubblewrap is what the v2 system tier drives on Linux. Without it the sandbox
       # enforcement tests SKIP (with the probe's own classification as the reason), which
       # is honest but means this leg would stop covering the one thing only a real
@@ -293,7 +302,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/cowcat/package-lock.json
+          cache-dependency-path: |
+            packages/cowcat/package-lock.json
+            packages/protocol/package-lock.json
+      # Same reason as the Linux leg above: a file dependency is linked, not installed or
+      # built, and this package now compiles against it.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)
