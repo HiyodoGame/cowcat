@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
+import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelPreset, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -130,7 +130,13 @@ export interface TurnDepsOptions {
   readonly approve?: (request: ActionRequest, decision: Decision) => Promise<ApprovalVerdict>;
   readonly fs?: FsPort;
   readonly approvalTimeoutMs?: number;
-  readonly modelId?: string;
+  /**
+   * Overrides for the test preset (ADR-046). The default can do everything, so a test
+   * that is about something else never has to build a whole `ModelPreset`; a test about
+   * the preset itself passes exactly the fields it means.
+   */
+  readonly preset?: Partial<ModelPreset>;
+  readonly effort?: string;
 }
 
 // One place to build TurnDeps, for the same reason sessionDeps exists: the shape
@@ -141,9 +147,18 @@ export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOp
   return {
     session,
     model,
-    // A model id the kernel only passes through (ADR-035). Tests that care about what
-    // the adapter was asked for assert on ScriptedModel.requests, not on this default.
-    modelId: options.modelId ?? 'test-model',
+    // A preset the kernel only relays (ADR-046). Tests that care about what the adapter
+    // was asked for assert on ScriptedModel.requests, not on this default. The ceiling
+    // is arbitrary — it exists so a protocol that requires one is satisfiable from the
+    // default without every test restating it.
+    preset: {
+      protocol: 'openai',
+      model: 'test-model',
+      limits: { output: 1024 },
+      toolCalls: true,
+      ...options.preset,
+    },
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
     tools: options.tools ?? new Map(),
     rules: options.rules ?? DEFAULT_RULES,
     fs: options.fs ?? fakeFs(),

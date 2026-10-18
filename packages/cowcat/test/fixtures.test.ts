@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { anthropicModel } from '../src/adapters/model-anthropic.js';
 import { openAIModel } from '../src/adapters/model-openai.js';
-import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReasonKind } from '../src/index.js';
+import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, ReasoningBlock, StopReasonKind } from '../src/index.js';
 import { loadFixture, type Fixture, type FixtureProtocol } from './fixtures.js';
 import { replayTransport, type ReplayTransport } from './support.js';
 
@@ -56,6 +56,13 @@ const textOf = (parts: readonly ModelChunk[]) =>
   parts.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('');
 const callsOf = (parts: readonly ModelChunk[]) =>
   parts.flatMap((p) => (p.type === 'tool_call' ? [{ name: p.call.name, input: p.call.input }] : []));
+// The logical content of the reasoning, with the protocol-generated parts stripped —
+// same treatment as a tool-call id (ADR-043/045). What must survive verbatim beyond it
+// (the signature) is asserted separately, where the bytes and adapter tests can do it.
+const reasoningOf = (parts: readonly ModelChunk[]) =>
+  parts.flatMap((p) => (p.type === 'reasoning' ? [projectBlock(p.block)] : []));
+const projectBlock = (block: ReasoningBlock) =>
+  block.type === 'thinking' ? { type: 'thinking' as const, text: block.text } : { type: 'redacted' as const };
 const usagesOf = (parts: readonly ModelChunk[]) => parts.flatMap((p) => (p.type === 'usage' ? [p.usage] : []));
 const lastUsage = (parts: readonly ModelChunk[]): ModelUsage | undefined => usagesOf(parts).at(-1);
 const stopKind = (parts: readonly ModelChunk[]): StopReasonKind | null => {
@@ -98,6 +105,7 @@ for (const protocol of PAIRED) {
 
       assert.equal(textOf(parts), logical.text);
       assert.deepEqual(callsOf(parts), logical.toolCalls);
+      assert.deepEqual(reasoningOf(parts), logical.reasoning ?? []);
       assert.deepEqual(lastUsage(parts), logical.usage);
       assert.equal(stopKind(parts), logical.stopKind);
       // The request side is pinned too: a fixture records the call that produced it.
@@ -164,10 +172,11 @@ test('pinned: a thinking block arrives ahead of the text and tool call it preced
   const fixture = loadFixture('anthropic', 'synthetic', 'thinking-precedes');
   const { parts } = await drive('anthropic', fixture);
 
-  assert.deepEqual(
-    parts.flatMap((p) => (p.type === 'reasoning' ? [p.block] : [])),
-    fixture.expectation.logical.reasoning,
-  );
+  assert.deepEqual(reasoningOf(parts), fixture.expectation.logical.reasoning);
+  // The signature is protocol-generated, so it is not part of the logical content — but
+  // it has to survive verbatim, which is what makes the block replayable at all.
+  const [block] = parts.flatMap((p) => (p.type === 'reasoning' ? [p.block] : []));
+  assert.equal(block?.type === 'thinking' ? block.signature : null, 'sig_fix_opaque');
   // The block is whole by the time it is emitted, and it is first: both are the shape
   // the replay depends on.
   assert.deepEqual(parts.map((p) => p.type), ['usage', 'reasoning', 'text', 'tool_call', 'usage', 'stop']);

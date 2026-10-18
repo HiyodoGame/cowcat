@@ -9,7 +9,7 @@ import {
   type ModelPort,
   type ModelUsage,
 } from '../src/index.js';
-import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './support.js';
+import { MemoryEventStore, ScriptedModel, sessionDeps, tool, turnDeps, type TurnDepsOptions } from './support.js';
 
 // The model contract P4 added (ADR-035, ADR-040, ADR-041, ADR-045): usage, the stop
 // reason and the model's own reasoning are facts the kernel receives from an adapter and
@@ -18,10 +18,12 @@ import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './suppor
 
 const usage: ModelUsage = { input: 12, output: 34, cacheRead: 5, cacheCreation: 6 };
 
-async function setup(model: ModelPort) {
+async function setup(model: ModelPort, options: TurnDepsOptions = {}) {
   const store = new MemoryEventStore();
   const session = await Session.create(sessionDeps(store), 'sess_1');
-  const deps = turnDeps(session, model, { modelId: 'deepseek-flash' });
+  // The id these tests default to, so "the request names the model" can assert a
+  // concrete value rather than the harness's own default.
+  const deps = turnDeps(session, model, { ...options, preset: { model: 'deepseek-flash', ...options.preset } });
   return { store, session, deps };
 }
 
@@ -132,12 +134,75 @@ test('a stop chunk does not end the stream: later chunks are still consumed', as
   assert.equal(message?.type === 'model.message' ? message.text : null, 'late');
 });
 
-test('the request names the model the kernel decided on (ADR-035)', async () => {
+test('the request carries the model and the ceiling the preset declared (ADR-035/046)', async () => {
   const model = new ScriptedModel([[{ type: 'text', text: 'hi' }]]);
-  const { deps } = await setup(model);
+  const { deps } = await setup(model, { preset: { limits: { output: 4096 } } });
   await runTurn(deps, 'hi', new AbortController().signal);
 
-  assert.equal(model.requests[0]?.model, 'deepseek-flash');
+  const request = model.requests.at(0);
+  assert.ok(request !== undefined, 'the model was called');
+  assert.equal(request.model, 'deepseek-flash');
+  assert.equal(request.maxTokens, 4096);
+});
+
+test('a model the preset says cannot take tools is sent none, and the outcome says so (ADR-046)', async () => {
+  const readTool = tool({ name: 'read_file', description: 'read a file', risk: 'read' }, () => ({
+    ok: true,
+    output: 'contents',
+  }));
+  const model = new ScriptedModel([[{ type: 'text', text: 'hi' }]]);
+  const { deps } = await setup(model, {
+    preset: { toolCalls: false },
+    tools: new Map([['read_file', readTool]]),
+  });
+  const outcome = await runTurn(deps, 'hi', new AbortController().signal);
+
+  // The tool map is *not* empty — the request is what must not carry schemas, which is
+  // the difference between "this model has no tools" and "the preset says no to tools".
+  assert.deepEqual(model.requests[0]?.tools, []);
+  assert.deepEqual(outcome.notes, [{ kind: 'tools-unsupported', model: 'deepseek-flash' }]);
+});
+
+test('a declared reasoning level goes to the wire verbatim; an undeclared one is reported, not sent (ADR-046)', async () => {
+  const efforts = { high: { reasoning_effort: 'high' } };
+
+  const declared = new ScriptedModel([[{ type: 'text', text: 'hi' }]]);
+  const { deps: withLevel } = await setup(declared, { preset: { efforts }, effort: 'high' });
+  const completed = await runTurn(withLevel, 'hi', new AbortController().signal);
+  assert.deepEqual(declared.requests[0]?.providerOptions, { reasoning_effort: 'high' });
+  assert.deepEqual(completed.notes, []);
+
+  const undeclared = new ScriptedModel([[{ type: 'text', text: 'hi' }]]);
+  const { deps: withUnknownLevel } = await setup(undeclared, { preset: { efforts }, effort: 'max' });
+  const noted = await runTurn(withUnknownLevel, 'hi', new AbortController().signal);
+  assert.equal(undeclared.requests[0]?.providerOptions, undefined);
+  assert.deepEqual(noted.notes, [{ kind: 'effort-not-declared', model: 'deepseek-flash', effort: 'max' }]);
+});
+
+test('a level name inherited from Object.prototype is not a declaration (ADR-046)', async () => {
+  // `efforts['toString']` would find `Object.prototype.toString` through the prototype
+  // chain and send a function as the wire parameters — silently, since an adapter maps
+  // over an empty key set. A name the preset did not write itself is not an answer.
+  const model = new ScriptedModel([[{ type: 'text', text: 'hi' }]]);
+  const { deps } = await setup(model, { preset: { efforts: {} }, effort: 'toString' });
+  const outcome = await runTurn(deps, 'hi', new AbortController().signal);
+
+  assert.equal(model.requests[0]?.providerOptions, undefined);
+  assert.deepEqual(outcome.notes, [{ kind: 'effort-not-declared', model: 'deepseek-flash', effort: 'toString' }]);
+});
+
+test('notes describe the configuration, so a cancelled turn carries them too (ADR-046)', async () => {
+  const controller = new AbortController();
+  const { deps } = await setup(usageThenWaitForAbort(usage), { preset: { toolCalls: false } });
+
+  const turn = runTurn(deps, 'hi', controller.signal);
+  // Let the generator reach its first yield, then cancel.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  controller.abort();
+  const outcome = await turn;
+
+  assert.equal(outcome.state, 'cancelled');
+  assert.deepEqual(outcome.notes, [{ kind: 'tools-unsupported', model: 'deepseek-flash' }]);
 });
 
 test('a log carrying usage replays to the same state', async () => {

@@ -1,5 +1,5 @@
 {
-  "description": "同一个逻辑回合的 Anthropic 编码：一句文本（跨两个 text_delta）+ 一次工具调用（partial_json 跨两个 delta）+ 用量（message_start 给 input 与 cache，message_delta 给累积 output）。logical 必须与 openai/paired/text-and-tool 一致。",
+  "description": "同一个逻辑回合的 Anthropic 编码：一个 thinking 块（thinking_delta 跨两个 delta + 一个 signature_delta）+ 一句文本（跨两个 text_delta）+ 一次工具调用（partial_json 跨两个 delta）+ 用量（message_start 给 input 与 cache，message_delta 给累积 output）。logical 必须与 openai/paired/text-and-tool 一致（签名是协议生成的，不进 logical——见 test/fixtures.ts）。",
   "urlPath": "/v1/messages",
   "body": {
     "model": "fixture-model",
@@ -10,6 +10,7 @@
     "text": "Let me read that file.",
     "toolCalls": [{ "name": "read_file", "input": { "path": "a.txt" } }],
     "usage": { "input": 12, "output": 34, "cacheRead": 5, "cacheCreation": 0 },
-    "stopKind": "toolCalls"
+    "stopKind": "toolCalls",
+    "reasoning": [{ "type": "thinking", "text": "Let me read the file first." }]
   }
 }

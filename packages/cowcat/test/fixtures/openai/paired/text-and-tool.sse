@@ -1,4 +1,8 @@
-data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","content":"Let me "},"finish_reason":null}]}
+data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Let me read the file"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"reasoning_content":" first."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"content":"Let me "},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[{"index":0,"delta":{"content":"read that file."},"finish_reason":null}]}
 
@@ -11,4 +15,3 @@ data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":
 data: {"id":"chatcmpl-fix","object":"chat.completion.chunk","created":1,"model":"fixture-model","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34,"total_tokens":46,"prompt_tokens_details":{"cached_tokens":5}}}
 
 data: [DONE]
-

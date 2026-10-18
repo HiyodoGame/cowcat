@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ModelUsage, ReasoningBlock, StopReasonKind } from '../src/index.js';
+import type { ModelUsage, StopReasonKind } from '../src/index.js';
 
 // Fixture loading for the model adapters (ADR-042).
 //
@@ -9,6 +9,17 @@ import type { ModelUsage, ReasoningBlock, StopReasonKind } from '../src/index.js
 // themselves run from `dist/test`. A path relative to `import.meta.dirname` would
 // therefore point at a directory that does not exist. The root is found by walking up to
 // the package marker instead, which is right from both `test/` and `dist/test/`.
+
+/**
+ * The logical content of one reasoning block, with the protocol-generated parts left
+ * out: a thinking block's signature and a redacted block's payload are the protocol's
+ * business — the same kind of accident as a tool-call id (ADR-043) — not what the two
+ * encodings of one turn share. That the signature survives verbatim is pinned where it
+ * can be: the adapter tests and the fixture authored for exactly that.
+ */
+export type ReasoningExpectation =
+  | { readonly type: 'thinking'; readonly text: string }
+  | { readonly type: 'redacted' };
 
 /**
  * The request the recording was made with, and what that recording is *supposed* to
@@ -35,7 +46,7 @@ export interface FixtureExpectation {
      * so absent means "none", not "unspecified"): the blocks a faithful normalisation
      * must produce, in order (ADR-045).
      */
-    readonly reasoning?: readonly ReasoningBlock[];
+    readonly reasoning?: readonly ReasoningExpectation[];
   };
 }
 

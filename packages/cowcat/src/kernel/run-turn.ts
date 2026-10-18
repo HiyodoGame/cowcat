@@ -1,7 +1,8 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, IdSource, ModelPort, StopReason, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
+import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
+import type { ModelPreset } from './preset.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
 
@@ -19,11 +20,20 @@ export interface TurnDeps {
   readonly session: Session;
   readonly model: ModelPort;
   /**
-   * The model this turn asks for (ADR-035). The kernel holds it because which model to
-   * call is a decision the session made — an adapter that had to guess would be
-   * guessing about someone else's configuration.
+   * The model this turn calls, as data (ADR-046 decision ①): the id, the response
+   * ceiling, whether tools may be sent, and the wire parameters behind each reasoning
+   * level. A preset rather than an id, because "which model" and "what it can do" are
+   * one decision — held by the kernel because that decision belongs to the session, not
+   * to an adapter that would have to guess (ADR-035).
    */
-  readonly modelId: string;
+  readonly preset: ModelPreset;
+  /**
+   * The reasoning level the caller asked for, when it asked at all (ADR-046 decision ④).
+   * What a level means is the preset's data: the kernel looks up whether the level was
+   * declared, relays those parameters verbatim, and reports an undeclared level instead
+   * of sending anything.
+   */
+  readonly effort?: string;
   readonly tools: ReadonlyMap<string, ToolPort>;
   readonly rules: readonly Rule[];
   /**
@@ -43,24 +53,43 @@ export interface TurnDeps {
   readonly ids: IdSource;
 }
 
+/**
+ * A static fact the run worked under, not something the run observed (ADR-046
+ * decisions ③/④): a model the preset says cannot take tools, or a reasoning level the
+ * preset never described. The log has no place for these — an event records what
+ * happened, and configuration is not an event — so they ride the outcome instead.
+ */
+export type TurnNote =
+  | { readonly kind: 'tools-unsupported'; readonly model: string }
+  | { readonly kind: 'effort-not-declared'; readonly model: string; readonly effort: string };
+
 export interface TurnOutcome {
   readonly state: TerminalTurnState;
   readonly reason: string | null;
+  /** Empty in the common case; see TurnNote. */
+  readonly notes: readonly TurnNote[];
 }
 
 class TurnAborted extends Error {}
 
 export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal): Promise<TurnOutcome> {
   const { session } = deps;
+  const effort = wireEffort(deps.preset, deps.effort);
+  // Computed once, before anything can fail: they describe the configuration the run
+  // works under, so every exit carries them (ADR-046).
+  const notes: TurnNote[] = [];
+  if (!deps.preset.toolCalls) notes.push({ kind: 'tools-unsupported', model: deps.preset.model });
+  if (effort.note !== null) notes.push(effort.note);
+
   await session.openTurn(input);
   try {
     for (;;) {
       if (signal.aborted) throw new TurnAborted('aborted before the model was called');
-      const calls = await streamModel(deps, signal);
+      const calls = await streamModel(deps, effort.providerOptions, signal);
       if (calls.length === 0) {
         await session.transition('finishing');
         await session.transition('completed');
-        return { state: 'completed', reason: null };
+        return { state: 'completed', reason: null, notes };
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
@@ -85,19 +114,47 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
     const reason = error instanceof Error ? error.message : String(error);
     const turn = session.state.turn;
     if (turn !== null && !isTerminal(turn.state)) await session.transition(outcome, reason);
-    return { state: outcome, reason };
+    return { state: outcome, reason, notes };
   }
 }
 
-async function streamModel(deps: TurnDeps, signal: AbortSignal): Promise<readonly ToolCall[]> {
-  const { session, model, tools } = deps;
+interface EffortWiring {
+  readonly providerOptions: Readonly<Record<string, unknown>> | undefined;
+  readonly note: TurnNote | null;
+}
+
+// "Did the preset declare this level?" is the kernel's whole involvement (ADR-046
+// decision ④): the parameters are data, relayed as-is, and an unknown level is reported
+// and skipped — the same "report and skip" shape the policy layer uses for rules.
+// Own properties only: a level named `toString` is a request the preset did not answer,
+// not a declaration inherited from `Object.prototype`.
+function wireEffort(preset: ModelPreset, effort: string | undefined): EffortWiring {
+  if (effort === undefined) return { providerOptions: undefined, note: null };
+  const efforts = preset.efforts;
+  const declared = efforts !== undefined && Object.hasOwn(efforts, effort) ? efforts[effort] : undefined;
+  if (declared === undefined) {
+    return { providerOptions: undefined, note: { kind: 'effort-not-declared', model: preset.model, effort } };
+  }
+  return { providerOptions: declared, note: null };
+}
+
+async function streamModel(
+  deps: TurnDeps,
+  providerOptions: Readonly<Record<string, unknown>> | undefined,
+  signal: AbortSignal,
+): Promise<readonly ToolCall[]> {
+  const { session, model, preset, tools } = deps;
   const turnId = session.turnId;
   if (turnId === null) throw new Error('streamModel outside a turn');
 
-  const request = {
+  const request: ModelRequest = {
     messages: session.state.messages,
-    tools: [...tools.values()].map((tool) => tool.spec),
-    model: deps.modelId,
+    // The preset's `toolCalls` gates the one place tools are put on the wire; a model
+    // that cannot take them runs the same turn without (ADR-046 decision ③).
+    tools: preset.toolCalls ? [...tools.values()].map((tool) => tool.spec) : [],
+    model: preset.model,
+    ...(preset.limits.output === undefined ? {} : { maxTokens: preset.limits.output }),
+    ...(providerOptions === undefined ? {} : { providerOptions }),
   };
   await session.transition('streaming');
 
