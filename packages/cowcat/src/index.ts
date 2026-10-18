@@ -109,6 +109,13 @@ export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds
 export { defineTool, type ToolDefinition, type ToolImplementation } from './adapters/tools/define-tool.js';
 export { toWireSchema, WIRE_SCHEMA, type WireSchema } from './adapters/tools/wire-schema.js';
 export { createGlobTool, globToRegExp, GLOB_MAX_RESULTS, type GlobToolOptions } from './adapters/tools/glob.js';
+export {
+  createGrepTool,
+  GREP_MAX_FILE_BYTES,
+  GREP_MAX_OUTPUT_LINES,
+  GREP_TYPE_EXTENSIONS,
+  type GrepToolOptions,
+} from './adapters/tools/grep.js';
 export { GITIGNORE_LIMITATIONS, walkFiles, type WalkResult } from './adapters/tools/ignore.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
 export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';

@@ -23,7 +23,7 @@
 
 **`tool.finished.facts` 是让审计能看到沙箱事实的唯一通路**（ADR-033）。`ToolPort.run` 返回的是 `ToolResult` 而不是 `ProcessResult`，所以没有它，网关做过什么就停在工具边界内、审计永远看不到。`facts` **可空而非可选**（与 `turnId`/`reason` 同形，且 `exactOptionalPropertyTypes` 下 optional 的含义与类型对不上），`null` 明确表示**工具没有上报**——与「没有施加沙箱（`mode: 'off'`）」是两件不同的事实，混淆它们会让审计无法回答自己唯一要回答的问题。
 
-**`tool.finished.truncation` 与 `facts` 同形，理由也同一条**（ADR-048）。算术沿用网关那唯一一份实现（`ProcessResult.truncated` + `.dropped`，`adapters/output-tail.ts` 的「`dropped` 永远是 `total - kept`」），新增字段**可空而非可选**，`null` = 工具没上报。「只给了 2000 行」与「这个工具不截断」是两件不同的事实。`output` 里的人可读尾注**照旧保留**：同一事实、两个读者、两种渲染——模型读尾注，审计读字段。
+**`tool.finished.truncation` 与 `facts` 同形，理由也同一条**（ADR-048）。算术沿用网关那唯一一份实现（`ProcessResult.truncated` + `.dropped`，`adapters/output-tail.ts` 的「`dropped` 永远是 `total - kept`」），新增字段**可空而非可选**，`null` = 工具没上报。「只给了 2000 行」与「这个工具不截断」是两件不同的事实。`output` 里的人可读尾注**照旧保留**：同一事实、两个读者、两种渲染——模型读尾注，审计读字段。**`dropped` 本身也可为 `null`**（ADR-053）：早退（Grep 的 `files_with_matches` 达到 `head_limit` 即停）时总量未知，用 `0` 冒充「一个都没丢」会把省下的 I/O 变成一句假话；`0` 只表示「问过、确实没丢」。
 
 **`tool.finished.path` 是「先读后改」闸门的唯一来源**（ADR-049）。它由 `runTurn` 在构造 `ActionRequest` 的同一处产出，因此**已经过 `FsPort.canonical`**（ADR-017），日志里记的是策略层比较过的那个身份，不是模型的原始字符串。`reduce` 由此维护 `SessionState.readFiles`：只有 `ok` 且 `name === 'Read'` 的调用才登记，重复读同一路径只留一份。**这条必须进日志**：旧版把闸门放在内存（`agent/src/init.js:12` 的 `ctx.readSet`），而 v2 的承诺是「回放与实时状态逐字段相等」——内存集合会让恢复会话后的闸门**静默消失**，同一条「不许盲改」的规则在新会话里悄悄不再成立。理由与 ADR-033 让 `facts` 进日志同源：**重构不出来的事实必须进日志**。
 

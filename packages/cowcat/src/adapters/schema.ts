@@ -66,7 +66,9 @@ const toolCallSchema = z.object({
 // it can never be negative, and `reason` names the unit it counts in.
 const truncationSchema = z.object({
   truncated: z.boolean(),
-  dropped: z.number().int().nonnegative(),
+  // Nullable for the same reason `ToolResult.truncation` is absent rather than zero:
+  // "stopped early, total unknown" is a different fact from "dropped nothing" (ADR-053).
+  dropped: z.number().int().nonnegative().nullable(),
   reason: z.string().nullable(),
 });
 
