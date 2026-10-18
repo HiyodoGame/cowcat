@@ -172,6 +172,19 @@ export { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from '.
 export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
 export {
+  materializeAttachment,
+  AttachmentUnavailableError,
+  type MaterializeOptions,
+  type MaterializedAttachment,
+} from './adapters/attachments.js';
+export {
+  ATTACHMENT_HARD_LIMIT_BYTES,
+  ATTACHMENT_SOFT_LIMIT_BYTES,
+  makeAttachment,
+  type Attachment,
+  type AttachmentType,
+} from './ports/attachments.js';
+export {
   detectPlatformId,
   discoverWindowsRoots,
   gitRoots,

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { describeIssues, kernelEventSchema, sessionSnapshotSchema } from '../src/adapters/schema.js';
-import { SCHEMA_VERSION, type KernelEvent, type SessionSnapshot } from '../src/index.js';
+import { SCHEMA_VERSION, makeAttachment, type KernelEvent, type SessionSnapshot } from '../src/index.js';
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
@@ -89,6 +89,12 @@ const toolFinished: KernelEvent = {
   facts: null,
   truncation: { truncated: true, dropped: 12, reason: 'read: 2000 lines' },
   path: '/repo/a.txt',
+  // Both kinds of reference, so the round-trip below covers the optional metadata as
+  // well as the required fields (ADR-057).
+  attachments: [
+    makeAttachment({ type: 'image', mediaType: 'image/png', path: '/repo/a.png', bytes: 12, width: 4, height: 3 }),
+    makeAttachment({ type: 'document', mediaType: 'application/pdf', path: '/repo/a.pdf', bytes: 4096, pages: 2 }),
+  ],
 };
 
 const everyEvent: readonly KernelEvent[] = [

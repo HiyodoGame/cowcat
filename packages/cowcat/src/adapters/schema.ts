@@ -81,6 +81,17 @@ const nullableFromAbsent = <T extends z.ZodType>(schema: T): z.ZodType<z.output<
     .nullish()
     .transform((value: z.output<T> | null | undefined): z.output<T> | null => value ?? null);
 
+const attachmentSchema = z.object({
+  type: z.enum(['image', 'document']),
+  mediaType: z.string().min(1),
+  path: z.string().min(1),
+  bytes: z.number().int().nonnegative(),
+  // Absent-and-null are the same statement here, as everywhere else in this file.
+  width: nullableFromAbsent(z.number().int().positive()),
+  height: nullableFromAbsent(z.number().int().positive()),
+  pages: nullableFromAbsent(z.number().int().positive()),
+});
+
 // Mirrors `ReasoningBlock` in kernel/messages.ts (ADR-045). Both arms carry an opaque
 // vendor token — `signature` for readable thinking, `data` for a redacted block — and
 // the kernel never looks inside either one.
@@ -197,6 +208,9 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // Added after dev logs already existed (ADR-048/049), hence absent-tolerating.
     truncation: nullableFromAbsent(truncationSchema),
     path: nullableFromAbsent(z.string()),
+    // Same for attachments (ADR-057): a log written before this field existed decodes to
+    // `null`, which says "the tool reported nothing" rather than "it produced no image".
+    attachments: nullableFromAbsent(z.readonly(z.array(attachmentSchema))),
   }),
 ]);
 
@@ -208,7 +222,20 @@ const messageSchema = z.discriminatedUnion('role', [
     toolCalls: z.readonly(z.array(toolCallSchema)),
     reasoning: z.readonly(z.array(reasoningBlockSchema)),
   }),
-  z.object({ role: z.literal('tool'), callId: z.string(), ok: z.boolean(), output: z.string() }),
+  z.object({
+    role: z.literal('tool'),
+    callId: z.string(),
+    ok: z.boolean(),
+    output: z.string(),
+    // A snapshot written before ADR-057 has tool messages without this field, and the
+    // kernel's message type says "required, possibly empty" — so absent becomes empty
+    // here. The *event* keeps the distinction (null = the tool reported nothing); a
+    // message only has to say what it carries.
+    attachments: z
+      .readonly(z.array(attachmentSchema))
+      .nullish()
+      .transform((value) => value ?? []),
+  }),
 ]);
 
 const turnViewSchema = z.object({ id: z.string(), state: turnStateSchema });

@@ -92,7 +92,20 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       const readFiles = registerRead(state.readFiles, event);
       return {
         ...base,
-        messages: [...state.messages, { role: 'tool', callId: event.callId, ok: event.ok, output: event.output }],
+        messages: [
+          ...state.messages,
+          {
+            role: 'tool',
+            callId: event.callId,
+            ok: event.ok,
+            output: event.output,
+            // `null` (the tool reported nothing) and `[]` (it reported "no attachments")
+            // become the same thing here on purpose: a message says what it carries, and
+            // "carries none" is one statement. The distinction stays in the log, where
+            // the tool's own words are what is being recorded.
+            attachments: event.attachments ?? [],
+          },
+        ],
         // Same array when nothing changed: a replay of many tool calls should not
         // allocate a new list for each one that was not a read.
         ...(readFiles === state.readFiles ? {} : { readFiles }),

@@ -217,8 +217,8 @@ test('consecutive tool results are merged into the one user turn that must carry
             { callId: 'toolu_2', name: 'read_file', input: { path: 'b.txt' } },
           ],
         },
-        { role: 'tool', callId: 'toolu_1', ok: true, output: 'a' },
-        { role: 'tool', callId: 'toolu_2', ok: false, output: 'b failed' },
+        { role: 'tool', callId: 'toolu_1', ok: true, output: 'a', attachments: [] },
+        { role: 'tool', callId: 'toolu_2', ok: false, output: 'b failed', attachments: [] },
       ],
     }),
   );

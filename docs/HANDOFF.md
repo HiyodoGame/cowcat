@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加四件：T1 前提验证（#56 已合）、T2 协议（#57 已合）、T3 `serve`（#58 已合）、T4 CLI 入口（本 PR）**——都不是阶段收尾，且**组合根与包结构仍未定**（T4a，见 §3）。
-> 交接时仓库状态：**`main` = `7caf5a6`**（#58 T3 合入）。本会话（2026-10-18 → 2026-10-19）产出 **13 个已合并 PR（#42–#54）**；此后 **#55、#56、#57、#58 已合**，**T4 在 `7caf5a6` 之上开的分支上**。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加五件：T1 前提验证（#56 已合）、T2 协议（#57 已合）、T3 `serve`（#58 已合）、T4 CLI 入口（#59 已合）、T5 附件契约（本 PR）**——都不是阶段收尾，且**组合根与包结构仍未定**（T4a，见 §3）。
+> 交接时仓库状态：**`main` = `988169b`**（#59 T4 合入）。本会话（2026-10-18 → 2026-10-19）产出 **13 个已合并 PR（#42–#54）**；此后 **#55–#59 已合**，**T5 在 `988169b` 之上开的分支上**。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -82,13 +82,20 @@
 - 【源码】`src/serve/main.ts` 删除，`bin` 指向 `dist/src/cli/main.js`（一个可执行文件，六个动词）；`dist/src/serve/main.js` 旧产物已清（AGENTS.md 的提醒：删源文件要清 `dist/`）
 - 【源码】`doctor` 只报它真能查的：Node 版本、平台原生核心**解析**、协议版本、未接线动词；配置与沙箱后端**明说不查**（需要内核）
 
+### 已验证 —— P6 T5（内核包，Windows，Node **v26.12.0**）
+
+- 【本机测试】`cd packages/cowcat && npm test` → **564 tests / 548 pass / 0 fail / 16 skipped**（新增 9 项：日志往返、**字节不进日志**、replay 进消息、旧日志缺字段解出 `null`、两适配器映射、缺文件拒绝、两处大小上限）
+- 【本机测试】「字节不进日志」是**真查字节**：把带 `BYTES-MARKER-…` 的文件挂上去，再读 `.jsonl` 原文，断言路径在、大小在、**内容与它的 base64 都不在**
+- 【源码】编译期守卫按设计工作了：给 `tool.finished` 加字段后，构建在 **4 处**硬失败（`schema.ts` 的 snapshot message schema、`test/schema.test.ts` 的等价断言与 fixture、两个适配器测试的 fixture），逐处补齐才通过
+- 【源码】两处与 ADR-057 字面不同、已在 `06-frontend.md` 写清：元数据用 `number | null` 而非 `?`（`exactOptionalPropertyTypes` + 日志 schema 的既有口径）；拿不到字节时**拒绝**而不是静默省略
+
 ### CI 远端【CI 远端】
 
 本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
 
 ### 项目状态
 
-- `main` = **`7caf5a6`**（#58 T3 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1 前提验证 + T2 协议 + T3 `serve` + T4 CLI 入口（本 PR；`serve`/`doctor` 可用，其余四个动词说明缺什么），T5 起未开工；组合根与包结构 = T4a**
+- `main` = **`988169b`**（#59 T4 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1~T4 落地 + T5 附件契约落地（本 PR），T6 起未开工；组合根与包结构 = T4a**
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
 - 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——**内核包本会话仍未增删**；`packages/tui/` 两个运行时依赖：`@opentui/core@0.6.6`（T1 装）与 `zod`（T2 的解码边界），都不进内核的依赖计数
 - 【registry】npm 上 v1 的最新版仍是 **`0.15.0`**——这是**前序会话**核实的结论，**本会话未复查**
@@ -99,7 +106,16 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T4（CLI 入口）已完成（本 PR）；唯一下一步是 T4a：组合根 —— 而它的第一个动作是定包结构**。T5（附件契约）在契约上不依赖 T4a，可以并行或先做；但**任何「真的跑一个回合」的能力都卡在 T4a**。
+**P6 的 T5（附件契约）已完成（本 PR）；下一步是 T6：`Read` 的非文本分支**（图像 / PDF / notebook 走附件通路，大小与类型校验沿用 P5 口径）。T6 与 T4a 互不依赖；但**任何「真的跑一个回合」的能力仍卡在 T4a**（组合根 + 包结构，见下）。
+
+**T5 的结论**：`Attachment`（引用，无字节）→ `ToolResult.attachments` → `tool.finished.attachments`（进日志）→ `Message`（replay 得到）→ 两个适配器各自映射。**564 项测试全绿**（【本机测试】Windows / Node 26.12.0，新增 9 项）。四条值得记住的：
+
+- **「字节不进日志」是真查字节**：挂上带 `BYTES-MARKER-…` 的文件再读 `.jsonl` 原文，断言路径在、大小在、**内容与它的 base64 都不在**；materialize 只在序列化请求那一刻发生
+- **拿到字节的失败是拒绝，不是省略**（`AttachmentUnavailableError`，请求不发）：模型被告知有图却没拿到，会当成「图里什么都没说」照常回答，而那次请求在日志里看不出异常结点
+- **两个协议确实不一样**：Anthropic 把图片放进**同一个** `tool_result` 的 content 块数组；Chat Completions 的 `role:'tool'` 只能是字符串，所以图片**作为紧接着的下一条 user 消息**发出，而**文档只给引用**并在请求里写明原因
+- **`?` 换成了 `number | null`**：日志 schema 用 `.optional()` 会推出 `undefined`，与 `exactOptionalPropertyTypes` 下的内核类型不等（`schema.ts` 早有注释记着这条）。ADR-057 字面写的 `width?`，实现按日志的既有口径改成 `null`，已写进 `06-frontend.md`
+
+**T4（CLI 入口，#59 已合）一句话**：一个 `bin`、六个动词、三个出口码（`0` 做到 / `2` 命令写错 / `1` 这个构建做不到）；`serve` 与 `doctor` 可用，其余四个在表里说明缺什么。
 
 **T4 的结论**：子命令表是数据（`src/cli/spec.ts`，六个动词，一个 `bin`），帮助文本与参数校验都从表生成；**56 项测试全绿**（【本机测试】Windows / Node 26.12.0）。三条契约：
 
@@ -191,7 +207,8 @@
 6. **真实沙箱后端（bwrap / seatbelt）本机没跑过**：本机真实进程只有 `mode: 'off'`；`system` 档由 CI 的 macOS 腿与 P6 组合根覆盖。
 7. **TodoWrite 在默认规则下每次调用都会被问一次**（ADR-054 记录在案）；P6 的组合根应加一条 `allow`，否则体感很差。
 8. **Grep 早退的实际收益未测**（主张的是「有界的工作量」，不是本机上测得出的加速比）。
-9. **协议与 CLI 都过了测试，但没有跑过一次真实内核的事件流**：`ProtocolHost` 至今只有 `refusingHost()`，六个动词里只有 `serve`/`doctor` 可用——其余四个的缺口写在表里。真实宿主 = T4a（并需先定包结构）。`attachment.read` 只有形状（真实字节 = T5/T6）。
+9. **协议与 CLI 都过了测试，但没有跑过一次真实内核的事件流**：`ProtocolHost` 至今只有 `refusingHost()`，六个动词里只有 `serve`/`doctor` 可用——其余四个的缺口写在表里。真实宿主 = T4a（并需先定包结构）。`attachment.read` 的**宿主实现**仍缺（= T4a），协议与 materialize 两侧都已就位。
+10. **预设里没有「模型是否支持图片」的字段**：`ModelPreset` 只有 `toolCalls`/`efforts`，给不识图的模型发图片会 400，而契约拦不住。等目录（catalog）落地时按 `toolCalls: false` 的同一手法补（ADR-046 决策 ③）。
 
 ### 前序遗留、本会话**未复现**
 

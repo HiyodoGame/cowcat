@@ -1,6 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
-import type { Truncation, TodoItem } from '../ports/index.js';
+import type { Attachment, Truncation, TodoItem } from '../ports/index.js';
 import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
@@ -116,6 +116,17 @@ export type KernelEvent = EventBase &
          * is reopened (the legacy `ctx.readSet` did exactly that).
          */
         readonly path: string | null;
+        /**
+         * Binary content this call produced, as references (ADR-057). `null` means the
+         * tool reported NOTHING — the same statement `facts` and `truncation` make, and
+         * the log records it rather than inferring it.
+         *
+         * It is logged because "this answer came with an image" is a durable fact: a
+         * reopened session replays it into the tool message the model sees next, and a
+         * frontend learns from it that there is something to fetch. The bytes never
+         * travel this path (`attachment.read` is how a frontend asks for them).
+         */
+        readonly attachments: readonly Attachment[] | null;
       }
   );
 
