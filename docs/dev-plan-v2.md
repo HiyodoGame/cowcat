@@ -23,7 +23,7 @@
 | P3 | 策略、配置与审批协议 | **已完成**（PR #14–#23，测试 219 → 347） |
 | P4 | 模型层 | **已完成**（T1–T7 全部落地、T6 拆 T6a/b/c；测试 347 → 436；ADR-035~046） |
 | P5 | 工具层 | **已完成**（T0–T7 全部落地；测试 436 → 555；ADR-047~054） |
-| P6 | 前端：headless 协议与 TUI | 未开始 |
+| P6 | 前端：headless 协议与 TUI | **进行中**：调研完成、T0 落表（ADR-055~060）；T1 起未开工 |
 | P7 | 功能模块（逐个调研） | 未开始 |
 | P8 | 发布切换与旧代码删除 | 未开始 |
 | R1 | Windows 原生沙箱调研 | 远期 |
@@ -460,7 +460,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 |---|---|
 | `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Bash` / `TodoWrite` | **已交付**（Read 只做文本；Bash 经 `ProcessPort`；TodoWrite 状态进日志，ADR-054） |
 | `NotebookEdit` | 推迟 **P7**（范围 5 点名） |
-| `Read` 的图像 / PDF / notebook 三个分支 | 推迟 **P7**——**阻塞点是契约**：v2 的 `Message` 联合没有附件通路 |
+| `Read` 的图像 / PDF / notebook 三个分支 | **改归 P6**（2026-10-19 裁定：内联图片进 P6）——原判「推迟 P7」的阻塞点是**契约**：v2 的 `Message` 联合没有附件通路。ADR-057 把附件通路提前到 P6，因此这三个分支由 **P6 T5–T6** 交付，不再是 P7 |
 | `TaskOutput` / `TaskStop` / `TaskCreate` / `TaskGet` / `TaskUpdate` / `TaskList` | 推迟 **P7**（后台任务）；`run_in_background` 因此在 P5 **显式拒绝**而不是静默忽略 |
 | `Agent`（子 agent） | 推迟 **P7** |
 | `WebFetch` / `WebSearch` | 推迟 **P7**（网络） |
@@ -469,11 +469,15 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | `ListMcpResources` / `ReadMcpResource` / `SubscribeMcpResource` / `UnsubscribeMcpResource` 与动态 `mcp__*` | 推迟 **P7**（MCP） |
 | `AskUserQuestion` | 推迟 **P6/P7**（自由提问与审批是两件事） |
 
-**无「无记录缺失」**：每一个旧版 wire 名都有归属，P5 范围内唯一被砍的是 Read 的三个非文本分支。
+**无「无记录缺失」**：每一个旧版 wire 名都有归属。**P5 范围内唯一被砍的是 Read 的三个非文本分支，而它们在 2026-10-19 被裁定改归 P6**（附件通路提前，ADR-057）——所以「推迟」这个词对它们已经不再准确，见 P6 段的 T5/T6。
 
 ---
 
 ## P6 前端：headless 协议与 TUI
+
+> **调研已完成、T0 落表（ADR-055~060 已定），T1 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
+>
+> **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
 
 **调研问题**
 
@@ -487,6 +491,22 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 2. 协议层的契约测试（不启动真实终端）
 3. TUI 只通过协议工作：渲染订阅到的事件，不持有会话状态副本
 4. `cowcat` 命令行入口
+
+**任务拆分**（一个 PR 一个任务；契约先于实现）
+
+| 任务 | 内容 | 依赖 | 状态 |
+|---|---|---|---|
+| T0 | **决定落表**（纯文档）：ADR-055~060 进 ADR 表；新增 `architecture/06-frontend.md`；本段补任务表；**更正 P5 段与 P7 模块表**（Read 的非文本分支改为 P6 交付）；`04-dependencies.md` 记 opentui 准入 | 调研评审通过 | ✅ 本 PR |
+| T1 | **前提验证**：CI 能否提供 Node ≥26.4（**已验证：v26.4.0 存在、26 线当前 v26.12.0**）；`@opentui/core` 在本机与 windows CI 腿能否安装并跑起最小界面；**装不上就地降级为「本机开发 + 手动验收」并把结论写回文档** | T0 | 未开始 |
+| T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | 未开始 |
+| T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | 未开始 |
+| T4 | **CLI 入口**：子命令表（数据）、帮助文本、`doctor` 最小版本 | T2 | 未开始 |
+| T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | 未开始 |
+| T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 口径 | T5 | 未开始 |
+| T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | 未开始 |
+| T8 | **组件**：session-frame / message / tool-card / approval-card / todo-panel / diff-card / status-bar / command-palette | T7 | 未开始 |
+| T9 | **图片渲染**（ADR-058）：`ImageRenderable` + 能力探测（env + `a=q` 静默查询）+ 三级回退；**两个位置**（工具结果内联 + 预览模态） | T8、T5 | 未开始 |
+| T10 | **收口**：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁与图片协议验收（**需要人眼与支持协议的终端**）、`06-frontend.md` 定稿 | T2–T9 | 未开始 |
 
 **出口标准**
 
@@ -510,7 +530,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | 后台任务 | 生命周期与会话的关系，取消与清理 | P2 |
 | Worktree | 与会话和信任的关系 | P2、P3 |
 | Cron | 无人值守下的策略收窄 | P3、后台任务 |
-| 文档类工具（Notebook、PDF、图像） | PDF 解析是否引入依赖；图像是否需要模型侧支持 | P5 |
+| 文档类工具（Notebook、PDF、图像） | PDF 解析是否引入依赖；图像是否需要模型侧支持。**图像 / PDF 的读取已在 P6 T5–T6 交付**（ADR-057 的附件通路）；本行剩下的部分（`NotebookEdit` 的编辑语义、PDF 文本抽取的取舍）仍是 P7 | P5、P6 |
 
 ---
 

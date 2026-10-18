@@ -44,7 +44,7 @@ P5 每个 PR 都是**非草稿** PR，三条 `packages/cowcat` 腿（ubuntu / wi
 
 ### 项目状态
 
-- `main` 合并前 = `6373929`；P5 完成，**下一步是 P6**（headless 协议与 TUI）
+- `main` 合并前 = `6373929`；P5 完成。**P6 已开工**：调研与 T0 落表（ADR-055~060）已合，见 §3
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
 - 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——P5 **未增删任何依赖**
 - **【registry】npm 上 v1 的真实最新版仍是 `0.15.0`**（`agent/package.json` 的 `0.16.0` 是未发布的本地版本号）
@@ -53,7 +53,9 @@ P5 每个 PR 都是**非草稿** PR，三条 `packages/cowcat` 腿（ubuntu / wi
 
 ## 3. 项目唯一下一步
 
-**P6 开工前先做调研**（工作规则 1）：headless 协议形态（JSON-RPC over stdio 是否足够）、TUI 渲染选型（自研 vs ink，以实际刷新率与闪烁为准）、CLI 子命令结构。P6 的范围与调研问题已在 `dev-plan-v2.md` 的 `## P6` 段列出。
+**P6 前端**（headless 协议与 TUI）：调研已完成、**T0 已落表（ADR-055~060）**，下一步是 **T1 前提验证**——`@opentui/core` 要求 `node >=26.4.0`（Node v26.4.0 已于 2026-06-24 发布，已核实），要确认 CI 能装该版本、且本机与 windows CI 腿能装上原生二进制；**装不上就地降级为「本机开发 + 手动验收」并把结论写回文档**。任务表见 [`dev-plan-v2.md`](dev-plan-v2.md) 的 `## P6` 段（T0–T10）。
+
+> **两处评审裁定（2026-10-19）**：① TUI 渲染采纳 `@opentui/core`（ADR-056，代价是前端包 `node >=26.4.0` 与原生二进制，内核包保持 Node ≥ 22）；② **工具结果的内联图片进 P6**（ADR-057 把附件通路提前），因此 `Read` 的图像/PDF/notebook 三个分支由 P6 T5–T6 交付，不再属于 P7。
 
 P5 交给 P6 的**具体接线点**（都已就位，只差组合根）：
 
