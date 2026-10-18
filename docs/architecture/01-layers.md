@@ -54,6 +54,8 @@ P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已�
 
 **「先读后改」闸门不在 `Write` / `Edit` 里**：工具只看得到自己的入参与 `grant`，看不到会话状态。闸门在 `runTurn`（`kernel/run-turn.ts` 的 `unreadTarget`），数据来自 `readFiles`（ADR-049）；`Write` / `Edit` 只是把 `pathInput: 'file_path'` 声明出来，让内核有路径可比、让日志有路径可记。
 
+**Bash 是薄壳**（`adapters/tools/bash.ts`）：`command` 经 `PlatformPort.resolveShell()` 变成 `[shell, ...baseArgs, commandFlag, command]` 交给 `ProcessPort`——**不经 `shell: true`**（那会重新引号化、让 Node 拒绝 `.cmd`，并让 cwd 里的同名文件抢先）；沙箱编排整段在 `adapters/sandbox/*` 里，工具只组装 `ProcessSpec` 并把 `ExecutionFacts` 原样回填。`network: 'ask'` 由它兑现：有 `grant` 就本次用 `on`，没有就**拒绝并说明**（ADR-051）。它自己不读配置——profile 由组合根解析后注入（`policy/sandbox-profile.ts`）。
+
 ## 路径身份（ADR-017）
 
 路径身份由 `FsPort` 独占：凡是拿路径当**键**的地方——信任记录、会话身份、白名单、沙箱策略条目——必须走同一实现，否则同一个目录会有两个身份。第 19 轮的 macOS 事故就是这个：`os.tmpdir()` 给符号链接写法而 `getcwd()` 给物理写法，精确字符串比较让 7 条互不相关的测试一起变红。

@@ -141,6 +141,14 @@ request.command ?? request.path ?? JSON.stringify(request.input ?? null)
 
 **尚未定的一件事**（不阻塞 T2b，留给有消费者时）：**配置文件叫什么、放哪里**。`loadConfig` 接受的是**已读出的文本**加上来源标识，谁来读文件属于组合根的职责（与 `SessionDeps` 注入 `cowcatVersion`/`shell` 同理）。v2 目前还没有 CLI（P6），先固定路径会是给一个不存在的消费者做决定。
 
+### 沙箱键（P5 T5）
+
+`CowcatConfig.sandbox` 是 `SandboxProfile` 的**配置形态**，每个键都可选：`mode` / `backend` / `network` / `env.deny` / `read.{profile,allow,deny}` / `write.{allow,deny}`。**标量取最后一层说了话的那层，列表拼接**——与 `rules` 同一条规则，理由也一样：后一层不该能悄悄删掉前一层的一条 deny。`sandbox` 在解码边界是 **strict 到底**（没有 `rules` 那种「跳过一条」的层级）：`"network": "of"` 这种拼错若被忽略，网络就悄悄停在默认值上。
+
+`resolveSandboxProfile(settings, { cwd, home, fs })`（`policy/sandbox-profile.ts`，**纯函数**）把配置变成执行用的 profile：`~`、相对路径与 `.` 都经 `policy/sandbox-paths.ts` 解析成 **canonical 绝对路径**（ADR-017，后端只认身份）；**glob 与 `~user` 一类无法兑现的条目被收集并进入 `profile.limitations`**，绝不静默丢弃。默认值来自 `policy/sandbox-defaults.ts`：`light` / `network: 'off'`、凭证目录硬 deny、**`write.allow` 默认含 `.`（工作区本身可写）**——一个连自己项目都写不了的沙箱，用户一天之内就会关掉它。
+
+组合根（P6）调用一次解析器，把 profile 交给 Bash 工具。**工具自己不读配置**：它收到的就是一个 profile，「用哪个沙箱」因此只有一个决定点。
+
 ## 端口
 
 端口是内核对外部世界的全部依赖，定义在 `src/ports/`。
@@ -222,9 +230,22 @@ ProcessPort.run(spec, signal)
 |---|---|---|
 | `policy/sandbox-defaults.ts` | 默认拒绝/允许清单、私有 `/tmp` 上限 | 纯 |
 | `policy/sandbox-paths.ts` | `~` / 相对 / glob 拒绝 / 规范化 | 纯（经 `FsPort` 问文件系统） |
+| `policy/sandbox-profile.ts` | 解析后的配置 → `SandboxProfile`（P5 T5 新增） | 纯（经 `FsPort`） |
 | `adapters/sandbox/backends/bwrap.ts` | 策略 → `bwrap` argv | 纯（文件系统探针注入） |
 | `adapters/sandbox/backends/seatbelt.ts` | 策略 → `sandbox-exec` argv + SBPL | 纯 |
 | `adapters/sandbox/executor.ts` | 后端选择、拒绝、私有临时目录生命周期 | **不纯** |
+
+### `network: 'ask'` 由 Bash 工具兑现（P5 T5，ADR-051）
+
+执行器那句给用户的承诺——`ask`「grants it per approved command」（`executor.ts:157`）——在 T5 之前没有载体：`ToolPort.run` 拿不到裁决。现在有了 `grant`：
+
+| profile | `grant.networkApproved` | 结果 |
+|---|---|---|
+| `off` / `on` | 任意 | 原样交给网关 |
+| `ask` | `true` | **本次运行**用 `network: 'on'`（批准的是这一次命令） |
+| `ask` | `false` | **拒绝并说明**，一个进程都不起 |
+
+第三行是关键：把 `ask` 静默当 `off` 跑，会让执行器自己的承诺变成假话。Bash 是唯一能把「profile 说了什么」与「内核批准了什么」放在一起的地方——两个事实各在一层，工具正好是它们的交汇点。
 
 ### 拒绝有两种，消息必须不同
 

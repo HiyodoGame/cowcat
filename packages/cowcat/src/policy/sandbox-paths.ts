@@ -79,6 +79,9 @@ export function expand(entry: string, home: string, cwd: string): string {
     const tail = entry.slice(2);
     return tail === '' ? home : `${home.replace(/[/\\]+$/, '')}/${tail}`;
   }
+  // `.` is the cwd itself, and it is the default `write.allow` entry — resolving it by
+  // concatenation would produce `<cwd>/.`, a second spelling of one directory.
+  if (entry === '.' || entry === './' || entry === '.\\') return cwd;
   // Absolute is decided by the leading separator or a Windows drive letter, not by
   // `node:path`'s isAbsolute: this must behave the same when a Windows path is being
   // resolved in a test that runs on Linux, because the policy layer is portable by

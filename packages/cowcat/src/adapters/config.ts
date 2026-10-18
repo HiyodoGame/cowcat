@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { validateRules, type Rule, type RuleWhen } from '../policy/decide.js';
-import { resolveConfig, type ConfigLayer, type ConfigLayerName, type CowcatConfig } from '../policy/config.js';
+import { resolveConfig, type ConfigLayer, type ConfigLayerName, type CowcatConfig, type SandboxSettings } from '../policy/config.js';
 
 // Config decoding lives in the adapter layer, next to the code that reads the files
 // (ADR-009).
@@ -46,8 +46,32 @@ export { ruleSchema, ruleWhenSchema };
 // `rules` stays `unknown[]` here: membership is checked per entry, not by this
 // schema. Everything else about the document IS checked here, which is what makes an
 // unknown top-level key a refusal rather than a warning.
+//
+// `sandbox` is strict all the way down: unlike a rule, a sandbox key has no
+// per-entry skip tier — a typo like `"network": "of"` must not quietly leave the
+// network in its default state.
+const sandboxEnvSchema = z.strictObject({ deny: z.array(z.string()).optional() });
+const sandboxReadSchema = z.strictObject({
+  profile: z.enum(['workspace', 'hide']).optional(),
+  allow: z.array(z.string()).optional(),
+  deny: z.array(z.string()).optional(),
+});
+const sandboxWriteSchema = z.strictObject({
+  allow: z.array(z.string()).optional(),
+  deny: z.array(z.string()).optional(),
+});
+const sandboxSchema = z.strictObject({
+  mode: z.enum(['off', 'light', 'system']).optional(),
+  backend: z.enum(['auto', 'bwrap', 'seatbelt', 'none']).optional(),
+  network: z.enum(['off', 'ask', 'on']).optional(),
+  env: sandboxEnvSchema.optional(),
+  read: sandboxReadSchema.optional(),
+  write: sandboxWriteSchema.optional(),
+});
+
 const documentSchema = z.strictObject({
   rules: z.array(z.unknown()).optional(),
+  sandbox: sandboxSchema.optional(),
 });
 
 export interface ConfigSource {
@@ -147,7 +171,47 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
     rules.push(rule);
   });
 
-  return { ok: true, value: { layer: rules.length === 0 ? {} : { rules }, warnings } };
+  return {
+    ok: true,
+    value: {
+      layer: {
+        ...(rules.length === 0 ? {} : { rules }),
+        ...(document.data.sandbox === undefined ? {} : { sandbox: toSandbox(document.data.sandbox) }),
+      },
+      warnings,
+    },
+  };
+}
+
+// Bridges zod's "optional means absent or undefined" to `SandboxSettings`'s "absent,
+// never undefined" under `exactOptionalPropertyTypes`. Spreading only the present keys
+// is the same bridge `toWhen` builds for rules.
+function toSandbox(input: z.infer<typeof sandboxSchema>): SandboxSettings {
+  return {
+    ...(input.mode === undefined ? {} : { mode: input.mode }),
+    ...(input.backend === undefined ? {} : { backend: input.backend }),
+    ...(input.network === undefined ? {} : { network: input.network }),
+    ...(input.env === undefined
+      ? {}
+      : { env: { ...(input.env.deny === undefined ? {} : { deny: input.env.deny }) } }),
+    ...(input.read === undefined
+      ? {}
+      : {
+          read: {
+            ...(input.read.profile === undefined ? {} : { profile: input.read.profile }),
+            ...(input.read.allow === undefined ? {} : { allow: input.read.allow }),
+            ...(input.read.deny === undefined ? {} : { deny: input.read.deny }),
+          },
+        }),
+    ...(input.write === undefined
+      ? {}
+      : {
+          write: {
+            ...(input.write.allow === undefined ? {} : { allow: input.write.allow }),
+            ...(input.write.deny === undefined ? {} : { deny: input.write.deny }),
+          },
+        }),
+  };
 }
 
 /**
