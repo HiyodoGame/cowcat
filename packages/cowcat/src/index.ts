@@ -116,6 +116,13 @@ export {
   GREP_TYPE_EXTENSIONS,
   type GrepToolOptions,
 } from './adapters/tools/grep.js';
+export {
+  createReadTool,
+  READ_ABSOLUTE_LIMIT,
+  READ_LARGE_LIMIT,
+  READ_MAX_LINES,
+  type ReadToolOptions,
+} from './adapters/tools/read.js';
 export { GITIGNORE_LIMITATIONS, walkFiles, type WalkResult } from './adapters/tools/ignore.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
 export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';

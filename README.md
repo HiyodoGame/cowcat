@@ -13,7 +13,7 @@ keys and your terminal under your own control. Zero runtime dependencies, Node.j
 | 形态 | 位置 | 状态 |
 |---|---|---|
 | **v1 CLI**（当前唯一可发布版本） | [`agent/`](agent/) | 已发布 `0.15.0`（npm `@corescense/cowcat`），MIT，零运行时依赖 |
-| **v2 内核**（事件溯源会话运行时） | [`packages/cowcat/`](packages/cowcat/) | P0–P4 已完成（内核、端口、执行网关、模型适配器）；P5 工具层进行中（工具定义 API、Glob、Grep 已落） |
+| **v2 内核**（事件溯源会话运行时） | [`packages/cowcat/`](packages/cowcat/) | P0–P4 已完成（内核、端口、执行网关、模型适配器）；P5 工具层进行中（工具定义 API、Glob、Grep、Read 已落） |
 
 v1 与 v2 长期并存，v2 达到功能对等后才切换（计划中的 P8），在那之前 `agent/` 只接受安全修复。
 

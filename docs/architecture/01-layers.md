@@ -50,6 +50,8 @@ P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已�
 
 **Glob / Grep 的遍历范围**（ADR-050，实现在 `adapters/tools/ignore.ts`）：只读搜索根那一份 `.gitignore`，支持 `pattern`、`dir/`、`/anchored`、`*`、`**`、`!negation` 六种写法；固定跳过 `node_modules` / `.git` / `.hg` / `.svn` 与**隐藏目录**（与 `rg` 默认口径一致），保留硬跳过是为了「没有 `.gitignore` 的树也安全」。三种不支持的能力——嵌套 `.gitignore`、全局 excludes、`.git/info/exclude`——由 `GITIGNORE_LIMITATIONS` 常量声明；真正遇到嵌套文件或无法解析的模式时，**结果里点名**（而不是静默漏掉）。
 
+**Read 只做文本**（`adapters/tools/read.ts`）：分页 2000 行、5MB 软限（`allow_large` 可读到 20MB 硬顶）；**图像 / PDF / notebook 显式拒绝并指向 P7**——v2 的 `Message` 联合没有附件通路，假装能读等于在错误的层发明一个通道。**CRLF 作为事实告知而不规范化字节**：返回的行仍带 `\r`（模型看不见），所以结果里写明行尾风格；Edit 必须按字节匹配，自动规范化会让「改了什么」不可预测（ADR-050，调研 §6.2）。
+
 ## 路径身份（ADR-017）
 
 路径身份由 `FsPort` 独占：凡是拿路径当**键**的地方——信任记录、会话身份、白名单、沙箱策略条目——必须走同一实现，否则同一个目录会有两个身份。第 19 轮的 macOS 事故就是这个：`os.tmpdir()` 给符号链接写法而 `getcwd()` 给物理写法，精确字符串比较让 7 条互不相关的测试一起变红。
