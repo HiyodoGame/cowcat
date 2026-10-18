@@ -1,12 +1,14 @@
 import type { KernelEvent } from '../kernel/events.js';
 import type { Message, ReasoningBlock, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
+import type { Attachment } from './attachments.js';
 import type { ModelUsage, StopReason } from './model.js';
 import type { ExecutionFacts } from './process.js';
 
 // The ports live in their own files (docs/architecture/01-layers.md) and are
 // re-exported here, so this barrel stays the single import surface for the kernel
 // and the tests.
+export * from './attachments.js';
 export * from './audit.js';
 export * from './fs.js';
 export * from './instructions.js';
@@ -136,6 +138,15 @@ export interface ToolResult {
    * session — the same direction `facts` and `truncation` travel.
    */
   readonly todos?: readonly TodoItem[];
+  /**
+   * Binary content this call hands to the model (ADR-057), or absent for a tool that
+   * produced none.
+   *
+   * `runTurn` turns this into the `tool.finished` event's `attachments`, which is what
+   * makes "this answer came with an image" a replayable fact rather than something the
+   * next process has to rediscover. The entries are references; the bytes stay on disk.
+   */
+  readonly attachments?: readonly Attachment[];
 }
 
 export interface ToolPort {

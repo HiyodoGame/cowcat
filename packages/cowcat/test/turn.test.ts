@@ -87,6 +87,7 @@ test('a read tool runs without asking and its result reaches the next model call
     callId: 'c1',
     ok: true,
     output: 'file contents',
+    attachments: [],
   });
   assert.equal(session.state.messages.length, 4);
 });
@@ -105,7 +106,7 @@ test('a write tool is asked about, and a rejection is reported to the model inst
 
   assert.deepEqual(asked, ['write_file']);
   const toolMsg = session.state.messages.find((m) => m.role === 'tool');
-  assert.deepEqual(toolMsg, { role: 'tool', callId: 'c1', ok: false, output: 'rejected by user' });
+  assert.deepEqual(toolMsg, { role: 'tool', callId: 'c1', ok: false, output: 'rejected by user', attachments: [] });
 });
 
 test('a denied action never reaches the tool', async () => {
@@ -148,6 +149,7 @@ test('a tool that throws becomes a failed tool result, not a failed turn', async
     callId: 'c1',
     ok: false,
     output: 'disk on fire',
+    attachments: [],
   });
 });
 

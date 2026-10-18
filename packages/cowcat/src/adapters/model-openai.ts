@@ -1,6 +1,7 @@
 import OpenAI, { APIConnectionError, APIError, APIUserAbortError } from 'openai';
 import type { Message, ReasoningBlock } from '../kernel/messages.js';
-import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
+import type { Attachment, ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
+import { materializeAttachment } from './attachments.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
 // The OpenAI-compatible adapter (ADR-036): one protocol that 201 of the 209 catalogued
@@ -203,17 +204,26 @@ function toWireMessages(
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const wire: OpenAI.Chat.ChatCompletionMessageParam[] = [];
   if (request.system !== undefined) wire.push({ role: 'system', content: request.system });
-  for (const message of request.messages) wire.push(toWireMessage(message, reasoningReplayField));
+  for (const message of request.messages) wire.push(...toWireMessagesFor(message, reasoningReplayField));
   return wire;
 }
 
-function toWireMessage(
+/**
+ * One internal message becomes one wire message — except a tool result with
+ * attachments, which becomes two.
+ *
+ * That is Chat Completions' shape, not our choice: a `role: 'tool'` message's content is
+ * a string, and images are content parts of a *user* message. So the attachment goes out
+ * as the next user turn, right after the result it belongs to (ADR-057's "two adapters
+ * each map it their own way" — Anthropic needs no such thing).
+ */
+function toWireMessagesFor(
   message: Message,
   reasoningReplayField: string | null,
-): OpenAI.Chat.ChatCompletionMessageParam {
+): OpenAI.Chat.ChatCompletionMessageParam[] {
   switch (message.role) {
     case 'user':
-      return { role: 'user', content: message.text };
+      return [{ role: 'user', content: message.text }];
     case 'assistant': {
       const toolCalls = message.toolCalls.map((call) => ({
         id: call.callId,
@@ -232,20 +242,58 @@ function toWireMessage(
         const reasoningText = reasoningTextOf(message);
         if (reasoningText !== '') replay[reasoningReplayField] = reasoningText;
       }
-      return {
-        role: 'assistant',
-        // `null`, not an empty string: a turn that only called tools has no text, and
-        // sending `''` alongside `tool_calls` is a shape some endpoints reject.
-        content: message.text === '' ? null : message.text,
-        ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
-        ...replay,
-      };
+      return [
+        {
+          role: 'assistant',
+          // `null`, not an empty string: a turn that only called tools has no text, and
+          // sending `''` alongside `tool_calls` is a shape some endpoints reject.
+          content: message.text === '' ? null : message.text,
+          ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+          ...replay,
+        },
+      ];
     }
-    case 'tool':
+    case 'tool': {
       // The name is deliberately absent: the wire format pairs a result with its call
       // by `tool_call_id`, and the call is the only place the name belongs.
-      return { role: 'tool', tool_call_id: message.callId, content: message.output };
+      const result: OpenAI.Chat.ChatCompletionMessageParam = {
+        role: 'tool',
+        tool_call_id: message.callId,
+        content: message.output,
+      };
+      if (message.attachments.length === 0) return [result];
+      return [result, attachmentMessage(message.attachments)];
+    }
   }
+}
+
+/**
+ * The images of a tool result, as the user turn that this protocol needs them to be.
+ *
+ * Documents are named rather than inlined: Chat Completions has no portable document
+ * part, and inventing one would be this adapter guessing at a vendor's beta surface. The
+ * note says so **in the request**, so the model is not left believing it saw the file —
+ * a silent omission would be the same failure as a silently dropped image (ADR-016).
+ */
+function attachmentMessage(attachments: readonly Attachment[]): OpenAI.Chat.ChatCompletionMessageParam {
+  const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
+  const documents: string[] = [];
+  for (const attachment of attachments) {
+    if (attachment.type === 'document') {
+      documents.push(`${attachment.mediaType} at ${attachment.path} (${String(attachment.bytes)} bytes)`);
+      continue;
+    }
+    const materialized = materializeAttachment(attachment);
+    parts.push({
+      type: 'image_url',
+      image_url: { url: `data:${materialized.mediaType};base64,${materialized.base64}` },
+    });
+  }
+  const text =
+    documents.length === 0
+      ? 'Attachments from the previous tool result:'
+      : `Attachments from the previous tool result (documents are referenced, not inlined — this protocol has no portable document part):\n${documents.join('\n')}`;
+  return { role: 'user', content: [{ type: 'text', text }, ...parts] };
 }
 
 // The two vendor spellings for streamed reasoning, neither of which the SDK's chunk type

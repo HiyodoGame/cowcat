@@ -112,6 +112,8 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
           facts: result.facts ?? null,
           // Same rule for truncation: `null` = not reported (ADR-048).
           truncation: result.truncation ?? null,
+          // And for attachments: `null` = the tool produced no binary content (ADR-057).
+          attachments: result.attachments ?? null,
           // The canonical path from the request that was decided on (ADR-049).
           path,
         });

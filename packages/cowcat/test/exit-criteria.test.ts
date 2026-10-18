@@ -223,6 +223,8 @@ const GOLDEN: readonly unknown[] = [
     truncation: null,
     // Canonicalised by the FsPort double (ADR-017/049): the fake normalises separators.
     path: 'a.txt',
+    // The tool produced no binary content, so it reported nothing (ADR-057).
+    attachments: null,
   },
   { type: 'turn.transitioned', from: 'awaiting_tools', to: 'requesting', reason: null },
   { type: 'turn.transitioned', from: 'requesting', to: 'streaming', reason: null },

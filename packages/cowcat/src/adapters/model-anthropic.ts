@@ -1,6 +1,7 @@
 import Anthropic, { APIConnectionError, APIError, APIUserAbortError } from '@anthropic-ai/sdk';
 import type { Message } from '../kernel/messages.js';
-import type { ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
+import type { Attachment, ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
+import { materializeAttachment } from './attachments.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
 // The Anthropic adapter (ADR-036). Needed for Claude itself and for the four MiniMax
@@ -240,7 +241,13 @@ function toWireMessages(messages: readonly Message[], carryReasoning: boolean): 
       const result: Anthropic.ToolResultBlockParam = {
         type: 'tool_result',
         tool_use_id: message.callId,
-        content: message.output,
+        // Anthropic is the protocol where an attachment needs no workaround: a tool
+        // result's content is a block array, so the image rides in the same message as
+        // the text it belongs to (ADR-057).
+        content:
+          message.attachments.length === 0
+            ? message.output
+            : [{ type: 'text', text: message.output }, ...message.attachments.map(toAttachmentBlock)],
         ...(message.ok ? {} : { is_error: true }),
       };
       if (previous?.role === 'user' && Array.isArray(previous.content) && isAllToolResults(previous.content)) {
@@ -282,6 +289,34 @@ function toWireMessages(messages: readonly Message[], carryReasoning: boolean): 
 
 function isAllToolResults(content: Anthropic.ContentBlockParam[]): boolean {
   return content.length > 0 && content.every((block) => block.type === 'tool_result');
+}
+
+/**
+ * An attachment as this protocol's block. The media type is the producer's claim (the
+ * tool read it off the file) and is cast to the vendor's literal union here, because a
+ * vendor vocabulary is protocol knowledge and the kernel deliberately does not carry it
+ * (ADR-035, and ADR-056's precedent for the same kind of cast).
+ */
+function toAttachmentBlock(attachment: Attachment): Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam {
+  const materialized = materializeAttachment(attachment);
+  if (materialized.type === 'image') {
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: materialized.mediaType as Anthropic.Base64ImageSource['media_type'],
+        data: materialized.base64,
+      },
+    };
+  }
+  return {
+    type: 'document',
+    source: {
+      type: 'base64',
+      media_type: materialized.mediaType as Anthropic.Base64PDFSource['media_type'],
+      data: materialized.base64,
+    },
+  };
 }
 
 function toWireTool(spec: ToolSpec): Anthropic.Tool {

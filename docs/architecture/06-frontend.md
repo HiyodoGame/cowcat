@@ -109,18 +109,36 @@ packages/tui/src/
 
 ## 附件与图像（ADR-057、ADR-058）
 
-### 附件通路
+### 附件通路（**T5 已实现**）
 
 ```
 工具（Read / 未来的 NotebookEdit）
-  → ToolResult.attachments          形状沿用旧版 attach.js：{ type, mediaType, path, bytes, width?, height?, pages? }
+  → ToolResult.attachments          形状沿用旧版 attach.js：{ type, mediaType, path, bytes, width, height, pages }
   → tool.finished.attachments       进日志（可空）——「这次回答里有一张图」是可重放的事实
   → Message 携带附件【引用】         日志是 JSON，字节不进日志
   → ModelRequest 内容部件            两个协议各自映射（否则图片只是给人看的装饰）
   → 协议 attachment.read(id)         前端与内核是两个进程，前端不能直接读内核侧的路径
 ```
 
-**大小与类型**沿用 P5 的口径（`READ_LARGE_LIMIT` = 5MB 软限、20MB 硬顶），超限时**拒绝并说明**，不截断字节。
+落地时定下的四件事，其中前两件与 ADR-057 的字面不同，理由写在代码里：
+
+| 项 | 形状 | 为什么 |
+|---|---|---|
+| 未知元数据 | `width`/`height`/`pages` 是 **`number \| null`（必填可为空）**，不是 ADR-057 写的 `?` | `adapters/schema.ts` 已经为这条踩过坑：日志 schema 用 `.optional()` 会推出 `undefined`，而 `exactOptionalPropertyTypes` 下那与内核类型不是同一个类型。日志里「没报」一律写 `null`，与 `facts`/`truncation`/`path` 同一口径 |
+| 旧日志 | `tool.finished.attachments` 用 `nullableFromAbsent`：**这个字段不存在时解出 `null`** | 与 ADR-048/049 同手法；不想让「早于本 ADR 写的日志」被读成「工具没产出图片」 |
+| 大小口径 | `ATTACHMENT_SOFT_LIMIT_BYTES` 5MB / `ATTACHMENT_HARD_LIMIT_BYTES` 20MB（与 P5 同口径，但**常量各自存在**） | 一个管「读回多少文本」，一个管「多少字节能上一趟模型请求」；合并会让「改一个动另一个」变成隐式行为 |
+| 拿不到字节时 | **拒绝**（`AttachmentUnavailableError`），请求不发 | 模型被告知有图却没拿到，会当成「图里什么都没说」照常回答——而那次请求在日志里看不出任何异常（ADR-016 的纪律：拒绝，不降级）。声明的 `bytes` 先查（不读文件），文件的真实大小再查（它可能已经变了） |
+
+**两个协议的映射各不相同**（这是「各自映射」的实测样子）：
+
+| 协议 | 图片 | 文档 |
+|---|---|---|
+| Anthropic | 放在**同一个** `tool_result` 的 content 块数组里（`{type:'image', source:{type:'base64',…}}`）——这个协议本来就能让附件跟着它所属的结果走 | 同处一块 `document` 块 |
+| OpenAI (Chat Completions) | `role:'tool'` 的 content 只能是字符串，所以图片**作为紧接着的下一条 user 消息**发出（`image_url` + `data:` URL） | **只给引用**（路径/类型/大小），并在请求里写明「这个协议没有可移植的 document 部件」——不静默省略 |
+
+**仍缺的一件事**：预设（`ModelPreset`）里**没有「模型是否支持图片」的字段**。给不识图模型发图片会 400，而现在的契约拦不住——等目录（catalog）落地时补，与 `toolCalls: false` 同一手法（ADR-046 决策 ③）。
+
+**还没验证的**：Anthropic 的 `document` 块是否需要 beta header，以及在 `tool_result` 里放图片/文档是否被所有模型接受——本机没有凭据，两个协议的实际接受度仍是零实测（与调研里「厂商侧零实测」同一条）。
 
 ### 图像协议矩阵
 

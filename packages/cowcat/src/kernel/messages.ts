@@ -1,3 +1,5 @@
+import type { Attachment } from '../ports/attachments.js';
+
 export interface ToolCall {
   readonly callId: string;
   readonly name: string;
@@ -35,4 +37,19 @@ export type Message =
       readonly toolCalls: readonly ToolCall[];
       readonly reasoning: readonly ReasoningBlock[];
     }
-  | { readonly role: 'tool'; readonly callId: string; readonly ok: boolean; readonly output: string };
+  | {
+      readonly role: 'tool';
+      readonly callId: string;
+      readonly ok: boolean;
+      readonly output: string;
+      /**
+       * What this result handed the model besides text (ADR-057). Required and possibly
+       * empty, like `reasoning`: "the tool produced no image" and "we dropped the image"
+       * are different statements, and only one of them is true here.
+       *
+       * The entries are references — the adapter materializes the bytes when it
+       * serializes a request, which is why a reopened session can still send the same
+       * image without the log ever having held it.
+       */
+      readonly attachments: readonly Attachment[];
+    };
