@@ -216,7 +216,10 @@
 
 ### 前序遗留、本会话**未复现**
 
-1. **macOS flake**：`agent/test/chrome.test.mjs:47` 固定 `sleep(15)` 后断言光标序列，**会随机卡住任何 PR**（它真的卡过 #26）；因 `agent/` 树冻结，「算不算安全修复」的口径问了三轮未答。
+1. **macOS flake（两个，同一个病根：用真实时间等，然后断言时间相关的结果）**：
+   - `agent/test/chrome.test.mjs:47` 固定 `sleep(15)` 后断言光标序列，**会随机卡住任何 PR**（它真的卡过 #26）。
+   - `agent/test/toast.test.mjs:34` 用 `duration: 30` 的计时器 + `sleep(60)`，**30ms 余量**在被占满的 runner 上偶发超时。**PR #61 实测**：同一 commit 首次运行 `# fail 1`（762 项里就它），`gh run rerun --failed` 后通过。
+   - 两者都在冻结的 `agent/` 树里。「算不算安全修复」的口径问了三轮未答——**只改测试的确定性修复**（注入假时钟 / 放大余量）需要用户点头，不由主 Agent 顺手带进 P6 的 PR。
 2. **ADR-034 要不要挪到 033 之后**（ADR 表不严格单调；新 ADR 一律追加表末）。
 3. **ADR-044 仍未收到显式认可**——P5 的 047/052 与 P6 的 055/058 都**引用**了它（「不发明策略」「不读不造」），但「被引用」不等于认可。
 4. `agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` **不在仓库里**（209 家 catalog「怎么更新」仍未定，ADR-037 已记）。
