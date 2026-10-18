@@ -22,10 +22,19 @@ export interface SessionState {
    * (ADR-026), and that does not exist yet.
    */
   readonly grants: readonly string[];
+  /**
+   * Canonical paths this session has read successfully (ADR-049), in the order they
+   * were first read.
+   *
+   * Derived from `tool.finished` rather than held beside the log, so "read before
+   * write" survives a reopened session: the gate is a fact about the log, not about
+   * this process's memory (the legacy `ctx.readSet` was memory and silently forgot).
+   */
+  readonly readFiles: readonly string[];
 }
 
 export function initialState(sessionId: string): SessionState {
-  return { sessionId, lastSeq: 0, turn: null, messages: [], grants: [] };
+  return { sessionId, lastSeq: 0, turn: null, messages: [], grants: [], readFiles: [] };
 }
 
 // Pure and total over valid logs. A log that contradicts itself (a transition
@@ -70,11 +79,16 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       // later decision reads. The event is in the log for whoever reports or audits
       // cost (ADR-041).
       return base;
-    case 'tool.finished':
+    case 'tool.finished': {
+      const readFiles = registerRead(state.readFiles, event);
       return {
         ...base,
         messages: [...state.messages, { role: 'tool', callId: event.callId, ok: event.ok, output: event.output }],
+        // Same array when nothing changed: a replay of many tool calls should not
+        // allocate a new list for each one that was not a read.
+        ...(readFiles === state.readFiles ? {} : { readFiles }),
       };
+    }
     case 'policy.decided':
       return base;
     case 'approval.requested':
@@ -84,6 +98,23 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
     case 'approval.answered':
       return event.verdict === 'always' ? { ...base, grants: [...state.grants, event.key] } : base;
   }
+}
+
+// The tool name is the only thing `reduce` can select on: the tool's spec is not part
+// of the log and the kernel does not hold a registry while replaying (ADR-049). T2 must
+// therefore name the read tool exactly this, and the constant is the one place to change
+// if that ever stops being true.
+const READ_TOOL_NAME = 'Read';
+
+// Registers a successful read. Returns the SAME array when nothing changes, which keeps
+// a replay of mostly-writes from copying the list on every event.
+function registerRead(
+  readFiles: readonly string[],
+  event: Extract<KernelEvent, { type: 'tool.finished' }>,
+): readonly string[] {
+  if (!event.ok || event.name !== READ_TOOL_NAME || event.path === null) return readFiles;
+  if (readFiles.includes(event.path)) return readFiles;
+  return [...readFiles, event.path];
 }
 
 export function replay(sessionId: string, events: readonly KernelEvent[]): SessionState {

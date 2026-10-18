@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelPreset, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
+import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelPreset, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type ToolGrant, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -120,8 +120,13 @@ export class ScriptedModel implements ModelPort {
   }
 }
 
-export function tool(spec: ToolSpec, run: (input: unknown) => ToolResult | Promise<ToolResult>): ToolPort {
-  return { spec, run: async (input) => run(input) };
+export function tool(
+  spec: ToolSpec,
+  run: (input: unknown, grant: ToolGrant) => ToolResult | Promise<ToolResult>,
+): ToolPort {
+  // The signal is forwarded only so a double that wants it can take a third parameter;
+  // most tests care about the input, and some about what was granted (ADR-051).
+  return { spec, run: async (input, _signal, grant) => run(input, grant) };
 }
 
 export interface TurnDepsOptions {

@@ -153,7 +153,7 @@ request.command ?? request.path ?? JSON.stringify(request.input ?? null)
 | `LockPort` | 已实现（Node 文件锁） | 会话单写者锁，见 [02-kernel.md](02-kernel.md#单写者锁) |
 | `SnapshotPort` | 已实现（JSON 文件快照） | 回放加速；缺失或损坏一律回退全量回放，见 [02-kernel.md](02-kernel.md#快照) |
 | `ModelPort` | 接口已定，适配器 P4 | 流式模型调用，带 `AbortSignal` |
-| `ToolPort` | 接口已定，工具 P5 | 工具规格 + 执行 |
+| `ToolPort` | 接口已定（含 P5 T1 的 `grant` 第三参数），工具 P5 | 工具规格 + 执行；`run(input, signal, grant)` 的 `grant` **只**描述本次授予（`networkApproved`），不携带规则或意见（ADR-051） |
 | `ProcessPort` | **已实现**（P2 T4，Node 适配器） | 唯一的子进程网关：脱敏、截断、终止都在里面；超时与取消走同一条终止路径（ADR-014、ADR-015）。沙箱执行器待做（T5），`system` 档在注入执行器前**显式拒绝**，不降级（ADR-016） |
 | `FsPort` | **已实现**（P2 T3，Node 适配器） | 路径身份：canonical / samePath / kindOf / exists，**同步**；缓存挂实例且只在找到现存祖先时写入（ADR-017） |
 | `PlatformPort` | **已实现**（P2 T2，Node 适配器） | shell 解析（绝对路径 + 真跑验证）、进程树终止策略、沙箱后端**真跑**探测；结果按会话记忆一次（ADR-018） |

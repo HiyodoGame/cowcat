@@ -1,5 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
+import type { Truncation } from '../ports/index.js';
 import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
@@ -87,6 +88,20 @@ export type KernelEvent = EventBase &
          * that as "not known", never as "no sandbox".
          */
         readonly facts: ExecutionFacts | null;
+        /**
+         * What a cap left out of `output` (ADR-048), or `null` when the tool reported
+         * nothing — the same statement `facts` makes, for the same reason.
+         */
+        readonly truncation: Truncation | null;
+        /**
+         * The canonical path this call acted on, when its spec declared a `pathInput`
+         * (ADR-049). `null` when it declared none, or the input carried no usable value.
+         *
+         * It is logged because `reduce` rebuilds the "read before write" gate from it: a
+         * set held beside the log would make that rule silently vanish once the session
+         * is reopened (the legacy `ctx.readSet` did exactly that).
+         */
+        readonly path: string | null;
       }
   );
 

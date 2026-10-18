@@ -1,6 +1,6 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
+import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, ToolGrant, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import type { ModelPreset } from './preset.js';
 import type { Session } from './session.js';
@@ -93,7 +93,7 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
-        const result = await runCall(deps, call, signal);
+        const { result, path } = await runCall(deps, call, signal);
         await session.emit({
           type: 'tool.finished',
           turnId: session.turnId,
@@ -104,6 +104,10 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
           // Passed through, not invented: a tool that reported no facts contributes
           // `null`, so the audit can tell "not known" from "nothing applied".
           facts: result.facts ?? null,
+          // Same rule for truncation: `null` = not reported (ADR-048).
+          truncation: result.truncation ?? null,
+          // The canonical path from the request that was decided on (ADR-049).
+          path,
         });
       }
       await session.transition('requesting');
@@ -262,6 +266,13 @@ interface ApprovalOutcome {
   readonly by: ApprovalBy;
 }
 
+// What one call produced: the result the model will see, plus the canonical path the
+// log records for the "read before write" gate (ADR-049).
+interface CompletedCall {
+  readonly result: ToolResult;
+  readonly path: string | null;
+}
+
 /**
  * Waits for an answer, but not forever (ADR-032), and not past a cancellation.
  *
@@ -309,26 +320,35 @@ async function askForApproval(
   }
 }
 
-async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<ToolResult> {
+async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
   const { session } = deps;
   const turnId = session.turnId;
   const tool = deps.tools.get(call.name);
-  if (tool === undefined) return { ok: false, output: `unknown tool: ${call.name}` };
+  if (tool === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
 
+  // Built once: the request needs it canonicalised, and the log records the same value
+  // (ADR-049) — computing it twice is how the two spellings would drift apart.
+  const fields = actionFields(deps.fs, tool.spec, call.input);
+  const path = fields.path ?? null;
   const request: ActionRequest = {
     kind: 'tool',
     callId: call.callId,
     name: call.name,
     risk: tool.spec.risk,
     input: call.input,
-    ...actionFields(deps.fs, tool.spec, call.input),
+    ...fields,
   };
   const decision = decide(request, deps.rules);
   await session.emit({ type: 'policy.decided', turnId, callId: call.callId, decision });
 
   if (decision.verdict === 'deny') {
-    return { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` };
+    return { result: { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` }, path };
   }
+
+  // Whether THIS call was granted by a person — the only thing `ToolGrant.networkApproved`
+  // reports (ADR-051). A `deny` or a `reject` never reaches the tool at all; an `allow`
+  // verdict means no question was asked, so nothing was granted either.
+  let approved = false;
 
   if (decision.verdict === 'ask') {
     const key = approvalKey(request);
@@ -345,6 +365,7 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         verdict: 'always',
         by: 'policy',
       });
+      approved = true;
     } else {
       await session.transition('awaiting_approval', decision.rule);
       // The question is written before it is asked, so a log that ends here says what
@@ -368,15 +389,19 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
       });
       await session.transition('awaiting_tools');
       if (outcome.verdict === 'reject') {
-        return { ok: false, output: outcome.by === 'timeout' ? REJECTED_BY_TIMEOUT : REJECTED_BY_USER };
+        const rejected = outcome.by === 'timeout' ? REJECTED_BY_TIMEOUT : REJECTED_BY_USER;
+        return { result: { ok: false, output: rejected }, path };
       }
+      approved = true;
     }
   }
 
+  const grant: ToolGrant = { networkApproved: approved };
   try {
-    return await tool.run(call.input, signal);
+    return { result: await tool.run(call.input, signal, grant), path };
   } catch (error) {
     if (signal.aborted) throw error;
-    return { ok: false, output: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    return { result: { ok: false, output: message }, path };
   }
 }

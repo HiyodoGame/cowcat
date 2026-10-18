@@ -19,9 +19,15 @@
 | `policy.decided` | 对某次工具调用的策略裁决 | 不改消息，但入日志，供审计 |
 | `approval.requested` | 向用户提出的审批问题（工具名、命中的规则、理由） | 不改消息。**写在问之前**，所以停在审批上的日志能说清在等什么 |
 | `approval.answered` | 审批的回答：`{ callId, key, verdict: once\|always\|reject, by: user\|policy\|timeout }` | `always` 时把 `key` 追加进 `grants` |
-| `tool.finished` | 工具结果（成功或失败）、工具名，以及**执行事实**（`facts`，见下） | 追加 tool 消息 |
+| `tool.finished` | 工具结果（成功或失败）、工具名、**执行事实**（`facts`）、**截断事实**（`truncation`）与**canonical `path`**（见下） | 追加 tool 消息；`path` 是 `readFiles` 的唯一来源 |
 
 **`tool.finished.facts` 是让审计能看到沙箱事实的唯一通路**（ADR-033）。`ToolPort.run` 返回的是 `ToolResult` 而不是 `ProcessResult`，所以没有它，网关做过什么就停在工具边界内、审计永远看不到。`facts` **可空而非可选**（与 `turnId`/`reason` 同形，且 `exactOptionalPropertyTypes` 下 optional 的含义与类型对不上），`null` 明确表示**工具没有上报**——与「没有施加沙箱（`mode: 'off'`）」是两件不同的事实，混淆它们会让审计无法回答自己唯一要回答的问题。
+
+**`tool.finished.truncation` 与 `facts` 同形，理由也同一条**（ADR-048）。算术沿用网关那唯一一份实现（`ProcessResult.truncated` + `.dropped`，`adapters/output-tail.ts` 的「`dropped` 永远是 `total - kept`」），新增字段**可空而非可选**，`null` = 工具没上报。「只给了 2000 行」与「这个工具不截断」是两件不同的事实。`output` 里的人可读尾注**照旧保留**：同一事实、两个读者、两种渲染——模型读尾注，审计读字段。
+
+**`tool.finished.path` 是「先读后改」闸门的唯一来源**（ADR-049）。它由 `runTurn` 在构造 `ActionRequest` 的同一处产出，因此**已经过 `FsPort.canonical`**（ADR-017），日志里记的是策略层比较过的那个身份，不是模型的原始字符串。`reduce` 由此维护 `SessionState.readFiles`：只有 `ok` 且 `name === 'Read'` 的调用才登记，重复读同一路径只留一份。**这条必须进日志**：旧版把闸门放在内存（`agent/src/init.js:12` 的 `ctx.readSet`），而 v2 的承诺是「回放与实时状态逐字段相等」——内存集合会让恢复会话后的闸门**静默消失**，同一条「不许盲改」的规则在新会话里悄悄不再成立。理由与 ADR-033 让 `facts` 进日志同源：**重构不出来的事实必须进日志**。
+
+**`ToolPort.run` 带一个只描述「本次授予」的第三参数**（ADR-051）。裁决是 `runTurn` 内部**逐调用**发生的，工具不可能从配置里读到结果；`ToolGrant.networkApproved` 就是那个载体：只有用户的 `once`/`always`（含本会话早先的 `always`）批准了本次调用才为 `true`。`false` 的含义是**本次没有授予**，不是「网络已关」——`SandboxProfile.network === 'ask'` 的工具必须据此**拒绝并说明**，不得把它静默当 `off`（`adapters/sandbox/executor.ts:157` 早已对用户承诺过 `ask` 会生效）。方向与 `facts` 一致：内核交出「做了什么决定」，执行方交回「实际做了什么」。
 
 **`model.usage` 是独立事件，不是 `model.message` 上的字段**（ADR-041）。两个理由：用量有**它自己的到达时刻**（Anthropic 在 `message_delta` 就到，早于流结束），以及**流在拿到用量之后被取消时也要留下用量**——挂在那条消息上就跟着一起丢了。一条流里它可以出现多次（Anthropic 报的是累积量），`reduce` 不从中派生任何状态：花了多少不改变对话，日志里的它是给报账与审计看的。
 
@@ -64,7 +70,8 @@ loop:
 
 几条有意的取舍：
 
-- **工具串行执行**。旧版并发执行 + 按序组装结果，带来了大量复杂度。v2 先串行，正确性优先；确有需要的只读工具并发放在 P5 再定，并且必须有测试证明结果顺序。
+- **工具串行执行**（P5 调研 §7 的结论，理由见下）。`for (const call of calls)` 逐个裁决、逐个执行、逐个 `emit`。旧版并发执行 + 按序组装结果，带来了大量复杂度；v2 先串行，正确性优先。
+  **为什么不能「顺手并发」**：审批与状态跃迁是**逐调用的顺序事实**——`policy.decided` → `turn.transitioned('awaiting_approval')` → `approval.requested` →（人工等待）→ `approval.answered` → `awaiting_tools`。并发发起多个 `ask` 会让 `session.state.grants` 的归约顺序与用户回答的顺序脱钩，`approval.answered.key` 也只能事后对账。只有**只读、且确定不会触发 `ask`** 的调用才具备并发前提，而那需要一个「先裁决、再决定是否并发」的两阶段实现。P5 保持串行；并发要等实测收益证据，且必须有测试钉住结果顺序。
 - **工具抛错不等于回合失败**。工具错误变成 `ok: false` 的 tool 消息，模型可以看到并自行恢复。只有模型调用本身失败，或取消，才让回合失败。
 - **拒绝审批不是错误**。被用户拒绝的调用返回 `rejected by user` 给模型，模型可以换一种做法。
 

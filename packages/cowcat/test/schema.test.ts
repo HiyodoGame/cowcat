@@ -83,10 +83,12 @@ const toolFinished: KernelEvent = {
   turnId: 'turn_1',
   type: 'tool.finished',
   callId: 'c1',
-  name: 'echo_file',
+  name: 'Read',
   ok: true,
   output: 'done',
   facts: null,
+  truncation: { truncated: true, dropped: 12, reason: 'read: 2000 lines' },
+  path: '/repo/a.txt',
 };
 
 const everyEvent: readonly KernelEvent[] = [
@@ -105,6 +107,33 @@ test('the schema and the kernel event union are the same type', () => {
 
 test('the snapshot schema and the SnapshotPort type are the same type', () => {
   assert.equal(snapshotMatchesPort, true);
+});
+
+test('truncation and path survive a JSON round trip', () => {
+  // The store writes JSON lines, so the contract has to hold for the decoded values, not
+  // just for the in-memory object (ADR-048/049).
+  const result = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(toolFinished)) as unknown);
+  if (!result.success) assert.fail(describeIssues(result.error));
+
+  if (result.data.type !== 'tool.finished') assert.fail('expected a tool.finished event');
+  assert.deepEqual(result.data.truncation, { truncated: true, dropped: 12, reason: 'read: 2000 lines' });
+  assert.equal(result.data.path, '/repo/a.txt');
+});
+
+test('a tool.finished logged before those fields existed decodes with null', () => {
+  // Local logs predate the fields (schemaVersion 1 was never published, ADR-019). "The
+  // key is absent" and "the tool reported nothing" have to mean the same thing here, or
+  // an old session becomes unreadable for a field it could not have written.
+  const older: Record<string, unknown> = { ...toolFinished };
+  delete older.truncation;
+  delete older.path;
+
+  const result = kernelEventSchema.safeParse(older);
+  if (!result.success) assert.fail(describeIssues(result.error));
+
+  if (result.data.type !== 'tool.finished') assert.fail('expected a tool.finished event');
+  assert.equal(result.data.truncation, null);
+  assert.equal(result.data.path, null);
 });
 
 test('every event the kernel writes decodes', () => {
