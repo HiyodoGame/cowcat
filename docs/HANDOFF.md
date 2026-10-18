@@ -59,6 +59,7 @@
 - 【本机命令】`node:ffi`：26.12.0 **无需** `--experimental-ffi`（只把 `ExperimentalWarning` 写到 stderr）；**Node 24 上该 flag 是 `bad option` 启动期硬错误**
 - 【本机命令】`npm view @opentui/core-{linux-x64,win32-x64,darwin-arm64,linux-arm64-musl}@0.6.6` 四个平台包都存在；以 `--os=linux --cpu=x64` 装出 `libopentui.so`（5.02 MB）——**只是解析到，未在 Linux 上加载**
 - 【本机命令】CI YAML 用 `yaml` 解析校验：9 个 job；两条 tui 腿 `node-version=26`、`working-directory=packages/tui`、非草稿 PR 必跑
+- 【CI 远端】**PR #56 全 pass**（11 项）：`packages/tui · node 26` 的 ubuntu **22 s** / windows **38 s**，其余（legacy 三腿、`packages/cowcat` 三腿 + macOS 腿、`package whitelist`、`scope`）也都 pass
 
 ### CI 远端【CI 远端】
 
@@ -85,7 +86,7 @@
 - **`--experimental-ffi` 不需要**（26.12.0 只在 stderr 打 `ExperimentalWarning`）；**写进脚本或 `NODE_OPTIONS` 就变成硬门槛**——同一个脚本在 Node 24 上是启动期崩溃（`bad option: --experimental-ffi`）
 - 生产路径 `createCliRenderer` 在 `isTTY: false` 下照样创建并输出 ANSI（含 kitty `a=q` 静默查询）；帧走 **stdout**、诊断走 stderr
 - 本机 Node 26 是**便携版**：`C:\Users\Con_WKK\AppData\Local\node-v26.12.0\node-v26.12.0-win-x64`（系统 `node` 仍是 24，**未改 PATH**）。跑 `packages/tui` 的测试要把该目录放到 PATH 最前
-- 两条 CI 腿（`packages/tui · node 26 · ubuntu-latest` / `windows-latest`）本 PR 加入；**干净 runner 上的结果尚未验证**，以该 PR 的 checks 为准
+- 两条 CI 腿（`packages/tui · node 26 · ubuntu-latest` / `windows-latest`）**在本 PR（#56）上 pass**，ubuntu 22 s / windows 38 s——Node 26 与对应平台二进制在干净 runner 上都解析到了【CI 远端】
 - 完整取证见 [`architecture/06-frontend.md`](architecture/06-frontend.md) 的「T1 前提验证」一节
 
 之后按 T2–T10 推进（T2 协议 → T3 `serve` → T4 CLI → T5 附件契约 → T6 `Read` 恢复非文本分支 → T7 前端骨架 → T8 组件 → T9 图片渲染 → T10 收口）。
@@ -152,7 +153,7 @@
 
 ### 本会话新增（**不要读成「不成立」**）
 
-1. **opentui 本机侧已由 T1 验证**：安装、Windows 原生二进制、一帧渲染都跑通了（见 §3）。**仍未验证的是干净 runner 上的两条 Node 26 CI 腿**——本 PR 的 checks 会给答案。
+1. **opentui 两侧都已验证**：本机安装 + Windows 原生二进制 + 一帧渲染（见 §3），以及干净 runner 上的两条 Node 26 CI 腿（PR #56 全 pass）——T1 不再有未验证项。
 2. **没有任何真实终端证据**：本会话 stdout 不是 TTY，`COLORTERM` / `TERM_PROGRAM` / `WT_SESSION` / `KITTY_WINDOW_ID` 全缺（探针实测）。因此**刷新率、闪烁、图片协议的实际渲染效果全部未测**，调研里相关结论都标了【推断】/【未验证】。
 3. **octant 码位的字体覆盖**未验证（回退方案因此以半块为主）；**iTerm2 图片与滚动的交互**是【推断】（协议文档没有承诺跟随文本）。
 4. **opentui 的 `<image protocol="auto">` 覆盖哪些协议**（kitty / iTerm2 / sixel）未验证。

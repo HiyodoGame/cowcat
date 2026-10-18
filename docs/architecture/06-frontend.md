@@ -134,7 +134,7 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 | 一帧渲染 | 40×6 一帧 12 ms、`cellsUpdated` 240；捕获到的字符帧是正确 UTF-8，框线与文本按列对齐，每行恰好 40 个字符 | 【实测】`packages/tui/test/render.test.ts`（Windows x64 / Node 26.12.0） |
 | `node:ffi` | **26.12.0 不需要 `--experimental-ffi`**（只把 `ExperimentalWarning` 写到 **stderr**）；显式传该 flag 也无害；**Node 24 上它是启动期硬错误**（`bad option: --experimental-ffi`） | 【实测】三条命令行用例 |
 | 非 TTY | `createCliRenderer` 在 `isTTY: false` 下照样创建、照样输出 ANSI（含 kitty `a=q` 静默查询与 DA1）；帧走 **stdout**，诊断走 stderr | 【实测】探针，stdout 992 B / stderr 166 B |
-| CI 两条腿 | 本 PR 加入 `packages/tui · node 26 · ubuntu-latest` 与 `windows-latest` | 【推断】干净 runner 上的结果以该 PR 的 checks 为准 |
+| CI 两条腿 | `packages/tui · node 26 · ubuntu-latest` **22 s**、`windows-latest` **38 s**，均 pass（Node 26 与对应平台二进制都在干净 runner 上解析到了） | 【CI 远端】PR #56 的 checks（只观察状态，未在本地复现） |
 
 三条要记住的：
 
