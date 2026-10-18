@@ -22,7 +22,7 @@
 | P2 | 端口与执行网关（含沙箱执行器迁移） | **已完成**（T1–T5 已合；T6 见下） |
 | P3 | 策略、配置与审批协议 | **已完成**（PR #14–#23，测试 219 → 347） |
 | P4 | 模型层 | **已完成**（T1–T7 全部落地、T6 拆 T6a/b/c；测试 347 → 436；ADR-035~046） |
-| P5 | 工具层 | **进行中**：ADR-047~053 已定（评审通过），T0–T2 与 T3a–T3c、T4 已落（测试 436 → 517）；T5 起未开工 |
+| P5 | 工具层 | **进行中**：ADR-047~053 已定（评审通过），T0–T2 与 T3a–T3c、T4、T5 已落（测试 436 → 537）；T6 起未开工 |
 | P6 | 前端：headless 协议与 TUI | 未开始 |
 | P7 | 功能模块（逐个调研） | 未开始 |
 | P8 | 发布切换与旧代码删除 | 未开始 |
@@ -412,7 +412,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P5 工具层
 
-> **调研已完成、ADR-047~052 已定（评审通过，2026-10-18）；ADR-053 随 T3b 落表；T0–T2 与 T3a–T3c、T4 已落地，T5 起未开工**：[`research/p5-tools.md`](research/p5-tools.md)。三条调研问题的答案依次见该文 §3（zod 入参 → wire JSON Schema，含 31 项实测）、§4（截断作为结构化事实进日志）、§5（纯 JS Glob/Grep 的性能实测，以及**不引入 ripgrep** 的理由）；任务拆分、每条的验收证据与「不做什么」见其 §14.2/§14.3。
+> **调研已完成、ADR-047~052 已定（评审通过，2026-10-18）；ADR-053 随 T3b 落表；T0–T2 与 T3a–T3c、T4、T5 已落地，T6 起未开工**：[`research/p5-tools.md`](research/p5-tools.md)。三条调研问题的答案依次见该文 §3（zod 入参 → wire JSON Schema，含 31 项实测）、§4（截断作为结构化事实进日志）、§5（纯 JS Glob/Grep 的性能实测，以及**不引入 ripgrep** 的理由）；任务拆分、每条的验收证据与「不做什么」见其 §14.2/§14.3。
 >
 > **一处必须知道的前提**：厂商侧对 JSON Schema 子集的接受度**零实测**（无凭据/端点），因此 ADR-047 决定的是**机制**（一处常量 + 语言子集约定），校准留在 P6 第一次真连端点时做（调研 §3.5）。
 
@@ -441,7 +441,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T3b | **Grep**：三种模式与上下文参数、单文件 1MB / 二进制跳过、250 上限、**`files_with_matches` 与 `count` 达到 `head_limit` 即停** | T3a | ✅ 本 PR（测试 470 → 485；新增 ADR-053） |
 | T3c | **Read（文本部分）**：分页、5MB/20MB 两级、**CRLF 作为可判定事实告知**；图像 / PDF / notebook **显式拒绝并指向 P7**（v2 契约里没有附件通路，那是 P7 的契约工作） | T2 | ✅ 本 PR（测试 485 → 500） |
 | T4 | **Write 与 Edit**（ADR-049 的消费方）：五条替换规则照旧、**拒绝空 `old_string`**、消费日志派生的已读集合（**恢复会话后依然成立**）、Edit 报错点明 CRLF；**出口标准点名的边界用例同 PR** | T1、T2、T3c | ✅ 本 PR（测试 500 → 517；闸门落在 `runTurn`） |
-| T5 | **Bash 薄壳**：`command` → argv（经 `PlatformPort`，**不经 `shell:true`**）、`ProcessSpec` 组装、`facts` 回填、退出码非零**不是**失败、`run_in_background` **显式拒绝**、消费第三参数（`network: 'ask'` **不得静默当 `off`**）；含 `SandboxProfile` 的配置键与纯解析函数 | T1、T2 | 未开始 |
+| T5 | **Bash 薄壳**：`command` → argv（经 `PlatformPort`，**不经 `shell:true`**）、`ProcessSpec` 组装、`facts` 回填、退出码非零**不是**失败、`run_in_background` **显式拒绝**、消费第三参数（`network: 'ask'` **不得静默当 `off`**）；含 `SandboxProfile` 的配置键与纯解析函数 | T1、T2 | ✅ 本 PR（测试 517 → 537；新增配置键与 `resolveSandboxProfile`） |
 | T6 | **TodoWrite**：全量替换语义与状态校验；**「状态存哪」先落一个小 ADR**（会话日志内 vs 外部文件 vs 纯事件） | T2 + 小 ADR | 未开始（阻塞于小 ADR） |
 | T7 | **出口标准与收口**：七个工具的统一契约测试、Edit 边界用例复核、v1 清单对照记录、端到端回合（读→改→跑命令→审批→截断）；同 PR 更新 `03-policy-and-execution.md` 的端口表 | T3a–T6 | 未开始 |
 

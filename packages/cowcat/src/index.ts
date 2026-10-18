@@ -125,6 +125,20 @@ export {
 } from './adapters/tools/read.js';
 export { createWriteTool, type WriteToolOptions } from './adapters/tools/write.js';
 export { createEditTool, type EditToolOptions } from './adapters/tools/edit.js';
+export {
+  BASH_DEFAULT_OUTPUT_CAP,
+  BASH_DEFAULT_TIMEOUT_MS,
+  BASH_MAX_TIMEOUT_MS,
+  BASH_MIN_TIMEOUT_MS,
+  createBashTool,
+  type BashToolOptions,
+} from './adapters/tools/bash.js';
+export {
+  DEFAULT_SANDBOX_SETTINGS,
+  type ResolvedSandboxSettings,
+  type SandboxSettings,
+} from './policy/config.js';
+export { resolveSandboxProfile, type ResolvedSandboxProfile, type SandboxProfileContext } from './policy/sandbox-profile.js';
 export { GITIGNORE_LIMITATIONS, walkFiles, type WalkResult } from './adapters/tools/ignore.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
 export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';
