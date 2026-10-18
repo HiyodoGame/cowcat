@@ -475,7 +475,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P6 前端：headless 协议与 TUI
 
-> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成（本 PR），T2 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
+> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成、T2 协议落地（本 PR），T3 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
 >
 > **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
 
@@ -498,7 +498,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 |---|---|---|---|
 | T0 | **决定落表**（纯文档）：ADR-055~060 进 ADR 表；新增 `architecture/06-frontend.md`；本段补任务表；**更正 P5 段与 P7 模块表**（Read 的非文本分支改为 P6 交付）；`04-dependencies.md` 记 opentui 准入 | 调研评审通过 | ✅ 本 PR |
 | T1 | **前提验证**：CI 能否提供 Node ≥26.4（**已验证：v26.4.0 存在、26 线当前 v26.12.0**）；`@opentui/core` 在本机与 windows CI 腿能否安装并跑起最小界面；**装不上就地降级为「本机开发 + 手动验收」并把结论写回文档** | T0 | ✅ 本 PR（装得上，不降级） |
-| T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | 未开始 |
+| T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | ✅ 本 PR |
 | T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | 未开始 |
 | T4 | **CLI 入口**：子命令表（数据）、帮助文本、`doctor` 最小版本 | T2 | 未开始 |
 | T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | 未开始 |
