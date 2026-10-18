@@ -86,4 +86,12 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
     limits: { output: 131072, context: 1000000 },
     toolCalls: true,
   },
+  // The Flash tier: same limits, cheaper. Included because "the small one" is what most
+  // smoke tests and first runs actually want (catalog: cost 0.15/0.5 per Mtok).
+  'zai/glm-5.3-flash': {
+    protocol: 'openai',
+    model: 'glm-5.3-flash',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
 };
