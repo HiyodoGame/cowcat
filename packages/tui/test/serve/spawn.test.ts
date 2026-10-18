@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
  * and exit with a code. Everything else about the protocol runs over the in-memory
  * transport, where the failure messages are readable.
  *
- * The entry it spawns is T3's placeholder (`src/serve/main.ts` with `refusingHost()`),
- * so the methods it can answer are the handshake and the refusals. That is enough: the
- * thing under test is the process, not the host.
+ * It spawns the real executable (`cowcat serve`), not a test-only entry, so the argv
+ * path, the subcommand dispatch and the process lifecycle are all covered at once.
  */
-const ENTRY = fileURLToPath(new URL('../../src/serve/main.js', import.meta.url));
+const ENTRY = fileURLToPath(new URL('../../src/cli/main.js', import.meta.url));
+const SERVE_ARGV = [ENTRY, 'serve'];
 const TIMEOUT_MS = 30_000;
 
 interface Spawned {
@@ -25,7 +25,7 @@ interface Spawned {
 }
 
 function start(): Spawned {
-  const child = spawn(process.execPath, [ENTRY], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, SERVE_ARGV, { stdio: ['pipe', 'pipe', 'pipe'] });
   const waiters: { readonly contains: string; readonly resolve: (line: string) => void }[] = [];
   let buffer = '';
 

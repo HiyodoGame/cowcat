@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加三件：P6 T1 前提验证（#56 已合）、T2 协议（#57 已合）、T3 `serve`（本 PR）**——都不是阶段收尾，P6 还在 T4 之前（结论见 §3）。
-> 交接时仓库状态：**`main` = `e600588`**（#57 T2 合入）。本会话（2026-10-18 → 2026-10-19）产出 **13 个已合并 PR（#42–#54）**；此后 **#55、#56、#57 已合**，**T3 在 `e600588` 之上开的分支上**。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加四件：T1 前提验证（#56 已合）、T2 协议（#57 已合）、T3 `serve`（#58 已合）、T4 CLI 入口（本 PR）**——都不是阶段收尾，且**组合根与包结构仍未定**（T4a，见 §3）。
+> 交接时仓库状态：**`main` = `7caf5a6`**（#58 T3 合入）。本会话（2026-10-18 → 2026-10-19）产出 **13 个已合并 PR（#42–#54）**；此后 **#55、#56、#57、#58 已合**，**T4 在 `7caf5a6` 之上开的分支上**。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -75,13 +75,20 @@
 - 【本机测试】生命周期：`shutdown` / stdin EOF / 注入的 SIGINT 都退出 **0**，且返回前把进程级 handler 摘干净（断言 `activeSignals()` 回到 0）
 - 【源码】`src/serve/` 与 `src/protocol/` 受同一条 lint 约束（不 import 内核、不 import opentui）——这是「将来能整体挪包」的前提
 
+### 已验证 —— P6 T4（Windows，Node **v26.12.0** 便携版）
+
+- 【本机测试】`cd packages/tui && npm test` → **56 tests / 56 pass / 0 fail**（新增 CLI 9 项：帮助文本、三个出口码、参数校验、未接线动词的原因、`doctor`、经 CLI 驱动 `serve` 的握手）
+- 【本机测试】`serve` 的 3 条 spawn 测试改为 spawn **真实可执行文件**（`dist/src/cli/main.js serve`），因此 argv 路径、子命令分发与进程生命周期一次覆盖
+- 【源码】`src/serve/main.ts` 删除，`bin` 指向 `dist/src/cli/main.js`（一个可执行文件，六个动词）；`dist/src/serve/main.js` 旧产物已清（AGENTS.md 的提醒：删源文件要清 `dist/`）
+- 【源码】`doctor` 只报它真能查的：Node 版本、平台原生核心**解析**、协议版本、未接线动词；配置与沙箱后端**明说不查**（需要内核）
+
 ### CI 远端【CI 远端】
 
 本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
 
 ### 项目状态
 
-- `main` = **`e600588`**（#57 T2 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1 前提验证 + T2 协议 + T3 `serve`（本 PR，宿主仍是拒绝型占位），T4 起未开工**
+- `main` = **`7caf5a6`**（#58 T3 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6 调研完成 + T0 落表（ADR-055~060）+ T1 前提验证 + T2 协议 + T3 `serve` + T4 CLI 入口（本 PR；`serve`/`doctor` 可用，其余四个动词说明缺什么），T5 起未开工；组合根与包结构 = T4a**
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
 - 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）——**内核包本会话仍未增删**；`packages/tui/` 两个运行时依赖：`@opentui/core@0.6.6`（T1 装）与 `zod`（T2 的解码边界），都不进内核的依赖计数
 - 【registry】npm 上 v1 的最新版仍是 **`0.15.0`**——这是**前序会话**核实的结论，**本会话未复查**
@@ -92,17 +99,18 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T3（`serve`）已完成（本 PR）；下一步是 T4（CLI 入口）**（`dev-plan-v2.md` 的 `## P6` 段 T4 行：子命令表（数据）、帮助文本、`doctor` 最小版本）。**再下一步是 T4a（组合根），它必须先定包结构**。
+**P6 的 T4（CLI 入口）已完成（本 PR）；唯一下一步是 T4a：组合根 —— 而它的第一个动作是定包结构**。T5（附件契约）在契约上不依赖 T4a，可以并行或先做；但**任何「真的跑一个回合」的能力都卡在 T4a**。
 
-**T3 的结论**：`src/protocol/stdio.ts`（行帧）+ `src/serve/serve.ts`（生命周期）+ **3 条真实 spawn 测试**，**47 项测试全绿**（【本机测试】Windows / Node 26.12.0）。三件值得记住的：
+**T4 的结论**：子命令表是数据（`src/cli/spec.ts`，六个动词，一个 `bin`），帮助文本与参数校验都从表生成；**56 项测试全绿**（【本机测试】Windows / Node 26.12.0）。三条契约：
 
-- **退出码 0 是唯一的正常出口**：`shutdown`、握手被拒、stdin EOF、SIGINT/SIGTERM 都是 0——拒绝不是错误，客户端已经从协议里知道了发生了什么
-- **宿主是注入点，这一轮填的是拒绝型占位**（`refusingHost()`）：对每个方法回 `hostRefused` 并说明缺什么。**返回空成功的占位比拒绝更糟**——客户端会把「没有会话」当成事实
-- stdio 帧的两个细节是刻意的：输入切 `utf8` 解码（否则**多字节字符跨 chunk 会被切坏**，而那正是模型输出与框线），一行超 8 MiB 视为坏对端并关闭
+- **三个出口码**：`0` 做到了、`2` 命令写错了、`1` 这个构建做不到。参数校验**先于**「是否接线」判断，所以 `cowcat run`（没带 prompt）报缺参数而不是缺组合根
+- **未接线的动词留在表里并说明缺什么**（`status: 'blocked'` 是类型上的一支，没有处理函数可被误调），帮助文本照实标注
+- `serve` 的处理函数动态 `import` 协议：`--help`/`doctor` 不需要那段模块图，T7 的 TUI 动词会把渲染器拉进来
 
-**为什么 T3 不落真实宿主（T4a 的第一个决定）**：`serve` 的宿主必须用内核 `Session` 实现，于是要跨包依赖 `packages/cowcat`；但仓库**没有 npm workspace**（根目录没有 `package.json`），而 `@corescense/cowcat-core` 是 `private: true`、从未发布 → 只能 `file:../cowcat`，且 CI 里要先构建内核。三个选项（A 新建 `packages/protocol` + `packages/cli`；B `packages/tui` 直接依赖内核；C 只做传输与生命周期）写在 `dev-plan-v2.md` 的「包结构待定」，**本轮选 C**。
+**T4a 要解决的两件事（都已查清，不是猜）**：
 
-**T4a 还缺的东西（已查清，不是猜）**：v2 配置里**没有 model/provider 段**、**没有预设目录**（v1 的 209 家 catalog 在 `agent/assets/`）、`openAIModel`/`anthropicModel` **没有从公共 API 导出**。所以「让 serve 真跑一个回合」= 一条 ADR（模型/供应商配置）+ 预设来源 + 导出模型工厂 + 七个工具 + 策略 + 审批桥。
+1. **包结构**（A/B/C 见 `dev-plan-v2.md` 的「包结构待定」）：宿主必须用内核 `Session`，于是要跨包依赖 `packages/cowcat`；但仓库没有 npm workspace、cowcat 是 private 未发布 → 只能 `file:../cowcat`，且 CI 里要先构建内核。**这是 T4a 的第一个决定**。
+2. **组合根本身**：v2 配置里**没有 model/provider 段**、**没有预设目录**（v1 的 209 家 catalog 在 `agent/assets/`）、`openAIModel`/`anthropicModel` **没从公共 API 导出**。所以需要：一条模型/供应商配置的 ADR + 预设来源 + 导出模型工厂 + 七个工具 + 策略 + 审批桥。
 
 **T2 的结论**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试 + `attachment.read` 全部落地在 `packages/tui/src/protocol/`，**27 项协议测试全绿**（【本机测试】Windows / Node 26.12.0）。两条决定值得记住，它们都是契约：
 
@@ -183,7 +191,7 @@
 6. **真实沙箱后端（bwrap / seatbelt）本机没跑过**：本机真实进程只有 `mode: 'off'`；`system` 档由 CI 的 macOS 腿与 P6 组合根覆盖。
 7. **TodoWrite 在默认规则下每次调用都会被问一次**（ADR-054 记录在案）；P6 的组合根应加一条 `allow`，否则体感很差。
 8. **Grep 早退的实际收益未测**（主张的是「有界的工作量」，不是本机上测得出的加速比）。
-9. **协议与进程都过了测试，但没有跑过一次真实内核的事件流**：`ProtocolHost` 至今只有 `refusingHost()`（T3 的注入点），真实宿主 = T4a；`attachment.read` 只有形状（真实字节 = T5/T6）。`dist/test/` 里跑的是脚本化宿主。
+9. **协议与 CLI 都过了测试，但没有跑过一次真实内核的事件流**：`ProtocolHost` 至今只有 `refusingHost()`，六个动词里只有 `serve`/`doctor` 可用——其余四个的缺口写在表里。真实宿主 = T4a（并需先定包结构）。`attachment.read` 只有形状（真实字节 = T5/T6）。
 
 ### 前序遗留、本会话**未复现**
 
