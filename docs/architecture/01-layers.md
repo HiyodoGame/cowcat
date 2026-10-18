@@ -8,7 +8,7 @@ v2 的分层规则只有一条：**依赖只能指向更稳定的一层**。
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ frontends   TUI · headless（JSON-RPC over stdio） · 测试 harness │  订阅事件、发送命令；不改内核状态
+│ frontends   TUI · headless（JSON-RPC over stdio） · 测试 harness │  只经协议；不改内核状态、不 import 内核
 ├───────────────────────────────────────────────────────────────┤
 │ modules     子 agent · MCP · 记忆 · 压缩 · skills · hooks · cron │  以能力形式注册，不被内核认识
 ├───────────────────────────────────────────────────────────────┤
@@ -37,6 +37,8 @@ test/
 ```
 
 P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已落地，见下）与 `adapters/` 下的各实现（`node.ts`、`platform.ts`、`shell.ts`、`sandbox-probe.ts`、`fs.ts`）；**P4 起新增 `ports/model.ts`**（协议词汇：`ModelUsage`、`StopReason`、`StopReasonKind`；放在自己文件里的理由是 `ports/index.ts` 与 `kernel/events.ts` 互相需要对方的名字，见 ADR-035），以及 `adapters/` 下的模型适配器（T2 落了 `adapters/model-openai.ts`，T3 落了 `adapters/model-anthropic.ts`，T5 落了共用的 `adapters/model-retry.ts`）。目录名随实现调整，但依赖规则不变。
+
+**P6 起多一个包**：`packages/tui/`（`private: true`）——前端与内核**不是同一个包**，因为它依赖 `@opentui/core`，而后者要求 `node >=26.4.0`（ADR-056），内核包声明的是 Node ≥ 22。分包让「依赖方向单向」成为结构事实而不是纪律：内核**不认识** opentui，前端**不认识**内核（只认识协议，ADR-055）。前端的内部形状见 [`06-frontend.md`](06-frontend.md)。
 
 ## 工具住在 `adapters/tools/`（ADR-047）
 
@@ -81,7 +83,7 @@ P2 起新增 `ports/process.ts`、`ports/fs.ts`、`ports/platform.ts`（均已�
 | `ports/` | `kernel/` 的类型 | 实现、`node:*` |
 | `adapters/` | `ports/`、`kernel/` 类型 | 前端 |
 | `modules/` | `kernel/` 公共 API、`ports/` | 其他模块的内部文件 |
-| `frontends/` | `index.ts` 公共 API | `kernel/` 内部文件；直接写 `Session.#state` |
+| `frontends/` | 协议包（stdio / 内存传输）、`@opentui/core`（仅前端包） | **内核内部文件、`adapters/`、`index.ts`**；直接写 `Session.#state` |
 
 `kernel/`、`policy/`、`ports/` 的 `node:*` 禁令由 `packages/cowcat/eslint.config.js` 的 `no-restricted-imports` 强制，已用探针文件验证会报错。
 

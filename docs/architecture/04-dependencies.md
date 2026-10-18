@@ -42,6 +42,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
 | `@anthropic-ai/sdk` | `^0.135.0`（当前 0.135.0） | **运行时**：Anthropic 原生协议的模型适配器（ADR-036） | P4 T3 引入。**它自带传递依赖，实测结论如下**（这是引入方必须说明「带进来了什么」）：依赖树里 7 个包，**只有 4 个真的进运行时**——`@opentelemetry/api`（9 个运行时文件引用，含 `client.js`；不注册 provider 时是空门面）、`standardwebhooks`（仅 `resources/beta/webhooks.js`，却**在 import 时就被解析**）、`fast-sha256` 与 `@stablelib/base64`（`standardwebhooks` 的下游）；**另外 3 个是纯类型层，运行时完全不加载**——`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`（源码扫描零命中 + 解析钩子 in `not resolved`）。取证方法：`registerHooks` 解析钩子记录 import 时真正被解析的裸模块，并对运行时 `.js`（排除 `.d.ts`）做源码扫描。`maxRetries: 0`，理由同 `openai` |
+| `@opentui/core` | P6（当前 0.6.6） | **运行时：仅前端包**（`packages/tui/`）：TUI 渲染（ADR-056） | **不进内核包的依赖计数**（内核仍是 3 / 6）。判断标准 4（跨平台分发负担）在此**显式豁免一次**：它带 8 个平台的原生核心（`@opentui/core-{win32,darwin,linux}-{x64,arm64}` + 两个 musl），并要求 `node >=26.4.0`——换掉的是整块渲染与图片协议的自研量。**锁版本**；`engines.node` 变化等于我们的门槛变化。平台二进制缺失时**显式报错**，不静默降级 |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
 ## 明确不引入的
@@ -53,9 +54,18 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `vitest` / `jest` | `node:test` 已足够，且零依赖。若 P6 的前端测试确有需要再评估 |
 | 打包器（esbuild / rollup） | 保持 tsc 直出，npm 包内是可读的 JS 与 source map，便于审计，也便于出问题时看堆栈 |
 
-## TUI 的依赖选择（P6 前的 gate）
+## TUI 的依赖选择（P6，已定：ADR-056）
 
-旧版 TUI 是自研的（`agent/src/tui/` 下 21 个文件、约 4700 行，含 wcwidth、Markdown、语法高亮、区域刷新）。是否继续自研、还是改用 ink 这类 React 终端渲染库，不在本轮决定。P6 开始前需要做一轮渲染性能与终端兼容的实测调研，并以 ADR 记录结论。
+旧版 TUI 是自研的（`agent/src/tui/` 下 21 个文件，含 wcwidth、Markdown、语法高亮、区域刷新；其中 `ui.js` 一个文件 **82 KB**）。P6 调研比较了自研、ink 与 opentui，**结论是采纳 `@opentui/core`**（opencode 的渲染器：Zig 原生核心 + TS 绑定、flexbox、原生图片支持），代价被显式接受：
+
+| 代价 | 处置 |
+|---|---|
+| `engines.node >=26.4.0`（实测 `@opentui/core@0.6.6`；Node v26.4.0 于 2026-06-24 发布） | **前端是独立 workspace 包**（`packages/tui/`），它声明自己的 `engines` 与一条 Node 26 的 CI 腿；**内核包保持 Node ≥ 22 不变** |
+| 8 个平台的原生核心走 `optionalDependencies` | 缺失时**显式报错**，不静默降级到「没有 TUI」 |
+| 一个更新频繁的原生库 | 锁版本；`engines.node` 的变化等于我们的门槛变化，升级前先在 CI 验证 Node 腿 |
+| 与「零运行时依赖」的距离 | 判断标准 4（跨平台分发负担）**被显式豁免一次**，理由是它换掉的是整块渲染与图片协议的自研量；内核侧依赖数（3 / 6）**不受影响**，因为 opentui 只出现在前端包内 |
+
+调研中同时核实的**不引入项**：`@opentui/react` / `@opentui/solid`（先用命令式 renderable，引入渲染器是第二个决定）；ink（与「事件流 → view model」的既有输入模型不匹配，且图片协议仍要自己写）。
 
 ## 与「依赖最小化」的关系
 
