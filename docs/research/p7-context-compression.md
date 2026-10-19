@@ -1,262 +1,267 @@
 # P7 调研：上下文压缩
 
-> **本文件只出决定草案与 ADR 清单，不改源码、不改 ADR 表。** 决定草案要等评审拍板，ADR 表与实现是后续 PR 的事（`docs/dev-plan-v2.md` 的工作规则 3）。
+> **本文件只出决定草案与 ADR 清单，不改源码、不改 ADR 表。** 决定草案要等评审拍板（`docs/dev-plan-v2.md` 工作规则 3）。
 >
-> 调研对象是 `dev-plan-v2.md` P7 表的第一行：**上下文压缩**（调研要点：压缩触发点、压缩结果是否作为事件入日志、与回放的关系；依赖 P2、P5）。
+> **这一版是重写的**：上一版拿 v1 当参照物，而 v1 只是「一个实现」。本轮按要求先做上游调研——**opencode、codex、DeepSeek Harness、Claude Code**——再决定我们的三个问题：① 用量怎么算 ② 压缩结果怎么进日志 ③ 摘要调用在架构里属于什么。
+>
+> v1 的实现移到附录 B，**只作历史参照，不再作为任何一条决定的依据**。
 
 ## 证据标注约定
 
-沿用 `docs/research/` 的既有纪律，不发明：
-
-- **【源码】** 直接读到实现，给 `文件:行号`
-- **【实测】** 本次跑出来的，给脚本名与用例号
-- **【上游】** 来自官方文档
+- **【上游源码】** 直接读到上游仓库的实现，给 `仓库/路径:符号`（行号在正文里按当次读取给出，符号更稳）
+- **【上游文档】** 官方文档原文，给 URL 或文档路径
+- **【实测】** 本次跑出来的
 - **【推断】** 未实测的推论，**不得作为决策依据**
 
-**本文件没有【实测】条目**：压缩的行为（阈值、摘要质量、缓存命中）全部要真实模型端点，而本会话没有（见 §10）。凡是标【推断】的，都是评审时要单独安排验证的。
+**本文件没有【实测】条目**：四家都是读代码与文档，没有真实端点。凡【推断】都是评审时要单独安排验证的。
 
 ## 0. 结论摘要
 
-1. **v1 已经有一份成熟的压缩实现**，结构是「阈值触发 → 摘要一次 → 就地 splice 历史 → 写两条日志记录」（`agent/src/loop.js:318-351`、`agent/src/prompts/compact.js`）。v2 没有它，**一行都没有**。
-2. **v2 的硬约束比 v1 强**：`SessionState.messages` 是事件日志的**纯折叠**（`packages/cowcat/src/kernel/state.ts:51-126`），模型请求直接用这份折叠结果（`kernel/run-turn.ts:173-181`）。所以压缩**必须**是一个事件——「进程内维护一份被压缩的历史」在 v2 是架构上的错，不是风格问题。
-3. **但「压缩是事件」有一个真难点，v1 的经验掩盖了它**：v1 是就地 `splice`（改写数组），而事件只能**追加**。保留最近 N 条原文（v1 的 `KEEP_RECENT = 6`）在追加模型下不能靠「这件事发生在中间」表达。本文件 §3 给出三种解法草案，倾向「**事件自带保留段**」。
-4. **触发依据在 v2 现在拿不到**：`ModelPort` 只有 `stream()`，没有 token 计数（`ports/index.ts:228-230`）；`model.usage` 有真实数字但 `reduce` 刻意不折叠它（`state.ts:85-90`）。要么让 `reduce` 记住最后一次 usage，要么只靠本地估算——本文件主张**两者都要**（§2）。
-5. **摘要调用不是回合**：它不能走 turn 状态机，也不能写 `model.message`，否则前端会多出一条假的助手消息、折叠还会重复（§4）。
-6. **失败必须不阻塞**：压缩失败就继续用原历史 + 一条 note。这是 ADR-069 的同一条教训（辅助功能不能把主流程搞挂）。v1 在这点上做得不好：`doCompact` 外面没有 try（`loop.js:343`），异常冒泡到 `runTurn` 的调用方被兜住（`agent/bin/cowcat.mjs:1347-1348`），于是**整回合失败**；而历史没变、阈值仍然超，**下一回合会以同样方式失败**——与 ADR-069 同一形状的「会话卡死」【源码】。
+三个问题的答案，先给结论：
 
-## 1. 验证环境
+| 问题 | 四家的共性答案 | 我们该抄的那一半 |
+|---|---|---|
+| **① 用量怎么算** | **没有一个把「请求前调 `count_tokens`」当主路径。** 全是「**真实 usage 锚 + 之后的本地估算**」：锚是上一次成功响应的 `input`（含 cache 读/写），锚之后的新消息按 4 字符/词量级估；媒体给固定值 | 锚 + 增量，两者**取大**；不要新开计数端口。阈值用窗口的一个**比例**，并预留输出余量（不是裸窗口） |
+| **② 压缩结果怎么进日志** | 四家都**保留原始消息**，都记一条**「替换」事实**：谁被替换（范围或 seq）、替换成什么、花了多少。差别只在「替换」的表达：opencode 把它变成**历史的第一条消息**；codex **重写历史**并持久化 `CompactedItem`；DeepSeek 用**三个 log-only 事件 + 一条带 `surfaceOp: replace` 的用户消息**；Claude Code 在文档层面只说「替换成结构化摘要」并**重新加载启动上下文** | **替换要可重放，且必须记「被替换的是哪些 seq」**。上一版草案「把保留段复制进事件」在四家都没有对应物——真正的对应物是**按 seq 的替换范围** |
+| **③ 摘要调用属于什么** | 都**不是普通对话回合**，但都有自己的生命周期：opencode 是 session 级 service + `compaction.started/delta/ended/failed` 事件；codex 是**一等 task 类型** `TaskKind::Compact`（走 turn 生命周期、有 pre/post compact hook、有 analytics）；DeepSeek 是**可选能力 seam** `ctx.compaction`，明确「不是 agent-loop 脊柱的一部分」，用 start/end **日志锁**包住整个操作；Claude Code 是**一次独立请求**，复用同一 system/tools/history 以命中前缀缓存 | 「**内核内的受控子操作**」：不进回合状态机、不写 `model.message`、**有锁**、**有自己的失败语义**，且**复用同一前缀**让摘要请求吃到缓存 |
 
-- **【源码】** v2 代码：本仓库工作区 `02c48ed` + PR #66（ADR-069）未合时的 `main`；`packages/cowcat` 602 tests / 586 pass（Node 24.18.0）。
-- **【源码】** v1 代码：`agent/src/`（已发布 0.16.0 未发，见 HANDOFF）。
-- **没有真实模型端点**：`ZHIPU_API_KEY` 不在本机 shell 里，本会话未发出任何模型请求。
+**上一版草案被推翻的两条**（写在这里，避免评审时以为没看）：
 
-## 2. 问题一：谁是「上下文用量」的权威
+1. ~~「事件自带保留段（`kept: Message[]`）」~~ → 四家都不复制保留段。保留段在日志里本来就存在，**用 seq 范围表达替换**即可（DeepSeek 的做法），复制只会让日志膨胀。
+2. ~~「阈值就是 `preset.limits.context` 直接比」~~ → 四家都用**窗口减去输出余量/预留**再打比例：opencode 留 15%（至少 16k），DeepSeek `min(W×0.8, W−O−65536)`，codex 有 `auto_compact_token_limit` 与 `fallback_buffer`。裸窗口当阈值会先撞输出上限。
 
-### 2.1 v1 怎么做的【源码】
+## 1. 取证方式（可复现）
 
-`agent/src/loop.js:316-352`，每一轮工具循环开头：
+| 工具 | 形态 | 取证 |
+|---|---|---|
+| **opencode** | MIT，`anomalyco/opencode`（默认分支 `dev`），TS + Effect | 【上游源码】`packages/core/src/session/compaction.ts`；【上游文档】`services/www/src/docs/content/compaction.mdx` |
+| **codex** | Apache-2.0，`openai/codex`（`main`），Rust | 【上游源码】`codex-rs/core/src/tasks/compact.rs`、`codex-rs/core/src/compact.rs`、`codex-rs/core/src/session/context_window.rs`、`codex-rs/prompts/templates/compact/prompt.md`、`codex-rs/core/src/context/compaction_summary.rs` |
+| **DeepSeek Harness** | 开源，`deepseek-ai/deepseek-harness`（`master`），TS | 【上游文档】`docs/subsystems/compaction.md`、`docs/subsystems/token-meter.md`、`packages/compaction/compaction-basic/README.md` |
+| **Claude Code** | **闭源**；只取官方文档与本地发布产物 | 【上游文档】`code.claude.com/docs/en/prompt-caching`（Compacting the conversation）、`/docs/en/costs`、`/docs/en/context-window`、`/docs/en/model-config` |
 
-1. **估算**：`estimateTokens(messages)`，算法是「序列化后字符数 / 4」+ 附件自带的 `tokens` 估算（`prompts/compact.js:160-164`、`attach.js:100-110`）。
-2. **探针**（`loop.js:323-329`）：估算超过阈值 **70%**，**或者**历史里有一条 `tool_result` 超过 8000 字符 / 带附件——后者是为了「一条巨大输出把预算吃光」的情况，此时估算本身可能还没过 70%。
-3. **校准**（`:330-339`）：探针命中才调 `provider.countTokens`（真实端点）；**失败就退回估算**（`catch` 空实现）。真正决定压缩的是 `real ?? est`。
-4. 阈值来自配置 `config.maxContextTokens`（`:322`）。
+**取证的局限**（评审必须知道）：
 
-关键取舍：**估算是常态、真值是校准**，不是反过来。理由很实际——`count_tokens` 是一次网络往返，每轮都调等于把回合变慢一倍。
+- Claude Code 没有源码，**实现细节一律不推断**；本文只引用它文档里明确写出的行为。
+- codex 与 DeepSeek 的**阈值/保留比例**是默认值，本文不假设它们对我们是好默认值（见 §9）。
+- 四家都是「单会话单上下文」，没有一家在编码 Agent 里做跨会话共享上下文——所以「压缩」在本仓库的边界就是**一个会话的历史**。
 
-### 2.2 v2 现在有什么【源码】
+## 2. 问题一：上下文用量怎么算
 
-| 能力 | 现状 |
-|---|---|
-| 本地估算 | **没有**（`kernel/` 里没有任何 token 概念） |
-| 真实计数 | **没有**：`ModelPort` 只有 `stream()`（`ports/index.ts:228-230`）；`ModelRequest` 的 `maxTokens` 只是**输出**上限（`:217-218`） |
-| 真实用量 | **有，但拿不到**：`model.usage` 事件带 `{input, output, cacheRead, cacheCreation}`（`ports/model.ts:17-22`、`kernel/events.ts:55-57`），而 `reduce` 明确**不**折叠它（`state.ts:85-90`：「成本不改变对话」） |
-| 预算配置 | **字段已经有，没人读**：`preset.limits.context` 存在（`kernel/preset.ts:10-19`），注释自己写着「carried so the catalogue's shape maps over; **nothing consults it yet**」 |
+### 2.1 逐家做法
 
-也就是说：**v2 连「现在用了多少」都回答不了**。
+**opencode**【上游源码 `compaction.ts` · `estimatePrompt` / `estimateContext` / `calculateCeiling`】
 
-### 2.3 决定草案
+- **锚点**：找**最后一条带 provider 计数的 assistant 消息**（`hasMeasuredPrompt`：同 provider/model ref、无 error、`input + cache.read + cache.write > 0`）。锚的用量 = `input + cache.read + cache.write + output + reasoning`。
+- **增量**：锚之后的消息逐条估（`estimateMessage`/`estimatePart`：文本按 `Token.estimate`，图片 1500、PDF 2000，tool call 与 schema 也算）。
+- **为什么只用同一 provider 的计数**：注释写明——别的 provider 的计数可能描述的是原生（加密）上下文窗口，本模型重放不了，**数字会撒谎**。
+- **阈值**：`calculateCeiling = window − max(window×15%, 16k)`；未知窗口时上限为 `Infinity`（只有 provider 拒绝才拦得住）。
+- **溢出恢复**：provider 报「太长」后，下一次按**被拒请求估算的 70% / 50% / 35%** 逐级收缩（`SHRINK_STEPS`），三轮不成就放弃。
 
-**D1：用量 = 上一回合的真实 `input` tokens（若模型给过）+ 本地估算兜底；两者取大。**
+**codex**【上游源码 `session/context_window.rs` · `ContextWindowTokenStatus`】
 
-- **为什么取大**：估算偏低会漏压（真的爆上下文），偏高只会早压一次（可忍受）。v1 的 `real ?? est` 是「二选一」，但真实 `input` 是**上一回合的**，这一回合光工具结果就可能翻倍——所以两者都要看。
-- **为什么不用 `count_tokens` 端点**：Anthropic 有；OpenAI 兼容端点大多没有，而 201/209 个目录里的 provider 走的是后者【推断，需按目录抽查】。为一个可选能力开一个新的端口方法，收益（一次往返换更准的数字）不划算——ADR-041 已经把 `usage` 记下来了，那本身就是免费的校准源。
-- **代价**：模型不给 `usage`（部分兼容端点会漏）时只剩估算，误差全部由兜底吸收；`cacheRead` 的语义也要单独处理（缓存命中的部分同样占窗口，只是便宜）。
+- 用量来自 `sess.get_total_token_usage()`（累计的真实 usage），不是本地估。
+- 两套口径并存：`AutoCompactTokenLimitScope::Total` 与 `BodyAfterPrefix`（后者减去窗口的 prefill 基线，只算「本窗口新增」）。
+- 硬上限 `full_context_window_limit` 与可配置的 `model_auto_compact_token_limit` 分开；还有 `fallback_buffer_tokens` 与「回合结束后按百分比触发」的 `model_post_turn_compact_threshold_percent`。
 
-**D2：阈值就用 `preset.limits.context`——它已经在目录里，只是还没有人读。**
+**DeepSeek Harness**【上游文档 `docs/subsystems/token-meter.md`】
 
-`kernel/preset.ts:10-19` 的注释自己写着「carried so the catalogue's shape maps over; **nothing consults it yet**」，九个内置 preset 每个都填了 `context`（`host/presets.ts:65-120`），自定义 preset 的 schema 也带这个键（`adapters/config.ts:94`）。所以这一条不是新决定，是**把既有字段接线**：压缩成为它的第一个读者。
+- 独立服务 `ctx.tokenMeter`，产出一个**不可变快照**：`baseline`（`usage` 或 `estimated`）+ `surfaceDeltaTokens`（相对锚的**带符号**重定价）+ `totalTokens` + **逐节点价格** `nodes: { seq, tokens, heuristicTokens }[]`。
+- 关键设计：锚只在上一次成功请求与当前请求**同一 canonical envelope** 时复用，否则整份重新定价；替换节点用 `heuristicTokens`（与路由无关）定价，保证投影折叠自洽。
+- 阈值（`compaction-basic` 文档）：`floor(min(W × 0.8, W − O − 65536))`，`O` 是路由的输出预留；保留 16% 的 `W − O`。
+- 自认的局限：「4 字符/token 对 CJK 与 JSON Schema 定价偏低」，精确分词仍是待办。
 
-同理，窗口大小是**模型的事实**不是用户偏好——用户想调就换 preset 或写自定义 `presets`（ADR-063）。
+**Claude Code**【上游文档 `/docs/en/costs`、`/docs/en/context-window`、`/docs/en/model-config`】
 
-**D3：探针要保留 v1 的「一条巨大 tool_result」这条腿。**
+- 文档口径是**展示与告警**：`/context`（看谁占了空间）、状态行的 context-window usage、`/usage` 的真实 token 与缓存统计（`cache_creation_input_tokens` / `cache_read_input_tokens`）。
+- 自动压缩有独立的「auto-compact window」设置（`/docs/en/model-config#set-the-auto-compact-window`）。
+- 它明确区分「**上下文用量**」与「**本轮输出量**」：spinner 旁边的计数只算本轮输出，**不含**你发出去的上下文。
 
-只按总量判断会漏掉「单条输出 8 万字符」的情况——它可能仍低于 70%，但会让**下一次**请求直接超限。v2 的对应物是 `tool.finished.output` 的长度。
+### 2.2 我们该拿走的
 
-## 3. 问题二：压缩结果怎么进日志（本文件最要紧的一节）
+**D1：用量 = 真实锚 + 增量估算，两者取大；阈值 = 窗口按比例，并扣掉输出余量。**
 
-### 3.1 为什么必须是事件【源码】
+- **锚从哪来**：`model.usage` 事件里已经有 `{input, output, cacheRead, cacheCreation}`（`packages/cowcat/src/ports/model.ts:17-22`）。但现在 `reduce` 刻意不折叠它（`kernel/state.ts:85-90`，理由是「成本不改变对话」）——压缩要它，所以这条决定要改：**state 记住最后一次 usage 与它所属的 message 位置**。
+- **为什么取大**：估算偏低会漏压（真爆窗口），偏高只是早压一次。opencode 是「锚 + 增量」两段相加，我们多一层保险。
+- **为什么不新开 `countTokens` 端口**：四家里只有 Anthropic 系有该端点，codex/deepseek/opencode 都没把它当主路径；而 `usage` 是**每回合免费**的。
+- **阈值不是裸窗口**：`ceiling = window − max(window×15%, 16k)`（取 opencode 的形状，理由与它相同：留出最后一次回复与摘要本身的空间）。`limit.context` 字段已在 `kernel/preset.ts:10-19` 存在且注释自认「nothing consults it yet」。
+- **溢出要能恢复**：provider 拒绝「太长」时按 70%/50%/35% 收缩重试一次；**不要**只在客户端等估算准确。
 
-- `SessionState.messages` 由 `reduce` 从事件算出（`state.ts:60-113`），**没有第二条写入路径**。
-- 模型请求直接吃它：`messages: session.state.messages`（`run-turn.ts:173-174`）。
-- 重开会话 = 重放日志（`state.ts:145-147`）。
-- TUI 也是同一份事件流的投影（ADR-066 ②：同一段日志 → 同一个视图）。
+## 3. 问题二：压缩结果怎么进日志（最契约的一节）
 
-所以：**任何「只在内存里替换历史」的做法，重开就失效**。这条和 ADR-059 ② 是同一个约定，不是新决定。
+### 3.1 四家的记录形态
 
-### 3.2 追加模型下的真难点
+| 工具 | 记录成什么 | 保不保留原始消息 | 「保留段」怎么留 | 重放怎么重建 |
+|---|---|---|---|---|
+| **opencode**【上游源码】 | 一条 **`compaction` 消息**（`text` + `recent`），成为历史的**第一条**；`previousCompaction()` 要求 `messages[0]` 是已完成的 compaction | **保留**（文档：更早的消息仍然存储，只是不再发给模型） | **字符串化进 compaction 消息的 `recent` 字段**；代码里有 TODO 说这该改成消息引用（「stringifying the recent history confuses some models」） | 从**最近一次完成的 compaction** 载入历史 |
+| **codex**【上游源码】 | `sess.replace_compacted_history(...)` 持久化 `CompactedItem`，带 `window_number`、`window_ids`、`compaction_response_id`、`input_goal_ids` | **保留**（原 items 在 rollout 里） | **复制**最近用户消息，预算 `COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000`，超预算的截断并标记「不完整」 | 新历史 = 初始上下文前缀 + 复制的用户消息 + summary（`CompactionSummary` 是**带 content-kind 的 user 消息**） |
+| **DeepSeek Harness**【上游文档】 | **三个 log-only 事件**：`compaction/start`（锁）、`compaction/summary`（`summary`、`shadowedRange`、**`shadowedSeqs`**、`shadowedTokenCount`、provider/model/usage、`rawOutput`）、`compaction/end`（释放锁，可带 `error`）；再加一条 `user/message` 带 `surfaceOp: { op: 'replace', startSeq, endSeq }` | **保留**（`shadowedSeqs` 记录「被遮住的是哪些」，原始事件不动） | **不复制**：替换只覆盖 `startSeq..endSeq`，**范围之后的消息原样留在 surface 上** | surface = 日志按 seq 展开后套用所有 `replace` 操作；`SurfaceEventType` **故意不扩展**（只有产出消息的事件进模型） |
+| **Claude Code**【上游文档】 | 文档只说「替换成结构化摘要」；终端看到一句 `Conversation compacted` | 未说明（闭源） | 摘要 + **启动上下文重新加载**（system/CLAUDE.md/memory/MCP 工具在消息历史之外）+ **重读最近修改的最多 5 个文件** + **重注入调用过的 skill（每个 ≤5000 tokens）** | 未说明 |
 
-v1 的压缩是**就地改写**：
+三家的共同形状可以压成一句话：
 
-```js
-messages.splice(0, messages.length, ...result.messages);   // loop.js:347
-```
+> **压缩是一条「替换」事实：替换发生在哪个位置范围、替换成什么、原来那段值多少 token。原始消息不动。**
 
-`result.messages` 可能是「wrapper + 保留的最近 6 条」（`compact.js:141-143`）。换成追加日志后，`context.compacted` 事件只能落在**当前末尾**，而它要表达的是「把**之前**的消息换成 summary，再接上**最近**几条」。
+### 3.2 对我们意味着什么
 
-三条解法：
+我们现在的硬约束没变：`SessionState.messages` 是事件日志的**纯折叠**，模型请求直接吃它（`kernel/run-turn.ts:173-177`）。所以「压缩」只能落在折叠规则上。
 
-| 方案 | 事件形状 | `reduce` 语义 | 代价 |
-|---|---|---|---|
-| **A 事件自带保留段**（倾向） | `{ summary, kept: Message[] }` | `messages: [{role:'user', text: summary}, ...event.kept]` | 保留段在日志里**重复一份**（v1 是 6 条，可控）；`reduce` 仍是纯函数、仍单调 |
-| B 消息带序号，读取时过滤 | `{ summary, throughSeq }` | `messages` 变成「`seq > throughSeq` 的消息」+ summary 固定在最前 | 要给 `Message` 加来源 `seq`（现在是裸结构，`kernel/messages.ts`），或者让 `state` 平行存一份序号数组——两者都会渗到每个折叠分支 |
-| C 只做全量压缩（`keepRecent = 0`） | `{ summary }` | `messages: [{role:'user', text: summary}]` | 最简单，但丢掉「最近几轮原文」这个 v1 实测出来的质量差异 |
+但上一版草案的「事件自带保留段」是**编出来的**——四家没有一家这么做。真正的对应物是 **DeepSeek 的 `shadowedSeqs` + `surfaceOp.replace`**：
 
-**倾向 A 的理由**：它把「重放要还原什么」写死在了事件里——`kept` 是**事实**（那几条消息曾经在窗口里），不是推算出来的。B 的正确性依赖「每条消息都有 seq」这个新不变量横跨所有折叠分支，而收益只是省几百字节。
-
-**A 的代价要说清**：日志会**重复**最多 6 条消息（含工具输出，可能很大）。缓解：`kept` 只保留**摘要不需要**的最近轮次，并且 v1 的 `findLargeFiles` 已经证明「大文件内容可以在压缩时被替换成一行提醒」（`compact.js:30-31,133-137`）——保留段里的大 `tool_result` 同样可以被裁剪成提醒。这条建议进 ADR：**`kept` 里的单条输出也有长度上限**。
-
-### 3.3 事件字段草案
+**D2：`context.compacted` 记录「替换范围」，`messages` 按 seq 过滤。**
 
 ```ts
 | {
     readonly type: 'context.compacted';
-    /** 给模型的那段续接文本（v1 的 WRAPPER_TEMPLATE，含指回会话文件的说明）。 */
+    /** 折叠后模型看到的那段续接文本（含「这是压缩检查点」的前导）。 */
     readonly summary: string;
-    /** 被摘要覆盖的消息条数，只用于审计与前端展示，不参与折叠。 */
-    readonly dropped: number;
-    /** 保留的最近消息，按原顺序；全量压缩时为空数组。 */
-    readonly kept: readonly Message[];
-    /** 谁做的摘要（preset 名与 model），审计用。 */
+    /** 被替换的最后一条消息的来源 seq；之后的消息原样保留。 */
+    readonly throughSeq: number;
+    /** 被替换的消息条数与它们的 seq（审计与前端展示用；裁决只看 throughSeq）。 */
+    readonly shadowed: readonly number[];
     readonly model: string;
     readonly usage: ModelUsage | null;
   }
 ```
 
-**为什么 `summary` 存的是「wrapper 全文」而不是纯摘要**：v1 的取舍（`compact.js:139`）——续接文本必须自解释（「本会话从一段超长对话继续」+ 指回 transcript 的路径），否则模型看到一条突兀的用户消息会困惑。存全文让重放**不需要重新拼装**。
+- **fold 语义**：`messages = [summary 作为一条 user 消息] + 所有 seq > throughSeq 的消息`。
+- **为什么是水位线而不是集合**：四家的自动压缩都只压**最旧的一段**（codex「older history」、opencode「older conversation」、deepseek「oldest balanced span」、claude「older history」）。水位线覆盖这个形状；`shadowed` 只作审计，等真需要「区域压缩」（deepseek 的 `compactRegion`）再升级成集合。
+- **代价（必须写进 ADR）**：`Message` 现在没有来源 seq，`reduce` 也从不记录。要么给 `Message` 加 `seq`，要么在 `state` 里平行保存 `seqs`。**推荐前者**：deepseek 的每个 surface 节点都带 `seq`，codex 的每个 item 都有 id——「消息知道自己从哪条日志来」是这类系统的通例，而我们迟早要它（审计、区域压缩、前端定位）。
+- **`readFiles` 不受影响**：它是安全闸门（ADR-049），不是上下文问题。压缩只改 `messages`，不碰 `readFiles`——DeepSeek 也把「折叠历史」和「安全事实」分开（它的闸门在别的 seam）。
+- **重开一致**：同一份日志折叠出同一个 `messages`，因为它就是纯函数。这条比 opencode 的「从最近 compaction 载入」更强，代价是压缩事件必须自带水位线。
 
-### 3.4 与「日志是审计事实」的关系
+### 3.3 Claude Code 那条额外要抄的
 
-压缩**不删除**日志里被摘要的事件：原始 `turn.opened` / `model.message` / `tool.finished` 全部还在，`context.compacted` 只影响**折叠出的 `messages`**。这一点必须写进 ADR，因为它决定了：
+它压缩后**重新加载启动上下文**（system / CLAUDE.md / memory / MCP 工具），并**重读最近修改的 5 个文件**、**重注入调用过的 skill**。
 
-- 审计/成本统计仍然能看全量历史；
-- `readFiles`（ADR-049）**不能**被压缩清空——它是安全闸门，压缩是上下文问题。v1 没有这个区分是因为 v1 的闸门是内存 `readSet`（`state.ts:26-34` 的注释记了这件事）。
+对我们的含义：我们的「启动上下文」目前是 `ModelRequest.system`（`ports/index.ts:210-216`），由组合根传入、**不进日志**。所以压缩**天然不需要**重建它——这反而比 Claude Code 简单，但要写进 ADR 的「不做」清单，免得以后有人照着 Claude Code 加一层没用的重建逻辑。**重读最近修改文件**这一条我们**不做**（我们的工具是显式 `Read`，模型自己会决定要不要重读；自动重读会绕过策略与审批）。
 
 ## 4. 问题三：摘要调用在架构里属于什么
 
-### 4.1 v1 怎么调【源码】
+### 4.1 四家的归属
 
-`compact.js:122-129`：**独立的一次 `provider.chat`**——自己的 system（`SUMMARIZER_IDENTITY`，`:7`）、自己的 max_tokens（20000）、`temperature: 1`、只给一个 `Read` 工具（让摘要者能补读文件）、模型可以是「小模型」（`loop.js:345`）。
+| 工具 | 归属 | 生命周期 | 失败的后果 |
+|---|---|---|---|
+| **opencode**【上游源码】 | `SessionCompaction` service，**session 级**；`compact()` 返回 `skipped / completed / failed` | `compaction.started` → `delta` → `ended` / `failed`；usage 以 `source: "compaction"` 单独记账；**一个 session 不会同时跑两个压缩** | 发 `failed` 事件；**历史不变**，报错给调用方；溢出恢复的收缩有次数上限 |
+| **codex**【上游源码】 | **一等 task**：`TaskKind::Compact`（`tasks/compact.rs`），`emit_turn_started` / `emit_turn_item_started(ContextCompactionItem)` | 走它自己的 task 生命周期；`PreCompactHook` / `PostCompactHook` 可阻断；analytics 记 `active_context_tokens_before/after`、`summary_tokens`、`cached_input_tokens` | 本地失败会上报 `EventMsg::Error`（`PreTurn` 阶段除外，避免吞掉用户输入）；远程压缩失败不回落本地 |
+| **DeepSeek Harness**【上游文档】 | **可选能力 seam** `ctx.compaction`，明确「**不是 agent-loop 脊柱的一部分**」；实现是插件（`compaction-basic`），另有 `tool-result-pruner`、`image-offload` 两个兄弟能力 | `compaction/start`（锁，自动压缩带 turn id，手动为 `null`）→ 摘要 → `compaction/summary` + 替换 → `compaction/end`；**锁括住整个操作**，崩在中间留下「孤儿锁」是可检测的 | 摘要失败：保留当前 surface 继续跑（可先落 pruner 的改动）；手动压缩用 `ManualCompactionErrorCode`（`busy/cancelled/changed/summary/commit/persistence`） |
+| **Claude Code**【上游文档】 | 一次**独立请求**：「same system prompt, tools, and history as your conversation, plus a summarization instruction appended as a final user message」；摘要过程**不出现在终端** | 未说明（闭源） | 未说明 |
 
-摘要完成后写两条记录（`loop.js:348-349`）：
+### 4.2 我们该拿走的
 
-- `compact_boundary`（带 wrapper 全文）→ 重放时变成一条 user 消息（`session.js:66-69`）
-- `compacted`（带条数）→ 重放时**跳过**（`session.js:65`）
+**D3：摘要是「内核内的一次受控子操作」——不进回合状态机、不写 `model.message`、有锁、有自己的失败事件。**
 
-### 4.2 v2 有三个不能做的事【源码】
+- **不进 `TurnState`**：我们的状态机是 `idle→…→completed/failed`（`kernel/turn.ts`），压缩不是回合的一个阶段。opencode 与 DeepSeek 都把它放在回合**外面**；codex 塞进 task 是因为它的 task 抽象本来就是「回合里的动作单元」，与我们不同构。
+- **不写 `model.message`**：写了会多一条假助手消息、折叠会重复（`kernel/state.ts:77-84`）。
+- **要锁**：DeepSeek 的 `compaction/start`→`compaction/end` 是一条可检测的日志锁（崩溃留孤儿锁而不是「假装做完了」）；opencode 用进程内状态保证「一个 session 不并发压缩」。我们要一条**日志锁**（重开也认），因为我们的重放是权威。
+- **失败不阻塞**：保留原历史继续跑 + 一条 note。DeepSeek 同样「摘要失败保留 surface 继续」，而我们刚在 ADR-069 栽过一次「辅助功能把主流程搞挂」。
+- **复用前缀**（三家都强调）：摘要请求 = 同一 system + 同一 tools + 被压缩区间逐字重放 + 末尾一条压缩指令。这样 provider 的 warm prefix 能命中，只有指令与摘要输出是未缓存。**这一条直接影响成本**，必须进 ADR。
+- **不引入第二个「小模型」**：opencode 文档写死「Compaction uses the session's model. There is no separate compaction model.」；DeepSeek 允许配置 `summarizationProvider/Model`，但默认跟随路由。我们站 opencode 这边（ADR-037/063 的「preset 是唯一模型入口」）。
 
-1. **不能开回合**：`session.openTurn()` 会写 `turn.opened`、改写 `state.turn`，而状态机不允许「回合里开回合」（`turn.ts` 的 `canTransition`）。
-2. **不能写 `model.message`**：那会往 `messages` 里追加一条助手消息，前端会显示它，折叠会重复（`state.ts:77-84`）。
-3. **不能借用 `tool.finished`**：那是工具的语义，`readFiles` 会误登记（`state.ts:136-143`）。
+## 5. 四家的分歧（决定时要选边的地方）
 
-### 4.3 决定草案
-
-**D4：摘要是一次「内核内部调用」，走同一个 `ModelPort.stream()`，只产出一条 `context.compacted`。**
-
-- 请求：`system` = 摘要指令（术语：v1 的 `COMPACT_SYSTEM` 可以整体迁移），`tools: []`。
-  - **v1 给摘要者 `Read` 工具，v2 不予**：那是「摘要者自己补读文件」的能力，但 v2 的工具调用要经过策略层与审批（ADR-023/024），**在压缩里弹审批是不可接受的**（用户没有在等这个）。替代品是 `kept` + 大文件提醒，以及允许用户自己重读。
-- **不写 `model.delta`**：那是瞬时显示（ADR-066 ②），压缩过程不该往对话流里打字。
-- **失败不阻塞**：`catch` → 不写事件、给回合加一条 `compaction-failed` note、原历史继续用（与 ADR-069 同一条课）。
-
-**D5：摘要用「当前 preset 的模型」，不引入 `smallModel`。**
-
-v1 有 `config.smallModel`（`loop.js:345`），目的是省钱。v2 的 preset 已经是「一切模型选择的唯一入口」（ADR-037/063），再加一个隐藏的第二模型会让 `doctor`、成本审计、preset 语义全部多一条分支。**代价**：压缩贵一点。这一条建议评审时按真实账单再定，本文件只给倾向。
-
-## 5. 问题四：压缩后前端显示什么
-
-### 5.1 传递路径不用改【源码】
-
-协议的事件信封把 `type` 当**纯字符串**透传（`packages/protocol/src/notifications.ts:32-36`），所以新事件**不需要**协议新方法。`project()` 对不认识的事件「第一次出现记一行 notice」（ADR-066 ②）——压缩事件会先以这种方式出现。
-
-### 5.2 决定草案
-
-**D6：显式支持 `context.compacted`，画一条系统行，不展示摘要内容。**
-
-- 文案只带数字与原因（`dropped` 条被压缩成一段），摘要本身默认不展开（品牌指南 §4.2「输出默认折叠」的同一逻辑）。
-- **不给「查看摘要」的入口**：那是一个新的模态（ADR-068 ② 的预览模态还没做），先记 P8/UI 待办。
-- 帧快照补一幕（`packages/tui/test/frames.ts` 的既有手法）。
-
-## 6. 问题五：附件与大文件的交互
-
-- **压缩时附件不读字节**【源码参照】：v1 的 `renderForCompact` 只输出 `attachmentLabel(a)`（`compact.js:42-63`、`attach.js:47-50`）——摘要看到的是「有一张 320x240 的 PNG」，不是像素。v2 应照做。
-- **保留段里的附件仍要 materialize**：`kept` 里的 `tool.finished` 带附件引用，下次请求还会读文件——ADR-069 的降级已经把「文件没了」这条兜住（降级成一句 `[attachment unavailable: …]`）。
-- **一个正向副作用**：压缩会把「已经不存在的附件引用」移出窗口，所以 ADR-069 之后仍然可能出现的「每次请求都点名一次」的噪音，会在压缩后自然消失。
-- **大文件提醒**（v1 `compact.js:30-31`）：v2 的 `Read` 结果里带不带行号格式不影响这条——提醒只需要路径。建议保留，并且同样写进 `kept` 的裁剪规则（§3.2 的代价说明）。
-
-## 7. 被否决的方案
-
-| 方案 | 否决理由 |
-|---|---|
-| **只压缩不记录**（内存里换历史） | 重开即失效，违反 `state.ts` 的折叠约定与 ADR-059 ② |
-| **压缩改写旧事件**（truncate 日志） | 日志是**追加**的事实（成本侧见 ADR-041），改写历史会让成本与安全审计同时失真；`readFiles` 也不能被压缩清空（ADR-049） |
-| **每轮调 `count_tokens`** | 每轮一次网络往返；且 OpenAI 兼容端点大多没有这个能力，做出来只在 Anthropic 上有效 |
-| **摘要者带工具（`Read`）** | 工具调用要过策略与审批；在压缩里弹审批不可接受（§4.3） |
-| **全量压缩、不保留最近几条** | v1 特意区分了 full / recent-portion（`compact.js:100-116`），保留段是实测出来的质量差异；没有实测证据能推翻它 |
-| **压缩率按「条数」而不是 token** | 条数与上下文窗口没有稳定关系（一条工具输出可以比十轮对话更大） |
-
-## 8. 需要落的 ADR（清单，草案）
-
-| # | 一句话 | 依赖 |
+| 分歧 | 各家立场 | 我们的取舍 |
 |---|---|---|
-| **ADR-070** | **上下文用量的权威**：本地估算（chars/4 + 附件估算）为主、上一回合 `usage.input` 为校准、两者取大；**不开 `countTokens` 端口**；探针包含「单条巨大 `tool_result`」 | D1、D3 |
-| **ADR-071** | **压缩是事件**：新增 `context.compacted { summary, dropped, kept, model, usage }`；`reduce` 把 `messages` 换成 `[summary, ...kept]`；**不改写历史事件**、**不清空 `readFiles`**；`kept` 里单条输出有长度上限 | D2（§3.3） |
-| **ADR-072** | **摘要调用不是回合**：走同一 `ModelPort`、不写 `model.message` / `model.delta`、不弹审批；**失败降级为 note 并继续** | D4 |
-| **ADR-073** | **阈值开始读 `preset.limits.context`**（字段早已存在、无人使用）；不引入第二个「小模型」配置键 | D2、D5 |
-| **ADR-074** | **前端呈现**：`context.compacted` 画一条系统行、摘要默认折叠、无查看入口 | D6 |
+| 「替换」的表达 | opencode：一条消息；codex：重写历史 + `CompactedItem`；deepseek：事件 + `surfaceOp.replace` | **deepseek**：我们的日志是事件溯源，替换必须是一条**可重放的替换事实** |
+| 保留段怎么留 | opencode：字符串进 summary 消息（自认 TODO）；codex：复制（受 API 约束）；deepseek：不动，靠范围 | **deepseek**：不复制 |
+| 用量测量归属 | deepseek：独立 `tokenMeter` 服务；opencode：函数；codex：session 累计 | **opencode 形状**（我们内核只有函数，没有 service 容器）+ **codex 的锚**（真实 usage） |
+| 阈值默认 | opencode 15%/16k；deepseek 0.8 + 64k 余量；codex 可配/百分比 | 先取 opencode 形状，**数值待实测**（§9） |
+| 官方原生压缩 | opencode：有（provider 侧，加密 checkpoint，只对同一 endpoint 有效）；codex：有（RemoteCompactionSupport） | **不做**：我们的合同是同仓库内核 + 两个协议适配器，加密 checkpoint 无法跨 provider 重放，收益不抵复杂度。记进「不做」清单 |
 
-## 9. 任务拆分（草案，T0 落表时定稿）
+## 6. 决定草案（评审对象）
+
+| # | 决定 | 依据 |
+|---|---|---|
+| **D1** | 用量 = 最后一次真实 `usage` 锚 + 之后的估算，**取大**；阈值 `ceiling = limit.context − max(15%, 16k)`；探针还包含「单条 tool_result 过大」；provider 报太长时按 70/50/35% 收缩重试一次 | opencode `estimatePrompt`/`calculateCeiling`/`SHRINK_STEPS`；codex `context_window.rs`；deepseek `tokenMeter` |
+| **D2** | `context.compacted { summary, throughSeq, shadowed, model, usage }`；折叠 = `[summary] + seq > throughSeq`；**Message 增加来源 seq**；原始事件不动；`readFiles` 不动 | deepseek `compaction/summary` + `surfaceOp.replace`；codex `replace_compacted_history`；opencode 文档「更早的消息仍然存储」 |
+| **D3** | 摘要是内核子操作：不进 TurnState、不写 `model.message`、**日志锁**（start/end 成对）、失败不阻塞；请求复用同一 system/tools/前缀 | deepseek 的 seam + 锁；opencode 的 session 级 service 与事件生命周期；claude 的「同一 system/tools/history + 末尾指令」 |
+| **D4** | 前端把 `context.compacted` 画成一条系统行（被压 N 条 → 摘要），摘要默认折叠；不做「查看摘要」模态 | 四家都有「你看到一句 compacted」的呈现；模态是另一件事（ADR-068 ② 仍未做） |
+
+## 7. 需要落的 ADR（清单，草案）
+
+| # | 一句话 |
+|---|---|
+| **ADR-070** | **上下文用量的权威**：真实 usage 锚 + 增量估算取大；阈值 `limit.context − max(15%, 16k)`；含「单条巨大 tool_result」探针与 70/50/35% 溢出收缩；**不开 `countTokens` 端口** |
+| **ADR-071** | **压缩是替换事实**：`context.compacted { summary, throughSeq, shadowed, model, usage }`；`Message` 带来源 `seq`；折叠按水位线；**不改写历史事件、不复制保留段、不清空 `readFiles`** |
+| **ADR-072** | **摘要调用不是回合**：内核子操作 + **日志锁**（`context.compaction.started/finished` 成对，孤儿锁可检测）；不写 `model.message`/`model.delta`、不弹审批；失败降级为 note 并继续；**复用同一 system/tools/前缀以命中缓存**；不引入第二个模型 |
+| **ADR-073** | **阈值接线到 `preset.limits.context`**（字段已存在、无人使用）；数值先按 15%/16k，实测后再定 |
+| **ADR-074** | **前端呈现**：`context.compacted` 一条系统行、摘要默认折叠、无查看入口；**不做**原生/provider 侧压缩与「自动重读最近文件」 |
+
+## 8. 任务拆分（草案，T0 落表时定稿）
 
 | 任务 | 内容 | 依赖 |
 |---|---|---|
-| T1 | 估算器（移植 v1 的 chars/4 + 附件估算）与「探针」判定；纯函数 + 用例 | — |
-| T2 | 事件与折叠：`context.compacted`、`reduce` 分支、replay 一致性断言（同日志同状态） | T1 |
-| T3 | 摘要调用：`kernel/compact.ts`（prompt 迁移、失败降级、usage 记录） | T2 |
-| T4 | 触发接线：`run-turn` 的 `for (;;)` 每轮开头检查（`run-turn.ts:97-99` 之前） | T1、T3 |
+| T1 | 估算器（chars/4 + 媒体固定值 + tool schema）+ 锚计算；纯函数与用例 | — |
+| T2 | `Message.seq`（或 `state` 平行 seq 数组）+ `context.compacted` 折叠；**重放一致性**断言 | T1 |
+| T3 | 摘要调用：prompt、前缀复用、日志锁、失败降级、usage 记录 | T2 |
+| T4 | 触发接线：`run-turn` 的 `for(;;)` 每轮开头 + provider 溢出恢复 | T1、T3 |
 | T5 | 前端：`project()` 支持 + 帧快照 + 系统行文案 | T2 |
-| T6 | 收口：`kept` 裁剪、大文件提醒、`doctor` 报告「当前 preset 的窗口与已用量」 | T3~T5 |
+| T6 | 收口：`doctor` 报告窗口与已用量、溢出收缩策略、文档 | T3~T5 |
 
-## 10. 待验证（本文件最重的一节）
+## 9. 待验证（没有数字就不要写死 ADR-073 的数值）
 
-按「不验证就不要写进 ADR-072/073」排序：
+1. **`chars/4` 在中文与代码上的误差**（deepseek 自认 CJK 偏低）：需要真实 `usage.input` 与估算对比。
+2. **`usage` 的可得性**：目录里的 OpenAI 兼容端点有多少在**流式**响应里给 `input_tokens`（不给则「锚」这一腿是空的）。
+3. **压缩后 `cacheRead` 的变化**：opencode 与 deepseek 都写明「替换会从第一个被替换 token 起失效前缀缓存」；我们的 `cacheRead` 数字**实测一次**再决定成本论证。
+4. **15% / 16k 这两个数**：四家给的是各自上下文（窗口 200k~1M）；我们的主力 preset 窗口是 1M，15% 就是 150k，可能过大——需要按真实会话分布定。
+5. **摘要请求自身会不会先超限**：四家都做了保护（opencode 的 `flattenAndDropOldest`、deepseek 的 shrink + retries、codex 的 `remove_first_item`）。我们至少要一条：**摘要输入 = 被替换区间，而不是全量历史**。
+6. **失败后的可恢复性**：压缩失败 → 下一回合是否仍以同样方式失败（ADR-069 的形状）。
 
-1. **真实端点上的估算误差**：`chars/4` 对中文与代码的偏差有多大？（v1 的 `tokapprox.js` 注释承认「够用」而不是准）→ 需要真实 `usage.input` 与估算对比，至少三个 provider。
-2. **`usage` 的可获得性**：目录里的 OpenAI 兼容端点有多少会在**流式**响应里给 `input_tokens`？不给的话 D1 的「校准」腿就是空的。
-3. **压缩后能否继续任务**：摘要 → 换窗口 → 继续做 → 是否出现「忘了刚做的事」。这是产品问题，不是代码问题。
-4. **缓存命中率的变化**【推断】：压缩会改写 prompt 前缀，`cacheRead` 大概率归零一次。**ADR-073 的成本论证依赖这个数字**，没测之前不能宣称「压缩省钱」。
-5. **`kept` 复制进日志的真实体积**：6 条消息里可能含大 `tool_result`，裁剪上限取多少要看实测分布。
-6. **摘要调用自身的窗口**：把整段历史塞给摘要者，会不会先超限？（v1 直接塞，没有任何保护，`compact.js:121`）
+## 10. 附录 A：四家逐条取证
 
-## 11. 附录 A：v1 实现要点（逐条带行号）
+### opencode
 
-| 要点 | 位置 |
+| 事实 | 位置 |
 |---|---|
-| 摘要者身份与五段式摘要结构（`<analysis>` / `<summary>`） | `agent/src/prompts/compact.js:7,9-19` |
-| 续接 wrapper（自解释 + 指回 transcript 路径） | `:21-28` |
-| 大文件提醒（被丢弃的大文件给一行「要用 Read 重读」） | `:30-31`、`:133-137` |
-| 消息渲染成摘要文本（附件只留 label） | `:42-63` |
-| 收集并判定「大文件」 | `:67-98` |
-| full / recent-portion 两种形态、`KEEP_RECENT = 6` | `:100-116` |
-| 摘要请求（独立 system、max 20000、temperature 1、只给 Read） | `:122-129` |
-| 返回 `{ messages, boundarySummary, compactedCount }` | `:139-155` |
-| 估算 token（chars/4 + 附件估算） | `:160-164` |
-| 触发：估算 70% 探针 + 单条巨大 tool_result 探针 | `agent/src/loop.js:323-329` |
-| 校准：`count_tokens`，失败退回估算 | `:330-339` |
-| 压缩后**就地 splice** 历史 | `:347` |
-| 写 `compact_boundary` + `compacted` 两条记录 | `:348-349` |
-| 重放：boundary 变 user 消息、`compacted` 跳过 | `agent/src/session.js:52-72` |
-| 附件 token 估算（来自附件引用上的 `tokens`） | `agent/src/attach.js:100-110` |
-| **v1 已经会降级不可读附件**（`Never throws`） | `agent/src/attach.js:56-59` |
+| 锚 = 最后一条同路由、带计数的 assistant 消息；`input + cache.read + cache.write + output + reasoning` | `packages/core/src/session/compaction.ts` · `estimatePrompt` / `hasMeasuredPrompt` |
+| 增量估算：文本 `Token.estimate`，图片 1500、PDF 2000，tool schema 计入 | 同上 · `estimatePart` / `estimateMedia` / `estimateTool` |
+| 阈值 = `window − max(15%, 16k)`；未知窗口为 `Infinity` | 同上 · `calculateCeiling` |
+| 溢出恢复 70/50/35% | 同上 · `SHRINK_STEPS`、`deliver` |
+| 保留 15000 tokens，边界对齐到 user 消息（工具调用与结果不拆开） | 同上 · `recentStart`；文档 `compaction.mdx` |
+| 摘要 = 全量对话 + 末尾指令，复用前缀；模板缺段落时补一次 nudge | 同上 · `summarize` / `NUDGE` |
+| compaction 是历史的**第一条消息**，历史从最近一次完成处载入 | 同上 · `previousCompaction` |
+| 事件 `started/delta/ended/failed`；usage 记 `source: "compaction"` | 同上 · `publish` / `spend` |
+| 文档：更早的消息仍然存储，只是不再发给模型；无独立压缩模型 | `services/www/src/docs/content/compaction.mdx` |
 
-最后一行值得单独看：**v2 在 ADR-069 之前把 v1 这条做丢了一次**。压缩这一块同样有「v1 有、v2 没有」的风险，所以本文件把 v1 的行为逐条列出来当参照物。
+### codex
 
-## 12. 附录 B：本仓库相关文件现状
-
-| 文件 | 与压缩的关系 |
+| 事实 | 位置 |
 |---|---|
-| `packages/cowcat/src/kernel/state.ts` | `messages` 的折叠入口；新增事件要在这里加分支 |
-| `packages/cowcat/src/kernel/events.ts` | 事件联合；`model.usage` 已存在但 `reduce` 不折叠 |
-| `packages/cowcat/src/kernel/run-turn.ts` | `for (;;)` 循环（`:97-99`）是触发的自然位置；`request.messages`（`:173-174`）是消费处 |
-| `packages/cowcat/src/ports/index.ts` | `ModelRequest` 没有窗口字段；`ModelPort` 只有 `stream()` |
-| `packages/cowcat/src/ports/model.ts` | `ModelUsage` 的四个数字 |
-| `packages/cowcat/src/kernel/preset.ts` | `limits.context` 已有、注释自认「没人读」；压缩是它的第一个读者 |
-| `packages/tui/src/app/project.ts` | 不认识的事件只记一行 notice；压缩要显式支持 |
-| `packages/protocol/src/notifications.ts` | 事件按字符串透传，新事件不用改协议 |
+| `TaskKind::Compact` 是一等 task；`emit_turn_started`/`emit_turn_item_started` | `codex-rs/core/src/tasks/compact.rs` |
+| `PreCompactHook` 可中止；`PostCompactHook` 可中止；analytics 记前后 token | `codex-rs/core/src/compact.rs` |
+| 替换历史：`sess.replace_compacted_history(...)` + `CompactedItem`（window_number/window_ids/response_id/goal_ids） | 同上 · `CompactedHistoryMetadata` |
+| 复制的用户消息预算 20k tokens，超预算截断并标记 | 同上 · `COMPACT_USER_MESSAGE_MAX_TOKENS`、`build_compacted_history_with_limit` |
+| summary 是带 content-kind 的 **user 消息** | `codex-rs/core/src/context/compaction_summary.rs` |
+| 用量：累计真实 usage + `auto_compact_token_limit` + 百分比后置触发 + fallback buffer | `codex-rs/core/src/session/context_window.rs` |
+| 摘要 prompt（四段式：进度/上下文/下一步/关键数据） | `codex-rs/prompts/templates/compact/prompt.md` |
+| 支持远程（provider 侧）压缩 | `tasks/compact.rs` · `RemoteCompactionSupport` |
+
+### DeepSeek Harness
+
+| 事实 | 位置 |
+|---|---|
+| 压缩是**可选能力 seam**，不是 agent-loop 脊柱；三个 log-only 事件 start/summary/end | `docs/subsystems/compaction.md` |
+| `SurfaceEventType` 故意不扩展；summary 走 `user/message` + `surfaceOp: { op:'replace', startSeq, endSeq }` | 同上 |
+| `shadowedRange` / `shadowedSeqs` / `shadowedTokenCount` 记录被遮住的范围 | 同上 · `CompactionResult` |
+| 锁括住整个操作；孤儿锁可检测；未匹配的 start 阻塞所有入口 | 同上 |
+| 阈值 `floor(min(W×0.8, W−O−65536))`，保留 16% 的 `W−O` | `packages/compaction/compaction-basic/README.md` |
+| 测量服务：`usage` 锚 + 带符号 `surfaceDeltaTokens` + 逐节点 `nodes[]` | `docs/subsystems/token-meter.md` |
+| 摘要请求复用同一前缀以命中 KV 缓存；替换会使被替换区间的缓存失效 | `compaction-basic/README.md` · 「KV Cache effect」 |
+| 兄弟能力：tool-result pruner（无模型调用）、image offload | `packages/compaction/README.md` |
+| 已知局限：4 字符/token 对 CJK 与 JSON Schema 偏低 | `compaction-basic/README.md` · Dev Note |
+
+### Claude Code
+
+| 事实 | 位置 |
+|---|---|
+| 摘要 = 同一 system/tools/history + 末尾一条指令；复用前缀缓存 | `code.claude.com/docs/en/prompt-caching` · 「Compacting the conversation」 |
+| 压缩后：启动上下文重新加载（system/CLAUDE.md/memory/MCP），重读最多 5 个最近修改文件，重注入调用过的 skill（≤5000 tokens/skill）；skill 索引不重载 | `/docs/en/context-window` |
+| `/compact <指令>` 可定制保留重点；CLAUDE.md 里可写 Compact instructions | `/docs/en/costs` |
+| 上下文用量与「本轮输出量」是两个数 | `/docs/en/costs` · spinner 段落 |
+| 自动压缩窗口可配 | `/docs/en/model-config` · 「set the auto-compact window」 |
+| 空闲时可在缓存过期前主动压缩（`idleCompaction`） | `/docs/en/prompt-caching` |
+
+## 11. 附录 B：v1 实现（历史参照，不是决策依据）
+
+`agent/src/prompts/compact.js`：阈值 70% 探针 + `count_tokens` 校准、`KEEP_RECENT = 6`、五段式摘要、`compact_boundary` + `compacted` 两条记录、就地 `splice` 历史；`agent/src/loop.js:316-352` 是触发点。
+
+**它只说明「这条路走过」，不构成任何一条决定。** 与上游对比后有三点结论：它的「每轮调 count_tokens」是比四家都激进的取舍；它的「保留 6 条」是条数而非 token；它的「就地 splice」在事件溯源下不成立。
