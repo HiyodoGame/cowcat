@@ -1,7 +1,7 @@
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { copyFor } from './copy.js';
-import { flag, number, record, records, text, updateSeq, updateType } from './fields.js';
-import { withLangFrom, type ApprovalView, type Entry, type TodoView, type TuiView } from './view.js';
+import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
+import { withLangFrom, withAttachment, type ApprovalView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
 
 /**
  * The pure function the whole frontend is built on (ADR-059 ②, ADR-066 ②).
@@ -60,12 +60,12 @@ export function project(view: TuiView, event: WireEvent): TuiView {
 
     case 'model.message': {
       const content = text(event, 'text') ?? '';
-      const calls = records(event, 'toolCalls').length;
-      const next: TuiView = { ...base, streaming: '' };
-      if (content !== '') return add(next, { kind: 'assistant', seq, text: content, calls });
+      const toolCalls = records(event, 'toolCalls');
+      const next: TuiView = { ...base, streaming: '', calls: withCalls(base.calls, toolCalls) };
+      if (content !== '') return add(next, { kind: 'assistant', seq, text: content, calls: toolCalls.length });
       // An empty answer with calls is normal — the calls ARE the answer. An empty answer
       // with nothing at all is worth a line, or the turn looks like it did nothing.
-      if (calls === 0) return add(next, notice(next, seq, 'info', copyFor(next.lang).empty));
+      if (toolCalls.length === 0) return add(next, notice(next, seq, 'info', copyFor(next.lang).empty));
       return next;
     }
 
@@ -79,7 +79,11 @@ export function project(view: TuiView, event: WireEvent): TuiView {
     }
 
     case 'tool.finished': {
-      return add(base, {
+      // The reference, not the bytes (ADR-057): record what the card will need to ask for.
+      const attachments = records(event, 'attachments');
+      const withImages =
+        attachments.length === 0 ? base : attachments.reduce(upsertAttachment, base);
+      return add(withImages, {
         kind: 'tool',
         seq,
         callId: text(event, 'callId') ?? '',
@@ -89,7 +93,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         truncation: truncationOf(event),
         // References only; the bytes stay on disk and are fetched with `attachment.read`
         // when a renderer actually wants to show them (ADR-057).
-        attachments: records(event, 'attachments')
+        attachments: attachments
           .map((attachment) => text(attachment, 'path'))
           .filter((path): path is string => path !== null && path !== ''),
         path: text(event, 'path'),
@@ -102,6 +106,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         name: text(event, 'name') ?? '(unnamed)',
         rule: text(event, 'rule') ?? '(unnamed rule)',
         reason: text(event, 'reason'),
+        askedAt: number(event, 'ts') ?? 0,
         verdict: null,
         by: null,
       };
@@ -177,6 +182,37 @@ function todoOf(entry: Record<string, unknown>): TodoView {
     status: text(entry, 'status') ?? 'pending',
     activeForm: text(entry, 'activeForm') ?? '',
   };
+}
+
+/** One attachment reference from a result becomes a record waiting for its bytes. */
+function upsertAttachment(view: TuiView, entry: Record<string, unknown>): TuiView {
+  const path = text(entry, 'path');
+  if (path === null || path === '') return view;
+  return withAttachment(view, {
+    path,
+    mediaType: text(entry, 'mediaType') ?? 'application/octet-stream',
+    width: number(entry, 'width'),
+    height: number(entry, 'height'),
+    pages: number(entry, 'pages'),
+    status: 'loading',
+    bytes: null,
+    reason: null,
+  });
+}
+
+/** Fold the model's tool calls into the view's map, keeping the order they arrived in. */
+function withCalls(
+  known: Readonly<Record<string, ToolCallView>>,
+  calls: readonly Record<string, unknown>[],
+): Readonly<Record<string, ToolCallView>> {
+  if (calls.length === 0) return known;
+  const merged = { ...known };
+  for (const call of calls) {
+    const callId = text(call, 'callId');
+    if (callId === null || callId === '') continue;
+    merged[callId] = { name: text(call, 'name') ?? '(unnamed)', input: read(call, 'input') };
+  }
+  return merged;
 }
 
 function add(view: TuiView, entry: Entry): TuiView {

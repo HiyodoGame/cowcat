@@ -1,8 +1,8 @@
 import {
   BoxRenderable,
+  ImageRenderable,
   InputRenderable,
   RGBA,
-  ScrollBoxRenderable,
   TextAttributes,
   TextRenderable,
   createTextAttributes,
@@ -32,22 +32,48 @@ import type { Line } from './line.js';
  */
 
 /**
- * How many transcript lines are kept mounted.
- *
- * A session can run for hours and the skeleton has no virtualisation of its own; the tail is
- * what a chat actually shows, and the session log keeps everything. T8's cards land on
- * `viewportCulling` for the real answer.
+ * Rows the screen spends on something other than the transcript: the root box's two borders,
+ * the status line and the input line.
  */
-const MAX_BODY_LINES = 500;
+const BODY_CHROME_ROWS = 4;
+
+/**
+ * An image, as a rectangle of the frame rather than a line of it.
+ *
+ * Images are a separate channel on purpose: a `Line` is text with a theme token, and a pixel
+ * is neither. The frame builder reserves the rows and says where the image goes; the screen
+ * mounts a renderable over them. That keeps the text model pure — and it means an image that
+ * never loads leaves a properly-sized hole rather than a broken layout.
+ */
+export interface ImageSlot {
+  /** Row offset inside `body`. The `rows` below it belong to the image. */
+  readonly row: number;
+  /** Column offset inside `body`: a card's image starts after its `│ ` frame. */
+  readonly left: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly source: Uint8Array;
+  /** `image/png 320x200`, for the diagnostics and for a failing renderer's message. */
+  readonly label: string;
+}
 
 export interface ScreenSpec {
   readonly body: readonly Line[];
   readonly status: Line;
   readonly placeholder: string;
+  readonly images?: readonly ImageSlot[];
 }
 
 export interface Screen {
   update(spec: ScreenSpec): void;
+  /**
+   * The columns a component may use: the terminal's, minus this screen's own chrome.
+   *
+   * The frame builder is handed this rather than the terminal width because the card borders
+   * and the root border both have to fit — measuring against the terminal is how a card ends
+   * up two cells too wide and wraps itself out of its own box (measured: they did).
+   */
+  contentWidth(): number;
   /** Called with the input's value when the user presses Enter. */
   onSubmit(handler: (value: string) => void): () => void;
   /** Every keypress, including the ones the input swallowed. */
@@ -71,15 +97,11 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   renderer.root.add(root);
 
-  const body = new ScrollBoxRenderable(renderer, {
+  const body = new BoxRenderable(renderer, {
     id: 'cowcat-body',
     flexGrow: 1,
     width: '100%',
-    // A chat shows the newest line; anything else means the user scrolls to find the thing
-    // they just asked for.
-    stickyStart: 'bottom',
-    scrollY: true,
-    viewportCulling: true,
+    flexDirection: 'column',
   });
   const status = new TextRenderable(renderer, {
     id: 'cowcat-status',
@@ -104,9 +126,18 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   // One renderable per line, updated in place when only the text or the colour changed.
   const mounted: TextRenderable[] = [];
   const specs: (Line | undefined)[] = [];
+  const images: ImageRenderable[] = [];
 
-  function updateBody(lines: readonly Line[]): void {
-    const visible = lines.length > MAX_BODY_LINES ? lines.slice(-MAX_BODY_LINES) : lines;
+  function updateBody(lines: readonly Line[]): number {
+    // The tail, cut here rather than by a scroll box. Two measured reasons: a `ScrollBox` draws
+    // a vertical scrollbar in the last column — a column the cards then do not have, so they
+    // wrap and lose their right border — and its `stickyStart: 'bottom'` did not hold, so the
+    // viewport showed the TOP of a long transcript and the newest card was off screen. Slicing
+    // the last N lines is the behaviour a chat wants, and it keeps the mounted renderables to
+    // what is actually visible.
+    const room = Math.max(1, renderer.height - BODY_CHROME_ROWS);
+    const start = lines.length > room ? lines.length - room : 0;
+    const visible = start === 0 ? lines : lines.slice(start);
     for (let index = 0; index < visible.length; index += 1) {
       const spec = visible[index];
       if (spec === undefined) continue;
@@ -141,11 +172,65 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     }
     mounted.length = visible.length;
     specs.length = visible.length;
+    // Where the visible window starts, so an image's row can be mapped onto it.
+    return start;
+  }
+
+  /**
+   * Mount the images over the rows the frame reserved for them.
+   *
+   * Absolutely positioned rather than added to the column: the rows ARE already there (a card
+   * draws `│    │` for them, which is what keeps its border intact), so a flex child would push
+   * the card's own frame apart. Measured — it did: the picture landed below the card, outside
+   * its border, and everything moved down by its height.
+   *
+   * Remounted whenever the set changes rather than diffed in place: an image is expensive to
+   * decode and cheap to mount, and the set changes only when a card appears or scrolls out.
+   */
+  function updateImages(slots: readonly ImageSlot[], viewStart: number): void {
+    for (const existing of images) body.remove(existing);
+    images.length = 0;
+    for (const slot of slots) {
+      const top = slot.row - viewStart;
+      // Entirely scrolled out: nothing to mount, and nothing to decode.
+      if (top + slot.rows <= 0 || top >= mounted.length) continue;
+      const image = new ImageRenderable(renderer, {
+        id: `cowcat-image-${String(slot.row)}`,
+        // The bytes came over the protocol, so there is nothing to fetch and nothing to read
+        // from disk on this side (ADR-057: the log holds references, the frontend asks).
+        source: slot.source,
+        protocol: 'auto',
+        fit: 'fit',
+        position: 'absolute',
+        top,
+        left: slot.left,
+        width: slot.cols,
+        height: slot.rows,
+        onLoad: () => {
+          // Decoding is asynchronous: without this the picture would appear only on the next
+          // unrelated redraw, which on an idle session is never.
+          renderer.requestRender();
+        },
+        onError: () => {
+          // A malformed file, an unsupported format, a native core that cannot draw it: the
+          // picture is simply absent, and the metadata line above it still says what it was.
+          renderer.requestRender();
+        },
+      });
+      body.add(image);
+      images.push(image);
+    }
   }
 
   return {
+    contentWidth() {
+      // Two cells for the root box's own border. Everything inside is laid out by width alone,
+      // so this is the one place that has to know about it.
+      return Math.max(8, renderer.width - 2);
+    },
     update(spec) {
-      updateBody(spec.body);
+      const viewStart = updateBody(spec.body);
+      updateImages(spec.images ?? [], viewStart);
       status.content = spec.status.text;
       status.fg = resolve(theme, spec.status.token);
       input.placeholder = spec.placeholder;
@@ -176,6 +261,8 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       input.focus();
     },
     destroy() {
+      for (const image of images) body.remove(image);
+      images.length = 0;
       renderer.root.remove(root);
     },
   };

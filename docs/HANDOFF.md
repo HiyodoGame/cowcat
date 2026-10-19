@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：T1 前提验证（#56）、T2 协议（#57）、T3 `serve`（#58）、T4 CLI 入口（#59）、T5 附件契约（#60）、T6 `Read` 非文本分支（#61）、T4a 1/3 协议独立成包（#62）已合；T4a 2/3、3/3 与 T7 骨架（ADR-061/063~066）在分支 `feat/p6-t4a-host` 上 → PR #63**——都不是阶段收尾，**T8（卡片）起仍未开工**（见 §3）。
-> 交接时仓库状态：**`main` = `89354a6`**（#62 合入）；当前分支 `feat/p6-t4a-host`（工作区干净，**PR #63** 开着）。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：T1~T6（#56~#61）与 T4a 1/3（#62）已合；T4a 2/3、3/3 与 T7 骨架并入 `main`（#63）**；当前分支 `feat/p6-t8-cards`（**PR #64**）上是 **T8 卡片 + T9 图片**（ADR-067/068）——**T10（收口与人眼验收）未开工**（见 §3）。
+> 交接时仓库状态：**`main` = `f2dbb73`**（#63 合入）；**PR #64**（T8 + T9）开着、全绿；工作区干净。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -31,7 +31,8 @@
 | #60 | P6 **T5 附件契约**（引用进日志、字节按需 materialize、两协议各自映射） |
 | #61 | P6 **T6 `Read` 非文本分支**（图像/PDF 附件、notebook 渲染） |
 | #62 | P6 **T4a 1/3**（ADR-062：协议独立成 `packages/protocol` + CI 腿） |
-| — | 分支 `feat/p6-t4a-host`：**T4a 2/3**（ADR-063 配置与内置预设 + ADR-064 组合根与真实 `ProtocolHost`）→ **PR #63**；**3/3**（ADR-065 `packages/cli` 与可执行文件）与 **T7 骨架**（ADR-061 主题 token + ADR-066 TUI 骨架：`project()`、帧快照、`cowcat tui`）追加在同一分支 |
+| #63 | P6 **T4a 2/3 + 3/3 + T7 骨架**（组合根与真实 `ProtocolHost`、`packages/cli`、`project()` 与帧快照；ADR-061/063~066）——**已合并** |
+| — | 分支 `feat/p6-t8-cards`：**T8 卡片**（ADR-067：卡片即文本、宽度表、尾部挂载、命令表与键位、注入时钟） |
 
 另外两次非功能性改动：修回被 PowerShell 写坏的 `ci.yml`（`·`→`路`，见 §5 第 11 条）、把两个 macOS flake 记进 §6 的前序遗留（`chrome.test.mjs:47`、`toast.test.mjs:34`）。
 
@@ -160,6 +161,26 @@
 - 【源码】`cowcat tui` 与 `sessions resume <id>` **同一条代码路径**（`packages/cli/src/cli/tui.ts` 的 `startTui`），Node 门槛检查在 import 渲染器**之前**；`packages/cli` 因此多一条 `file:../tui` 依赖，CI 的 cli 腿也多一环（构建链：protocol → cowcat → tui）
 - **仍未验证**：真实终端上的观感；真实模型请求；T8 的卡片与 T9 的图片
 
+### 已验证 —— P6 T8 卡片（Windows，Node **v26.12.0** 便携版）
+
+- 【本机测试】`cd packages/tui && npm test` → **43 tests / 43 pass / 0 fail**：`project()` 10、卡片 10（含**每张卡每一行都是 `width` 格**的不变量）、帧快照 8、宽度表 6、diff 7、T1 前提 2
+- 【本机测试】帧快照新增四幕（`nudge` 催促、`todos`、`palette`、以及重写后的 `turn`）——**期望帧是人看过的**，看的过程里发现两个真 bug（见 §5 第 23、24 条）
+- 【源码】`text/{width,wrap,diff}.ts`：宽度表**迁移** v1 的 `wcwidth.js` 并修掉 `tools/p6-tui-probe.mjs` 找到的排序缺陷（合并成一张有序不相交的表，两条性质都有断言）；diff 是迁移 v1 的 LCS（去掉了它的 ANSI 着色）
+- 【源码】`ui/card.ts`（逐字符画的卡片）、`components/{message,tool-card,approval-card,todo-panel,palette,transcript,session-frame,status-bar}.ts`、`app/{commands,keymap}.ts`
+- 【源码】`Edit`/`Write` 的 **diff 卡片**靠日志里的**请求**：视图按 `callId` 保留 `model.message` 的 `toolCalls`，卡片把请求与结果接起来（`Edit` 的两个字符串不在 `tool.finished` 里）
+- 【本机命令】`node tools/tui-smoke.mjs` → **7/7**（真实 `cowcat tui` 进程在 T8 之后仍然起得来、画得出帧、退出 0、不留锁）
+- 【本机测试】`packages/cli` 19/19、`packages/cowcat` 600/584/0 —— 未受影响
+- **仍未验证**：滚动回看（只挂尾部）、Plan/Act 双模式、语法高亮、图片渲染（T9）、真实终端观感（T10）
+
+### 已验证 —— P6 T9 图片（Windows，Node **v26.12.0** 便携版）
+
+- 【本机测试】`cd packages/tui && npm test` → **46 tests / 46 pass / 0 fail**（新增 3 项：图片尺寸的等比与行预算、附件的三态与图片槽位、以及**帧快照里的 `image` 一幕**）
+- 【本机测试】**图片真的画出来了**：帧快照的 `image` 那一幕里，卡片的预留行上是 `████`（opentui 的 **blocks 回退**），**边框完好**、`图片 image/png 4×4` 在它上方。这是「字节从协议来 → 卡片占位 → 渲染器按终端能力画」整条链路的证据
+- 【源码】`image/layout.ts`（尺寸：按单元格 2:1 算行数，超 12 行等比缩）、`app/view.ts` 的 `AttachmentView`（`loading`/`ready`/`failed` 三态）、`app/project.ts` 把 `tool.finished.attachments` 转成待取字节的记录、`ui/screen.ts` 的 `ImageSlot`（**绝对定位**覆盖预留行）、`run.ts` 的 `attachment.read` 取字节
+- 【本机命令】`node tools/tui-smoke.mjs` → **7/7**（真实 `cowcat tui` 进程在 T9 之后仍然起得来、画得出帧、退出 0、不留锁）
+- 【本机测试】`packages/cli` 19/19、`packages/cowcat` 600/584/0 未受影响
+- **仍未验证**：**kitty / sixel 的原生渲染**（测试渲染器只有 blocks 回退）、`a=q` 的答复会不会漏进键盘输入、预览模态（没做）、真实终端观感（T10）
+
 ### CI 远端【CI 远端】
 
 本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
@@ -178,20 +199,19 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T4a 三步与 T7 骨架都已落地**（1/3 已在 `main`；2/3、3/3 与 T7 在 **PR #63**）。**下一步：合 #63，然后开 T8**（卡片：message / tool-card / approval-card / todo-panel / diff-card / status-bar 重做 / command-palette，外加键位表与命令表——`app/` 的「命令、键位、屏幕表」那一半还没写）。
+**P6 的 T1~T9 都已落地**（T1~T8 在 `main`；本分支是 T9）。**下一步：把 T9 的 PR 合掉，然后 T10 收口**：出口标准复核（协议回合测试、lint 探针）、**真实终端上的刷新率/闪烁与图片协议验收（kitty / sixel，需要人眼与支持协议的终端）**、预览模态、`06-frontend.md` 定稿。
 
-T7 交付的四块（细节见 ADR-061/066）：
+T9 交付的三块（细节见 ADR-068）：
 
-1. **`project(view, event)`**：纯函数、只吃协议的 `WireEvent`、同日志同视图；delta 走 `streamText` 不进它；未知事件**第一次**出现记一行；`policy.decided` 不显示（结果已由工具结果说明）。
-2. **主题 token**（ADR-061）：色值来自品牌指南 §3.1，组件只说语义名；`text` 用终端默认色（`RGBA.defaultForeground()`）。
-3. **帧快照**：`createTestRenderer` + 固定 64×16 + 期望帧存 `test/frames.ts`（编译进产物，因为 `dist/` 里的 fixture 会被清掉）；跨平台只比 ASCII/框线，CJK 的**单元格**宽度单独断言。
-4. **`cowcat tui` / `sessions resume` 接线**：cli 建宿主与**内存传输**，渲染器只拿 `ProtocolClient`（ADR-066 ①）——`packages/tui` 因此完全不 import 内核。
+1. **三级回退与能力探测是渲染库的**：`ImageRenderable` 的 `protocol: 'auto'` → kitty / sixel / blocks（**没有 iTerm2**），探测用它自己的查询。我们的判断只剩「能不能画」——渲染器选什么我们不管。
+2. **尺寸与位置是我们的**：`image/imageBox` 用附件自带的 `width`/`height` 在**渲染前**算好行数；图片以 `position: 'absolute'` 覆盖卡片预留的行（**不能当 flex 子元素**，见 §5 第 25 条）。
+3. **字节只从协议来**：`attachment.read` → 视图的三态（`loading`/`ready`/`failed`），每一态都有字。
 
-**T8 开工前值得先看一眼的三条（都是这次实测出来的）**：
+**T10 开工前值得先看一眼的三条**：
 
-- **`ui/screen.ts` 是唯一 import opentui 的地方**（ADR-066 ③）：新组件产出 `Line[]`，不要碰 renderable——那样它们的测试不需要 Node 26，也不需要渲染器。
-- **`TextRenderable` 的 `attributes` 是位掩码**，`fg` 只认颜色名/hex（`'default'` 会被警告并变品红）；`InputRenderable` 的 `onSubmit` 选项是死代码，用 `on('enter')`。
-- **状态条只有一行**：64 列下能放的字不多——审批那行把「工具（规则）+ 提示」放前面，quip 放输入行（这是看了一眼快照才发现规则名被截掉的）。
+- **`a=q` 的答复是否漏进键盘输入未验证**：那是 ADR-058 关心的「查询必须静默」，现在在库内。真终端上要先按一次键看会不会被吃掉/串字。
+- **`blocks` 之外的协议没有任何实测**：帧快照只能证明 blocks 回退；kitty/sixel 要真终端。
+- **预览模态**没做：它是「更大的矩形 + 一个开关键」，`ImageSlot` 已经带 `row/left/cols/rows`，模态只是另一次摆放。
 
 2/3 与 3/3 各自交付了什么、以及三个设计点的结论（含「审批桥直接用 `ActionRequest.callId`」这条对上一版结论的更正），见 §2 的两段「已验证」与 ADR-063~065——**§3 只留下一步**。
 
@@ -297,6 +317,10 @@ T7 交付的四块（细节见 ADR-061/066）：
 20. **帧快照必须真的看一眼**（T7 最值钱的一课）：第一版渲染出来的帧里，**状态条和输入行画在同一行**——两行文字逐字符交错（「saysthe realnthing;」），因为 `TextRenderable` 没给 `height: 1` 时列布局不给它留行。第二版又暴露出审批那行的**规则名被 64 列截掉**。两个都只有把帧当文本读出来才能发现；`expect(frame).toContain(...)` 那类断言会让两个都通过。
 21. **测试期望帧不能放在 `dist/` 里**：第一版把快照写成 `test/fixtures/*.txt`，而测试跑在 `dist/test/`，于是文件落进 `dist/`——下一次 build 清掉、git 也永远看不到。改成编译进产物的 `test/frames.ts`（@repo 里 `packages/cowcat/test/fixtures.ts` 就是这个先例）。
 22. **拆掉渲染器之后还调 `draw()` 会杀掉进程**：`client.closed` 的回调在 `runTui` 的 finally 之后才触发，撞上已销毁的 scene → 抛异常 → **进程非 0 退出，并且跳过 `host.close()` 留下会话锁**。修法是一个 `disposed` 标志 + 在 cli 侧把 `host.close()` 放进 `finally`。这条只有 spawn 真实进程才看得见（进程内测试用的 `createTestRenderer` 不会这样死）。
+23. **`ScrollBox` 有两个坑，都只有看帧才发现**：① 它在最后一列画**垂直滚动条**——那是卡片没有的一列，于是卡片折行、右边框被 `█` 覆盖；② 它的 `stickyStart: 'bottom'` **没生效**，长对话的视口停在**开头**，最新的一张卡根本不在屏上（命令面板因此整块看不见）。改成普通 Box + 自己按 `height - 4` 取尾部。**教训与第 20 条同源：帧快照要真的读。**
+24. **卡片的边框算术错一格，是「宽度不变量」测试抓到的**：`╭─ title suffix fill ╮` 里 suffix 自带前导空格，我却又减了一次 1，于是有 suffix 的卡片**短一格**（47/48）。`assertCardWidths` 对每张卡的每一行断言「正好 `width` 格」——这类错误在肉眼看帧时几乎发现不了（边框看起来是齐的）。
+25. **图片不能当 flex 子元素塞进卡片**（T9 实测）：卡片逐行画 `│  │` 预留了图片的行，把 `ImageRenderable` **追加**进列会把它画到卡片**外面**、并把下面所有内容顶下去（帧快照里第一版就是「图片在卡片下方、卡片下方多出两行」）。正解是 `position: 'absolute'` + `top`/`left` **覆盖**在预留行上。
+26. **`ImageRenderable` 是异步解码的**：首帧通常还没有像素——`onLoad` 里要 `requestRender()`，否则空闲会话里图片**永远不出现**；测试里要 `renderOnce()` → `flush()` → 再 `renderOnce()`，只画一帧会拍到空白。
 
 ---
 
@@ -328,7 +352,7 @@ T7 交付的四块（细节见 ADR-061/066）：
 22. **会话日志里不记模型**（T7 发现的缺口）：`turn.opened` 只有 `input`，`model.message`/`model.usage` 只有结果，所以「这一回合是哪个模型答的」**日志里没有**。后果直接可见：TUI 的状态条**想说也说不出**（品牌指南 §4.1 的状态条本来要放模式/模型/会话）。可复现性上它与 `shell`（ADR-012 记进 header）是同一个论证——要补就得动事件 schema，一条 ADR + 编译期硬失败，**不在 T7 里顺手做**。
 23. **TUI 的观感仍未验证**：`tools/tui-smoke.mjs` 证明的是「起得来、画得出帧、退出干净、不留锁」，**不是**刷新率、闪烁、颜色在 16 色终端下的降级、`alternate-screen` 进出是否干净。这些要人眼 + 真终端（T10 的验收项）。
 24. **帧快照刻意不含宽字符**：逐字节快照只有 ASCII 与框线（跨平台的字宽一致性没有实测过），CJK 的**单元格**宽度用渲染器自己的 span 宽度断言。若将来要在快照里放 CJK，先确认 ubuntu 与 windows 的字节相同。
-25. **T8/T9 未开工**：卡片（message / tool-card / approval-card / todo-panel / diff-card / command-palette）、键位表与命令表（`app/` 的「命令、键位、屏幕表」那一半）、图片渲染与能力探测（ADR-058）、以及工具输出侧的自研对齐（宽度表——ADR-056 明确说那部分不归 opentui 管）。
+25. **T8/T9 未开工（T9）**：图片渲染与能力探测（ADR-058，`image/` 目录）、真机观感验收（T10）。**T8 里未做的**：滚动回看（只挂尾部——`ScrollBox` 的两个坑见第 23 条，回看要用别的做法）、Plan/Act 双模式（那是一个**策略层**的概念，不是组件）、语法高亮（v1 的着色往字符串里塞 ANSI，与 token 模型冲突，不迁移）、工具输出的自研列对齐（宽度表已就位，还没有需要它的组件）。
 
 ### 前序遗留、本会话**未复现**
 
@@ -373,7 +397,7 @@ T7 交付的四块（细节见 ADR-061/066）：
 | `packages/cowcat/test/host.test.ts` / `host-config.test.ts` | 真实协议服务端驱动的宿主（审批桥、信任闸门、附件、取消、attach 契约）与配置层 |
 | `packages/cli/src/cli/` | **可执行文件**：`spec.ts`（表 + 选项）、`run.ts`（解析与退出码）、`serve.ts` / `oneshot.ts` / `sessions.ts` / `doctor.ts`（四个已接线的动词）、`host.ts`（装配宿主 + `COWCAT_HOME`） |
 | `packages/cli/test/cli/spawn.test.ts` | **唯一** spawn 真实 `cowcat serve` 进程的测试（会话落盘、结构化拒绝、退出后锁文件消失） |
-| `packages/tui/src/{app,ui,components,theme}/` | **TUI 骨架**：`app/project.ts`（纯函数）、`app/view.ts`、`app/copy.ts`、`ui/line.ts`、`ui/screen.ts`（唯一 import opentui 的文件）、`components/{session-frame,transcript,status-bar}.ts`、`theme/tokens.ts` |
+| `packages/tui/src/{app,text,ui,components,theme}/` | **TUI**：`app/project.ts`（纯函数）、`app/{view,copy,commands,keymap}.ts`、`text/{width,wrap,diff}.ts`、`ui/{line,card,screen}.ts`（`screen.ts` 是唯一 import opentui 的文件）、`components/{session-frame,transcript,message,tool-card,approval-card,todo-panel,palette,status-bar}.ts`、`theme/tokens.ts` |
 | `packages/tui/test/frames.ts` | **帧快照的期望值**（人看过；`UPDATE_SNAPSHOTS=1` 重写） |
 | `tools/tui-api-probe.mjs` | 装机 opentui 的 API 探针（setter 是否存在、颜色解析、captureSpans） |
 | `tools/tui-smoke.mjs` | **真实 `cowcat tui` 进程**的探针（起、画帧、Ctrl-C 退出 0、不留锁）；需要 Node ≥26.4 |

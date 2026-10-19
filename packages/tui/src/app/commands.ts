@@ -1,0 +1,74 @@
+import type { TuiView } from './view.js';
+import { closePalette, toggleExpanded, toggleTodos } from './view.js';
+
+/**
+ * The commands, and the effects they can ask for.
+ *
+ * One table serves both ways in: typing `/todos` in the input and picking "todos" in the
+ * palette run the same function, so the two can never disagree about what a command does
+ * (the same reason ADR-060 made the CLI's subcommand table data).
+ *
+ * A command returns an EFFECT rather than doing the work, because two of them (cancel, quit)
+ * are about the loop and not about the view — and a table that closed over the socket would
+ * be a table no test could run.
+ */
+export type CommandEffect =
+  | { readonly kind: 'view'; readonly view: TuiView }
+  | { readonly kind: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string }
+  | { readonly kind: 'cancel' }
+  | { readonly kind: 'quit' };
+
+export interface TuiCommand {
+  /** As typed, without the slash. */
+  readonly name: string;
+  readonly summary: string;
+  readonly run: (view: TuiView) => CommandEffect;
+}
+
+export const KEYS_HELP = [
+  '回车 发送（审批待回答时：y / n / always）',
+  'Esc 取消正在跑的回合；命令面板开着时关掉它',
+  'Ctrl-P 命令面板 · Ctrl-O 展开/折叠最后一张工具卡 · Ctrl-C 退出',
+  '直接输入 /命令 也可以（/help 看这个列表）',
+].join('　');
+
+export const COMMANDS: readonly TuiCommand[] = [
+  {
+    name: 'todos',
+    summary: '显示 / 隐藏待办面板',
+    run: (view) => ({ kind: 'view', view: toggleTodos(closePalette(view)) }),
+  },
+  {
+    name: 'expand',
+    summary: '展开 / 折叠最后一张工具卡',
+    run: (view) => {
+      const callId = lastToolCallId(view);
+      if (callId === null) return { kind: 'notice', level: 'info', text: '这一回合还没有工具卡。' };
+      return { kind: 'view', view: toggleExpanded(closePalette(view), callId) };
+    },
+  },
+  { name: 'cancel', summary: '取消正在跑的回合', run: () => ({ kind: 'cancel' }) },
+  { name: 'help', summary: '键位与用法', run: (view) => ({ kind: 'notice', level: 'info', text: KEYS_HELP.replace('（/help 看这个列表）', '').trim() + `　【${view.sessionId ?? '无会话'}】` }) },
+  { name: 'quit', summary: '退出 cowcat', run: () => ({ kind: 'quit' }) },
+];
+
+export function findCommand(name: string): TuiCommand | undefined {
+  return COMMANDS.find((command) => command.name === name);
+}
+
+/** `/name rest` → the command and whatever followed it, or `null` when nothing matches. */
+export function parseCommand(text: string): { readonly command: TuiCommand; readonly rest: string } | null {
+  if (!text.startsWith('/')) return null;
+  const [head = '', ...tail] = text.slice(1).split(/\s+/);
+  const command = findCommand(head);
+  return command === undefined ? null : { command, rest: tail.join(' ') };
+}
+
+/** The most recent tool entry's call id — what `/expand` and Ctrl-O act on. */
+export function lastToolCallId(view: TuiView): string | null {
+  for (let index = view.entries.length - 1; index >= 0; index -= 1) {
+    const entry = view.entries[index];
+    if (entry?.kind === 'tool') return entry.callId;
+  }
+  return null;
+}

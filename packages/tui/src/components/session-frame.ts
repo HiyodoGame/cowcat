@@ -1,7 +1,11 @@
+import { COMMANDS } from '../app/commands.js';
 import { copyFor, type Copy } from '../app/copy.js';
 import type { TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
+import { line } from '../ui/line.js';
+import { paletteLines } from './palette.js';
 import { statusLine } from './status-bar.js';
+import { todoPanelLines } from './todo-panel.js';
 import { transcriptLines } from './transcript.js';
 
 /**
@@ -9,25 +13,40 @@ import { transcriptLines } from './transcript.js';
  *
  * ```
  * ┌─ banner：CowCat + 版本 ──────────────────────┐
- * │ 对话流                                        │
+ * │ 对话流（卡片）                                 │
+ * │ 待办面板 / 命令面板（出现时）                   │
  * ├──────────────────────────────────────────────┤
- * │ 状态条（模式/会话/待办/用量）                  │
+ * │ 状态条（会话 · 状态 · 待办 · 用量）             │
  * │ 输入区                                        │
  * └──────────────────────────────────────────────┘
  * ```
  *
- * The banner is the border's own title so it survives scrolling, the transcript is the
- * flexible middle, and the last two rows are the status line and the input. T8's cards
- * (message / tool / approval / todo / diff) land inside the transcript; the frame itself
- * does not change when they do.
- *
- * This is the only place that decides what goes where, and it is a pure function of the
- * view — so "does the screen say the right thing?" is a test that needs no terminal.
+ * Two parameters, both injected rather than read: `width` (how many columns the cards have to
+ * fit in, which only the renderer knows) and `now` (only the nudge needs it). Everything else
+ * comes from the view, so the whole screen is a pure function of `(view, width, now)` — and a
+ * frame snapshot is therefore a test of the screen, not a photograph of a process.
  */
-export function frameOf(view: TuiView): ScreenSpec {
+export interface FrameOptions {
+  readonly width: number;
+  readonly now: number;
+}
+
+export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
+  const transcript = transcriptLines(view, options);
+  const body = [...transcript.lines];
+  const images = [...transcript.images];
+
+  if (view.todosVisible && view.todos.length > 0) {
+    body.push(line('', 'text'), ...todoPanelLines(view.todos, options.width));
+  }
+  if (view.palette !== null) {
+    body.push(line('', 'text'), ...paletteLines(COMMANDS, view.palette.index, options.width));
+  }
+
   return {
-    body: transcriptLines(view),
-    status: statusLine(view),
+    body,
+    images,
+    status: statusLine(view, options),
     placeholder: placeholderFor(view, copyFor(view.lang)),
   };
 }
@@ -46,6 +65,7 @@ export function titleOf(version: string): string {
  * `turn.send` is refused by the host (`session … already has a turn running`).
  */
 function placeholderFor(view: TuiView, copy: Copy): string {
+  if (view.palette !== null) return '↑↓ 选命令 · 回车执行 · Esc 关掉';
   if (view.approval !== null && view.approval.verdict === null) {
     return `${view.approval.name}：${copy.approveKeys}`;
   }

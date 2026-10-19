@@ -1,65 +1,72 @@
-import type { Entry } from '../app/view.js';
-import type { TuiView } from '../app/view.js';
-import { copyFor } from '../app/copy.js';
-import { block, line, marked, tail, type Line } from '../ui/line.js';
+import type { Entry, TuiView } from '../app/view.js';
+import { approvalCardLines, noticeLines } from './approval-card.js';
+import { assistantMessageLines, userMessageLines } from './message.js';
+import { toolCardLines } from './tool-card.js';
+import { line, type Line } from '../ui/line.js';
+import type { ImageSlot } from '../ui/screen.js';
+import { wrap } from '../text/wrap.js';
 
 /**
- * The transcript: the entries of the view model as lines (T7's version of the cards T8
- * builds).
+ * The transcript: every entry as lines, top to bottom — plus the images, which are not lines.
  *
- * What it is NOT is a layout engine. Every line it emits is text plus a token, and the
- * renderer wraps whatever is too wide — which is why this file has no width table in it.
- * Where a width table IS needed is alignment the model and the tools produce (columns that
- * must line up), and that is the brand guide's "模型侧与工具输出侧的对齐不归 opentui 管"
- * (ADR-056) — T8's problem, with the tool cards.
+ * It dispatches and nothing else — each card is its own module, and each of them is a pure
+ * function of `(entry, view, width)`. That is what makes a frame snapshot cover them all: the
+ * snapshot renders this function, so every card's layout is in the diff.
  *
- * The markers are deliberately plain and few, because T8 replaces them with the guide's
- * cards (`❯`/`⏺` are placeholders that survive a snapshot, not a visual language):
+ * The transcript is also where the two things that are NOT entries appear: the pending
+ * approval (a question is the newest thing on screen by definition) and the live stream (text
+ * that no event has replaced yet).
  *
- *   `❯` the user speaking      `⏺` a tool call          `·`/`!` a notice
- *   (none) the agent speaking — the body of the conversation, in the brand green
+ * Images are carried alongside, with their rows shifted by however many lines came before
+ * them — the one piece of bookkeeping the "everything is a line" model cannot do on its own.
  */
-export function transcriptLines(view: TuiView): readonly Line[] {
-  const lines: Line[] = [];
-  for (const entry of view.entries) lines.push(...entryLines(entry));
-  // The live half: streamed text that no event has replaced yet. Rendered like the
-  // assistant's own words, because that is what it is about to become.
-  if (view.streaming !== '') lines.push(...marked(view.streaming, '', 'assistant'));
-  return lines;
+export interface TranscriptOptions {
+  readonly width: number;
+  /** Milliseconds now, for the card that can say "you still there". */
+  readonly now: number;
 }
 
-function entryLines(entry: Entry): readonly Line[] {
+export interface TranscriptLines {
+  readonly lines: readonly Line[];
+  readonly images: readonly ImageSlot[];
+}
+
+export function transcriptLines(view: TuiView, options: TranscriptOptions): TranscriptLines {
+  const lines: Line[] = [];
+  const images: ImageSlot[] = [];
+
+  const push = (part: TranscriptLines): void => {
+    const offset = lines.length;
+    lines.push(...part.lines);
+    for (const image of part.images) images.push({ ...image, row: image.row + offset });
+  };
+
+  for (const entry of view.entries) {
+    push(entryLines(entry, view, options));
+    lines.push(line('', 'text'));
+  }
+
+  if (view.streaming !== '') {
+    lines.push(...wrap(view.streaming, options.width).map((row) => line(row, 'assistant')));
+  }
+
+  if (view.approval !== null) {
+    if (view.streaming !== '') lines.push(line('', 'text'));
+    push({ lines: approvalCardLines(view.approval, options), images: [] });
+  }
+
+  return { lines, images };
+}
+
+function entryLines(entry: Entry, view: TuiView, options: TranscriptOptions): TranscriptLines {
   switch (entry.kind) {
     case 'user':
-      return marked(entry.text, '❯ ', 'user', '  ', true);
-
-    case 'assistant': {
-      const lines = marked(entry.text, '', 'assistant');
-      // "this answer came with N tool calls" — a fact the log has and the screen would
-      // otherwise lose, since the calls are drawn as their own entries below.
-      return entry.calls === 0
-        ? lines
-        : [...lines, line(`  （这一轮还带了 ${String(entry.calls)} 个工具调用）`, 'textDim')];
-    }
-
-    case 'tool': {
-      const status = entry.ok ? 'ok' : '失败';
-      const where = entry.path === null ? '' : ` — ${entry.path}`;
-      const lines: Line[] = [line(`⏺ ${entry.name} ${status}${where}`, entry.ok ? 'tool' : 'alert', true)];
-      if (entry.attachments.length > 0) {
-        lines.push(line(`  ${copyFor('zh').attachment} ×${String(entry.attachments.length)}：${entry.attachments.join(' ')}`, 'textDim'));
-      }
-      if (entry.truncation !== null) lines.push(line(`  ${entry.truncation}`, 'textDim'));
-      if (entry.output !== '') lines.push(...tail(entry.output, 'tool', 4, TOOL_OUTPUT_TAIL));
-      return lines;
-    }
-
+      return { lines: userMessageLines(entry, options.width), images: [] };
+    case 'assistant':
+      return { lines: assistantMessageLines(entry, options.width), images: [] };
+    case 'tool':
+      return toolCardLines(entry, view, options.width);
     case 'notice':
-      return block(entry.text, entry.level === 'error' ? 'alert' : entry.level === 'warn' ? 'notice' : 'textDim', 0, false).map(
-        (row, index) => (index === 0 ? line(`${entry.level === 'info' ? '·' : '!'} ${row.text}`, row.token) : row),
-      );
+      return { lines: noticeLines(entry.level, entry.text, options.width), images: [] };
   }
 }
-
-/** The brand guide's terminal-output rule: the exit status plus the last three lines. */
-export const TOOL_OUTPUT_TAIL = 3;

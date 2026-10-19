@@ -162,17 +162,36 @@ test('a tool result reports the truncation and the attachment references it carr
 });
 
 test('an approval is opened by its request and closed by the answer to *that* call', () => {
-  const asked = project(initialView(), event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null }));
-  // The whole shape, because "which rule stopped it" is as much a part of the question as
-  // the tool's name.
-  assert.deepEqual(asked.approval, { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null, verdict: null, by: null });
+  // Held in a variable so the expected `askedAt` is the event's own timestamp rather than a
+  // number copied out of a failure message.
+  const request = event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null });
+  const asked = project(initialView(), request);
+  // The whole shape, because "which rule stopped it" is as much a part of the question as the
+  // tool's name — and the timestamp is what lets a card say "you still there".
+  assert.deepEqual(asked.approval, {
+    callId: 'c7',
+    name: 'Bash',
+    rule: 'exec-asks',
+    reason: null,
+    askedAt: request.ts,
+    verdict: null,
+    by: null,
+  });
 
   // A different call's answer must not close this question.
   const other = project(asked, event('approval.answered', { callId: 'c9', key: 'k', verdict: 'always', by: 'user' }));
   assert.equal(other.approval?.verdict, null);
 
   const answered = project(other, event('approval.answered', { callId: 'c7', key: 'k', verdict: 'reject', by: 'user' }));
-  assert.deepEqual(answered.approval, { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null, verdict: 'reject', by: 'user' });
+  assert.deepEqual(answered.approval, {
+    callId: 'c7',
+    name: 'Bash',
+    rule: 'exec-asks',
+    reason: null,
+    askedAt: request.ts,
+    verdict: 'reject',
+    by: 'user',
+  });
 
   // And the end of the turn takes the question away entirely.
   const after = project(answered, event('turn.transitioned', { from: 'awaiting_approval', to: 'cancelled', reason: 'aborted' }));
