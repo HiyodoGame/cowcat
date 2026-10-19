@@ -109,31 +109,42 @@ T3 交付的是**进程**，不是宿主：`stdioTransport`（行帧）+ `serve(
 3. **审批桥的键是 `ActionRequest.callId`**，不是从 `approval.requested` 反查出来的。两者是同一个 id，
    而手上已经有一个值就不该再去日志里找它。
 
-**还没接上的**：`packages/cli`（3/3）尚未存在，因此 `cowcat serve` 现在仍然注入拒绝型占位宿主
-（`packages/tui/src/cli/spec.ts`）——真实宿主已经有了自己的测试，但**没有经过一次真实的 `cowcat serve`
-进程**。`cowcat run` 与 `sessions` 同样等 3/3。
+**已经接上了**：`packages/cli`（3/3）是 `bin`、子命令表与 `doctor` 的所在地（ADR-065），它用
+`createHost` 装配真实宿主，因此 **`cowcat serve` 跑的就是这个宿主**——`packages/cli/test/cli/spawn.test.ts`
+里那条测试会 spawn 真实的 `cowcat serve` 进程，建一个会话、在 `COWCAT_HOME` 指向的临时目录里写下
+`.jsonl`、再确认退出后锁文件被清掉了。`cowcat run`（一次性回合，审批逐条答复）与 `sessions list` 同样
+接在这条链上。
+
+**仍然没接上的只有两个动词**：`tui`（T7：opentui 骨架、`project()` 与组件）与 `setup`（配置的**写入**路径
+尚未实现；键已定，见 ADR-063）。`sessions resume` 是交互式的另一半，也需要 T7，它会说明该用
+`cowcat run --session <id>` 或 `cowcat serve` 代替，而不是假装恢复成功。
 
 ## 前端分层（ADR-056、ADR-062）
 
 前端是**独立包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
 
-**包结构（ADR-062，T4a 1/3 已落地）**——协议从 `tui` 里独立出来了：
+**包结构（ADR-062；1/3、2/3 与 3/3 都已落地）**：
 
 ```
 packages/protocol/   @corescense/cowcat-protocol   Node >=22   wire + 传输 + serve 生命周期 + ProtocolHost 端口
                      ↑ 不 import opentui、不 import 内核（自己的 eslint 强制）
-packages/cowcat/     @corescense/cowcat-core       Node >=22   内核 + 适配器 +（T4a 2/3）组合根 src/host/
-packages/tui/        @corescense/cowcat-tui        Node >=26   opentui 渲染器 + 协议客户端 + CLI（3/3 后只剩渲染器）
-packages/cli/        （T4a 3/3）                    Node >=26   bin + 子命令表 + doctor
+packages/cowcat/     @corescense/cowcat-core       Node >=22   内核 + 适配器 + 组合根 src/host/
+packages/tui/        @corescense/cowcat-tui        Node >=26.4 opentui 渲染器 + 协议客户端（T7 填 app/ ui/ components/）
+                     ↑ 整个包都不许 import 内核（ADR-059 ③，禁令从 src/cli/** 扩到 src/**）
+packages/cli/        @corescense/cowcat-cli        Node >=22   bin + 子命令表 + doctor（唯一同时看得到两边的包）
+                     ↑ 不许直接 import @opentui/*（进渲染器只有一个门：@corescense/cowcat-tui）
 
 依赖方向：protocol ← cowcat ← cli，protocol ← tui ← cli（无环）
 ```
+
+`packages/cli` 的门槛是**内核的 22**，不是渲染器的 26.4（ADR-065 ①）：把 26.4 写在 `bin` 上，正是
+ADR-062 否掉方案 B 时反对的那件事（「`serve` 被绑在渲染器的 Node 门槛上」）。渲染器的门槛落在**加载它的
+那个动词**（`cowcat tui`，T7 在那里检查并拒绝），`doctor` 把它作为另一行事实报出来。
 
 `packages/tui/src/`（协议搬走后）与将要加进来的目录：
 
 ```
 packages/tui/src/
-  cli/          子命令表（数据）、帮助、doctor——3/3 会搬去 packages/cli
   app/          project()（KernelEvent → view model，纯函数）、命令、键位、屏幕表
   ui/           无状态原语：box / text / list / dialog / input / toast / status-bar / tabs / spinner
   components/   特性组件：session-frame / message / tool-card / approval-card / todo-panel / diff-card / image-preview
@@ -141,15 +152,17 @@ packages/tui/src/
   image/        ImageRenderable 与能力探测（ADR-058）
 ```
 
+（`cli/` 已经不在这里了：子命令表、帮助与 `doctor` 在 T4a 3/3 搬去了 `packages/cli`，ADR-065 ⑥。）
+
 | 层 | 规则 |
 |---|---|
-| `protocol/` | 只做传输与解码；不认识任何界面概念 |
+| `protocol/` | 只做传输与解码；不认识任何界面概念（它如今是自己的包） |
 | `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏） |
 | `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号 |
 | `components/` | 只读 view model，不订阅协议、不发命令 |
 | `image/` | 能力探测与协议细节（kitty / iTerm2 / 半块）只在这里；组件只说「这里有一张图」 |
 
-**依赖方向**：`components → ui → image/theme`，`app → protocol`；**没有任何一层 import `packages/cowcat/src/kernel/*` 或 `adapters/*`**（ADR-059 的 lint）。
+**依赖方向**：`components → ui → image/theme`，`app → protocol`；**整个 `packages/tui` 都不 import `@corescense/cowcat-core`**（ADR-059 ③，lint 在它的 `eslint.config.js` 里，`tools/lint-probe.mjs` 有一条探针证明它真的会报错）。同时**反向**：`packages/cli` 不许直接 import `@opentui/*`——它通过 `@corescense/cowcat-tui` 取渲染器，进渲染器只有一个门。
 
 **为什么用 opentui 而不自研**：用户裁定采纳 `@opentui/core`（flexbox、原生图片支持），代价是 Node 门槛与原生二进制（ADR-056）。旧版的宽度实现与能力探测仍然保留——**模型侧与工具输出侧的对齐不归 opentui 管**。
 
@@ -228,26 +241,28 @@ packages/tui/src/
 
 ## CLI（ADR-060）
 
-| 命令 | 作用 | 状态（T4） |
+| 命令 | 作用 | 状态（T4a 3/3 之后） |
 |---|---|---|
 | `cowcat` | 进 TUI（默认） | **未接线**：需要 T7（opentui 骨架、`project()` 与组件） |
-| `cowcat serve` | headless 协议服务（stdio）——TUI 与 IDE 都连它，也是无终端测试的入口 | **可用**（宿主是拒绝型占位，见 T4a：真实宿主已在 `packages/cowcat/src/host/`，接线是 3/3） |
-| `cowcat run "<prompt>"` | 一次性回合（非交互） | **未接线**：需要 T4a 3/3（组合根已在 `packages/cowcat`，缺的是 `packages/cli` 与 `bin`） |
-| `cowcat doctor` | 环境、原生核心与协议版本逐项检查 | **可用**（最小版本；配置与沙箱后端需要内核，明说不做） |
-| `cowcat sessions list \| resume <id>` | 会话管理 | **未接线**：需要 T4a 3/3（会话存储与宿主已在 `packages/cowcat/src/host/`） |
-| `cowcat setup` | 交互式配置向导 | **未接线**：需要 T4a 3/3（配置键已定，写路径尚未做） |
+| `cowcat serve` | headless 协议服务（stdio）——TUI 与 IDE 都连它，也是无终端测试的入口 | **可用**（真实宿主：会话、回合、审批、附件都接上了） |
+| `cowcat run "<prompt>"` | 一次性回合（非交互） | **可用**：`--yes` 放行审批，`--session <id>` 继续一个会话；默认逐条拒绝（ADR-065 ②） |
+| `cowcat doctor` | Node、配置、信任、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；不查渲染器的原生二进制，说明理由） |
+| `cowcat sessions list \| resume <id>` | 会话管理 | **`list` 可用**（直接读会话目录）；**`resume` 未接线**：交互式恢复需要 T7，它说明该用 `cowcat run --session <id>` 或 `cowcat serve` |
+| `cowcat setup` | 交互式配置向导 | **未接线**：配置的**写入**路径尚未实现（键已定，见 ADR-063；现在直接编辑 `~/.cowcat/config.json`） |
 
-子命令表是**数据**（`src/cli/spec.ts`：名字、摘要、参数 schema、处理函数），帮助文本与参数校验都从表生成，不做嵌套子命令。T4 落的是**结构与三个出口码**：
+子命令表是**数据**（`packages/cli/src/cli/spec.ts`：名字、摘要、参数 schema、**选项**、处理函数），帮助文本与参数/选项校验都从表生成，不做嵌套子命令。T4 落的是**结构与三个出口码**：
 
 | 出口码 | 含义 |
 |---|---|
 | `0` | 做到了要求的事 |
-| `2` | **命令本身写错了**（未知动词、缺参数、多参数）——参数校验先于「是否接线」判断，所以 `cowcat run`（没带 prompt）报的是缺参数，不是缺组合根 |
+| `2` | **命令本身写错了**（未知动词、未知选项、缺值、缺参数、多参数）——参数校验先于「是否接线」判断，所以 `cowcat run`（没带 prompt）报的是缺参数，不是缺组合根 |
 | `1` | 命令写得对，但这个构建做不到（未接线）或执行失败 |
 
 **未接线的动词留在表里并说明缺什么**（`status: 'blocked'` 是类型上的一支，没有处理函数可被误调）。帮助文本也照实标注——把一个跑不起来的动词列得像能用，和「宿主返回空成功」是同一种谎。
 
-`bin` 指向 `dist/src/cli/main.js`：**一个可执行文件，六个动词**。`serve` 的处理函数里用动态 `import` 取协议，因为 `--help` 与 `doctor` 不需要那段模块图，而 T7 的 TUI 动词会把渲染器拉进来。
+`bin` 指向 `dist/src/cli/main.js`：**一个可执行文件，六个动词**。每个动词的处理函数里用动态 `import` 取它真正需要的那一半——`--help`、`--version` 与一个未知动词都不加载协议图、内核或模型 SDK；这也是 `packages/cli` 敢同时依赖两边的代价被压到最低的地方。
+
+**`COWCAT_HOME`** 重定位状态目录（默认 `~/.cowcat`）。它是**进程事实，不是配置层**（ADR-065 ④）：不改任何策略值，只改日志住在哪。测试靠它不写进开发者的真实 home。
 
 ## T1 前提验证（2026-10-19）
 
@@ -274,6 +289,8 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 - **没有任何真实终端证据**：刷新率、闪烁、图片协议的实际渲染效果全部未测（调研 §5.6）
 - **T1 已验证**：Node ≥26.4 与 Windows 原生二进制可用，ADR-056 的 CI 部分**不需要**降级（见「T1 前提验证」）
 - **`serve` 的宿主不再是占位**：`packages/cowcat/src/host/` 是真实实现（会话生命周期、回合、审批桥、
-  `attachment.read`），并且有 16 项测试经**真实协议服务端**驱动真实内核会话。**仍未验证的是进程链路**：
-  `packages/cli`（3/3）还没写，所以 `cowcat serve` 目前仍注入拒绝型占位，一次真实的 `cowcat serve` 进程
-  也还没跑过。`cowcat run` / `sessions` 同样等 3/3
+  `attachment.read`），并且有 16 项测试经**真实协议服务端**驱动真实内核会话。
+- **进程链路已覆盖（T4a 3/3）**：`packages/cli/test/cli/spawn.test.ts` spawn 真实的 `cowcat serve`，
+  在 `COWCAT_HOME` 指向的临时目录里建会话、列会话、拿到 `not-configured` 的结构化拒绝，并确认退出后
+  锁文件被清掉。**仍未跑过一次真实的模型请求**，因此 `cowcat run` 的「整条回合」只在宿主层验证过
+  （`packages/cowcat/test/host.test.ts` 注入脚本化模型），**没有**经由一个真实端点走完整条 CLI 路径。

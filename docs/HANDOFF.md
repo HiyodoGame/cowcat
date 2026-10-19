@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：T1 前提验证（#56）、T2 协议（#57）、T3 `serve`（#58）、T4 CLI 入口（#59）、T5 附件契约（#60）、T6 `Read` 非文本分支（#61）、T4a 1/3 协议独立成包（#62）全部已合；T4a 2/3（ADR-063 + 组合根与真实 `ProtocolHost`，ADR-064）在分支 `feat/p6-t4a-host` 上，尚未开 PR**——都不是阶段收尾，**T4a 的 3/3（`packages/cli`）与 T7 起仍未开工**（见 §3）。
-> 交接时仓库状态：**`main` = `89354a6`**（#62 T4a 1/3 合入）；当前分支 `feat/p6-t4a-host`（5 个提交，工作区干净，**无 PR**）。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：T1 前提验证（#56）、T2 协议（#57）、T3 `serve`（#58）、T4 CLI 入口（#59）、T5 附件契约（#60）、T6 `Read` 非文本分支（#61）、T4a 1/3 协议独立成包（#62）已合；T4a 2/3（ADR-063/064，组合根与真实 `ProtocolHost`，PR #63）与 3/3（ADR-065，`packages/cli` 与可执行文件）在分支 `feat/p6-t4a-host` 上**——都不是阶段收尾，**T7 起仍未开工**（见 §3）。
+> 交接时仓库状态：**`main` = `89354a6`**（#62 T4a 1/3 合入）；当前分支 `feat/p6-t4a-host`（工作区干净；2/3 已开 **PR #63**，3/3 追加在同一分支）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -31,7 +31,7 @@
 | #60 | P6 **T5 附件契约**（引用进日志、字节按需 materialize、两协议各自映射） |
 | #61 | P6 **T6 `Read` 非文本分支**（图像/PDF 附件、notebook 渲染） |
 | #62 | P6 **T4a 1/3**（ADR-062：协议独立成 `packages/protocol` + CI 腿） |
-| — | 分支 `feat/p6-t4a-host`：**T4a 2/3**（ADR-063 配置与内置预设 + ADR-064 组合根与真实 `ProtocolHost`，**无 PR**） |
+| — | 分支 `feat/p6-t4a-host`：**T4a 2/3**（ADR-063 配置与内置预设 + ADR-064 组合根与真实 `ProtocolHost`）→ **PR #63**；**3/3**（ADR-065 `packages/cli` 与可执行文件）追加在同一分支 |
 
 另外两次非功能性改动：修回被 PowerShell 写坏的 `ci.yml`（`·`→`路`，见 §5 第 11 条）、把两个 macOS flake 记进 §6 的前序遗留（`chrome.test.mjs:47`、`toast.test.mjs:34`）。
 
@@ -136,7 +136,18 @@
 - 【源码】`src/host/paths.ts`（`~/.cowcat` 布局）、`host/config.ts`（三层读取 + 组合根基线规则）、`host/host.ts`（`createHost`）、`adapters/config-files.ts`、`adapters/session-index.ts`、`adapters/sandbox/fs-probe.ts`；`kernel/run-turn.ts` 的 `TurnOutcome` 增 `turnId`；`packages/cowcat` 依赖 `@corescense/cowcat-protocol`（`file:../protocol`）
 - 【源码】**`src/host/**` 落在 `src/**` 那条 lint 约束里**（禁 `node:fs`/`node:os`/`node:child_process`），所以「读字节」被推到 adapters——这不是绕过规则，是 ADR-009 的同一条理由
 - 【本机测试】四处 `TurnOutcome` 的整体断言（`turn.test.ts` ×2、`exit-criteria.test.ts`、`end-to-end.test.ts`）按新字段更新为 `{ turnId: 'turn_1', … }`
-- **仍未验证**：没有一次真实的 `cowcat serve` / `cowcat run` 进程（`packages/cli` 是 3/3，现在 `serve` 仍注入拒绝型占位）；没有一次真实模型请求
+- **仍未验证**：一次真实的模型请求（见 §6）
+
+### 已验证 —— P6 T4a 3/3（`packages/cli` 与可执行文件；Windows，Node v24.18.0）
+
+- 【本机测试】`cd packages/cli && npm test` → **19 tests / 19 pass / 0 fail**（新增包：9 项在进程内、3 项 spawn、7 项其余）
+- 【本机测试】其中**3 项 spawn 真实的 `cowcat serve` 进程**（`dist/src/cli/main.js`，`COWCAT_HOME` 指向临时目录）：握手 + 退出 0；**建会话 → 日志真的落在磁盘上 → `session.list` 看得见 → `turn.send` 拿到 `hostRefused` + `data.problem='not-configured'` → shutdown 之后锁文件被清掉**；stdin 关闭即干净退出
+- 【本机测试】进程内还有 2 项走真实宿主（同一个 `serve` 处理器 + 内存传输），以及 `run` 在没配模型时的可读拒绝、`run --session <不存在的 id>`、`sessions list`（空 / 有一条）、`doctor` 的行、选项校验（未知选项、缺值、`--config --yes`、`--` 终止符）
+- 【本机命令】`node tools/lint-probe.mjs` → **18 条探针全过**（扩成四个包）：新增 protocol 两条（不 import 内核 / 不 import opentui）、tui 一条（**整个包**不许 import 内核）、cli 两条（**允许** import 内核与 `node:fs`，**禁止**直接 import `@opentui/*`）
+- 【源码】`packages/cli/src/cli/{spec,run,flags,help,exit,host,serve,oneshot,sessions,doctor,main,version}.ts`；`packages/tui` 只剩渲染器（`bin`、CLI 与它的测试都搬走了，**`packages/tui/dist` 已删**，否则旧产物会跑出 12 项不该在的测试）
+- 【源码】**`packages/cli` 的 Node 门槛是 22 而不是渲染器的 26.4**（ADR-065 ①）：把 26.4 写在 `bin` 上，正是 ADR-062 否掉方案 B 时反对的「`serve` 被绑在渲染器的门槛上」；渲染器的门槛落在 `cowcat tui` 那个动词上，`doctor` 把它作为另一行事实报出来
+- 【本机命令】`doctor` 在 Node 24 上**退出 0**（本包下限 22 满足），并分别报出「TUI 需要 >=26.4」与「未配置模型」——第二条是状态不是失败
+- **仍未验证**：`cowcat run` 的整条回合只经由**宿主层**的注入模型测试过；真实端点下的 CLI 端到端仍是零实测（§6）
 
 ### CI 远端【CI 远端】
 
@@ -144,10 +155,10 @@
 
 ### 项目状态
 
-- `main` = **`89354a6`**（#62 T4a 1/3 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6：T0 落表、T1~T6 落地、T4a 1/3 与 2/3 落地（分支 `feat/p6-t4a-host`，无 PR）；只差 3/3（`packages/cli`）与 T7 起**
-- `packages/protocol`（`@corescense/cowcat-protocol`，private，Node ≥22）已独立成包；`packages/tui` 与 **`packages/cowcat`** 都通过 `file:` 依赖它（**`file:` 是 junction：npm 既不装目标的依赖也不构建它**，消费者那条腿要自己 `npm --prefix ../protocol ci && run build`——T4a 2/3 之后 `packages/cowcat` 也是消费者，三条 cowcat CI 腿已各加这一步）
+- `main` = **`89354a6`**（#62 T4a 1/3 合入）；**P5 完成（T0–T7 全部落地，七个核心工具已交付）**；**P6：T0 落表、T1~T6 落地、T4a 三步全部落地（1/3 已合；2/3 与 3/3 在分支 `feat/p6-t4a-host`，**PR #63**）；T7 起未开工**
+- 四个包：`packages/protocol`（headless 协议）、`packages/cowcat`（内核 + 组合根）、`packages/tui`（渲染器）、**`packages/cli`（可执行文件，3/3 新增）**；`packages/protocol` 被 `packages/cowcat`、`packages/tui` 与 `packages/cli` 三个包以 `file:` 依赖（**`file:` 是 junction：npm 既不装目标的依赖也不构建它**，消费者那条腿要自己 `npm --prefix ../protocol ci && run build`——三条 cowcat 腿与新增的 cli 腿都已加这一步）
 - `packages/cowcat` 仍是 `private: true` 的 `0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
-- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）**不变**；`packages/cowcat` 新增的那条 `@corescense/cowcat-protocol` 是**同仓库的 `file:` 链接**，按 ADR-064 ⑤ **不计入**这份第三方预算（理由与 CI 代价写在 `04-dependencies.md`）；`packages/tui/` 两个运行时依赖：`@opentui/core@0.6.6`（T1 装）与 `zod`（T2 的解码边界），同样不进内核的计数
+- 运行时依赖 **3 / 6**（`zod`、`openai`、`@anthropic-ai/sdk`）**不变**；`packages/cowcat` 新增的 `@corescense/cowcat-protocol` 与 `packages/cli` 的两条同类依赖都是**同仓库的 `file:` 链接**，按 ADR-064 ⑤ **不计入**这份第三方预算（理由与 CI 代价写在 `04-dependencies.md`）；`packages/cli` 唯一的第三方依赖是 **`zod`**（子命令表的参数 schema，沿用已准入的那一份）；`packages/tui/` 两个运行时依赖：`@opentui/core@0.6.6`（T1 装）与 `zod`（T2 的解码边界），同样不进内核的计数
 - 【registry】npm 上 v1 的最新版仍是 **`0.15.0`**——**本次会话复核过**（`npm view @corescense/cowcat version` → `0.15.0`，而 `agent/package.json` 已是 `0.16.0`，即**这个版本号尚未发布**）
 - **平台 / 工作区设置本会话未变更**：未调用 `opencode_console` 的任何写操作。若需确认工作区设置与模型开关，**请单独核对**，不要以本文件为据
 - 本会话的工具使用：只读检索（GitHub API / raw、kitty 与 iTerm2 官方文档、`nodejs.org` 版本索引）；`websearch` **失败（HTTP 402）**，改用 `webfetch`
@@ -156,7 +167,19 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T4a 2/3 已完成（分支 `feat/p6-t4a-host`，无 PR）；下一步是开这个 PR，然后做 3/3**。四件都已落地：
+**P6 的 T4a 三步全部落地**（1/3 与 2/3 在 **PR #63**；3/3 追加在同一分支）。**下一步是把 #63 合掉，然后开 T7**（前端骨架：opentui 接入、`app/`、`ui/`、`components/`、`theme/`、`image/`、`project()` 纯函数与帧快照测试）。
+
+3/3 交付的四件（细节见 ADR-065）：
+
+1. **`packages/cli`**：`bin`（`cowcat`）+ 子命令表 + 帮助 + `doctor` 从 `packages/tui` 搬过来；`packages/tui` 只剩渲染器，它对内核的禁令**从 `src/cli/**` 扩到整个包**。
+2. **`serve` 接真实宿主**：`createHost(...)` 装配 → `serve({host, …})`，并在 `finally` 里 `host.close()`（会话锁必须释放，否则下次运行会看到「writer pid … 已消失但留下了锁文件」）。
+3. **`run` / `sessions`**：`run "<prompt>"` 是「最小前端」——attach、打印事件、按策略答复审批；`sessions list` 直接读会话目录（配置坏了也能用），`sessions resume` 说明该用 `cowcat run --session <id>` 或 `cowcat serve` 代替。
+4. **三个交付面**：`CommandSpec.flags`（选项进表，ADR-065 ③）、`COWCAT_HOME`（重定位状态目录，进程事实不是配置层，ADR-065 ④）、`doctor` 真的查配置 / trust / rules / sandbox / 模型（ADR-065 ⑤）。
+
+**T7 要注意的两件事（写在这里免得重走）**：
+
+- **`cowcat tui` 必须自己查 Node 门槛**：`packages/cli` 的 `engines` 是 22，而 opentui 需要 ≥26.4；那个动词接线时要在**加载渲染器之前**检查并拒绝（ADR-065 ①），否则用户看到的是原生模块加载失败。
+- **渲染器的原生二进制不在这里探**：它在 `packages/tui/node_modules`（`file:` 是 junction，npm 不装目标的依赖），从 cli 探会得到假 FAIL——`doctor` 因此只报门槛这一行事实。
 
 1. **`host/config.ts`**：三层配置——用户 `~/.cowcat/config.json` → 项目 `<cwd>/cowcat.json` → 会话 `--config <path>`。缺文件=该层不说话；存在但读不了=整次拒绝并点名文件。读字节在 `adapters/config-files.ts`（`host/` 不得 import `node:fs`）。
 2. **`host/host.ts`**：真实 `ProtocolHost`——会话生命周期（`JsonlEventStore`/`FileLockPort`/`FileSnapshotPort` + `platform.resolveShell()`）、回合（`runTurn` + 每会话一个 `AbortController`）、审批桥、`attachment.read`（`id` 就是日志里那条附件的 `path`，且**只服务本进程见过的路径**）、`ModelConfigError` → 协议可读拒绝（`hostRefused` + `data.problem`）。另加 `close()`（协议没有这个动词）——不释放会话锁会在磁盘上留下死锁文件。
@@ -169,13 +192,13 @@
 - **`turn.send` 的 turnId 要早拿**：仍然要在 `turn.opened` 上等（`runTurn` 内部才 `openTurn`），但**答案不必依赖订阅**——`TurnOutcome.turnId` 也给了同一个 id，`packages/cli` 的 `run` 用它。
 - **`attach` 的不丢不重**：**先订阅再 `readAll`**；读日志期间到的更新进缓冲，`seq <= lastSeq` 的丢掉（重放已有），其余在**服务端发出重放之后**的一个 microtask 上补发——服务端是「先回响应、再发重放、同一个同步块」，所以这个微任务既不会插队也不会漏。
 
-3/3 是 `packages/cli`（`bin` + 子命令表 + `doctor` 搬过去，动态 import 取 serve 与 tui）。**CI 的三条 cowcat 腿已经先加好了**构建协议包的步骤（ADR-064 ⑤），所以 3/3 不必再动 `ci.yml` 的 cowcat 部分。
+3/3 是 `packages/cli`（`bin` + 子命令表 + `doctor` 搬过去，动态 import 取两边）——**已落地**，见 §2 的「T4a 3/3」。CI 侧：三条 cowcat 腿先加好了构建协议包的步骤（ADR-064 ⑤），3/3 又**新增一条 `packages/cli` 腿**（ADR-065 ⑥），它的价值是**构建链**（两个 `file:` 依赖必须先构建才能编译 bin）。
 
 **T4a 1/3 的结论**（ADR-062 = 选项 A′）：协议搬进 `packages/protocol`（Node ≥22、无 opentui、无内核，42 项测试跟着走），tui 通过 `file:../protocol` 依赖它（**14 项测试**），CI 加一条 protocol 腿 + 两条 tui 腿里各加一次「构建协议包」的步骤。三条实测值得记住：
 
 - **`file:` 是链接，不是安装**：npm 既**不装**目标的依赖也**不构建**它（0.6 s / +1 个包），消费者必须自己 `npm --prefix ../protocol ci && run build`——这条已写进 CI 的注释
 - **删源文件必须清 `dist/`**：`git mv` 后 `packages/tui/dist/test/protocol/` 的旧产物把测试数从 14 顶到 59（AGENTS.md 早写过这条，这次真踩了）
-- 协议那条 lint 规则**跟着包走了**（`packages/protocol/eslint.config.js`），tui 侧换成反向的一条：`src/cli/**` 不许 import 内核
+- 协议那条 lint 规则**跟着包走了**（`packages/protocol/eslint.config.js`），tui 侧那条在 3/3 之后**扩到整个包**：`packages/tui/src/**` 一律不许 import 内核
 
 **T6（#61 已合）一句话**：`Read` 真的读图像/PDF/notebook——图片与 PDF 走附件（一行头 + 引用，带尺寸/页数），notebook 渲染成文本且**不挂附件**（图片 output 活在 JSON 里）；名字与内容不符时拒绝。
 
@@ -188,7 +211,7 @@
 
 **T5（#60 已合）一句话**：`Attachment` 引用进日志、字节在序列化请求时 materialize；Anthropic 把图片放进同一个 `tool_result`，Chat Completions 把图片作为紧接着的下一条 user 消息、文档只给引用。**564 项测试**（新增 9 项）里最值钱的两条：**「字节不进日志」是真查字节**（挂上带 marker 的文件再读 `.jsonl` 原文，断言内容与它的 base64 都不在）；**拿不到字节时拒绝而不是省略**（模型被告知有图却没拿到，会当成「图里什么都没说」照常回答）。
 
-**T4（#59 已合）一句话**：一个 `bin`、六个动词、三个出口码（`0` 做到 / `2` 命令写错 / `1` 这个构建做不到）；参数校验先于「是否接线」，`serve` 与 `doctor` 可用，其余四个在表里说明缺什么。
+**T4（#59 已合）一句话**：一个 `bin`、六个动词、三个出口码（`0` 做到 / `2` 命令写错 / `1` 这个构建做不到）；参数校验先于「是否接线」。（**T4a 3/3 之后**：`serve` / `run` / `sessions list` / `doctor` 可用，`tui` 与 `setup` 及 `sessions resume` 仍未接线。）
 
 **T4a 要解决的两件事（都已查清，不是猜）**：
 
@@ -204,7 +227,7 @@
 
 之后按 T4 → T4a → T5–T10 推进（T4 CLI → T4a 组合根与包结构 → T5 附件契约 → T6 `Read` 恢复非文本分支 → T7 前端骨架 → T8 组件 → T9 图片渲染 → T10 收口）。
 
-**P5 交给 P6 的接线点**（都已就位，只差组合根）：
+**P5 交给 P6 的接线点（组合根已按此装配，`packages/cowcat/src/host/host.ts`）**：
 
 | 组合根要做的 | 现成的入口 |
 |---|---|
@@ -265,6 +288,9 @@
 14. **写宿主时我把草稿撤了，而不是硬提交**：第一版 `host/host.ts` 有三个设计点没定（审批桥的 callId 来源、`turn.send` 的 turnId 早期信号、`attach` 的先订阅后读），当时直接删掉文件并 revert 相关改动——**半成品留在树里比撤掉更糟**：它会让接手的人以为「配置好了却跑不起来」是环境问题。三个设计点的结论已记在 §3。**这次逐个落码时，第 1 条的结论与当时记的相反**（`ActionRequest` 其实带 `callId`）：一个「待重走」的笔记也要在重走时核实，别把它当结论用。
 15. **控制台里的乱码不等于文件被写坏，但「看一眼」也不算验证**：`git diff` 在 PowerShell 里把 `—`、`③` 显示成 `�?`，与第 11 条那次**真被写坏**长得一模一样。这次的判据是**字节**：用 `read` 工具读回那几行，再用 `python` + PyYAML 解析两个 workflow 并逐字比对 job 名（脚本化，可重跑）。**结论：文件没坏，显示坏了**——区分这两者只能靠读回来的字节，不能靠终端里那行字。
 16. **测试里「事件没到」不一定是宿主不转发**：三处新用例忘了先 `session.open`，于是宿主没有订阅者，事件只进了日志。这是设计如此（前端靠重放重建屏幕，`06-frontend.md`），不是 bug——补齐 `openSession` 后三处都过。写这类用例时先问「谁在听」。
+17. **给 `bin` 定 Node 门槛时，要问「哪个动词真的需要它」**：我一开始照 `06-frontend.md` 的图给 `packages/cli` 定了 `>=26.4.0`（渲染器的门槛），`doctor` 立刻在本机 Node 24 上 FAIL——而 `serve`/`run`/`doctor` 在 24 上完全能用。ADR-062 早就写了「`serve` 不该被绑在渲染器的 Node 门槛上」，而把 26.4 写在 bin 上做的正是同一件事。改成 22，渲染器的门槛落在**加载渲染器的那个动词**上（ADR-065 ①）。**门槛要写在需要它的那一层。**
+18. **测试里连着调两次「隔离 home」的 helper**：`serveHarness(t)` 内部会建临时 home 并设 `COWCAT_HOME`，而用例自己又调了一次 `isolatedHome(t)`——第二个覆盖了第一个，会话写进了别处，断言去第一个目录里找（ENOENT）。**隔离 helper 要么返回它建的目录，要么只允许调一次。**
+19. **搬走源文件之后 `dist/` 必须删**（AGENTS.md 的老坑，1/3 踩过一次，3/3 又差点）：`git mv` 只动源码，`packages/tui/dist/test/cli/**` 里的旧产物会让 `npm test` 跑出 12 项本不该在的测试。这次先删 `packages/tui/dist` 再跑。
 
 ---
 
@@ -280,16 +306,19 @@
 6. **真实沙箱后端（bwrap / seatbelt）本机没跑过**：本机真实进程只有 `mode: 'off'`；`system` 档由 CI 的 macOS 腿与 P6 组合根覆盖。
 7. **组合根已给 TodoWrite 加了一条 `allow`**（ADR-064 ③，`host.test.ts` 断言了「没有审批请求」）——这条从「应加」变成「已加」，但**「体感是否够好」仍然没有人工证据**。
 8. **Grep 早退的实际收益未测**（主张的是「有界的工作量」，不是本机上测得出的加速比）。
-9. **真实宿主已经落地并过了测试，但没有一次真实的进程链路**：`packages/cli`（3/3）还没写，所以 `cowcat serve` 现在仍注入 `refusingHost()`，`cowcat run`/`sessions` 也未接线。宿主侧的 `attachment.read`、审批桥、`attach` 契约都有测试覆盖（`test/host.test.ts`，经真实协议服务端）。
+9. **真实宿主 + 真实进程链路都已覆盖**：`packages/cowcat/src/host/` 是真实实现，`packages/cli/test/cli/spawn.test.ts` 会 spawn 真实的 `cowcat serve`（建会话、落盘、列表、结构化拒绝、退出后锁文件消失）。**仍未接线的是两个动词**：`tui`（T7）与 `setup`（配置的写入路径），外加 `sessions resume`（交互式，等 T7）。
 10. **预设里没有「模型是否支持图片」的字段**：`ModelPreset` 只有 `toolCalls`/`efforts`，给不识图的模型发图片会 400，而契约拦不住（T6 因此**不按能力 gate**，一律产出附件）。等目录（catalog）落地时按 `toolCalls: false` 的同一手法补（ADR-046 决策 ③）。
 11. **v1 的 `pdftext.js` 没有移植**：非 Anthropic 端点上 PDF 只会以**引用**到达模型（`06-frontend.md` 里写明了这条代价）。若实测显示不够用，它是一个独立任务。
-12. **一次真实模型请求都没跑过**：探针 `tools/glm-smoke.mjs` 已经能走通「预设解析 → 端点 → key 变量名」的前置检查并以 2 退出（**什么都没发**），因为**本机这个 shell 里 `ZHIPU_API_KEY` 未设置**。要在真机做这条实测，需要先在那个 shell 里 export。预设给 `max_tokens` 填的是 catalog 的 131072——若 Coding Plan 上限更低，第一次请求会以 400 拒绝并说明上限，届时改成控制台给的值。
+12. **一次真实模型请求都没跑过**：探针 `tools/glm-smoke.mjs` 已经能走通「预设解析 → 端点 → key 变量名」的前置检查并以 2 退出（**什么都没发**），因为**本机这个 shell 里 `ZHIPU_API_KEY` 未设置**。要在真机做这条实测，需要先在那个 shell 里 export。预设给 `max_tokens` 填的是 catalog 的 131072——若 Coding Plan 上限更低，第一次请求会以 400 拒绝并说明上限，届时改成控制台给的值。**连带**：`cowcat run` 的整条回合只在宿主层用注入模型验证过（`packages/cowcat/test/host.test.ts`），**没有**经由真实端点走完一次 CLI 端到端。
 13. **`bigmodel` 的端点是用户控制台给的**，不是 catalog（catalog 只记了 OpenAI 协议的 `zai` 路线）。它按「用户提供的权威值」入表，**没有独立核实**（比如用别的账号或文档复核）。
 14. **`packages/protocol` 尚未进分支保护的 required 列表**：它按「非草稿 PR 必跑」上报（所以**可以**设为 required），但改仓库设置是用户的事。同理 `packages/tui` 那两条腿是本次会话加的（已设）。
 15. **三条 cowcat 腿的「先构建协议包」已加好，但只在本机用 PyYAML 校验过 YAML 形状**：真正跑起来要等这个 PR 上 CI（**未在本地复现 ubuntu/macOS**）。
-16. **会话日志里不记 cwd**：`session.opened` 只有 `schemaVersion`/`cowcatVersion`/`shell`（ADR-012 的口径），所以 `sessions resume <id>` 会拿**当前**目录当工作目录。要改就得动事件 schema（契约改动 → 一条 ADR + 编译期硬失败三处），**本轮刻意没做**，记在这里免得下一个接手的人以为是 bug。
+16. **会话日志里不记 cwd**：`session.opened` 只有 `schemaVersion`/`cowcatVersion`/`shell`（ADR-012 的口径），所以 `sessions resume <id>`（T7）与 `cowcat run --session <id>` 会拿**当前**目录当工作目录。要改就得动事件 schema（契约改动 → 一条 ADR + 编译期硬失败三处），**本轮刻意没做**，记在这里免得下一个接手的人以为是 bug。
 17. **`session.list` 的 `lastSeq` 来自「非空行数」**（`adapters/session-index.ts`）：这依赖 `JsonlEventStore` 「一行一事件、`seq` 从 1 连续」的不变量，而该不变量只在 `readAll`（真正打开会话时）被校验。手改过的日志可能被列错。
-18. **`host/config.ts` 只读文件，不读环境变量**（ADR-025 决定 2 明确「环境变量不是一层」）：`model.providers.<id>.apiKeyEnv` 是环境变量的唯一用途（ADR-063）。没有任何 `COWCAT_*` 覆盖键。
+18. **`host/config.ts` 只读文件，不读环境变量**（ADR-025 决定 2 明确「环境变量不是一层」）：`model.providers.<id>.apiKeyEnv` 是环境变量的唯一用途（ADR-063）。`COWCAT_HOME` 是唯一的例外，而它按 ADR-065 ④ 是**进程事实**（只改日志住哪，不改任何策略值），不是配置层。
+19. **`packages/cli` 尚未进分支保护的 required 列表**：它按「非草稿 PR 必跑」上报（所以**可以**设为 required），但改仓库设置是用户的事——与 `packages/protocol` 同一条（§6.14）。
+20. **`doctor` 不查渲染器的原生二进制**，这是刻意的：它住在 `packages/tui/node_modules`（`file:` 是 junction，npm 不装目标的依赖），从这里探会得到**假 FAIL**。那个前提由 `packages/tui/test/render.test.ts` 与 T7 的 `tui` 动词自己查。
+21. **`cowcat setup` 仍未接线**：配置的**写入**路径没有实现（键已定，见 ADR-063）。在那之前用户要手写 `~/.cowcat/config.json`——`doctor` 会把「读了哪几层」如实打印出来，所以手写的效果立刻可见。
 
 ### 前序遗留、本会话**未复现**
 
@@ -321,7 +350,7 @@
 | 路径 | 内容 |
 |---|---|
 | [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P5 段含交付记录与 v1 清单对照；**P6 段含 T0–T10 任务表** |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~064**（047~054 是 P5，055~060 是 P6 前端，062~064 是 T4a） |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~065**（047~054 是 P5，055~060 是 P6 前端，062~065 是 T4a 三步） |
 | [`architecture/06-frontend.md`](architecture/06-frontend.md) | **P6 契约文档**（协议方法表、前端分层、附件通路、图像协议矩阵、测试形态、CLI、**组合根与宿主**） |
 | [`research/p5-tools.md`](research/p5-tools.md) | P5 调研（前序会话产出）：八个问题、被否决方案、v1 工具全量归类、T0–T7 拆分 |
 | [`research/p6-frontend.md`](research/p6-frontend.md) | P6 调研：五个问题、两处裁定的正文、图像协议矩阵、探针实测 |
@@ -332,6 +361,8 @@
 | `packages/cowcat/src/host/` | **组合根**：`paths.ts`（落盘布局）、`config.ts`（三层配置 + 组合根基线规则）、`host.ts`（`createHost` = 真实 `ProtocolHost`） |
 | `packages/cowcat/src/adapters/config-files.ts` / `session-index.ts` / `sandbox/fs-probe.ts` | 组合根要的那点字节与目录（`host/` 不得 import `node:fs`） |
 | `packages/cowcat/test/host.test.ts` / `host-config.test.ts` | 真实协议服务端驱动的宿主（审批桥、信任闸门、附件、取消、attach 契约）与配置层 |
+| `packages/cli/src/cli/` | **可执行文件**：`spec.ts`（表 + 选项）、`run.ts`（解析与退出码）、`serve.ts` / `oneshot.ts` / `sessions.ts` / `doctor.ts`（四个已接线的动词）、`host.ts`（装配宿主 + `COWCAT_HOME`） |
+| `packages/cli/test/cli/spawn.test.ts` | **唯一** spawn 真实 `cowcat serve` 进程的测试（会话落盘、结构化拒绝、退出后锁文件消失） |
 | `packages/cowcat/src/adapters/tools/` | 七个工具 + `wire-schema.ts` / `define-tool.ts` / `ignore.ts` |
 | `packages/cowcat/src/kernel/run-turn.ts` | 回合循环、`unreadTarget`（未读闸门）、`grant` 组合、`todo.updated` 写入点 |
 | `packages/cowcat/src/policy/sandbox-profile.ts` | 配置 → `SandboxProfile` 的纯解析 |

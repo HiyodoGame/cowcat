@@ -13,7 +13,8 @@ keys and your terminal under your own control. Zero runtime dependencies, Node.j
 | 形态 | 位置 | 状态 |
 |---|---|---|
 | **v1 CLI**（当前唯一可发布版本） | [`agent/`](agent/) | 已发布 `0.15.0`（npm `@corescense/cowcat`），MIT，零运行时依赖 |
-| **v2 内核**（事件溯源会话运行时） | [`packages/cowcat/`](packages/cowcat/) | P0–P5 已完成（内核、端口、执行网关、模型适配器、七个核心工具）；P6 前端进行中（headless 协议与 TUI，ADR-055~060 已落表） |
+| **v2 内核**（事件溯源会话运行时） | [`packages/cowcat/`](packages/cowcat/) | P0–P5 完成（内核、端口、执行网关、模型适配器、七个核心工具）；P6 的组合根与宿主已落地（ADR-063/064） |
+| **v2 前端与可执行文件** | [`packages/protocol/`](packages/protocol/) · [`packages/tui/`](packages/tui/) · [`packages/cli/`](packages/cli/) | headless 协议与 `cowcat` 可执行文件（`serve` / `run` / `sessions` / `doctor` 可用）；TUI 渲染器未接线（T7） |
 
 v1 与 v2 长期并存，v2 达到功能对等后才切换（计划中的 P8），在那之前 `agent/` 只接受安全修复。
 
@@ -48,7 +49,10 @@ cowcat -p --output-format stream-json "..."         # CI 用：纯 NDJSON 事件
 
 ```
 agent/            v1 CLI（可发布版本，零运行时依赖，Node >= 20）
-packages/cowcat/  v2 内核（TypeScript strict，唯一运行时依赖 zod，Node >= 22）
+packages/cowcat/     v2 内核 + 组合根（TypeScript strict，Node >= 22）
+packages/protocol/   v2 headless 协议（JSON-RPC over stdio，无渲染器、无内核，Node >= 22）
+packages/tui/        v2 渲染器（opentui，Node >= 26.4；协议客户端与组件见 T7）
+packages/cli/        v2 可执行文件（bin + 子命令表 + doctor，Node >= 22）
 docs/
   architecture/   v2 架构契约与 ADR 表（01 分层 / 02 内核 / 03 策略与执行 / 04 依赖 / 05 平台）
   research/       阶段调研记录（P1 内核、P2 端口）
