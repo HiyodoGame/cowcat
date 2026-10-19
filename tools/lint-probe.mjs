@@ -69,9 +69,14 @@ const PROBES = [
   { pkg: 'protocol', file: 'src/index.ts', add: "import { readFileSync } from 'node:fs';", expect: 'silent' },
 
   // packages/tui: the whole package reaches the kernel through the protocol (ADR-059 ③),
-  // not just the directory that used to hold the bin.
+  // not just the directory that used to hold the bin — and since T10, **only `ui/screen.ts`
+  // may import the renderer** (ADR-066 ③: everything else produces `Line[]`, so it can be
+  // tested without a terminal).
   { pkg: 'tui', file: 'src/index.ts', add: "import { createHost } from '@corescense/cowcat-core';", expect: 'message', match: 'only through the protocol' },
-  { pkg: 'tui', file: 'src/index.ts', add: "import '@opentui/core';", expect: 'silent' },
+  { pkg: 'tui', file: 'src/components/session-frame.ts', add: "import '@opentui/core';", expect: 'message', match: 'only src/ui/screen.ts touches the renderer' },
+  // …and the one file that is allowed to: silence here is the rule working, not the rule dead.
+  { pkg: 'tui', file: 'src/ui/screen.ts', add: "import '@opentui/core';", expect: 'silent' },
+  { pkg: 'tui', file: 'src/ui/screen.ts', add: "import { createHost } from '@corescense/cowcat-core';", expect: 'message', match: 'only through the protocol' },
 
   // packages/cli: the one package that may see both halves (ADR-062 ③) — and it must not
   // reach past a package to the renderer it does not own.
