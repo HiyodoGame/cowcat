@@ -22,6 +22,8 @@ export interface Copy {
   readonly empty: string;
   readonly unsupportedEvent: string;
   readonly attachment: string;
+  /** The label an image line carries: `图片 image/png 320×200`. */
+  readonly image: string;
   readonly truncated: string;
   readonly inputPlaceholder: string;
   readonly approveKeys: string;
@@ -44,6 +46,7 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     empty: '（这一回合没有输出）',
     unsupportedEvent: '（这个事件这一版不认识）',
     attachment: '附件',
+    image: '图片',
     truncated: '（输出被截断）',
     inputPlaceholder: '说正事吧，回车发送，Ctrl-C 退出',
     approveKeys: 'y = 允许 / n = 拒绝 / always = 以后都允许（回车确认）',
@@ -62,6 +65,7 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     empty: '(nothing came back this turn)',
     unsupportedEvent: '(an event this build does not know)',
     attachment: 'attachment',
+    image: 'image',
     truncated: '(output was truncated)',
     inputPlaceholder: 'say the real thing; Enter sends, Ctrl-C quits',
     approveKeys: 'y = allow / n = reject / always = allow from now on (Enter to confirm)',

@@ -32,7 +32,9 @@ export interface FrameOptions {
 }
 
 export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
-  const body = [...transcriptLines(view, options)];
+  const transcript = transcriptLines(view, options);
+  const body = [...transcript.lines];
+  const images = [...transcript.images];
 
   if (view.todosVisible && view.todos.length > 0) {
     body.push(line('', 'text'), ...todoPanelLines(view.todos, options.width));
@@ -43,6 +45,7 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
 
   return {
     body,
+    images,
     status: statusLine(view, options),
     placeholder: placeholderFor(view, copyFor(view.lang)),
   };

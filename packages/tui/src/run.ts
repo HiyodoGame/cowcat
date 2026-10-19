@@ -8,7 +8,9 @@ import {
   initialView,
   movePalette,
   openPalette,
+  pendingAttachments,
   toggleExpanded,
+  withAttachment,
   withLangFrom,
 } from './app/view.js';
 import { frameOf, titleOf } from './components/session-frame.js';
@@ -69,6 +71,39 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   });
 
   try {
+    /**
+     * Fetch the bytes of every attachment the log has referenced (ADR-057).
+     *
+     * Eagerly, because this transport is in-process: `attachment.read` is a function call, not
+     * a round trip. A frontend connected to a `serve` process would fetch when a card is
+     * actually on screen instead — that is a T10 question, and the state machine
+     * (`loading`/`ready`/`failed`) is already the shape it would need.
+     */
+    const requested = new Set<string>();
+    const fetchAttachments = (): void => {
+      for (const attachment of pendingAttachments(view.current)) {
+        if (requested.has(attachment.path)) continue;
+        requested.add(attachment.path);
+        options.client.readAttachment(attachment.path).then(
+          (bytes) => {
+            view.current = withAttachment(view.current, {
+              ...attachment,
+              status: 'ready',
+              bytes: Buffer.from(bytes.data, 'base64'),
+              reason: null,
+            });
+            draw();
+          },
+          (error: unknown) => {
+            // Refused with a reason ("too big", "no such attachment", "the file is gone"):
+            // the card shows it rather than pretending there was no image.
+            view.current = withAttachment(view.current, { ...attachment, status: 'failed', reason: message(error) });
+            draw();
+          },
+        );
+      }
+    };
+
     detach.push(
       options.client.on('event', (event) => {
         view.current = project(view.current, event);
@@ -79,6 +114,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           nudgeTimer = setTimeout(draw, NUDGE_AFTER_MS);
         }
         draw();
+        fetchAttachments();
       }),
       options.client.on('delta', (delta) => {
         view.current = streamText(view.current, delta);

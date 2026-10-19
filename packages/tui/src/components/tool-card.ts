@@ -1,7 +1,9 @@
 import { copyFor } from '../app/copy.js';
-import type { TranscriptToolEntry, TuiView } from '../app/view.js';
+import type { AttachmentView, TranscriptToolEntry, TuiView } from '../app/view.js';
+import { imageBox } from '../image/layout.js';
 import { card, type CardBodyLine } from '../ui/card.js';
 import type { Line } from '../ui/line.js';
+import type { ImageSlot } from '../ui/screen.js';
 import { unifiedDiff, foldItems, type UnifiedItem } from '../text/diff.js';
 import { truncate } from '../text/width.js';
 import { wrap } from '../text/wrap.js';
@@ -17,6 +19,9 @@ import { wrap } from '../text/wrap.js';
  * `new_string` never appear in `tool.finished`, so the view keeps the model's tool calls by
  * id (`TuiView.calls`) and this card joins the two. That is the one place the frontend needs
  * more than the result, and it is the log's own data — not a re-derivation of it.
+ *
+ * An attachment becomes a hole in the text plus an `ImageSlot` (T9): the layout is decided
+ * here, the pixels are the screen's business.
  */
 
 /** Lines folded into a diff card before it stops being a card and becomes a file. */
@@ -25,8 +30,14 @@ const DIFF_EXPANDED_LINES = 40;
 /** The brand guide: a terminal card shows the exit status and the last three lines. */
 export const TOOL_OUTPUT_TAIL = 3;
 const OUTPUT_EXPANDED_LINES = 60;
+/** How tall an inline image may be before it stops being inline. */
+const IMAGE_MAX_ROWS = 12;
 
-export function toolCardLines(entry: TranscriptToolEntry, view: TuiView, width: number): readonly Line[] {  const expanded = view.expanded.includes(entry.callId);
+export function toolCardLines(
+  entry: TranscriptToolEntry,
+  view: TuiView,
+  width: number,
+): { readonly lines: readonly Line[]; readonly images: readonly ImageSlot[] } {  const expanded = view.expanded.includes(entry.callId);
   const diff = editOf(view.calls[entry.callId]?.input);
   const status = entry.ok ? 'ok' : '失败';
   const where = entry.path === null ? '' : ` — ${entry.path}`;
@@ -34,9 +45,32 @@ export function toolCardLines(entry: TranscriptToolEntry, view: TuiView, width: 
   const suffix = diff === null ? (expanded ? '[收起]' : '[展开]') : `+${String(diff.added)} -${String(diff.removed)}`;
   const title = `⏺ ${entry.name} ${status}${where}`;
   const body: CardBodyLine[] = [];
+  const images: ImageSlot[] = [];
 
-  for (const attachment of entry.attachments) {
-    body.push({ text: `${copyFor('zh').attachment}：${attachment}`, token: 'textDim' });
+  for (const path of entry.attachments) {
+    const attachment = view.attachments[path];
+    if (attachment === undefined) continue;
+    const label = describeAttachment(attachment);
+    if (attachment.status === 'ready' && attachment.bytes !== null) {
+      const box = imageBox({
+        cols: width - 4,
+        maxRows: IMAGE_MAX_ROWS,
+        width: attachment.width,
+        height: attachment.height,
+      });
+      // The header names what it is even when the picture cannot be drawn: a terminal with no
+      // image protocol must still say "there was a PNG here, 320×200".
+      body.push({ text: `${copyFor('zh').image} ${label}`, token: 'textDim' });
+      // `card()` draws one row of border above the body, so body row `b` is line `b + 1`.
+      const row = body.length + 1;
+      for (let index = 0; index < box.rows; index += 1) body.push({ text: '', token: 'text' });
+      // Column 2: the card's `│ ` frame is two cells before its content.
+      images.push({ row, left: 2, cols: box.cols, rows: box.rows, source: attachment.bytes, label });
+    } else if (attachment.status === 'failed') {
+      body.push({ text: `${copyFor('zh').image} ${label} — 取不到：${attachment.reason ?? '未知原因'}`, token: 'notice' });
+    } else {
+      body.push({ text: `${copyFor('zh').image} ${label} — 正在取字节…`, token: 'textDim' });
+    }
   }
   if (entry.truncation !== null) body.push({ text: entry.truncation, token: 'textDim' });
 
@@ -46,13 +80,26 @@ export function toolCardLines(entry: TranscriptToolEntry, view: TuiView, width: 
     body.push(...outputLines(entry.output, width - 4, expanded));
   }
 
-  return card({
-    title: truncate(title, Math.max(8, width - 4 - suffix.length - 2)),
-    titleToken: entry.ok ? 'tool' : 'alert',
-    ...(suffix === '' ? {} : { suffix }),
-    body,
-    width,
-  });
+  return {
+    lines: card({
+      title: truncate(title, Math.max(8, width - 4 - suffix.length - 2)),
+      titleToken: entry.ok ? 'tool' : 'alert',
+      ...(suffix === '' ? {} : { suffix }),
+      body,
+      width,
+    }),
+    images,
+  };
+}
+
+/** `image/png 320×200`, or the part of it that is known. */
+function describeAttachment(attachment: AttachmentView): string {
+  const size =
+    attachment.width === null || attachment.height === null
+      ? ''
+      : ` ${String(attachment.width)}×${String(attachment.height)}`;
+  const pages = attachment.pages === null ? '' : ` · ${String(attachment.pages)} 页`;
+  return `${attachment.mediaType}${size}${pages}`;
 }
 
 /** The `Edit`/`Write` input, if that is what this call was. */

@@ -79,6 +79,28 @@ export interface ToolCallView {
   readonly input: unknown;
 }
 
+/**
+ * An attachment, and whether its bytes have arrived.
+ *
+ * The log holds a REFERENCE (ADR-057): `tool.finished.attachments` says an image exists and
+ * how big it is, and the bytes come over the protocol (`attachment.read`) when a renderer
+ * actually wants to show them. So an attachment has three states rather than two, and the
+ * interface shows the difference: `loading` is "asked for it", `failed` carries the reason,
+ * and only `ready` has pixels.
+ */
+export interface AttachmentView {
+  readonly path: string;
+  readonly mediaType: string;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly pages: number | null;
+  readonly status: 'loading' | 'ready' | 'failed';
+  /** The bytes, when they arrived. */
+  readonly bytes: Uint8Array | null;
+  /** Why it failed, in the host's words. */
+  readonly reason: string | null;
+}
+
 export interface TurnView {
   readonly id: string;
   readonly state: string;
@@ -112,6 +134,8 @@ export interface TuiView {
   readonly calls: Readonly<Record<string, ToolCallView>>;
   /** Call ids whose output is expanded. Interface state, not from the log. */
   readonly expanded: readonly string[];
+  /** Attachment bytes, by path: the log has the reference, this is where the pixels land. */
+  readonly attachments: Readonly<Record<string, AttachmentView>>;
   readonly todosVisible: boolean;
   /** The command palette when it is open: which row is selected. */
   readonly palette: { readonly index: number } | null;
@@ -141,6 +165,7 @@ export function initialView(): TuiView {
     approval: null,
     calls: {},
     expanded: [],
+    attachments: {},
     todosVisible: true,
     palette: null,
     todos: [],
@@ -166,6 +191,16 @@ export function toggleExpanded(view: TuiView, callId: string): TuiView {
 
 export function toggleTodos(view: TuiView): TuiView {
   return { ...view, todosVisible: !view.todosVisible };
+}
+
+/** Record an attachment (an image/PDF reference) and its state, by path. */
+export function withAttachment(view: TuiView, attachment: AttachmentView): TuiView {
+  return { ...view, attachments: { ...view.attachments, [attachment.path]: attachment } };
+}
+
+/** Everything still waiting for bytes, for the loop that fetches them. */
+export function pendingAttachments(view: TuiView): readonly AttachmentView[] {
+  return Object.values(view.attachments).filter((attachment) => attachment.status === 'loading');
 }
 
 export function openPalette(view: TuiView): TuiView {

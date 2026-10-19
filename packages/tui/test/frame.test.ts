@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { createTestRenderer } from '@opentui/core/testing';
 import type { WireEvent } from '@corescense/cowcat-protocol';
 import { addNotice, project, streamText } from '../src/app/project.js';
-import { initialView, type TuiView } from '../src/app/view.js';
+import { initialView, withAttachment, type TuiView } from '../src/app/view.js';
 import { frameOf, titleOf } from '../src/components/session-frame.js';
 import { THEME } from '../src/theme/tokens.js';
 import { createScreen } from '../src/ui/screen.js';
 import { FRAMES } from './frames.js';
+import { PNG_BYTES, PNG_SIZE } from './png.js';
 
 /**
  * ADR-059 ② in the form it was written in: feed the screen a written-down log, render one
@@ -49,12 +50,16 @@ interface Rendered {
 }
 
 async function renderSnapshot(view: TuiView, now: number = CLOCK): Promise<Rendered> {
-  const { renderer, renderOnce, captureCharFrame, captureSpans, dispose } = await createTestRenderer({ width: WIDTH, height: HEIGHT });
+  const { renderer, renderOnce, captureCharFrame, captureSpans, dispose, flush } = await createTestRenderer({ width: WIDTH, height: HEIGHT });
   try {
     const screen = createScreen(renderer, THEME, { title: titleOf(RENDERER_VERSION) });
     // The same width the loop uses: the terminal's, minus the screen's own chrome. A card
     // measured against the terminal would be two cells too wide and wrap out of its box.
     screen.update(frameOf(view, { width: screen.contentWidth(), now }));
+    await renderOnce();
+    // An `ImageRenderable` decodes its source asynchronously, so one frame is not enough for a
+    // scene with an image: wait for the renderer to go idle, then draw the now-loaded pixels.
+    await flush();
     await renderOnce();
     // `captureSpans()` reports each span's own width — the renderer's answer about cells,
     // which is what the layout is made of. Counting characters would be wrong the moment a
@@ -194,6 +199,39 @@ test('an approval nobody answers nudges, which is the one redraw nothing trigger
   ]);
   // Eleven seconds in, with a clock that is injected rather than read.
   await expectFrame('nudge', asked, CLOCK + 11_000);
+});
+
+test('an image renders into the rows the card reserved', async () => {
+  seq = 0;
+  const asked = from([
+    OPENED,
+    event('turn.opened', { input: '看一眼这张 4×4 的图' }),
+    event('tool.finished', {
+      callId: 'c1',
+      name: 'Read',
+      ok: true,
+      output: 'read /work/shot.png (image, 4x4)',
+      facts: null,
+      truncation: null,
+      attachments: [{ type: 'image', mediaType: 'image/png', path: '/work/shot.png', bytes: PNG_SIZE.bytes, width: PNG_SIZE.width, height: PNG_SIZE.height, pages: null }],
+      path: '/work/shot.png',
+    }),
+  ]);
+  const ready = withAttachment(asked, {
+    path: '/work/shot.png',
+    mediaType: 'image/png',
+    width: PNG_SIZE.width,
+    height: PNG_SIZE.height,
+    pages: null,
+    status: 'ready',
+    bytes: PNG_BYTES,
+    reason: null,
+  });
+  const snapshot = await expectFrame('image', ready);
+  // The picture itself is the renderer's answer about the terminal's protocol: in the test
+  // renderer that is opentui's own `blocks` fallback, and it paints real pixels into the
+  // character grid. Whatever it picked, the card's rows are there and the label names it.
+  assert.match(snapshot.frame, /图片 image\/png 4×4/);
 });
 
 test('the todo panel, and the command palette over it', async () => {

@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireEvent } from '@corescense/cowcat-protocol';
-import { initialView, toggleExpanded, type TuiView } from '../src/app/view.js';
+import { initialView, toggleExpanded, withAttachment, type TuiView } from '../src/app/view.js';
 import { project } from '../src/app/project.js';
 import { frameOf } from '../src/components/session-frame.js';
 import { statusLine } from '../src/components/status-bar.js';
 import { paletteLines } from '../src/components/palette.js';
 import { COMMANDS } from '../src/app/commands.js';
 import { stringWidth } from '../src/text/width.js';
+import { imageBox } from '../src/image/layout.js';
 import { line } from '../src/ui/line.js';
 import type { Line } from '../src/ui/line.js';
+import { PNG_BYTES } from './png.js';
 
 /**
  * Every card, asserted as text — before any renderer is involved.
@@ -85,7 +87,7 @@ test('the agent answers without a box, and says when the answer came with calls'
   assert.match(lines[1]?.text ?? '', /带了 1 个工具调用/);
 });
 
-test('a tool result is a card: status, path, tail, and a way to see the rest', () => {
+test('a tool result is a card: status, tail, and a way to see the rest', () => {
   seq = 0;
   const base = viewOf([
     event('model.message', { text: '', toolCalls: [{ callId: 'c1', name: 'Bash', input: { command: 'npm test' } }], reasoning: [], stopReason: null }),
@@ -101,17 +103,86 @@ test('a tool result is a card: status, path, tail, and a way to see the rest', (
     }),
   ]);
 
-  const folded = bodyLines(base).map((row) => row.text);
-  assert.match(folded[0] ?? '', /^╭─ ⏺ Bash 失败/);
-  assert.match(folded[0] ?? '', /\[展开\]/);
-  assert.match(folded.join('\n'), /上面还有 2 行/);
-  assert.match(folded.join('\n'), /three/);
-  assertCardWidths(bodyLines(base), 'tool folded');
+  const folded = bodyLines(base);
+  const foldedText = folded.map((row) => row.text).join('\n');
+  assert.match(folded[0]?.text ?? '', /^╭─ ⏺ Bash 失败 \[展开\]/);
+  assert.match(foldedText, /上面还有 2 行/);
+  assert.match(foldedText, /three/);
+  assertCardWidths(folded, 'tool folded');
 
   const expanded = bodyLines(toggleExpanded(base, 'c1'));
-  assert.match(expanded.map((row) => row.text).join('\n'), /one/);
+  const expandedText = expanded.map((row) => row.text).join('\n');
   assert.match(expanded[0]?.text ?? '', /\[收起\]/);
+  assert.match(expandedText, /one/);
   assertCardWidths(expanded, 'tool expanded');
+});
+
+test('an attachment is a hole in the text plus a slot, and it says what it is at every stage', () => {
+  seq = 0;
+  const asked = viewOf([
+    event('model.message', { text: '', toolCalls: [{ callId: 'c1', name: 'Read', input: { file_path: '/work/a.png' } }], reasoning: [], stopReason: null }),
+    event('tool.finished', {
+      callId: 'c1',
+      name: 'Read',
+      ok: true,
+      output: 'read a.png (image, 320x200)',
+      facts: null,
+      truncation: null,
+      attachments: [{ type: 'image', mediaType: 'image/png', path: '/work/a.png', bytes: 83, width: 320, height: 200, pages: null }],
+      path: '/work/a.png',
+    }),
+  ]);
+
+  // 1. The log only has the REFERENCE, so the card says it is fetching (ADR-057).
+  const loading = frameOf(asked, { width: WIDTH, now: 0 });
+  assert.match(loading.body.map((row) => row.text).join('\n'), /图片 image\/png 320×200 — 正在取字节…/);
+  assert.equal(loading.images?.length, 0);
+  assertCardWidths(loading.body, 'attachment loading');
+
+  // 2. The bytes arrived: the card reserves rows and hands the pixels to the screen.
+  const ready = withAttachment(asked, {
+    path: '/work/a.png',
+    mediaType: 'image/png',
+    width: 320,
+    height: 200,
+    pages: null,
+    status: 'ready',
+    bytes: PNG_BYTES,
+    reason: null,
+  });
+  const framed = frameOf(ready, { width: WIDTH, now: 0 });
+  assert.match(framed.body.map((row) => row.text).join('\n'), /图片 image\/png 320×200/);
+  const slot = framed.images?.[0];
+  assert.ok(slot !== undefined, 'a ready attachment becomes an image slot');
+  // 320×200 in 44 columns would want 44 columns and 14 rows, which is over the inline budget
+  // (12), so the box shrinks keeping the ratio: 12 rows × 2 cells ≈ 38 columns.
+  assert.equal(slot.rows, 12, 'the row budget caps an inline image');
+  assert.equal(slot.cols, 38);
+  assert.equal(slot.left, 2, 'a card image starts after the `│ ` frame');
+  assert.equal(slot.source.byteLength, 83);
+  // The rows it occupies are card rows, so the text below it cannot be drawn over the image.
+  for (let index = 0; index < slot.rows; index += 1) {
+    assert.match(framed.body[slot.row + index]?.text ?? 'x', /^│\s*│$/, `row ${String(index)} of the image is a card row`);
+  }
+  assertCardWidths(framed.body, 'attachment ready');
+
+  // 3. Refused: the reason is shown, and there is no hole pretending to be a picture.
+  const failed = withAttachment(asked, {
+    path: '/work/a.png',
+    mediaType: 'image/png',
+    width: 320,
+    height: 200,
+    pages: null,
+    status: 'failed',
+    bytes: null,
+    reason: 'attachment /work/a.png is 24000000 bytes, over the 20000000 byte limit',
+  });
+  const bad = frameOf(failed, { width: WIDTH, now: 0 });
+  // The reason is the host's own sentence, truncated to the card — the point is that it is
+  // shown at all, rather than a silent blank where a picture was promised.
+  assert.match(bad.body.map((row) => row.text).join('\n'), /取不到：attachment/);
+  assert.equal(bad.images?.length, 0);
+  assertCardWidths(bad.body, 'attachment failed');
 });
 
 test('an edit shows its diff, because the request is in the log', () => {
@@ -216,6 +287,18 @@ test('the palette draws the same table the /commands run through', () => {
   // terminal with no colour.
   assert.match(lines[2] ?? '', /^│ ❯ \/expand/);
   assert.match(lines[1] ?? '', /^│ {3}\/todos/);
+});
+
+test('an image box keeps its ratio until the row budget says otherwise', () => {
+  // Wide image: the columns are the limit.
+  assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: 100, height: 40 }), { cols: 44, rows: 9 });
+  // Tall image: the rows are, and shrinking keeps the ratio.
+  assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: 200, height: 400 }), { cols: 12, rows: 12 });
+  // Nobody measured it: a shape, not a guess about the contents.
+  assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: null, height: null }), { cols: 24, rows: 8 });
+  // A tiny square image is not stretched, and it is still two rows: four columns of cells are
+  // twice as tall as the four pixels were wide.
+  assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: 4, height: 4 }), { cols: 4, rows: 2 });
 });
 
 test('the status bar says where the session is, and truncates rather than wrapping', () => {
