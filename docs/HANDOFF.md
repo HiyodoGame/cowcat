@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：T1~T6（#56~#61）与 T4a 1/3（#62）已合；T4a 2/3、3/3 与 T7 骨架并入 `main`（#63）**；当前分支 `feat/p6-t8-cards`（**PR #64**）上是 **T8 卡片 + T9 图片**（ADR-067/068）——**T10（收口与人眼验收）未开工**（见 §3）。
-> 交接时仓库状态：**`main` = `f2dbb73`**（#63 合入）；**PR #64**（T8 + T9）开着、全绿；工作区干净。
+> 最近一次更新：**2026-10-19（会话收尾：P5 完成 + P6 开工）**；**同日追加：T1~T6（#56~#61）、T4a 1/3（#62）、T4a 2/3 + 3/3 + T7（#63）、T8 + T9（#64）全部已合入 `main`**；当前分支 `feat/p6-t10-closing` 上是 **T10 收口（自动部分）**——**剩下只有真实终端上的人眼验收**（清单见 §3）。
+> 交接时仓库状态：**`main` = `9279e47`**（#64 合入）；当前分支 `feat/p6-t10-closing`（工作区干净，尚未开 PR）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows + Node 24.18.0 跑 `node:test`（跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`npm view`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或开源仓库源码（**不是本仓库源码**）；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真机沙箱、没有模型端点、没有发布动作、没有真实终端**：本机真实进程只跑 `mode: 'off'`；stdout 不是 TTY；厂商对 wire JSON Schema 的接受度仍为零实测。
@@ -181,6 +181,14 @@
 - 【本机测试】`packages/cli` 19/19、`packages/cowcat` 600/584/0 未受影响
 - **仍未验证**：**kitty / sixel 的原生渲染**（测试渲染器只有 blocks 回退）、`a=q` 的答复会不会漏进键盘输入、预览模态（没做）、真实终端观感（T10）
 
+### 已验证 —— P6 T10 收口（自动部分；Windows，Node 24.18.0 / 26.12.0）
+
+- 【本机测试】`packages/cli` **20 / 20**（新增 **`test/exit-criteria.test.ts`**）：`createHost` + 真实协议服务端（内存传输）+ 脚本化模型 → `turn.send` → `approval.requested` → `respondApproval('once')` → 完成，**中间的事件流喂给 `project()` 与 `frameOf()`**，断言屏幕上出现 `╭─ 你`、`⏺ Write ok` 与答案，并在回合结束后断言**没有悬着的审批卡**。它住在 cli（只有它同时看得到两边），**不碰渲染器**——所以 Node 22 的 cli 腿也跑得到
+- 【本机命令】`node tools/lint-probe.mjs` → **20 条探针全过**（新增 3 条）：`packages/tui` 整包**禁止** `@opentui/*`、`src/ui/screen.ts` **允许**它、而 `screen.ts` 仍然**禁止** import 内核——ADR-066 ③ 从约定变成 lint 规则，并且规则**被看见报过错**
+- 【源码】`packages/tui/eslint.config.js` 两个块（`no-restricted-imports` 不合并，后者替换前者的匹配文件，所以 `screen.ts` 有自己的那份）
+- **P6 出口标准复核**：① 带工具与审批的回合经协议跑通 → 上面那条测试；② 前端不 import 内核 → tui 的 lint 规则 + 探针
+- **仍未验证（要人眼 + 真终端）**：`06-frontend.md` 的「T10 收口」8 条清单——对齐（含 80 列）、流式闪烁、审批三态与 10 秒催促、图片三级回退（kitty / 半块 / 元信息）、`a=q` 是否漏输入、Ctrl-C 后终端恢复、缩放、长对话停最新
+
 ### CI 远端【CI 远端】
 
 本会话 13 个 PR **全部是非草稿 PR**，每次都跑：`packages/cowcat` 的 ubuntu / windows / macos-15 三条腿 + macOS 的 Seatbelt 腿 + `check-tarball` + `scope` —— **全部 pass**（用 `gh pr checks` 逐次观察）。**未在本地复现 ubuntu / macOS 的结果**，macOS 侧（含 Seatbelt）只由 CI 覆盖。
@@ -199,19 +207,12 @@
 
 ## 3. 项目唯一下一步
 
-**P6 的 T1~T9 都已落地**（T1~T8 在 `main`；本分支是 T9）。**下一步：把 T9 的 PR 合掉，然后 T10 收口**：出口标准复核（协议回合测试、lint 探针）、**真实终端上的刷新率/闪烁与图片协议验收（kitty / sixel，需要人眼与支持协议的终端）**、预览模态、`06-frontend.md` 定稿。
+**P6 的 T1~T10 自动部分全部落地**（T1~T9 在 `main`；本分支是 T10 的收口）。**剩下的只有一件事：真实终端上的人眼验收**——清单在 `06-frontend.md` 的「T10 收口」一节（8 条：对齐/80 列、流式闪烁、审批三态与 10 秒催促、图片三级回退、`a=q` 是否漏输入、Ctrl-C 恢复、缩放、长对话停最新）。做完之后 P6 才算收口，`dev-plan-v2.md` 的状态才能从「T10 收口」翻成「P6 完成」。
 
-T9 交付的三块（细节见 ADR-068）：
+T10 落的两件（都是「把约定变成可执行的东西」）：
 
-1. **三级回退与能力探测是渲染库的**：`ImageRenderable` 的 `protocol: 'auto'` → kitty / sixel / blocks（**没有 iTerm2**），探测用它自己的查询。我们的判断只剩「能不能画」——渲染器选什么我们不管。
-2. **尺寸与位置是我们的**：`image/imageBox` 用附件自带的 `width`/`height` 在**渲染前**算好行数；图片以 `position: 'absolute'` 覆盖卡片预留的行（**不能当 flex 子元素**，见 §5 第 25 条）。
-3. **字节只从协议来**：`attachment.read` → 视图的三态（`loading`/`ready`/`failed`），每一态都有字。
-
-**T10 开工前值得先看一眼的三条**：
-
-- **`a=q` 的答复是否漏进键盘输入未验证**：那是 ADR-058 关心的「查询必须静默」，现在在库内。真终端上要先按一次键看会不会被吃掉/串字。
-- **`blocks` 之外的协议没有任何实测**：帧快照只能证明 blocks 回退；kitty/sixel 要真终端。
-- **预览模态**没做：它是「更大的矩形 + 一个开关键」，`ImageSlot` 已经带 `row/left/cols/rows`，模态只是另一次摆放。
+1. **出口标准 ①**：`packages/cli/test/exit-criteria.test.ts` —— 真实协议事件流 → `project()`/`frameOf()` → 断言屏幕。以前「协议侧」和「前端侧」各有一套测试，**接缝没人测**。
+2. **出口标准 ②**：`ui/screen.ts` 成为**唯一**允许 import 渲染器的文件，由 lint 强制；`tools/lint-probe.mjs` 的 20 条探针里 4 条是 tui 的（整包禁内核、整包禁渲染器、`screen.ts` 的豁免、`screen.ts` 仍禁内核）。
 
 2/3 与 3/3 各自交付了什么、以及三个设计点的结论（含「审批桥直接用 `ActionRequest.callId`」这条对上一版结论的更正），见 §2 的两段「已验证」与 ADR-063~065——**§3 只留下一步**。
 
