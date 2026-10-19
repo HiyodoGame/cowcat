@@ -146,7 +146,7 @@ ADR-062 否掉方案 B 时反对的那件事（「`serve` 被绑在渲染器的 
 packages/tui/src/
   app/          project()（KernelEvent → view model，纯函数）、视图与界面状态、文案、命令表、键位
   text/         我们自己的排版：width（宽度表，v1 的排序缺陷在此修掉）、wrap（卡片内换行）、diff（LCS）
-  ui/           无状态原语：line（行模型）、card（逐字符画的卡片）、screen（**唯一 import opentui 的文件**）
+  ui/           无状态原语：line（行模型）、card（逐字符画的卡片）、screen（**renderable 层，两个碰渲染器的文件之一**）
   components/   特性组件：session-frame / transcript / message / tool-card / approval-card /
                 todo-panel / palette / status-bar（全部产出 `Line[]`）
   theme/        语义 token（ADR-061）
@@ -160,7 +160,7 @@ packages/tui/src/
 | `protocol/` | 只做传输与解码；不认识任何界面概念（它如今是自己的包） |
 | `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏）；命令表同时服务 `/命令` 与面板，键位是纯函数 |
 | `text/` | 排版与测量：宽度表是**我们的**（ADR-056、ADR-067 ②），diff 是迁移 v1 的 LCS |
-| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**`ui/screen.ts` 是包内唯一 import `@opentui/core` 的文件**（ADR-066 ③）；卡片是文本（ADR-067 ①） |
+| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**只有 `ui/screen.ts`（renderable 层）与 `run.ts`（渲染器生命周期）可以 import `@opentui/core`**（ADR-066 ③，由 lint 强制）；卡片是文本（ADR-067 ①） |
 | `components/` | 只读 view model，不订阅协议、不发命令；**产出 `Line[]` 与状态行**，因此不需要渲染器就能测 |
 | `image/` | 能力探测与协议细节（kitty / iTerm2 / 半块）只在这里；组件只说「这里有一张图」 |
 
@@ -286,6 +286,28 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 3. **真实终端仍然没有证据**：刷新率、闪烁、图片协议的实际渲染全部未测，仍是 T10 的活（本节只证明「能装、能编帧」）。
 
 **T9 落地的形状（图片，ADR-068）**：三级回退是**渲染库内建的**（`ImageRenderable` 的 `protocol: 'auto'` → `kitty` / `sixel` / `blocks`，**没有 iTerm2**），能力探测也由它做（T1 捕获里那条 `a=q` 就是它的查询）。我们负责三件事：**尺寸**（`image/imageBox`：附件自带 `width`/`height`，按单元格 2:1 算行数，超过 12 行等比缩小——布局在渲染前就知道占多少行）、**位置**（帧规格里的 `images: ImageSlot[]`；图片**绝对定位**覆盖卡片预留的行，当 flex 子元素会被推到卡片外面并把下面顶下去）、**状态**（`loading` / `ready` / `failed` 各有一行字，终端没有图片协议时也要能说「这里有一张 320×200 的 PNG」）。字节只经 `attachment.read`，日志里只有引用。
+
+## T10 收口（2026-10-19）
+
+**出口标准的两条，现在各有一条「接缝」测试或规则：**
+
+| 出口标准 | 怎么被保证 |
+|---|---|
+| 用 headless 协议完整跑通一个带工具与审批的回合（**测试中**） | `packages/cli/test/exit-criteria.test.ts`：`createHost` + 真实协议服务端（内存传输）+ 脚本化模型 → `session.create` → `turn.send` → `approval.requested` → `respondApproval('once')` → 完成；**中间的事件流喂给 `project()` 与 `frameOf()`**，断言屏幕上出现用户卡、`⏺ Write ok` 的卡片与答案。它住在 cli 是因为只有它同时看得到两边（ADR-062 ③），而且**不碰渲染器**（`Line[]` 是纯函数产物，Node 22 腿也能跑） |
+| TUI 中删除任何直接访问内核内部的代码路径（**lint 或测试保证**） | `packages/tui/eslint.config.js` 两条：整包不许 import `@corescense/cowcat-core`；**只有 `ui/screen.ts` 与 `run.ts` 可以 import `@opentui/core`**（ADR-066 ③ 从约定变成规则）。`tools/lint-probe.mjs` 有 5 条 tui 探针证明它们**真的会报错**，以及两个豁免**真的成立**。**CI 教了这里一课**：第一版规则写的是「只有 `screen.ts`」，而 `src/smoke.ts`（测试辅助）与 `run.ts`（调用 `createCliRenderer`）立刻让它红了——**跑探针不等于跑包级 lint** |
+
+**待办与未验证**（`HANDOFF` §6 有同样的清单，这里是要人眼做的部分）：
+
+| # | 要验的 | 怎么验（真终端） |
+|---|---|---|
+| 1 | 一帧的**对齐**：banner、卡片边框、状态条、输入行 | 起 `cowcat`，把终端缩到 **80 列**再看一遍（品牌指南要求 80 列可读） |
+| 2 | **流式**：逐字出现、无闪烁、无跳动 | 让它跑一个会连续调工具的任务；看文字与卡片出现时屏幕是否稳定 |
+| 3 | **审批**：`y`/`n`/`always` 三个答案、以及 **10 秒催促** | 让它写文件；先等 11 秒看「......你还在吗。」，再分别试三个答案 |
+| 4 | **图片三级回退**：真图片 / 半块 / 只有元信息 | 在 kitty 或 WezTerm（`TERM=xterm-kitty`）上 Read 一张 PNG 应是**真图片**；普通终端应是**半块字符**；`TERM=dumb` 下应只有一行 `图片 image/png …` |
+| 5 | **`a=q` 的答复会不会漏进键盘输入**（ADR-058 的「静默查询」现在是库内行为） | 图片出现后**连续打几个字符**，看输入框是否被吞字或串字 |
+| 6 | **退出**：Ctrl-C 后终端恢复 | 退出后光标是否可见、alternate screen 是否干净、`~/.cowcat` 里有没有残留 `.lock` |
+| 7 | **缩放**：改变窗口大小 | 边框是否按新宽度重排（每次重绘按 `renderer.width` 算，但没有监听 resize 事件——这条要专门看） |
+| 8 | **长对话**：视口停在最新 | 让它输出 30+ 行，最新的卡是否在屏上（尾部挂载，**没有滚动回看**） |
 
 ## 待办与未验证
 

@@ -475,7 +475,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P6 前端：headless 协议与 TUI
 
-> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成、T2 协议落地、T3 `serve` 与 stdio 传输落地、T4 CLI 入口落地、T5 附件契约落地、T6 `Read` 非文本分支落地、T4a 三步全部落地（协议独立成包 ADR-062、组合根与宿主 ADR-063/064、可执行文件 ADR-065）、**T7 骨架落地（主题 token ADR-061、TUI 骨架 ADR-066）**；T8 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
+> **T1~T10 全部落地（ADR-055~068）——自动部分完成；剩下的只有真实终端上的人眼验收**（清单在 [`architecture/06-frontend.md`](architecture/06-frontend.md) 的「T10 收口」）。T2 协议、T3 `serve` 与 stdio 传输、T4 CLI 入口、T5 附件契约、T6 `Read` 非文本分支、T4a 三步（协议独立成包 ADR-062、组合根与宿主 ADR-063/064、可执行文件 ADR-065）、T7 骨架（主题 token ADR-061、TUI 骨架 ADR-066）、T8 卡片（ADR-067）、T9 图片（ADR-068）：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
 >
 > **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
 >
@@ -509,7 +509,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | ✅ 本 PR（协议已在 T4a 独立成包；`image/` 是 T9 的。**`cowcat tui` 与 `sessions resume` 同时接线**，帧快照 + `project()` 单测 + 真实进程探针见 `tools/tui-smoke.mjs`） |
 | T8 | **组件**：session-frame / message / tool-card / approval-card / todo-panel / diff-card / status-bar / command-palette | T7 | ✅ 本 PR（还带了 `text/`（宽度表 + 换行 + diff）、命令表与键位两个纯模块、品牌指南 §4.2 的折叠与 §2.2 的催促文案。**未做**：滚动回看、Plan/Act 模式、语法高亮——理由见 `06-frontend.md` 的待办） |
 | T9 | **图片渲染**（ADR-058）：`ImageRenderable` + 能力探测（env + `a=q` 静默查询）+ 三级回退；**两个位置**（工具结果内联 + 预览模态） | T8、T5 | ✅ 本 PR（**三级回退与探测是渲染库内建的**（kitty/sixel/blocks，无 iTerm2），我们落**尺寸 / 位置 / 三态**；**内联已落，预览模态没做**——见 ADR-068 与 `06-frontend.md` 的待办） |
-| T10 | **收口**：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁与图片协议验收（**需要人眼与支持协议的终端**）、`06-frontend.md` 定稿 | T2–T9 | 未开始 |
+| T10 | **收口**：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁与图片协议验收（**需要人眼与支持协议的终端**）、`06-frontend.md` 定稿 | T2–T9 | ✅ 自动部分本 PR（**出口标准两条各有一条接缝测试/规则**：`packages/cli/test/exit-criteria.test.ts` 把真实协议事件流喂给 `project()`/`frameOf()`；`ui/screen.ts` 成为唯一允许 import 渲染器的文件，4 条 lint 探针证明规则会报错）。**人眼那一半待做**：`06-frontend.md` 的「T10 收口」有 8 条验收清单 |
 
 **出口标准**
 

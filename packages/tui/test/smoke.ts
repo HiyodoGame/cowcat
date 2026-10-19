@@ -17,7 +17,11 @@ export interface SmokeFrame {
  * exactly the T1 question. How this looks in a real terminal is T10's question and
  * is not answered here.
  *
- * T7 replaces this file with the protocol client plus `ui/`; nothing else imports it.
+ * T7 replaced the interface with the protocol client plus `ui/`; what is left here is the
+ * premise itself, and it lives in `test/` because of the rule T10 added: **`src/ui/screen.ts`
+ * is the only file in `src/` allowed to import the renderer** (ADR-066 ③). Having this
+ * check in `src/` was the one thing that made that sentence untrue — caught by CI's tui leg,
+ * not by the lint probe, which is the lesson: a probe per file is not a package lint.
  */
 export async function renderSmokeFrame(text: string, width = 40, height = 6): Promise<SmokeFrame> {
   const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width, height });

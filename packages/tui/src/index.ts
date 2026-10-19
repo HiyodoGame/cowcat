@@ -37,4 +37,3 @@ export { RANGES, charWidth, graphemes, padTo, sliceWidth, stringWidth, truncate 
 export { wrap } from './text/wrap.js';
 export { computeLineDiff, foldItems, unifiedDiff, type UnifiedDiff, type UnifiedItem } from './text/diff.js';
 export { BRAND, THEME, colorOf, type Theme, type TokenColor, type TokenName } from './theme/tokens.js';
-export { renderSmokeFrame, type SmokeFrame } from './smoke.js';

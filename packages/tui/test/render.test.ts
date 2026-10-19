@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { renderSmokeFrame } from '../src/smoke.js';
+import { renderSmokeFrame } from './smoke.js';
 
 // These assertions are what the Node 26 CI legs are for. They fail if the platform
 // native core did not resolve (optional dependency missing), did not load, or
