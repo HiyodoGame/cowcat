@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { anthropicModel } from '../src/adapters/model-anthropic.js';
 import { openAIModel } from '../src/adapters/model-openai.js';
 import {
+  ATTACHMENT_HARD_LIMIT_BYTES,
   AttachmentUnavailableError,
   makeAttachment,
   materializeAttachment,
@@ -195,29 +196,58 @@ test('a tool result with no attachments looks exactly as it did before ADR-057',
   assert.equal(result['content'], 'Read the file', 'a string, not a one-element block array');
 });
 
-test('a missing file is refused, not silently dropped, and no request is sent', async () => {
+test('a file that is gone is named in the request instead of failing the turn (ADR-069)', async () => {
+  const gone = join(tmpdir(), 'cowcat-does-not-exist-9f3a.png');
+  const ghost = makeAttachment({ type: 'image', mediaType: 'image/png', path: gone, bytes: 4 });
+  for (const [name, model, sse] of [
+    ['anthropic', (fetch: typeof globalThis.fetch) => anthropicModel({ apiKey: 'test', fetch }), anthropicSse()],
+    ['openai', (fetch: typeof globalThis.fetch) => openAIModel({ apiKey: 'test', fetch }), openaiSse()],
+  ] as const) {
+    const transport = replayTransport(sse);
+    // The whole point: this resolves. A rejection here fails the turn *and*, because the
+    // reference stays in the history, every later turn of that session.
+    await drain(model(transport.fetch), requestWith([ghost]));
+
+    const body = JSON.stringify(bodyOf(transport));
+    assert.match(body, /attachment unavailable/, `${name}: the model is told`);
+    assert.match(body, /gone or unreadable/, `${name}: and told why`);
+    assert.ok(body.includes(gone.replace(/\\/g, '\\\\')) || body.includes(gone), `${name}: the note names the file`);
+    assert.ok(!body.includes('image_url') && !body.includes('"image"'), `${name}: no image block is invented`);
+  }
+});
+
+test('an attachment over the hard limit degrades the same way, not into a failed turn', async () => {
+  const huge = makeAttachment({ type: 'image', mediaType: 'image/png', path: '/nowhere-huge.png', bytes: ATTACHMENT_HARD_LIMIT_BYTES + 1 });
+  const transport = replayTransport(anthropicSse());
+  await drain(anthropicModel({ apiKey: 'test', fetch: transport.fetch }), requestWith([huge]));
+
+  const carrier = toolResultCarrier(bodyOf(transport).messages);
+  const result = (carrier['content'] as Record<string, unknown>[])[0];
+  assert.ok(result !== undefined);
+  const blocks = result['content'] as Record<string, unknown>[];
+  assert.equal(blocks.length, 2);
+  const note = blocks[1];
+  assert.ok(note !== undefined);
+  assert.equal(note['type'], 'text');
+  assert.match(String(note['text']), /over the \d+ byte limit/);
+});
+
+test('the strict reading still refuses: `attachment.read` answers with an error, not a sentence', () => {
   const ghost = makeAttachment({
     type: 'image',
     mediaType: 'image/png',
     path: join(tmpdir(), 'cowcat-does-not-exist-9f3a.png'),
     bytes: 4,
   });
-  for (const [name, model, sse] of [
-    ['anthropic', (fetch: typeof globalThis.fetch) => anthropicModel({ apiKey: 'test', fetch }), anthropicSse()],
-    ['openai', (fetch: typeof globalThis.fetch) => openAIModel({ apiKey: 'test', fetch }), openaiSse()],
-  ] as const) {
-    const transport = replayTransport(sse);
-    await assert.rejects(
-      () => drain(model(transport.fetch), requestWith([ghost])),
-      (error: unknown) => {
-        assert.ok(error instanceof AttachmentUnavailableError, `${name}: expected a refusal, got ${String(error)}`);
-        assert.equal(error.path, ghost.path);
-        assert.match(error.reason, /gone or unreadable/);
-        return true;
-      },
-    );
-    assert.equal(transport.requests.length, 0, `${name}: a request that cannot carry the content is not sent`);
-  }
+  assert.throws(
+    () => materializeAttachment(ghost),
+    (error: unknown) => {
+      assert.ok(error instanceof AttachmentUnavailableError);
+      assert.equal(error.path, ghost.path);
+      assert.match(error.reason, /gone or unreadable/);
+      return true;
+    },
+  );
 });
 
 test('the size limits refuse with numbers, and the declared size is checked first', () => {
