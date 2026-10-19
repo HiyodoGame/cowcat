@@ -65,9 +65,18 @@ export interface ApprovalView {
   readonly name: string;
   readonly rule: string;
   readonly reason: string | null;
+  /** The event's `ts`. A clock is what turns "waiting" into the brand's nudge after 10s. */
+  readonly askedAt: number;
   /** `null` while the question is open; the verdict afterwards. */
   readonly verdict: string | null;
   readonly by: string | null;
+}
+
+/** A tool call the model asked for, before its result arrives. */
+export interface ToolCallView {
+  readonly name: string;
+  /** The model's raw input. A renderer reads the fields it knows (`Edit`'s two strings). */
+  readonly input: unknown;
 }
 
 export interface TurnView {
@@ -92,6 +101,20 @@ export interface TuiView {
   readonly streaming: string;
   readonly turn: TurnView | null;
   readonly approval: ApprovalView | null;
+  /**
+   * Every tool call the log has seen, by `callId`.
+   *
+   * The RESULT arrives in `tool.finished`, but what the call was asked to do only exists in
+   * the `model.message` that carried it — and that is where a diff comes from: `Edit`'s
+   * `old_string`/`new_string` never appear in the result, so a card that wants to show the
+   * change has to keep the request. Nothing else reads this.
+   */
+  readonly calls: Readonly<Record<string, ToolCallView>>;
+  /** Call ids whose output is expanded. Interface state, not from the log. */
+  readonly expanded: readonly string[];
+  readonly todosVisible: boolean;
+  /** The command palette when it is open: which row is selected. */
+  readonly palette: { readonly index: number } | null;
   readonly todos: readonly TodoView[];
   readonly usage: { readonly input: number; readonly output: number } | null;
   /**
@@ -116,12 +139,48 @@ export function initialView(): TuiView {
     streaming: '',
     turn: null,
     approval: null,
+    calls: {},
+    expanded: [],
+    todosVisible: true,
+    palette: null,
     todos: [],
     usage: null,
     unsupported: [],
     lastSeq: 0,
     closed: false,
   };
+}
+
+// ── interface state ─────────────────────────────────────────────────────────────
+//
+// Kept beside the derived view because they are the same kind of thing to a renderer (fields
+// on the view) but a different kind of thing to `project()`: these are the user's, not the
+// log's, and `project` leaves them alone by construction — it spreads the view it is given.
+
+export function toggleExpanded(view: TuiView, callId: string): TuiView {
+  const expanded = view.expanded.includes(callId)
+    ? view.expanded.filter((id) => id !== callId)
+    : [...view.expanded, callId];
+  return { ...view, expanded };
+}
+
+export function toggleTodos(view: TuiView): TuiView {
+  return { ...view, todosVisible: !view.todosVisible };
+}
+
+export function openPalette(view: TuiView): TuiView {
+  return { ...view, palette: { index: 0 } };
+}
+
+export function closePalette(view: TuiView): TuiView {
+  return { ...view, palette: null };
+}
+
+/** Move the palette selection, wrapping at both ends (`count` rows). */
+export function movePalette(view: TuiView, delta: number, count: number): TuiView {
+  if (view.palette === null || count === 0) return view;
+  const index = (view.palette.index + delta + count) % count;
+  return { ...view, palette: { index } };
 }
 
 /** The language of any user text, decided once and then left alone. */

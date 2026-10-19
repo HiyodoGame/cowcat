@@ -31,6 +31,14 @@ import { FRAMES } from './frames.js';
 const WIDTH = 64;
 const HEIGHT = 16;
 const RENDERER_VERSION = '0.0.0-test';
+/**
+ * A FIXED clock for every snapshot.
+ *
+ * `now` reaches a component (the "you still there" nudge), so a snapshot taken against the
+ * real clock would change ten seconds after the approval scene was written — a fixture that
+ * fails on its own is a fixture nobody trusts. The nudge scene passes a later value.
+ */
+const CLOCK = 1_000;
 
 /** `dist/test/` → `test/`: the source tree, which is what the module belongs to. */
 const SOURCE_TEST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'test');
@@ -40,11 +48,13 @@ interface Rendered {
   readonly rowWidths: readonly number[];
 }
 
-async function renderSnapshot(view: TuiView): Promise<Rendered> {
+async function renderSnapshot(view: TuiView, now: number = CLOCK): Promise<Rendered> {
   const { renderer, renderOnce, captureCharFrame, captureSpans, dispose } = await createTestRenderer({ width: WIDTH, height: HEIGHT });
   try {
     const screen = createScreen(renderer, THEME, { title: titleOf(RENDERER_VERSION) });
-    screen.update(frameOf(view));
+    // The same width the loop uses: the terminal's, minus the screen's own chrome. A card
+    // measured against the terminal would be two cells too wide and wrap out of its box.
+    screen.update(frameOf(view, { width: screen.contentWidth(), now }));
     await renderOnce();
     // `captureSpans()` reports each span's own width — the renderer's answer about cells,
     // which is what the layout is made of. Counting characters would be wrong the moment a
@@ -59,8 +69,8 @@ async function renderSnapshot(view: TuiView): Promise<Rendered> {
 const rendered = new Map<string, Rendered>();
 const updated: Record<string, string> = {};
 
-async function expectFrame(name: string, view: TuiView): Promise<Rendered> {
-  const snapshot = await renderSnapshot(view);
+async function expectFrame(name: string, view: TuiView, now: number = CLOCK): Promise<Rendered> {
+  const snapshot = await renderSnapshot(view, now);
   rendered.set(name, snapshot);
   if (process.env.UPDATE_SNAPSHOTS === '1') {
     updated[name] = snapshot.frame;
@@ -168,11 +178,39 @@ test('a pending approval takes over the input line', async () => {
   seq = 0;
   const asked = from([
     OPENED,
-    event('turn.opened', { input: 'clean the build directory' }),
+    event('turn.opened', { input: '清一下构建目录' }),
     event('turn.transitioned', { from: 'opened', to: 'awaiting_tools', reason: null }),
     event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null }),
   ]);
   await expectFrame('approval', addNotice(asked, 'warn', 'the tool wants network access'));
+});
+
+test('an approval nobody answers nudges, which is the one redraw nothing triggers', async () => {
+  seq = 0;
+  const asked = from([
+    OPENED,
+    event('turn.opened', { input: '清一下构建目录' }),
+    event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null }),
+  ]);
+  // Eleven seconds in, with a clock that is injected rather than read.
+  await expectFrame('nudge', asked, CLOCK + 11_000);
+});
+
+test('the todo panel, and the command palette over it', async () => {
+  seq = 0;
+  const withTodos = from([
+    OPENED,
+    event('turn.opened', { input: '把登录接口改成 JWT' }),
+    event('todo.updated', {
+      todos: [
+        { content: '加 JWT 校验', status: 'in_progress', activeForm: '在加 JWT 校验' },
+        { content: '跑一遍测试', status: 'pending', activeForm: '在跑测试' },
+        { content: '读一遍现有实现', status: 'completed', activeForm: '在读实现' },
+      ],
+    }),
+  ]);
+  await expectFrame('todos', withTodos);
+  await expectFrame('palette', { ...withTodos, palette: { index: 1 } });
 });
 
 // CJK is two cells wide and one grapheme, so the count that matters is the renderer's own

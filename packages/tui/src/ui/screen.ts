@@ -2,7 +2,6 @@ import {
   BoxRenderable,
   InputRenderable,
   RGBA,
-  ScrollBoxRenderable,
   TextAttributes,
   TextRenderable,
   createTextAttributes,
@@ -32,13 +31,10 @@ import type { Line } from './line.js';
  */
 
 /**
- * How many transcript lines are kept mounted.
- *
- * A session can run for hours and the skeleton has no virtualisation of its own; the tail is
- * what a chat actually shows, and the session log keeps everything. T8's cards land on
- * `viewportCulling` for the real answer.
+ * Rows the screen spends on something other than the transcript: the root box's two borders,
+ * the status line and the input line.
  */
-const MAX_BODY_LINES = 500;
+const BODY_CHROME_ROWS = 4;
 
 export interface ScreenSpec {
   readonly body: readonly Line[];
@@ -48,6 +44,14 @@ export interface ScreenSpec {
 
 export interface Screen {
   update(spec: ScreenSpec): void;
+  /**
+   * The columns a component may use: the terminal's, minus this screen's own chrome.
+   *
+   * The frame builder is handed this rather than the terminal width because the card borders
+   * and the root border both have to fit — measuring against the terminal is how a card ends
+   * up two cells too wide and wraps itself out of its own box (measured: they did).
+   */
+  contentWidth(): number;
   /** Called with the input's value when the user presses Enter. */
   onSubmit(handler: (value: string) => void): () => void;
   /** Every keypress, including the ones the input swallowed. */
@@ -71,15 +75,11 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   renderer.root.add(root);
 
-  const body = new ScrollBoxRenderable(renderer, {
+  const body = new BoxRenderable(renderer, {
     id: 'cowcat-body',
     flexGrow: 1,
     width: '100%',
-    // A chat shows the newest line; anything else means the user scrolls to find the thing
-    // they just asked for.
-    stickyStart: 'bottom',
-    scrollY: true,
-    viewportCulling: true,
+    flexDirection: 'column',
   });
   const status = new TextRenderable(renderer, {
     id: 'cowcat-status',
@@ -106,7 +106,14 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   const specs: (Line | undefined)[] = [];
 
   function updateBody(lines: readonly Line[]): void {
-    const visible = lines.length > MAX_BODY_LINES ? lines.slice(-MAX_BODY_LINES) : lines;
+    // The tail, cut here rather than by a scroll box. Two measured reasons: a `ScrollBox` draws
+    // a vertical scrollbar in the last column — a column the cards then do not have, so they
+    // wrap and lose their right border — and its `stickyStart: 'bottom'` did not hold, so the
+    // viewport showed the TOP of a long transcript and the newest card was off screen. Slicing
+    // the last N lines is the behaviour a chat wants, and it keeps the mounted renderables to
+    // what is actually visible.
+    const room = Math.max(1, renderer.height - BODY_CHROME_ROWS);
+    const visible = lines.length > room ? lines.slice(-room) : lines;
     for (let index = 0; index < visible.length; index += 1) {
       const spec = visible[index];
       if (spec === undefined) continue;
@@ -144,6 +151,11 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   }
 
   return {
+    contentWidth() {
+      // Two cells for the root box's own border. Everything inside is laid out by width alone,
+      // so this is the one place that has to know about it.
+      return Math.max(8, renderer.width - 2);
+    },
     update(spec) {
       updateBody(spec.body);
       status.content = spec.status.text;
