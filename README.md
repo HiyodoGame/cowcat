@@ -14,7 +14,7 @@ keys and your terminal under your own control. Zero runtime dependencies, Node.j
 |---|---|---|
 | **v1 CLI**（当前唯一可发布版本） | [`agent/`](agent/) | 已发布 `0.15.0`（npm `@corescense/cowcat`），MIT，零运行时依赖 |
 | **v2 内核**（事件溯源会话运行时） | [`packages/cowcat/`](packages/cowcat/) | P0–P5 完成（内核、端口、执行网关、模型适配器、七个核心工具）；P6 的组合根与宿主已落地（ADR-063/064） |
-| **v2 前端与可执行文件** | [`packages/protocol/`](packages/protocol/) · [`packages/tui/`](packages/tui/) · [`packages/cli/`](packages/cli/) | headless 协议与 `cowcat` 可执行文件（`serve` / `run` / `sessions` / `doctor` 可用）；TUI 渲染器未接线（T7） |
+| **v2 前端与可执行文件** | [`packages/protocol/`](packages/protocol/) · [`packages/tui/`](packages/tui/) · [`packages/cli/`](packages/cli/) | headless 协议 + `cowcat` 可执行文件（六个动词里五个可用，`setup` 未接线）；**TUI 骨架已落地**（`project()` 纯函数 + 帧快照），卡片与图片渲染见 T8/T9 |
 
 v1 与 v2 长期并存，v2 达到功能对等后才切换（计划中的 P8），在那之前 `agent/` 只接受安全修复。
 

@@ -115,9 +115,8 @@ T3 交付的是**进程**，不是宿主：`stdioTransport`（行帧）+ `serve(
 `.jsonl`、再确认退出后锁文件被清掉了。`cowcat run`（一次性回合，审批逐条答复）与 `sessions list` 同样
 接在这条链上。
 
-**仍然没接上的只有两个动词**：`tui`（T7：opentui 骨架、`project()` 与组件）与 `setup`（配置的**写入**路径
-尚未实现；键已定，见 ADR-063）。`sessions resume` 是交互式的另一半，也需要 T7，它会说明该用
-`cowcat run --session <id>` 或 `cowcat serve` 代替，而不是假装恢复成功。
+**T7 之后 `tui` 与 `sessions resume` 也接上了**：`packages/cli` 建宿主与内存传输，渲染器只拿
+`ProtocolClient`（ADR-066 ①）。**仍然未接线的只有 `setup`**（配置的**写入**路径；键已定，见 ADR-063）。
 
 ## 前端分层（ADR-056、ADR-062）
 
@@ -145,11 +144,12 @@ ADR-062 否掉方案 B 时反对的那件事（「`serve` 被绑在渲染器的 
 
 ```
 packages/tui/src/
-  app/          project()（KernelEvent → view model，纯函数）、命令、键位、屏幕表
-  ui/           无状态原语：box / text / list / dialog / input / toast / status-bar / tabs / spinner
-  components/   特性组件：session-frame / message / tool-card / approval-card / todo-panel / diff-card / image-preview
-  theme/        颜色与样式（语义化 token，ADR-061 待落）
-  image/        ImageRenderable 与能力探测（ADR-058）
+  app/          project()（KernelEvent → view model，纯函数）、视图类型、文案（键位与命令见 T8）
+  ui/           无状态原语：line（行模型）、screen（**唯一 import opentui 的文件**）
+  components/   特性组件：session-frame / transcript / status-bar（message / tool-card / approval-card /
+                todo-panel / diff-card / command-palette 见 T8）
+  theme/        语义 token（ADR-061）
+  image/        ImageRenderable 与能力探测（ADR-058，T9）
 ```
 
 （`cli/` 已经不在这里了：子命令表、帮助与 `doctor` 在 T4a 3/3 搬去了 `packages/cli`，ADR-065 ⑥。）
@@ -158,8 +158,8 @@ packages/tui/src/
 |---|---|
 | `protocol/` | 只做传输与解码；不认识任何界面概念（它如今是自己的包） |
 | `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏） |
-| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号 |
-| `components/` | 只读 view model，不订阅协议、不发命令 |
+| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**`ui/screen.ts` 是包内唯一 import `@opentui/core` 的文件**（ADR-066 ③），别的地方产生 `Line[]` |
+| `components/` | 只读 view model，不订阅协议、不发命令；**产出 `Line[]` 与状态行**，因此不需要渲染器就能测 |
 | `image/` | 能力探测与协议细节（kitty / iTerm2 / 半块）只在这里；组件只说「这里有一张图」 |
 
 **依赖方向**：`components → ui → image/theme`，`app → protocol`；**整个 `packages/tui` 都不 import `@corescense/cowcat-core`**（ADR-059 ③，lint 在它的 `eslint.config.js` 里，`tools/lint-probe.mjs` 有一条探针证明它真的会报错）。同时**反向**：`packages/cli` 不许直接 import `@opentui/*`——它通过 `@corescense/cowcat-tui` 取渲染器，进渲染器只有一个门。
@@ -241,13 +241,13 @@ packages/tui/src/
 
 ## CLI（ADR-060）
 
-| 命令 | 作用 | 状态（T4a 3/3 之后） |
+| 命令 | 作用 | 状态（T7 之后） |
 |---|---|---|
-| `cowcat` | 进 TUI（默认） | **未接线**：需要 T7（opentui 骨架、`project()` 与组件） |
+| `cowcat` | 进 TUI（默认） | **可用**：`project()` 骨架 + `cowcat tui`（`--session <id>` 继续一个会话） |
 | `cowcat serve` | headless 协议服务（stdio）——TUI 与 IDE 都连它，也是无终端测试的入口 | **可用**（真实宿主：会话、回合、审批、附件都接上了） |
 | `cowcat run "<prompt>"` | 一次性回合（非交互） | **可用**：`--yes` 放行审批，`--session <id>` 继续一个会话；默认逐条拒绝（ADR-065 ②） |
 | `cowcat doctor` | Node、配置、信任、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；不查渲染器的原生二进制，说明理由） |
-| `cowcat sessions list \| resume <id>` | 会话管理 | **`list` 可用**（直接读会话目录）；**`resume` 未接线**：交互式恢复需要 T7，它说明该用 `cowcat run --session <id>` 或 `cowcat serve` |
+| `cowcat sessions list \| resume <id>` | 会话管理 | **都可用了**：`list` 直接读会话目录，`resume` 就是「带 id 的 TUI」（同一条代码路径，Node 门槛只检查一次） |
 | `cowcat setup` | 交互式配置向导 | **未接线**：配置的**写入**路径尚未实现（键已定，见 ADR-063；现在直接编辑 `~/.cowcat/config.json`） |
 
 子命令表是**数据**（`packages/cli/src/cli/spec.ts`：名字、摘要、参数 schema、**选项**、处理函数），帮助文本与参数/选项校验都从表生成，不做嵌套子命令。T4 落的是**结构与三个出口码**：
@@ -285,12 +285,18 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 
 ## 待办与未验证
 
-- 主题与设计 token 的 ADR 尚未落（实现主题时再落，不提前占号）
-- **没有任何真实终端证据**：刷新率、闪烁、图片协议的实际渲染效果全部未测（调研 §5.6）
-- **T1 已验证**：Node ≥26.4 与 Windows 原生二进制可用，ADR-056 的 CI 部分**不需要**降级（见「T1 前提验证」）
+- **主题 token 已落（ADR-061）**：色值来自品牌指南 §3.1，组件只说语义 token。明暗切换与用户主题文件**没做**（前者等 T8 的真实需求，后者是一个配置键，得先有 ADR）。
+- **没有任何真实终端证据**：刷新率、闪烁、图片协议的实际渲染效果全部未测（调研 §5.6）。`tools/tui-smoke.mjs` 证明的是**进程链路**（起、画、Ctrl-C 干净退出、不留锁），**不是**观感。
+- **T1 已验证**：Node ≥26.4 与 Windows 原生二进制可用，ADR-056 的 CI 部分**不需要**降级（见「T1 前提验证」）。
 - **`serve` 的宿主不再是占位**：`packages/cowcat/src/host/` 是真实实现（会话生命周期、回合、审批桥、
   `attachment.read`），并且有 16 项测试经**真实协议服务端**驱动真实内核会话。
 - **进程链路已覆盖（T4a 3/3）**：`packages/cli/test/cli/spawn.test.ts` spawn 真实的 `cowcat serve`，
   在 `COWCAT_HOME` 指向的临时目录里建会话、列会话、拿到 `not-configured` 的结构化拒绝，并确认退出后
-  锁文件被清掉。**仍未跑过一次真实的模型请求**，因此 `cowcat run` 的「整条回合」只在宿主层验证过
-  （`packages/cowcat/test/host.test.ts` 注入脚本化模型），**没有**经由一个真实端点走完整条 CLI 路径。
+  锁文件被清掉。**T7 之后 `tools/tui-smoke.mjs` 又补了一条**：真实的 `cowcat tui` 起得来、画得出帧、
+  Ctrl-C 退出 0、不留锁。
+- **仍未跑过一次真实的模型请求**，因此 `cowcat run` 的「整条回合」只在宿主层验证过
+  （`packages/cowcat/test/host.test.ts` 注入脚本化模型），**没有**经由一个真实端点走完整条 CLI/TUI 路径。
+- **帧快照只覆盖 ASCII 与一个 CJK 宽度断言**：逐字节快照刻意不含宽字符（字宽是否跨平台一致没有实测过），
+  CJK 的**单元格**宽度单独用渲染器自己的 span 宽度断言（`test/frame.test.ts`）。
+- **T8/T9 的缺口写在 `dev-plan-v2.md`**：卡片（message / tool-card / approval-card / todo-panel /
+  diff-card / command-palette）、图片渲染与能力探测、命令面板与键位表、工具输出的自研对齐（宽度表）。
