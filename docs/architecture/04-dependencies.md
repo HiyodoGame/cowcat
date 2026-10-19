@@ -45,6 +45,12 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `@opentui/core` | P6（当前 0.6.6） | **运行时：仅前端包**（`packages/tui/`）：TUI 渲染（ADR-056） | **不进内核包的依赖计数**（内核仍是 3 / 6）。判断标准 4（跨平台分发负担）在此**显式豁免一次**：它带 8 个平台的原生核心（`@opentui/core-{win32,darwin,linux}-{x64,arm64}` + 两个 musl），并要求 `node >=26.4.0`——换掉的是整块渲染与图片协议的自研量。**锁版本**；`engines.node` 变化等于我们的门槛变化。平台二进制缺失时**显式报错**，不静默降级。**T1 实测（2026-10-19）**：`0.6.6` 可安装（12 个包 / 8 秒），`@opentui/core-win32-x64` 内含 `opentui.dll`（5.06 MB）；Node **26.12.0 不需要** `--experimental-ffi`（只在 stderr 打警告），而 **Node 24 上该 flag 是启动期硬错误**——门槛是真的。取证与结论见 [`06-frontend.md`](06-frontend.md) 的「T1 前提验证」一节；两条 Node 26 CI 腿在 PR #56 上 pass |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
+### 包内依赖（**不进 3 / 6 的计数**）
+
+| 边 | 阶段 | 为什么不算一次「引入」 |
+|---|---|---|
+| `packages/cowcat` → `@corescense/cowcat-protocol`（`file:../protocol`） | P6 T4a 2/3（ADR-062 ③、ADR-064 ⑤） | 这是**同一个仓库**里的 `file:` 链接，不带来任何第三方代码——3 / 6 量的是「引入方带进来了什么外部代码」，而这条边的另一头是我们自己的包（`private`、更不发布）。**代价记在别处**：`file:` 是 junction，npm 不装目标的依赖也不构建它，所以 `packages/cowcat` 的**三条 CI 腿**各自要多一步 `npm --prefix ../protocol ci && run build`（本 PR 已加）。将来若改成 npm workspace，这条边与那三步一起消失 |
+
 ## 明确不引入的
 
 | 候选 | 不引入的原因 |

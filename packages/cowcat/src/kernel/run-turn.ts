@@ -64,6 +64,15 @@ export type TurnNote =
   | { readonly kind: 'effort-not-declared'; readonly model: string; readonly effort: string };
 
 export interface TurnOutcome {
+  /**
+   * The turn this run opened (ADR-064).
+   *
+   * `runTurn` mints it, so a caller that needs to answer "which turn is this?" — the
+   * protocol's `turn.send` does — would otherwise have to watch the event stream to find
+   * out. It is the same id the log's `turn.opened` carries, and it is reported whether
+   * the turn completed, failed or was cancelled.
+   */
+  readonly turnId: string;
   readonly state: TerminalTurnState;
   readonly reason: string | null;
   /** Empty in the common case; see TurnNote. */
@@ -82,6 +91,8 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
   if (effort.note !== null) notes.push(effort.note);
 
   await session.openTurn(input);
+  const turnId = session.turnId;
+  if (turnId === null) throw new Error('the session did not open a turn');
   try {
     for (;;) {
       if (signal.aborted) throw new TurnAborted('aborted before the model was called');
@@ -89,7 +100,7 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
       if (calls.length === 0) {
         await session.transition('finishing');
         await session.transition('completed');
-        return { state: 'completed', reason: null, notes };
+        return { turnId, state: 'completed', reason: null, notes };
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
@@ -126,7 +137,7 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
     const reason = error instanceof Error ? error.message : String(error);
     const turn = session.state.turn;
     if (turn !== null && !isTerminal(turn.state)) await session.transition(outcome, reason);
-    return { state: outcome, reason, notes };
+    return { turnId, state: outcome, reason, notes };
   }
 }
 

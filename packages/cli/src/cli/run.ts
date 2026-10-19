@@ -1,20 +1,16 @@
 import type { Readable, Writable } from 'node:stream';
+import { EXIT } from './exit.js';
+import { parseArgv } from './flags.js';
 import { renderHelp } from './help.js';
 import { COMMANDS, defaultCommand, findCommand, type CommandContext } from './spec.js';
 import { readVersion } from './version.js';
-
-export const EXIT = {
-  ok: 0,
-  /** Well-formed invocation, capability missing or execution failed. */
-  failed: 1,
-  /** The command line itself was wrong (unknown verb, missing argument). */
-  usage: 2,
-} as const;
 
 export interface CliOptions {
   readonly stdin?: Readable;
   readonly stdoutStream?: Writable;
   readonly stdout?: (line: string) => void;
+  /** Raw output, no trailing newline: `run` streams the model's text through it. */
+  readonly write?: (text: string) => void;
   readonly stderr?: (line: string) => void;
 }
 
@@ -25,7 +21,7 @@ export interface CliOptions {
  *
  * The three exit codes are the contract a script depends on: `0` did what was asked,
  * `2` you typed it wrong, `1` this build cannot do it or it failed. Usage errors are
- * checked before the blocked/exectution branch so `cowcat run` (no prompt) reports the
+ * checked before the blocked/execution branch so `cowcat run` (no prompt) reports the
  * missing argument rather than the missing composition root.
  */
 export async function runCli(argv: readonly string[], options: CliOptions = {}): Promise<number> {
@@ -33,6 +29,11 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
     options.stdout ??
     ((line: string) => {
       process.stdout.write(`${line}\n`);
+    });
+  const write =
+    options.write ??
+    ((text: string) => {
+      process.stdout.write(text);
     });
   const stderr =
     options.stderr ??
@@ -58,7 +59,17 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
     return EXIT.usage;
   }
 
-  const parsed = spec.args.safeParse(rest);
+  // Options before positionals: they are the structural half of the command line, so
+  // `cowcat run --nope "x"` should say "unknown option" rather than "wrong number of
+  // arguments" — the second message would send someone counting arguments that are fine.
+  const parsedArgv = parseArgv(rest, spec.flags ?? []);
+  if (parsedArgv.problems.length > 0) {
+    for (const problem of parsedArgv.problems) stderr(`cowcat ${spec.name}: ${problem}`);
+    stderr(`用法：${spec.usage}`);
+    return EXIT.usage;
+  }
+
+  const parsed = spec.args.safeParse(parsedArgv.positionals);
   if (!parsed.success) {
     stderr(`cowcat ${spec.name}: 参数不对`);
     stderr(`用法：${spec.usage}`);
@@ -72,11 +83,21 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
 
   const context: CommandContext = {
     args: parsed.data,
+    flags: parsedArgv.flags,
     stdout,
+    write,
     stderr,
     diagnostics: stderr,
     ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
     ...(options.stdoutStream === undefined ? {} : { stdoutStream: options.stdoutStream }),
   };
-  return spec.run(context);
+  try {
+    return await spec.run(context);
+  } catch (error) {
+    // A last-resort net: every handler is expected to report its own failures (and all of
+    // them do), so reaching here means a bug. A stack trace is not something a terminal
+    // can use, and exiting non-zero is what a script needs.
+    stderr(`cowcat ${spec.name}: 内部错误：${error instanceof Error ? error.message : String(error)}`);
+    return EXIT.failed;
+  }
 }

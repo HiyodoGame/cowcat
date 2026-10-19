@@ -105,7 +105,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/cowcat/package-lock.json
+          cache-dependency-path: |
+            packages/cowcat/package-lock.json
+            packages/protocol/package-lock.json
+      # A file dependency is linked, not installed or built (ADR-062), and the host in this
+      # package implements the protocol's port — so the protocol is built here first.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)

@@ -15,13 +15,12 @@ export default tseslint.config(
     files: ['**/*.js'],
     ...tseslint.configs.disableTypeChecked,
   },
-  // The protocol's layering rules (no renderer, no kernel) moved with it into
-  // `packages/protocol/eslint.config.js` (ADR-062) — that package is the seam now, and
-  // the rule that used to protect a directory protects a package instead. What stays here
-  // is the inverse: the frontend must not reach into the kernel, which is still the whole
-  // point of speaking a protocol (ADR-059 ③).
+  // The prohibition ADR-059 ③ states, now that the CLI has moved out (T4a 3/3): the
+  // whole frontend package reaches the kernel only through the protocol — not just the
+  // directory that happened to hold the bin. `packages/cli` is the one package allowed to
+  // import both, and it is not the frontend (ADR-062 ③).
   {
-    files: ['src/cli/**/*.ts'],
+    files: ['src/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -30,7 +29,7 @@ export default tseslint.config(
             {
               group: ['@corescense/cowcat-core', '*/cowcat/src/*', '**/packages/cowcat/**'],
               message:
-                'the frontend reaches the kernel only through the protocol; the composition root is T4a and it will inject the host (ADR-059 ③, ADR-062)',
+                'the frontend reaches the kernel only through the protocol; the composition root lives in packages/cowcat and is wired by packages/cli (ADR-059 ③, ADR-062 ③)',
             },
           ],
         },
@@ -46,8 +45,6 @@ export default tseslint.config(
       '@typescript-eslint/require-await': 'off',
     },
   },
-  // ADR-059's ban on importing the kernel and its adapters is NOT here yet: at T1
-  // this package has no protocol client and therefore nothing that could import
-  // them. It lands with the layer that could (T7), together with the lint probe
-  // that proves the rule actually fires.
+  // ADR-059's ban on importing the kernel and its adapters is in the block above, and it
+  // now covers the whole package rather than the CLI directory that used to live here.
 );

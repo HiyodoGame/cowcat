@@ -1,0 +1,42 @@
+{
+  "name": "@corescense/cowcat-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "CowCat's executable: the subcommand table, `serve` over the real host, `run`, `sessions` and `doctor`. The only package that sees the protocol and the renderer at once (ADR-062 ③).",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "cowcat": "./dist/src/cli/main.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "pretest": "npm run build && npm run lint",
+    "test": "node --test \"dist/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@corescense/cowcat-core": "file:../cowcat",
+    "@corescense/cowcat-protocol": "file:../protocol",
+    "@corescense/cowcat-tui": "file:../tui",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2"
+  }
+}

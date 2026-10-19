@@ -1,9 +1,19 @@
 import type { Readable, Writable } from 'node:stream';
 import { z } from 'zod';
+import { runDoctor } from './doctor.js';
+import type { FlagSpec } from './flags.js';
+import { runOneShot } from './oneshot.js';
+import { runServe } from './serve.js';
+import { runSessions } from './sessions.js';
+import { runTui } from './tui.js';
 
 export interface CommandContext {
   readonly args: readonly string[];
+  /** Options, keyed by bare name: `--config` → `flags['config']`. */
+  readonly flags: Readonly<Record<string, string | boolean>>;
   readonly stdout: (line: string) => void;
+  /** Raw output with no newline appended: `run` streams the model's text through it. */
+  readonly write: (text: string) => void;
   readonly stderr: (line: string) => void;
   /** Present so `serve` can be driven by a test without touching the process streams. */
   readonly stdin?: Readable;
@@ -16,6 +26,12 @@ interface CommandBase {
   readonly summary: string;
   /** Positional arguments, validated before the handler runs. */
   readonly args: z.ZodType<readonly string[]>;
+  /**
+   * The options this verb accepts (ADR-065 ①). Declared here for the same reason the
+   * positional schema is: help text, validation and dispatch all read the table, so an
+   * option cannot exist in one and be missing from another.
+   */
+  readonly flags?: readonly FlagSpec[];
   readonly usage: string;
   readonly isDefault?: boolean;
 }
@@ -34,66 +50,77 @@ export type CommandSpec =
 
 const noArgs = z.tuple([]);
 
+const configFlag: FlagSpec = {
+  name: '--config',
+  value: '<path>',
+  summary: '额外的会话层配置（默认只读 user 与 project 两层）',
+};
+const yesFlag: FlagSpec = {
+  name: '--yes',
+  summary: '自动放行每一次审批（默认逐条拒绝：这个动词背后没有人可以问）',
+};
+const sessionFlag: FlagSpec = {
+  name: '--session',
+  value: '<id>',
+  summary: '继续一个已有会话，而不是新建一个',
+};
+
 /**
  * The subcommand table is data (ADR-060), for the same reason the protocol's method
  * table is: help text, argument validation and dispatch all read it, so a command
  * cannot be added to one and forgotten in another. Six verbs, one level, no nesting.
+ *
+ * Since T4a 3/3 this table lives in `packages/cli` and the wired verbs reach the kernel
+ * through `createHost` (ADR-062 ③, ADR-064). `setup` is the one verb still blocked: the
+ * configuration KEYS are decided (ADR-063), the writing path is not.
  */
 export const COMMANDS: readonly CommandSpec[] = [
   {
     name: 'tui',
     summary: '启动 TUI（无参数时的默认命令）',
     args: noArgs,
+    flags: [configFlag, sessionFlag],
     usage: 'cowcat',
-    status: 'blocked',
-    blockedBy: 'T7（opentui 骨架、project() 与组件）',
+    status: 'ready',
+    run: runTui,
     isDefault: true,
   },
   {
     name: 'serve',
     summary: 'headless 协议服务（stdio，一行一个 JSON）',
     args: noArgs,
+    flags: [configFlag],
     usage: 'cowcat serve',
     status: 'ready',
-    run: async (context) => {
-      // Imported here rather than at the top of the module: `--help` and `doctor` do
-      // not need the protocol graph, and the TUI verb (T7) will need the renderer.
-      const { serve, refusingHost } = await import('@corescense/cowcat-protocol');
-      return serve({
-        host: refusingHost(),
-        ...(context.stdin === undefined ? {} : { input: context.stdin }),
-        ...(context.stdoutStream === undefined ? {} : { output: context.stdoutStream }),
-        diagnostics: context.diagnostics ?? context.stderr,
-      });
-    },
+    run: runServe,
   },
   {
     name: 'run',
     summary: '一次性回合（非交互）',
     // The prompt is required; that is the whole argument contract for now.
     args: z.tuple([z.string().min(1)]),
+    flags: [configFlag, yesFlag, sessionFlag],
     usage: 'cowcat run "<prompt>"',
-    status: 'blocked',
-    blockedBy: 'T4a（组合根：模型、七个工具、策略与审批桥）',
+    status: 'ready',
+    run: runOneShot,
   },
   {
     name: 'doctor',
-    summary: '环境、原生核心与协议版本逐项检查',
+    summary: '环境、配置、沙箱后端与协议版本逐项检查',
     args: noArgs,
+    flags: [configFlag],
     usage: 'cowcat doctor',
     status: 'ready',
-    run: async (context) => {
-      const { runDoctor } = await import('./doctor.js');
-      return runDoctor(context);
-    },
+    run: runDoctor,
   },
   {
     name: 'sessions',
     summary: '会话管理：list | resume <id>',
     args: z.union([z.tuple([z.literal('list')]), z.tuple([z.literal('resume'), z.string().min(1)])]),
+    flags: [configFlag],
     usage: 'cowcat sessions list | resume <id>',
-    status: 'blocked',
-    blockedBy: 'T4a（会话存储与宿主）',
+    status: 'ready',
+    run: runSessions,
   },
   {
     name: 'setup',
@@ -101,7 +128,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     args: noArgs,
     usage: 'cowcat setup',
     status: 'blocked',
-    blockedBy: 'T4a（配置键与写入路径）',
+    blockedBy: '写入路径（配置键已定，见 ADR-063；现在请直接编辑 ~/.cowcat/config.json）',
   },
 ];
 

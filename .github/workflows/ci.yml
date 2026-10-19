@@ -17,6 +17,10 @@
 #                              cowcat, plus a different Node floor: opentui needs
 #                              >=26.4 (ADR-056) and ships its native core per platform,
 #                              so the two runners answer two different questions
+#   packages/cli (P6)          Linux on every non-draft PR — the executable. It is on the
+#                              KERNEL's Node floor (22, ADR-065 ①) and its one interesting
+#                              property is the build CHAIN: two `file:` dependencies have
+#                              to be built before it can compile at all
 #   package whitelist          every non-draft PR (cheap, guards what npm publishes)
 #   CI (macOS)                 every non-draft PR + every main push — the only place
 #                              the Seatbelt backend is verified for real
@@ -240,7 +244,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/cowcat/package-lock.json
+          cache-dependency-path: |
+            packages/cowcat/package-lock.json
+            packages/protocol/package-lock.json
+      # The protocol is a file dependency, and npm links a directory — it does not install
+      # its dependencies or build it. The host in this package is what implements its
+      # `ProtocolHost` port (ADR-062 ③), so this leg does both itself, before `tsc` runs.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       # bubblewrap is what the v2 system tier drives on Linux. Without it the sandbox
       # enforcement tests SKIP (with the probe's own classification as the reason), which
       # is honest but means this leg would stop covering the one thing only a real
@@ -293,7 +306,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/cowcat/package-lock.json
+          cache-dependency-path: |
+            packages/cowcat/package-lock.json
+            packages/protocol/package-lock.json
+      # Same reason as the Linux leg above: a file dependency is linked, not installed or
+      # built, and this package now compiles against it.
+      - name: "Build the protocol package (file dependency)"
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)
@@ -385,6 +406,51 @@ jobs:
         run: |
           npm --prefix ../protocol ci
           npm --prefix ../protocol run build
+      - name: Install (npm ci)
+        run: npm ci
+      - name: Build, lint and test (pretest runs build + eslint)
+        run: npm test
+
+  cli:
+    # The executable (ADR-062 ③, ADR-065): the subcommand table, `serve` over the real
+    # host, `run`, `sessions` and `doctor`. One leg, and the reason is what this leg
+    # really checks — the CHAIN. `file:` dependencies are junctions, so the protocol and
+    # the kernel have to be built here before the bin can even be compiled, and this is
+    # the only leg where that order is exercised end to end.
+    #
+    # What it does not cover: the Windows side of its own spawn test. That is deliberate —
+    # the protocol's spawn tests already run on both platforms inside the tui legs, and a
+    # second Windows leg would buy the same answer twice.
+    name: packages/cli · node 22 · ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    defaults:
+      run:
+        working-directory: packages/cli
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/cli/package-lock.json
+            packages/cowcat/package-lock.json
+            packages/protocol/package-lock.json
+            packages/tui/package-lock.json
+      - name: "Build the file dependencies (protocol → kernel → renderer)"
+        # The chain, in dependency order, and it is the reason this leg exists: `file:`
+        # dependencies are junctions, so npm installs and builds none of them. The renderer
+        # is in the chain because the `tui` verb imports it (and its types), which is what
+        # makes `cowcat tui` compile against the real entry rather than a hand-written shape.
+        run: |
+          npm --prefix ../protocol ci
+          npm --prefix ../protocol run build
+          npm --prefix ../cowcat ci
+          npm --prefix ../cowcat run build
+          npm --prefix ../tui ci
+          npm --prefix ../tui run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)

@@ -1,0 +1,541 @@
+import {
+  AttachmentTooLargeError,
+  ERROR_CODES,
+  NoSuchSessionError,
+  ProtocolHostError,
+  type ApprovalVerdict,
+  type AttachedSession,
+  type AttachmentBytes,
+  type ProtocolHost,
+  type SessionSummary,
+} from '@corescense/cowcat-protocol';
+import { createBashTool } from '../adapters/tools/bash.js';
+import { createEditTool } from '../adapters/tools/edit.js';
+import { createGlobTool } from '../adapters/tools/glob.js';
+import { createGrepTool } from '../adapters/tools/grep.js';
+import { createReadTool } from '../adapters/tools/read.js';
+import { createTodoWriteTool } from '../adapters/tools/todo.js';
+import { createWriteTool } from '../adapters/tools/write.js';
+import { AttachmentUnavailableError, materializeAttachment } from '../adapters/attachments.js';
+import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
+import { NodeFs } from '../adapters/fs.js';
+import { NodePlatform } from '../adapters/platform.js';
+import { NodeProcess } from '../adapters/process.js';
+import { createSandboxExecutor } from '../adapters/sandbox/executor.js';
+import { fsProbeFrom } from '../adapters/sandbox/fs-probe.js';
+import { createSessionIndex } from '../adapters/session-index.js';
+import { FileTrustStore } from '../adapters/trust.js';
+import { Session, type SessionDeps } from '../kernel/session.js';
+import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
+import type { KernelEvent, SessionUpdate } from '../kernel/events.js';
+import { trustedRules, isTrusted } from '../policy/trust.js';
+import { resolveSandboxProfile, type ResolvedSandboxProfile } from '../policy/sandbox-profile.js';
+import type { CowcatConfig } from '../policy/config.js';
+import type { ActionRequest, Rule } from '../policy/decide.js';
+import {
+  ATTACHMENT_HARD_LIMIT_BYTES,
+  LockHeldError,
+  type Attachment,
+  type Clock,
+  type EventStore,
+  type FsPort,
+  type IdSource,
+  type LockPort,
+  type ModelPort,
+  type PlatformPort,
+  type ProcessPort,
+  type SnapshotPort,
+  type ToolPort,
+} from '../ports/index.js';
+import { ModelConfigError, createModelPort, selectModel, type ModelSelection } from './model.js';
+import { loadHostConfig, withHostRules } from './config.js';
+import { cowcatPaths, type CowcatPaths } from './paths.js';
+import type { ConfigFileReader, ReadTextFile } from '../adapters/config-files.js';
+
+// The composition root (ADR-062 ②, ADR-064): the one place that assembles the kernel,
+// the adapters and the protocol host port, and the only place in `packages/cowcat` that
+// knows a frontend exists.
+//
+// Everything the kernel needs is already a port; what is decided here, and nowhere else,
+// is WHICH implementations, pointed at which paths, and with what rules. Three
+// decisions worth reading before the code:
+//
+//   1. Config is loaded once, at construction, and a file that cannot be read or decoded
+//      refuses the whole host rather than degrading to defaults. `createHost` is async
+//      for exactly this reason: refusing at startup is fixable, refusing mid-turn is not.
+//   2. The MODEL is not. `selectModel`/`createModelPort` run on the first `turn.send`, so
+//      a machine with no model configured can still list sessions, read a log, or run
+//      `doctor` — and so a missing key is reported to the frontend as a refusal with an
+//      error code instead of killing the process at startup.
+//   3. Approvals pair on the call id from the request itself, not from a log event:
+//      `ActionRequest.callId` is the same id `approval.requested` carries, and taking it
+//      from the value in hand removes the ordering question entirely.
+
+export class HostConfigError extends Error {
+  /** One line per problem, ready to print. */
+  readonly problems: readonly string[];
+
+  constructor(problems: readonly string[]) {
+    super(`the configuration cannot be used:\n${problems.join('\n')}`);
+    this.name = 'HostConfigError';
+    this.problems = problems;
+  }
+}
+
+export interface CreateHostOptions {
+  /** The session's working directory: where tools resolve relative paths. */
+  readonly cwd: string;
+  /** The USER's home directory. Used for `~` in policy entries. */
+  readonly home: string;
+  /**
+   * The process environment, passed in rather than read.
+   *
+   * It is the only source of a model API key (ADR-063 D3), and this layer may not touch
+   * the host runtime — which also makes "the key is missing" a case a test can describe.
+   */
+  readonly env: Readonly<Record<string, string | undefined>>;
+  /** The build's version, recorded in the session header (ADR-012). */
+  readonly version?: string;
+  /** The session config layer: `--config <path>`, when the caller named one. */
+  readonly configPath?: string | null;
+  readonly paths?: CowcatPaths;
+  readonly readFiles?: ConfigFileReader;
+  readonly readTextFile?: ReadTextFile;
+  readonly fs?: FsPort;
+  readonly platform?: PlatformPort;
+  readonly process?: ProcessPort;
+  readonly store?: EventStore;
+  readonly lock?: LockPort;
+  readonly snapshots?: SnapshotPort;
+  readonly clock?: Clock;
+  readonly ids?: IdSource;
+  readonly trustStore?: { load(): Promise<{ readonly trusted: readonly string[]; readonly problem: string | null }> };
+  /** A model for tests. When absent it is built from the config on the first turn. */
+  readonly model?: ModelPort;
+  /** Injected so a test can assert the endpoint without a network (ADR-042). */
+  readonly fetch?: typeof globalThis.fetch;
+  readonly approvalTimeoutMs?: number;
+}
+
+/**
+ * The protocol host, plus the two things the protocol has no verb for.
+ *
+ * `close()` exists because a kernel `Session` holds the session lock for its whole life
+ * (ADR-010): a host that never released it would leave a lock file behind and the next
+ * process would report "writer pid … is gone but left its lock file behind".
+ */
+export interface CowcatHost extends ProtocolHost {
+  readonly paths: CowcatPaths;
+  readonly config: CowcatConfig;
+  /** The rules a session runs with, in force order. */
+  readonly rules: readonly Rule[];
+  readonly sandbox: ResolvedSandboxProfile;
+  /** Non-fatal findings from the config layers, for whatever reports them. */
+  readonly configWarnings: readonly string[];
+  close(): Promise<void>;
+}
+
+interface PendingApproval {
+  readonly callId: string;
+  readonly resolve: (verdict: ApprovalVerdict) => void;
+}
+
+interface SessionRecord {
+  readonly session: Session;
+  readonly listeners: Set<(update: unknown) => void>;
+  unsubscribe: () => void;
+  lastSeq: number;
+  /** Resolved by the `turn.opened` the host sees, so `turn.send` can answer early. */
+  turnWaiters: Array<(turnId: string) => void>;
+  pendingApproval: PendingApproval | null;
+  running: { readonly controller: AbortController; readonly done: Promise<void> } | null;
+}
+
+export async function createHost(options: CreateHostOptions): Promise<CowcatHost> {
+  const paths = options.paths ?? cowcatPaths({ cwd: options.cwd, home: options.home });
+
+  const loaded = await loadHostConfig({
+    cwd: options.cwd,
+    home: options.home,
+    sessionConfigPath: options.configPath ?? null,
+    paths,
+    ...(options.readFiles === undefined ? {} : { readFiles: options.readFiles }),
+    ...(options.readTextFile === undefined ? {} : { readTextFile: options.readTextFile }),
+  });
+  if (!loaded.ok) throw new HostConfigError(loaded.errors.map((error) => `${error.source}: ${error.problem}`));
+
+  const config = loaded.config;
+  const fs = options.fs ?? new NodeFs();
+  const version = options.version ?? '0.0.0';
+
+  // Trust is a statement about the workspace (ADR-028), so it is read here and applied
+  // to the rules: without this, a repository's own `cowcat.json` could hand itself
+  // permissions the user never granted.
+  const trustStore =
+    options.trustStore ?? new FileTrustStore({ file: paths.trustFile, fs });
+  const trust = await trustStore.load();
+  const rules = withHostRules(trustedRules(config, { trusted: isTrusted(trust.trusted, options.cwd, fs) }));
+
+  const platform = options.platform ?? new NodePlatform({ env: options.env });
+  const sandbox = resolveSandboxProfile(config.sandbox, { cwd: options.cwd, home: options.home, fs });
+  const processes =
+    options.process ??
+    new NodeProcess({
+      platform,
+      sandboxCommand: createSandboxExecutor({ platform, fsProbe: fsProbeFrom(fs) }),
+    });
+
+  const tools = createTools({ cwd: options.cwd, platform, process: processes, sandbox: sandbox.profile });
+  const store = options.store ?? new JsonlEventStore(paths.sessionsDir);
+  const sessionDeps: SessionDeps = {
+    store,
+    clock: options.clock ?? systemClock,
+    ids: options.ids ?? randomIds,
+    lock: options.lock ?? new FileLockPort(paths.sessionsDir),
+    snapshots: options.snapshots ?? new FileSnapshotPort(paths.sessionsDir),
+    cowcatVersion: version,
+    shell: platform.resolveShell(),
+  };
+  const index = createSessionIndex(paths.sessionsDir);
+  const sessions = new Map<string, SessionRecord>();
+  /** Every attachment this host has seen in a log, by path (ADR-057: `id` is the path). */
+  const attachments = new Map<string, Attachment>();
+
+  let selection: ModelSelection | null = null;
+  let model: ModelPort | null = options.model ?? null;
+
+  // The model is built from the config, so a config problem becomes a refusal the
+  // frontend can read instead of a stack trace it cannot (see the header, note 2).
+  function currentModel(): { readonly port: ModelPort; readonly selection: ModelSelection } {
+    try {
+      selection ??= selectModel(config.model);
+      model ??= createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
+      return { port: model, selection };
+    } catch (error) {
+      if (error instanceof ModelConfigError) {
+        throw new ProtocolHostError(
+          error.hint === null ? error.message : `${error.message} — ${error.hint}`,
+          ERROR_CODES.hostRefused,
+          { problem: error.problem },
+        );
+      }
+      throw error;
+    }
+  }
+
+  function deliver(rec: SessionRecord, update: SessionUpdate): void {
+    if (update.type !== 'model.delta') {
+      rec.lastSeq = update.seq;
+      if (update.type === 'turn.opened' && update.turnId !== null) {
+        const { turnId } = update;
+        const waiters = rec.turnWaiters;
+        rec.turnWaiters = [];
+        for (const waiter of waiters) waiter(turnId);
+      } else if (update.type === 'tool.finished' && update.attachments !== null) {
+        for (const attachment of update.attachments) attachments.set(attachment.path, attachment);
+      }
+    }
+    for (const listener of rec.listeners) listener(update);
+  }
+
+  function observe(events: readonly KernelEvent[]): void {
+    for (const event of events) {
+      if (event.type === 'tool.finished' && event.attachments !== null) {
+        for (const attachment of event.attachments) attachments.set(attachment.path, attachment);
+      }
+    }
+  }
+
+  function adopt(session: Session): SessionRecord {
+    const rec: SessionRecord = {
+      session,
+      listeners: new Set(),
+      unsubscribe: () => undefined,
+      lastSeq: session.state.lastSeq,
+      turnWaiters: [],
+      pendingApproval: null,
+      running: null,
+    };
+    rec.unsubscribe = session.subscribe((update) => {
+      deliver(rec, update);
+    });
+    return rec;
+  }
+
+  function lockedError(sessionId: string, error: LockHeldError): ProtocolHostError {
+    return new ProtocolHostError(
+      `session ${sessionId} is already open in another process: ${error.guidance}`,
+      ERROR_CODES.hostRefused,
+      { sessionId, pid: error.pid, lockPath: error.lockPath },
+    );
+  }
+
+  async function record(sessionId: string): Promise<SessionRecord> {
+    const existing = sessions.get(sessionId);
+    if (existing !== undefined) return existing;
+    try {
+      const rec = adopt(await Session.open(sessionDeps, sessionId));
+      sessions.set(sessionId, rec);
+      return rec;
+    } catch (error) {
+      if (error instanceof LockHeldError) throw lockedError(sessionId, error);
+      // "No such session" is a different fact from "this log is unreadable", and the
+      // protocol has a code for the first one. An empty log is how the store reports a
+      // file that is not there (it does not invent an error for absence).
+      const known = await store.readAll(sessionId).catch(() => null);
+      if (known !== null && known.length === 0) throw new NoSuchSessionError(sessionId);
+      throw new ProtocolHostError(`${sessionId}: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId });
+    }
+  }
+
+  /** The open session, or a refusal — for the verbs that must not open one implicitly. */
+  function open(sessionId: string): SessionRecord {
+    const rec = sessions.get(sessionId);
+    if (rec === undefined) throw new NoSuchSessionError(sessionId);
+    return rec;
+  }
+
+  return {
+    serverVersion: version,
+    paths,
+    config,
+    rules,
+    sandbox,
+    configWarnings: loaded.warnings.map((warning) => `${warning.source}: ${warning.problem}`),
+
+    async listSessions(): Promise<readonly SessionSummary[]> {
+      return index.list();
+    },
+
+    async createSession(sessionId: string | null): Promise<SessionSummary> {
+      const id = sessionId ?? sessionDeps.ids.next('sess');
+      if (sessions.has(id)) {
+        throw new ProtocolHostError(`session already exists: ${id}`, ERROR_CODES.hostRefused, { sessionId: id });
+      }
+      let session: Session;
+      try {
+        session = await Session.create(sessionDeps, id);
+      } catch (error) {
+        if (error instanceof LockHeldError) throw lockedError(id, error);
+        throw new ProtocolHostError(`${id}: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId: id });
+      }
+      const rec = adopt(session);
+      sessions.set(id, rec);
+      return { sessionId: id, lastSeq: rec.lastSeq };
+    },
+
+    async attach(sessionId: string): Promise<AttachedSession> {
+      const rec = await record(sessionId);
+      // Subscribe BEFORE reading the log, and hold what arrives until the server has sent
+      // the replay: a host that reads first leaves a gap no client can detect, and one
+      // that forwards immediately would put a later event before the replay it is part
+      // of. The buffer closes the gap; the microtask keeps the order (the server sends
+      // its reply and the replay in the same synchronous block, before this runs).
+      const buffered: SessionUpdate[] = [];
+      let live: ((update: unknown) => void) | null = null;
+      const onUpdate = (update: unknown): void => {
+        if (live === null) buffered.push(update as SessionUpdate);
+        else live(update);
+      };
+      rec.listeners.add(onUpdate);
+
+      let replay: readonly KernelEvent[];
+      try {
+        replay = await store.readAll(sessionId);
+      } catch (error) {
+        rec.listeners.delete(onUpdate);
+        throw new ProtocolHostError(`${sessionId}: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      observe(replay);
+      const lastSeq = replay.at(-1)?.seq ?? rec.session.state.lastSeq;
+      rec.lastSeq = lastSeq;
+
+      return {
+        lastSeq,
+        replay,
+        subscribe: (listener: (update: unknown) => void) => {
+          const queued = buffered.filter((update) => update.type === 'model.delta' || update.seq > lastSeq);
+          buffered.length = 0;
+          live = listener;
+          let subscribed = true;
+          queueMicrotask(() => {
+            if (!subscribed) return;
+            for (const update of queued) listener(update);
+          });
+          return () => {
+            subscribed = false;
+            live = null;
+            rec.listeners.delete(onUpdate);
+          };
+        },
+      };
+    },
+
+    async sendTurn(sessionId: string, input: string): Promise<{ turnId: string }> {
+      const rec = await record(sessionId);
+      if (rec.running !== null) {
+        throw new ProtocolHostError(`session ${sessionId} already has a turn running`, ERROR_CODES.hostRefused, {
+          sessionId,
+        });
+      }
+      // Before anything is opened: an unconfigured model is a refusal with a hint, not a
+      // turn that starts and fails a moment later.
+      const configured = currentModel();
+      const controller = new AbortController();
+      const opened = new Promise<string>((resolve) => {
+        rec.turnWaiters.push(resolve);
+      });
+
+      const deps: TurnDeps = {
+        session: rec.session,
+        model: configured.port,
+        preset: configured.selection.preset,
+        ...(configured.selection.effort === null ? {} : { effort: configured.selection.effort }),
+        tools,
+        rules,
+        fs,
+        approve: (request: ActionRequest) => askApproval(rec, request),
+        ...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
+        ids: sessionDeps.ids,
+      };
+
+      let failure: unknown = null;
+      const done = runTurn(deps, input, controller.signal).then(
+        () => undefined,
+        (error: unknown) => {
+          failure = error;
+        },
+      );
+      const settled = done.then(() => undefined);
+      rec.running = { controller, done: settled };
+      void settled.then(() => {
+        rec.running = null;
+        rec.pendingApproval = null;
+        rec.turnWaiters = [];
+      });
+      // RACE, not all: the reply has to go out while the turn is still running, and the
+      // answer is the id the session reported when it opened the turn. If the turn ends
+      // first the id is still there — a session keeps its last turn — so a turn that
+      // opens and completes in one go answers correctly too.
+      await Promise.race([settled, opened]);
+      const turnId = rec.session.turnId;
+      if (turnId === null) {
+        throw new ProtocolHostError(
+          `the turn ended before it opened: ${message(failure ?? new Error('no turn was opened'))}`,
+          ERROR_CODES.hostRefused,
+          { sessionId },
+        );
+      }
+      return { turnId };
+    },
+
+    async cancelTurn(sessionId: string): Promise<void> {
+      const rec = open(sessionId);
+      const running = rec.running;
+      if (running === null) return;
+      running.controller.abort();
+      await running.done;
+    },
+
+    respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void> {
+      const rec = open(sessionId);
+      const pending = rec.pendingApproval;
+      if (pending === null || pending.callId !== callId) {
+        return Promise.reject(
+          new ProtocolHostError(`no approval is pending for call ${callId}`, ERROR_CODES.hostRefused, {
+            sessionId,
+            callId,
+          }),
+        );
+      }
+      rec.pendingApproval = null;
+      pending.resolve(verdict);
+      return Promise.resolve();
+    },
+
+    readAttachment(id: string, maxBytes: number | null): Promise<AttachmentBytes> {
+      const attachment = attachments.get(id);
+      if (attachment === undefined) {
+        // Only what this host has seen in a session log is served: the id is a path, and
+        // "any path the client names" would make the protocol a file reader.
+        return Promise.reject(new ProtocolHostError(`no such attachment: ${id}`, ERROR_CODES.hostRefused, { id }));
+      }
+      const limit = maxBytes === null ? ATTACHMENT_HARD_LIMIT_BYTES : Math.min(maxBytes, ATTACHMENT_HARD_LIMIT_BYTES);
+      try {
+        const materialized = materializeAttachment(attachment, { hardLimitBytes: limit });
+        return Promise.resolve({
+          id,
+          mediaType: materialized.mediaType,
+          byteLength: materialized.byteLength,
+          data: materialized.base64,
+        });
+      } catch (error) {
+        if (error instanceof AttachmentUnavailableError) {
+          // Two different refusals: "too big" has a number the client can act on, and
+          // anything else (gone, unreadable) is a plain refusal with the reason.
+          return error.byteLength !== null && error.byteLength > limit
+            ? Promise.reject(new AttachmentTooLargeError(id, error.byteLength, limit))
+            : Promise.reject(
+                new ProtocolHostError(`attachment ${id} cannot be read: ${error.reason}`, ERROR_CODES.hostRefused, { id }),
+              );
+        }
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+
+    async close(): Promise<void> {
+      for (const rec of sessions.values()) {
+        rec.running?.controller.abort();
+        await rec.running?.done;
+        rec.unsubscribe();
+        await rec.session.close();
+      }
+      sessions.clear();
+    },
+  };
+}
+
+/**
+ * The approval bridge.
+ *
+ * The kernel asks with the request in hand, and that request already carries the id the
+ * frontend will answer with (`ActionRequest.callId`), so nothing has to be paired against
+ * a log event. One question at a time, because `runTurn` runs tool calls serially — a
+ * second concurrent ask is a bug and is reported as one rather than silently queueing.
+ */
+function askApproval(rec: SessionRecord, request: ActionRequest): Promise<ApprovalVerdict> {
+  return new Promise<ApprovalVerdict>((resolve, reject) => {
+    if (rec.pendingApproval !== null) {
+      reject(new ProtocolHostError('an approval is already pending in this session', ERROR_CODES.hostRefused));
+      return;
+    }
+    rec.pendingApproval = { callId: request.callId, resolve };
+  });
+}
+
+function createTools(options: {
+  readonly cwd: string;
+  readonly platform: PlatformPort;
+  readonly process: ProcessPort;
+  readonly sandbox: ResolvedSandboxProfile['profile'];
+}): ReadonlyMap<string, ToolPort> {
+  const tools: readonly ToolPort[] = [
+    createReadTool({ cwd: options.cwd }),
+    createWriteTool({ cwd: options.cwd }),
+    createEditTool({ cwd: options.cwd }),
+    createGlobTool({ cwd: options.cwd }),
+    createGrepTool({ cwd: options.cwd }),
+    createBashTool({
+      cwd: options.cwd,
+      platform: options.platform,
+      process: options.process,
+      sandbox: options.sandbox,
+    }),
+    createTodoWriteTool(),
+  ];
+  return new Map(tools.map((tool) => [tool.spec.name, tool]));
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

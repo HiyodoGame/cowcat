@@ -475,11 +475,11 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P6 前端：headless 协议与 TUI
 
-> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成、T2 协议落地、T3 `serve` 与 stdio 传输落地、T4 CLI 入口落地、T5 附件契约落地、T6 `Read` 非文本分支落地（本 PR），T7 起未开工（且 T4a 的组合根与包结构仍未定）**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
+> **调研已完成、T0 落表（ADR-055~060 已定）、T1 前提验证完成、T2 协议落地、T3 `serve` 与 stdio 传输落地、T4 CLI 入口落地、T5 附件契约落地、T6 `Read` 非文本分支落地、T4a 三步全部落地（协议独立成包 ADR-062、组合根与宿主 ADR-063/064、可执行文件 ADR-065）、**T7 骨架落地（主题 token ADR-061、TUI 骨架 ADR-066）**；T8 起未开工**：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
 >
 > **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
 >
-> **包结构已定（ADR-062 = 选项 A′，T4a 分三步落）**：`packages/protocol`（协议，Node ≥22，无 opentui 无内核）→ `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现）→ `packages/cli`（`bin` + 子命令表 + `doctor`）；`packages/tui` 退回渲染器 + 协议客户端，**不依赖内核**。**第 1 步已落地**（本 PR）。查清的事实：仓库**没有 npm workspace**，`@corescense/cowcat-core` 是 `private` 且从未发布 → 跨包依赖只能 `file:`，而 `file:` 是**链接**（实测：npm 既不装目标的依赖也不构建它），所以消费者那条腿要自己 `npm --prefix ../protocol ci && run build`。三个选项（A′/B/D）的比较与理由写在 ADR-062 正文里。
+> **包结构已定（ADR-062 = 选项 A′，T4a 分三步落）**：`packages/protocol`（协议，Node ≥22，无 opentui 无内核）→ `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现）→ `packages/cli`（`bin` + 子命令表 + `doctor`）；`packages/tui` 退回渲染器 + 协议客户端，**不依赖内核**。**第 1 步与第 2 步都已落地**。查清的事实：仓库**没有 npm workspace**，`@corescense/cowcat-core` 是 `private` 且从未发布 → 跨包依赖只能 `file:`，而 `file:` 是**链接**（实测：npm 既不装目标的依赖也不构建它），所以消费者那条腿要自己 `npm --prefix ../protocol ci && run build`——2/3 落地后 `packages/cowcat` 成了一个消费者，因此 CI 的**三条 cowcat 腿**（`ci.yml` 的 ubuntu 与 windows、`ci-macos.yml` 的 macOS）也都加了这一步。三个选项（A′/B/D）的比较与理由写在 ADR-062 正文里。
 
 **调研问题**
 
@@ -503,10 +503,10 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T2 | **协议**：方法表 + 类型（zod 解码边界）+ 内存传输 + 契约测试（打开/输入/事件/审批/取消）+ `attachment.read` | T0 | ✅ 本 PR |
 | T3 | **`serve` 子进程**：stdio 传输、生命周期、`initialize` 版本协商、一条 spawn 测试 | T2 | ✅ 本 PR（宿主是**拒绝型占位**，见 T4a） |
 | T4 | **CLI 入口**：子命令表（数据）、帮助文本、`doctor` 最小版本 | T2 | ✅ 本 PR（`serve`/`doctor` 可用，其余四个动词在表里说明缺什么） |
-| T4a | **组合根**（T3 的宿主缺口），按 ADR-062 分三步：**① 协议独立成包（`packages/protocol`，Node ≥22，无 opentui 无内核）**；② `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现：模型预设目录、模型/供应商配置键（**需一条 ADR**）、七个工具、策略、审批桥）；③ `packages/cli`（`bin` + 子命令表 + `doctor`，动态 import 取 serve 与 tui） | T3、T4 | 🔄 1/3 本 PR（`packages/protocol` + CI 腿已落地） |
+| T4a | **组合根**（T3 的宿主缺口），按 ADR-062 分三步：**① 协议独立成包（`packages/protocol`，Node ≥22，无 opentui 无内核）**；② `packages/cowcat` 加 `src/host/`（组合根 + `ProtocolHost` 实现：模型预设目录与配置键按 **ADR-063**、落盘布局/信任闸门/基线规则/宿主形状按 **ADR-064**、七个工具、策略、审批桥）；③ `packages/cli`（`bin` + 子命令表 + `doctor`，动态 import 取 serve 与 tui；包边界、Node 门槛、选项进表与 `run` 的审批策略按 **ADR-065**） | T3、T4 | ✅ 三步全部落地（协议包、内核组合根、可执行文件；`cowcat serve`/`run`/`sessions list`/`doctor` 可用，`tui`/`setup` 与 `sessions resume` 仍等 T7） |
 | T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | ✅ 本 PR（Read 真的读图见 T6） |
 | T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 口径 | T5 | ✅ 本 PR |
-| T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | 未开始 |
+| T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | ✅ 本 PR（协议已在 T4a 独立成包；`image/` 是 T9 的。**`cowcat tui` 与 `sessions resume` 同时接线**，帧快照 + `project()` 单测 + 真实进程探针见 `tools/tui-smoke.mjs`） |
 | T8 | **组件**：session-frame / message / tool-card / approval-card / todo-panel / diff-card / status-bar / command-palette | T7 | 未开始 |
 | T9 | **图片渲染**（ADR-058）：`ImageRenderable` + 能力探测（env + `a=q` 静默查询）+ 三级回退；**两个位置**（工具结果内联 + 预览模态） | T8、T5 | 未开始 |
 | T10 | **收口**：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁与图片协议验收（**需要人眼与支持协议的终端**）、`06-frontend.md` 定稿 | T2–T9 | 未开始 |
