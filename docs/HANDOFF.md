@@ -89,7 +89,7 @@
 
 ## 4. 关键决策（本会话落表）
 
-P6 的 ADR 表见 [`architecture/README.md`](architecture/README.md)（**ADR-001~068**）。**本会话新增 6 条**（063 是前序会话的）：
+P6 的 ADR 表见 [`architecture/README.md`](architecture/README.md)（**ADR-001~069**）。**本会话新增 6 条**（063 是前序会话的）：
 
 | ADR | 一句话 |
 |---|---|
@@ -172,7 +172,7 @@ P6 的 ADR 表见 [`architecture/README.md`](architecture/README.md)（**ADR-001
 | 路径 | 内容 |
 |---|---|
 | [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**。P5 交付记录；**P6 段含 T0–T10 任务表（T1~T10 已标落地）**；P7 模块表 |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~068**（047~054 P5；055~060 P6 协议/前端；062~065 T4a；061/066 T7；067 T8；068 T9） |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~069**（047~054 P5；055~060 P6 协议/前端；062~065 T4a；061/066 T7；067 T8；068 T9） |
 | [`architecture/06-frontend.md`](architecture/06-frontend.md) | **P6 契约文档**：协议方法表、包结构、分层规则、附件与图片通路、**「T10 收口」的人眼验收 8 条** |
 | [`brand/brand-guide.md`](brand/brand-guide.md) | 品牌事实来源：§3.1 色彩（主题 token 的色值来源）、§2.2 状态文案、§4 界面结构 |
 | `packages/cowcat/src/host/` | **组合根**：`paths.ts`（布局）、`config.ts`（三层配置 + 基线规则）、`host.ts`（`createHost` = 真实 `ProtocolHost`） |
