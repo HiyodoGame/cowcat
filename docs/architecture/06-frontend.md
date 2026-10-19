@@ -144,10 +144,11 @@ ADR-062 否掉方案 B 时反对的那件事（「`serve` 被绑在渲染器的 
 
 ```
 packages/tui/src/
-  app/          project()（KernelEvent → view model，纯函数）、视图类型、文案（键位与命令见 T8）
-  ui/           无状态原语：line（行模型）、screen（**唯一 import opentui 的文件**）
-  components/   特性组件：session-frame / transcript / status-bar（message / tool-card / approval-card /
-                todo-panel / diff-card / command-palette 见 T8）
+  app/          project()（KernelEvent → view model，纯函数）、视图与界面状态、文案、命令表、键位
+  text/         我们自己的排版：width（宽度表，v1 的排序缺陷在此修掉）、wrap（卡片内换行）、diff（LCS）
+  ui/           无状态原语：line（行模型）、card（逐字符画的卡片）、screen（**唯一 import opentui 的文件**）
+  components/   特性组件：session-frame / transcript / message / tool-card / approval-card /
+                todo-panel / palette / status-bar（全部产出 `Line[]`）
   theme/        语义 token（ADR-061）
   image/        ImageRenderable 与能力探测（ADR-058，T9）
 ```
@@ -157,8 +158,9 @@ packages/tui/src/
 | 层 | 规则 |
 |---|---|
 | `protocol/` | 只做传输与解码；不认识任何界面概念（它如今是自己的包） |
-| `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏） |
-| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**`ui/screen.ts` 是包内唯一 import `@opentui/core` 的文件**（ADR-066 ③），别的地方产生 `Line[]` |
+| `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏）；命令表同时服务 `/命令` 与面板，键位是纯函数 |
+| `text/` | 排版与测量：宽度表是**我们的**（ADR-056、ADR-067 ②），diff 是迁移 v1 的 LCS |
+| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**`ui/screen.ts` 是包内唯一 import `@opentui/core` 的文件**（ADR-066 ③）；卡片是文本（ADR-067 ①） |
 | `components/` | 只读 view model，不订阅协议、不发命令；**产出 `Line[]` 与状态行**，因此不需要渲染器就能测 |
 | `image/` | 能力探测与协议细节（kitty / iTerm2 / 半块）只在这里；组件只说「这里有一张图」 |
 
@@ -285,7 +287,8 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 
 ## 待办与未验证
 
-- **主题 token 已落（ADR-061）**：色值来自品牌指南 §3.1，组件只说语义 token。明暗切换与用户主题文件**没做**（前者等 T8 的真实需求，后者是一个配置键，得先有 ADR）。
+- **主题 token 已落（ADR-061）**：色值来自品牌指南 §3.1，组件只说语义 token。明暗切换与用户主题文件**没做**（前者等真实需求，后者是一个配置键，得先有 ADR）。
+- **卡片已落（ADR-067，T8）**：对话流是卡片（用户气泡 / 工具卡 / 审批卡 / 待办面板 / 命令面板），工具卡默认折叠成「退出状态 + 尾部三行」（品牌指南 §4.2），`Edit`/`Write` 显示 diff（靠日志里的**请求**接上结果）。**还没有**：滚动回看（只挂尾部）、Plan/Act 双模式（那是一个策略层的概念，不是组件）、语法高亮（v1 的着色是往字符串里塞 ANSI，与本仓库的 token 模型冲突，不迁移）、工具输出的自研列对齐（宽度表已在 `text/width.ts`，但还没有需要对齐的组件）。
 - **没有任何真实终端证据**：刷新率、闪烁、图片协议的实际渲染效果全部未测（调研 §5.6）。`tools/tui-smoke.mjs` 证明的是**进程链路**（起、画、Ctrl-C 干净退出、不留锁），**不是**观感。
 - **T1 已验证**：Node ≥26.4 与 Windows 原生二进制可用，ADR-056 的 CI 部分**不需要**降级（见「T1 前提验证」）。
 - **`serve` 的宿主不再是占位**：`packages/cowcat/src/host/` 是真实实现（会话生命周期、回合、审批桥、

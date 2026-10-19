@@ -507,7 +507,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | T5 | **附件契约**（ADR-057）：`ToolResult.attachments` / `tool.finished.attachments` / `Message` 引用 / `ModelRequest` 内容部件；两协议适配器各自映射；**日志往返与「字节不进日志」的测试** | T0 | ✅ 本 PR（Read 真的读图见 T6） |
 | T6 | **`Read` 恢复非文本分支**：图像 / PDF / notebook 走附件通路；大小与类型校验沿用 P5 口径 | T5 | ✅ 本 PR |
 | T7 | **前端骨架**（独立包）：opentui 接入、`protocol/ app/ ui/ components/ theme/ image/` 目录、`project()` 纯函数与帧快照测试 | T1、T2 | ✅ 本 PR（协议已在 T4a 独立成包；`image/` 是 T9 的。**`cowcat tui` 与 `sessions resume` 同时接线**，帧快照 + `project()` 单测 + 真实进程探针见 `tools/tui-smoke.mjs`） |
-| T8 | **组件**：session-frame / message / tool-card / approval-card / todo-panel / diff-card / status-bar / command-palette | T7 | 未开始 |
+| T8 | **组件**：session-frame / message / tool-card / approval-card / todo-panel / diff-card / status-bar / command-palette | T7 | ✅ 本 PR（还带了 `text/`（宽度表 + 换行 + diff）、命令表与键位两个纯模块、品牌指南 §4.2 的折叠与 §2.2 的催促文案。**未做**：滚动回看、Plan/Act 模式、语法高亮——理由见 `06-frontend.md` 的待办） |
 | T9 | **图片渲染**（ADR-058）：`ImageRenderable` + 能力探测（env + `a=q` 静默查询）+ 三级回退；**两个位置**（工具结果内联 + 预览模态） | T8、T5 | 未开始 |
 | T10 | **收口**：出口标准复核（协议回合测试 + lint 禁 import 的探针）、真实终端上的刷新率/闪烁与图片协议验收（**需要人眼与支持协议的终端**）、`06-frontend.md` 定稿 | T2–T9 | 未开始 |
 
