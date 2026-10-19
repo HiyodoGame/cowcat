@@ -1,8 +1,7 @@
-// T1 published the premise check; T4 added the CLI. The protocol itself lives in
-// `@corescense/cowcat-protocol` (ADR-062): this package is the renderer and the CLI, and
-// it reaches the protocol as a dependency like any other client would.
-export { EXIT, runCli, type CliOptions } from './cli/run.js';
-export { COMMANDS, defaultCommand, findCommand, type CommandContext, type CommandSpec } from './cli/spec.js';
-export { renderHelp } from './cli/help.js';
-export { runDoctor } from './cli/doctor.js';
+// The renderer (ADR-056). The protocol lives in `@corescense/cowcat-protocol` and the
+// CLI in `@corescense/cowcat-cli` (ADR-062): T4a 3/3 moved every verb out of this
+// package, and T7 fills in `app/`, `ui/`, `components/`, `theme/` and `image/` here.
+//
+// `@corescense/cowcat-protocol` stays a dependency on purpose: the protocol CLIENT is what
+// this package becomes next, and the renderer is the only part that needs opentui.
 export { renderSmokeFrame, type SmokeFrame } from './smoke.js';

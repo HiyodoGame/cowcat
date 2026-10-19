@@ -34,8 +34,12 @@ export interface CowcatPaths {
  * takes a directory rather than a scheme: a session id is the identity, and looking one
  * up must not depend on which directory the user happens to be in.
  */
-export function cowcatPaths(options: { readonly cwd: string; readonly home: string }): CowcatPaths {
-  const dir = join(options.home, CONFIG_DIR_NAME);
+export function cowcatPaths(options: { readonly cwd: string; readonly home: string; readonly dir?: string }): CowcatPaths {
+  // `dir` is how a caller relocates our state without touching the user's home — the CLI
+  // passes `COWCAT_HOME` through here. It is a process fact, not a config layer: it moves
+  // where the logs live and does not change a single policy value (ADR-025 decision 2
+  // is about VALUES, and a directory is not one).
+  const dir = options.dir ?? join(options.home, CONFIG_DIR_NAME);
   return {
     dir,
     sessionsDir: join(dir, SESSIONS_DIR_NAME),

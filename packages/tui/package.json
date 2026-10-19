@@ -5,9 +5,6 @@
   "description": "CowCat v2 frontend: TUI over the headless protocol. Not published yet, and the only package on the Node 26 floor.",
   "type": "module",
   "license": "MIT",
-  "bin": {
-    "cowcat": "./dist/src/cli/main.js"
-  },
   "engines": {
     "node": ">=26.4.0"
   },
