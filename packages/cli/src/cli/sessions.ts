@@ -1,6 +1,7 @@
 import { EXIT } from './exit.js';
 import { statePaths } from './host.js';
 import type { CommandContext } from './spec.js';
+import { startTui } from './tui.js';
 
 /**
  * `cowcat sessions list | resume <id>`.
@@ -11,16 +12,20 @@ import type { CommandContext } from './spec.js';
  * ids and their event counts, which is what `--session <id>` and `cowcat serve` both
  * take.
  *
- * `resume` is the interactive half, and it needs the TUI (T7). It stays unwired and says
- * what to use instead rather than pretending the id it was given did something.
+ * `resume` IS the TUI with a session already chosen (T7): the same function the `tui` verb
+ * calls, so the two cannot drift — and the Node floor check happens in one place, before the
+ * renderer is imported.
  */
 export async function runSessions(context: CommandContext): Promise<number> {
   const action = context.args[0];
+  const id = context.args[1];
 
   if (action === 'resume') {
-    context.stderr('cowcat sessions resume: 尚未接线，需要 T7（交互式 TUI）');
-    context.stderr('  现在可以：cowcat run --session <id> "<prompt>" 继续它，或 cowcat serve 交给前端');
-    return EXIT.failed;
+    if (id === undefined) {
+      context.stderr('用法：cowcat sessions resume <id>');
+      return EXIT.usage;
+    }
+    return startTui(context, id);
   }
 
   const { createSessionIndex } = await import('@corescense/cowcat-core');

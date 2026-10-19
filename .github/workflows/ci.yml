@@ -438,12 +438,19 @@ jobs:
             packages/cli/package-lock.json
             packages/cowcat/package-lock.json
             packages/protocol/package-lock.json
-      - name: "Build the file dependencies (protocol, then the kernel)"
+            packages/tui/package-lock.json
+      - name: "Build the file dependencies (protocol → kernel → renderer)"
+        # The chain, in dependency order, and it is the reason this leg exists: `file:`
+        # dependencies are junctions, so npm installs and builds none of them. The renderer
+        # is in the chain because the `tui` verb imports it (and its types), which is what
+        # makes `cowcat tui` compile against the real entry rather than a hand-written shape.
         run: |
           npm --prefix ../protocol ci
           npm --prefix ../protocol run build
           npm --prefix ../cowcat ci
           npm --prefix ../cowcat run build
+          npm --prefix ../tui ci
+          npm --prefix ../tui run build
       - name: Install (npm ci)
         run: npm ci
       - name: Build, lint and test (pretest runs build + eslint)

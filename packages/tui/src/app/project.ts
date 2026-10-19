@@ -1,0 +1,201 @@
+import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
+import { copyFor } from './copy.js';
+import { flag, number, record, records, text, updateSeq, updateType } from './fields.js';
+import { withLangFrom, type ApprovalView, type Entry, type TodoView, type TuiView } from './view.js';
+
+/**
+ * The pure function the whole frontend is built on (ADR-059 ②, ADR-066 ②).
+ *
+ * `project(view, event)` derives the screen from the log, and from nothing else: no clock,
+ * no randomness, no transport. Feed it the same log twice and you get the same view, which
+ * is why a frame snapshot can be a test — and why "the log is the truth" survives the trip
+ * to a renderer (the v1 TUI read kernel state directly, and the screen, the log and what
+ * the model saw could disagree).
+ *
+ * Two rules it follows from the protocol's own contract:
+ *
+ *   * **an event this build does not know is displayed as unsupported, once.** The
+ *     envelope is validated and the body is passed through (ADR-055), so a newer kernel is
+ *     not an error — but silently dropping a fact is how a user concludes the tool never
+ *     ran.
+ *   * **deltas never reach it.** `model.delta` is ephemeral display, not state: it goes
+ *     through `streamText` and is dropped by the event that replaces it (`model.message`),
+ *     so a replay from the log cannot depend on having seen a token arrive.
+ */
+export function project(view: TuiView, event: WireEvent): TuiView {
+  const seq = updateSeq(event) ?? view.lastSeq;
+  const base: TuiView = seq > view.lastSeq ? { ...view, lastSeq: seq } : view;
+
+  switch (updateType(event)) {
+    case 'session.opened': {
+      return { ...base, sessionId: text(event, 'sessionId') ?? base.sessionId };
+    }
+
+    case 'turn.opened': {
+      const input = text(event, 'input') ?? '';
+      const opened = add(withLangFrom(base, input), { kind: 'user', seq, text: input });
+      return {
+        ...opened,
+        streaming: '',
+        turn: { id: text(event, 'turnId') ?? '', state: 'opened', reason: null },
+      };
+    }
+
+    case 'turn.transitioned': {
+      const to = text(event, 'to') ?? 'unknown';
+      const done = TERMINAL.has(to);
+      return {
+        ...base,
+        turn: {
+          id: text(event, 'turnId') ?? base.turn?.id ?? '',
+          state: to,
+          reason: text(event, 'reason'),
+        },
+        // A question cannot outlive the turn that asked it, and neither can a half-sent
+        // answer: both are cleared by the terminal transition that makes them stale.
+        approval: done ? null : base.approval,
+        streaming: done ? '' : base.streaming,
+      };
+    }
+
+    case 'model.message': {
+      const content = text(event, 'text') ?? '';
+      const calls = records(event, 'toolCalls').length;
+      const next: TuiView = { ...base, streaming: '' };
+      if (content !== '') return add(next, { kind: 'assistant', seq, text: content, calls });
+      // An empty answer with calls is normal — the calls ARE the answer. An empty answer
+      // with nothing at all is worth a line, or the turn looks like it did nothing.
+      if (calls === 0) return add(next, notice(next, seq, 'info', copyFor(next.lang).empty));
+      return next;
+    }
+
+    case 'model.usage': {
+      const usage = record(event, 'usage');
+      if (usage === null) return base;
+      return {
+        ...base,
+        usage: { input: number(usage, 'input') ?? 0, output: number(usage, 'output') ?? 0 },
+      };
+    }
+
+    case 'tool.finished': {
+      return add(base, {
+        kind: 'tool',
+        seq,
+        callId: text(event, 'callId') ?? '',
+        name: text(event, 'name') ?? '(unnamed)',
+        ok: flag(event, 'ok') === true,
+        output: text(event, 'output') ?? '',
+        truncation: truncationOf(event),
+        // References only; the bytes stay on disk and are fetched with `attachment.read`
+        // when a renderer actually wants to show them (ADR-057).
+        attachments: records(event, 'attachments')
+          .map((attachment) => text(attachment, 'path'))
+          .filter((path): path is string => path !== null && path !== ''),
+        path: text(event, 'path'),
+      });
+    }
+
+    case 'approval.requested': {
+      const approval: ApprovalView = {
+        callId: text(event, 'callId') ?? '',
+        name: text(event, 'name') ?? '(unnamed)',
+        rule: text(event, 'rule') ?? '(unnamed rule)',
+        reason: text(event, 'reason'),
+        verdict: null,
+        by: null,
+      };
+      return { ...base, approval };
+    }
+
+    case 'approval.answered': {
+      const callId = text(event, 'callId') ?? '';
+      if (base.approval === null || base.approval.callId !== callId) return base;
+      return {
+        ...base,
+        approval: {
+          ...base.approval,
+          verdict: text(event, 'verdict') ?? 'unknown',
+          by: text(event, 'by') ?? 'unknown',
+        },
+      };
+    }
+
+    case 'todo.updated': {
+      // Wholesale replacement, which is the kernel's semantics too (ADR-054): what the
+      // model sent is the complete new list, not a delta to merge.
+      return { ...base, todos: records(event, 'todos').map(todoOf) };
+    }
+
+    case 'policy.decided':
+      // Deliberately silent: the verdict reaches the transcript through the result it
+      // produced ("denied by <rule>: <reason>"), and repeating it would print every
+      // allowed read twice.
+      return base;
+
+    default:
+      return unsupported(base, updateType(event) ?? 'unknown');
+  }
+}
+
+/** A streamed token, applied to the ephemeral half of the view. */
+export function streamText(view: TuiView, delta: WireDelta): TuiView {
+  return { ...view, streaming: view.streaming + delta.text };
+}
+
+/**
+ * A line the interface itself wants to say — a server diagnostic, a refusal the host
+ * reported, a hint about which keys answer an approval.
+ *
+ * It is not a session fact, so it does not come from the log: `06-frontend.md` keeps the
+ * three channels apart (`event` = durable, `delta` = ephemeral display, `log` = the server's
+ * own diagnostics), and this is where the third one and the app's own hints land. Its `seq`
+ * is the current head, because there is no event to inherit one from — nothing re-derives
+ * these on a replay, which is exactly right for something the log never carried.
+ */
+export function addNotice(view: TuiView, level: 'info' | 'warn' | 'error', text: string): TuiView {
+  return add(view, notice(view, view.lastSeq, level, text));
+}
+
+/** The transport went away. The view stays as it is — it just cannot grow. */
+export function closeView(view: TuiView): TuiView {
+  return { ...view, closed: true };
+}
+
+const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+
+/** `ToolResult.truncation` (ADR-048) in words, or `null` when nothing was dropped. */
+function truncationOf(event: WireEvent): string | null {
+  const truncation = record(event, 'truncation');
+  if (truncation === null || flag(truncation, 'truncated') !== true) return null;
+  return text(truncation, 'reason') ?? 'truncated';
+}
+
+function todoOf(entry: Record<string, unknown>): TodoView {
+  return {
+    content: text(entry, 'content') ?? '',
+    status: text(entry, 'status') ?? 'pending',
+    activeForm: text(entry, 'activeForm') ?? '',
+  };
+}
+
+function add(view: TuiView, entry: Entry): TuiView {
+  return { ...view, entries: [...view.entries, entry] };
+}
+
+function notice(view: TuiView, seq: number, level: 'info' | 'warn' | 'error', line: string): Entry {
+  return { kind: 'notice', seq, level, text: line };
+}
+
+/**
+ * The first sighting of an unknown event type earns a line in the transcript; the rest earn
+ * nothing. A new kernel event that fires per streamed chunk would otherwise turn a working
+ * session into a wall of "(an event this build does not know)".
+ */
+function unsupported(view: TuiView, type: string): TuiView {
+  if (view.unsupported.includes(type)) return view;
+  return add(
+    { ...view, unsupported: [...view.unsupported, type] },
+    notice(view, view.lastSeq, 'warn', `${copyFor(view.lang).unsupportedEvent}: ${type}`),
+  );
+}

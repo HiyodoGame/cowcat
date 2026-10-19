@@ -116,10 +116,20 @@ test('options are validated against the table, and a bad one is a usage error', 
   assert.doesNotMatch(literal.err.join('\n'), /不认识的选项/);
 });
 
-test('no arguments means the default verb, and its blocking reason names the task', async () => {
+// The TUI's floor (ADR-056/ADR-065 ①): the `tui` verb and `sessions resume` are the two
+// that load a renderer, and on an older Node they must refuse with a sentence instead of
+// dying inside a native module. On a recent Node those two verbs would start a real
+// terminal interface, which an in-process test cannot host — so they are skipped there
+// rather than hanging the suite.
+const [NODE_MAJOR = 0, NODE_MINOR = 0] = process.versions.node.split('.').map(Number);
+const RENDERER_AVAILABLE = NODE_MAJOR > 26 || (NODE_MAJOR === 26 && NODE_MINOR >= 4);
+const SKIP_ON_RENDERER = RENDERER_AVAILABLE ? 'this build would start a real TUI here' : false;
+
+test('no arguments means the default verb, and on an old Node it says why', { skip: SKIP_ON_RENDERER }, async () => {
   const run = await cli([]);
   assert.equal(run.code, EXIT.failed);
-  assert.match(run.err.join('\n'), /cowcat tui: 尚未接线，需要 T7/);
+  assert.match(run.err.join('\n'), /cowcat tui: 需要 Node >=26\.4/);
+  assert.match(run.err.join('\n'), /Node 22 上就能用/);
 });
 
 test('the one verb still unwired refuses with its own reason', async () => {
@@ -129,11 +139,10 @@ test('the one verb still unwired refuses with its own reason', async () => {
   assert.match(run.err.join('\n'), /config\.json/);
 });
 
-test('sessions resume says what to use instead, without pretending it resumed', async () => {
+test('sessions resume is the TUI with an id, and checks the renderer floor first', { skip: SKIP_ON_RENDERER }, async () => {
   const run = await cli(['sessions', 'resume', 'sess_anything']);
   assert.equal(run.code, EXIT.failed);
-  assert.match(run.err.join('\n'), /需要 T7/);
-  assert.match(run.err.join('\n'), /--session/);
+  assert.match(run.err.join('\n'), /cowcat tui: 需要 Node >=26\.4/);
 });
 
 test('sessions list reads the store directly, and says so when there is nothing', async (t) => {

@@ -5,6 +5,7 @@ import type { FlagSpec } from './flags.js';
 import { runOneShot } from './oneshot.js';
 import { runServe } from './serve.js';
 import { runSessions } from './sessions.js';
+import { runTui } from './tui.js';
 
 export interface CommandContext {
   readonly args: readonly string[];
@@ -78,10 +79,10 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: 'tui',
     summary: '启动 TUI（无参数时的默认命令）',
     args: noArgs,
-    flags: [configFlag],
+    flags: [configFlag, sessionFlag],
     usage: 'cowcat',
-    status: 'blocked',
-    blockedBy: 'T7（opentui 骨架、project() 与组件）',
+    status: 'ready',
+    run: runTui,
     isDefault: true,
   },
   {
@@ -116,7 +117,7 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: 'sessions',
     summary: '会话管理：list | resume <id>',
     args: z.union([z.tuple([z.literal('list')]), z.tuple([z.literal('resume'), z.string().min(1)])]),
-    flags: [],
+    flags: [configFlag],
     usage: 'cowcat sessions list | resume <id>',
     status: 'ready',
     run: runSessions,
