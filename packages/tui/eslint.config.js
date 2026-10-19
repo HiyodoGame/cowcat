@@ -20,10 +20,15 @@ export default tseslint.config(
   // directory that happened to hold the bin. `packages/cli` is the one package allowed to
   // import both, and it is not the frontend (ADR-062 ③).
   //
-  // T10 added the second half of ADR-066 ③: **only `ui/screen.ts` may import the renderer**.
+  // T10 added the second half of ADR-066 ③: **only `ui/screen.ts` (the renderables) and
+  // `run.ts` (the renderer's lifecycle) may import it**. CI taught this the hard way — the
+  // first version said "only screen.ts", and `src/smoke.ts` (a test helper) and `run.ts`
+  // (which calls `createCliRenderer`) both told it otherwise. Two files, each with one job;
+  // everything else produces `Line[]` and is testable without a terminal.
+  //
   // Two blocks, because `no-restricted-imports` does not merge — the later block *replaces*
-  // the rule for the files it matches, so `screen.ts` gets its own copy with the renderer
-  // allowed and the kernel still banned.
+  // the rule for the files it matches, so those two files get their own copy with the
+  // renderer allowed and the kernel still banned.
   {
     files: ['src/**/*.ts'],
     rules: {
@@ -39,7 +44,7 @@ export default tseslint.config(
             {
               group: ['@opentui/*', '@opentui'],
               message:
-                'only src/ui/screen.ts touches the renderer; everything else produces Line[] so it can be tested without a terminal (ADR-066 ③)',
+                'only src/ui/screen.ts and src/run.ts touch the renderer; everything else produces Line[] so it can be tested without a terminal (ADR-066 ③)',
             },
           ],
         },
@@ -47,8 +52,8 @@ export default tseslint.config(
     },
   },
   {
-    // The one renderer-aware file. The kernel ban still applies here; the renderer does not.
-    files: ['src/ui/screen.ts'],
+    // The two renderer-aware files. The kernel ban still applies here; the renderer does not.
+    files: ['src/ui/screen.ts', 'src/run.ts'],
     rules: {
       'no-restricted-imports': [
         'error',

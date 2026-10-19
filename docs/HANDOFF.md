@@ -184,7 +184,7 @@
 ### 已验证 —— P6 T10 收口（自动部分；Windows，Node 24.18.0 / 26.12.0）
 
 - 【本机测试】`packages/cli` **20 / 20**（新增 **`test/exit-criteria.test.ts`**）：`createHost` + 真实协议服务端（内存传输）+ 脚本化模型 → `turn.send` → `approval.requested` → `respondApproval('once')` → 完成，**中间的事件流喂给 `project()` 与 `frameOf()`**，断言屏幕上出现 `╭─ 你`、`⏺ Write ok` 与答案，并在回合结束后断言**没有悬着的审批卡**。它住在 cli（只有它同时看得到两边），**不碰渲染器**——所以 Node 22 的 cli 腿也跑得到
-- 【本机命令】`node tools/lint-probe.mjs` → **20 条探针全过**（新增 3 条）：`packages/tui` 整包**禁止** `@opentui/*`、`src/ui/screen.ts` **允许**它、而 `screen.ts` 仍然**禁止** import 内核——ADR-066 ③ 从约定变成 lint 规则，并且规则**被看见报过错**
+- 【本机命令】`node tools/lint-probe.mjs` → **21 条探针全过**（tui 5 条）：`packages/tui` 整包**禁止** `@opentui/*`、`ui/screen.ts` 与 `run.ts` **允许**它、而这两个文件仍然**禁止** import 内核——ADR-066 ③ 从约定变成 lint 规则，并且规则**被看见报过错**。**第一次提交时 CI 红了两条腿**：规则写的是「只有 `screen.ts`」，而 `src/smoke.ts`（测试辅助）与 `run.ts`（`createCliRenderer`）让它落地即失败——**探针不等于包级 lint**（§5 第 27 条），`smoke.ts` 因此挪进了 `test/`
 - 【源码】`packages/tui/eslint.config.js` 两个块（`no-restricted-imports` 不合并，后者替换前者的匹配文件，所以 `screen.ts` 有自己的那份）
 - **P6 出口标准复核**：① 带工具与审批的回合经协议跑通 → 上面那条测试；② 前端不 import 内核 → tui 的 lint 规则 + 探针
 - **仍未验证（要人眼 + 真终端）**：`06-frontend.md` 的「T10 收口」8 条清单——对齐（含 80 列）、流式闪烁、审批三态与 10 秒催促、图片三级回退（kitty / 半块 / 元信息）、`a=q` 是否漏输入、Ctrl-C 后终端恢复、缩放、长对话停最新
@@ -322,6 +322,7 @@ T10 落的两件（都是「把约定变成可执行的东西」）：
 24. **卡片的边框算术错一格，是「宽度不变量」测试抓到的**：`╭─ title suffix fill ╮` 里 suffix 自带前导空格，我却又减了一次 1，于是有 suffix 的卡片**短一格**（47/48）。`assertCardWidths` 对每张卡的每一行断言「正好 `width` 格」——这类错误在肉眼看帧时几乎发现不了（边框看起来是齐的）。
 25. **图片不能当 flex 子元素塞进卡片**（T9 实测）：卡片逐行画 `│  │` 预留了图片的行，把 `ImageRenderable` **追加**进列会把它画到卡片**外面**、并把下面所有内容顶下去（帧快照里第一版就是「图片在卡片下方、卡片下方多出两行」）。正解是 `position: 'absolute'` + `top`/`left` **覆盖**在预留行上。
 26. **`ImageRenderable` 是异步解码的**：首帧通常还没有像素——`onLoad` 里要 `requestRender()`，否则空闲会话里图片**永远不出现**；测试里要 `renderOnce()` → `flush()` → 再 `renderOnce()`，只画一帧会拍到空白。
+27. **探针全过 ≠ 包级 lint 过**（T10 最贵的一课，CI 抓的）：新增「只有 `ui/screen.ts` 能 import 渲染器」这条规则后，我跑了 `tools/lint-probe.mjs`（20 条全过）就提交了——CI 的 tui 腿立刻红：`src/smoke.ts`（T1 的前提检查，也 import 渲染器）与 `run.ts`（`createCliRenderer`）都在 `src/` 里。探针只检查**被点名的那几个文件**，规则对**其余文件**的影响它看不见。修法不是加豁免：`smoke.ts` 是测试辅助，挪进 `test/`；`run.ts` 是渲染器生命周期的正当位置，规则改成「两个文件、各有其职」。**加了 lint 规则之后，必须跑一遍包级 `npm run lint`。**
 
 ---
 

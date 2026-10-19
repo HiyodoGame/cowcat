@@ -146,7 +146,7 @@ ADR-062 否掉方案 B 时反对的那件事（「`serve` 被绑在渲染器的 
 packages/tui/src/
   app/          project()（KernelEvent → view model，纯函数）、视图与界面状态、文案、命令表、键位
   text/         我们自己的排版：width（宽度表，v1 的排序缺陷在此修掉）、wrap（卡片内换行）、diff（LCS）
-  ui/           无状态原语：line（行模型）、card（逐字符画的卡片）、screen（**唯一 import opentui 的文件**）
+  ui/           无状态原语：line（行模型）、card（逐字符画的卡片）、screen（**renderable 层，两个碰渲染器的文件之一**）
   components/   特性组件：session-frame / transcript / message / tool-card / approval-card /
                 todo-panel / palette / status-bar（全部产出 `Line[]`）
   theme/        语义 token（ADR-061）
@@ -160,7 +160,7 @@ packages/tui/src/
 | `protocol/` | 只做传输与解码；不认识任何界面概念（它如今是自己的包） |
 | `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏）；命令表同时服务 `/命令` 与面板，键位是纯函数 |
 | `text/` | 排版与测量：宽度表是**我们的**（ADR-056、ADR-067 ②），diff 是迁移 v1 的 LCS |
-| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**`ui/screen.ts` 是包内唯一 import `@opentui/core` 的文件**（ADR-066 ③）；卡片是文本（ADR-067 ①） |
+| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**只有 `ui/screen.ts`（renderable 层）与 `run.ts`（渲染器生命周期）可以 import `@opentui/core`**（ADR-066 ③，由 lint 强制）；卡片是文本（ADR-067 ①） |
 | `components/` | 只读 view model，不订阅协议、不发命令；**产出 `Line[]` 与状态行**，因此不需要渲染器就能测 |
 | `image/` | 能力探测与协议细节（kitty / iTerm2 / 半块）只在这里；组件只说「这里有一张图」 |
 
@@ -294,7 +294,7 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 | 出口标准 | 怎么被保证 |
 |---|---|
 | 用 headless 协议完整跑通一个带工具与审批的回合（**测试中**） | `packages/cli/test/exit-criteria.test.ts`：`createHost` + 真实协议服务端（内存传输）+ 脚本化模型 → `session.create` → `turn.send` → `approval.requested` → `respondApproval('once')` → 完成；**中间的事件流喂给 `project()` 与 `frameOf()`**，断言屏幕上出现用户卡、`⏺ Write ok` 的卡片与答案。它住在 cli 是因为只有它同时看得到两边（ADR-062 ③），而且**不碰渲染器**（`Line[]` 是纯函数产物，Node 22 腿也能跑） |
-| TUI 中删除任何直接访问内核内部的代码路径（**lint 或测试保证**） | `packages/tui/eslint.config.js` 两条：整包不许 import `@corescense/cowcat-core`；**只有 `ui/screen.ts` 可以 import `@opentui/core`**（ADR-066 ③ 从约定变成规则）。`tools/lint-probe.mjs` 有 4 条探针证明它们**真的会报错**，以及 `screen.ts` 的豁免**真的成立** |
+| TUI 中删除任何直接访问内核内部的代码路径（**lint 或测试保证**） | `packages/tui/eslint.config.js` 两条：整包不许 import `@corescense/cowcat-core`；**只有 `ui/screen.ts` 与 `run.ts` 可以 import `@opentui/core`**（ADR-066 ③ 从约定变成规则）。`tools/lint-probe.mjs` 有 5 条 tui 探针证明它们**真的会报错**，以及两个豁免**真的成立**。**CI 教了这里一课**：第一版规则写的是「只有 `screen.ts`」，而 `src/smoke.ts`（测试辅助）与 `run.ts`（调用 `createCliRenderer`）立刻让它红了——**跑探针不等于跑包级 lint** |
 
 **待办与未验证**（`HANDOFF` §6 有同样的清单，这里是要人眼做的部分）：
 
