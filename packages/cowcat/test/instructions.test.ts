@@ -159,7 +159,7 @@ treeTest(
       found.map((entry) => entry.name),
       ['AGENTS.md', 'AGENTS.md'],
     );
-    assert.equal(found[0]?.path, join(root, 'AGENTS.md'), 'nothing above the repository is read');
+    assert.equal(found[0]?.path, join(fs.canonical(root), 'AGENTS.md'), 'nothing above the repository is read');
   },
 );
 
