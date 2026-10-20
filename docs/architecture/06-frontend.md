@@ -62,7 +62,7 @@
 | 传输 | T2 只交付**内存传输**（`memoryTransport`：投递走 microtask，且 `defer` 可注入，因此顺序断言是确定的）——ADR-059 ① 的契约测试要的就是它。**stdio 传输是 T3 的活** |
 | `initialize` | 版本不匹配 → `versionMismatch` 响应**先发出**，然后服务端停止（拒绝 = 停止，不降级）；测试断言了这条顺序，也正是内存传输把 close 也排进队列的原因 |
 | 错误 | JSON-RPC 保留码之外用实现定义段：`versionMismatch`/`notInitialized`/`noSuchSession`/`hostRefused`/`attachmentTooLarge`。客户端按**码**分支，不按文案 |
-| `session.open` | 回 `{sessionId, lastSeq, replayed}`，**然后**按序补发日志里的每条事件：前端靠重放重建屏幕，不需要第二种「现在长什么样」的查询（ADR-059 ②） |
+| `session.open` | 回 `{sessionId, lastSeq, replayed}`，**然后**按序补发日志里的每条事件：前端靠重放重建屏幕，不需要第二种「现在长什么样」的查询（ADR-059 ②）。`session.list` 的每条摘要可带 `parentSessionId`（ADR-079 ③ 的可选新增字段），客户端据此折叠子会话 |
 | `attachment.read` | 超限一律**拒绝并带数字**（`{id, byteLength, limit}`），不截断字节；调用方的 `maxBytes` 只会更严、不会更松（ADR-057 的 5MB 口径在 T5/T6 落到真实附件上） |
 | 宿主端口 | `ProtocolHost`（`packages/protocol/src/host.ts`）是「会话持有者」的端口：T3/T4 拿它接内核，协议层因此完全不认识内核。`attach()` 的原子性（replay 与 subscribe 之间不丢不重）写在端口注释里，因为那是**实现者的义务**，协议无法在运行时检查它 |
 
@@ -249,7 +249,7 @@ packages/tui/src/
 | `cowcat serve` | headless 协议服务（stdio）——TUI 与 IDE 都连它，也是无终端测试的入口 | **可用**（真实宿主：会话、回合、审批、附件都接上了） |
 | `cowcat run "<prompt>"` | 一次性回合（非交互） | **可用**：`--yes` 放行审批，`--session <id>` 继续一个会话；默认逐条拒绝（ADR-065 ②） |
 | `cowcat doctor` | Node、配置、信任、指令链（注入了哪几份 / 跳过了什么）、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；指令链一行在 ADR-078 T6 补上；不查渲染器的原生二进制，说明理由） |
-| `cowcat sessions list \| resume <id>` | 会话管理 | **都可用了**：`list` 直接读会话目录，`resume` 就是「带 id 的 TUI」（同一条代码路径，Node 门槛只检查一次） |
+| `cowcat sessions list \| resume <id>` | 会话管理 | **都可用了**：`list` 直接读会话目录，**默认折叠被委派的子会话**（`--all` 才列，并标出父会话——ADR-079 ④）；`resume` 就是「带 id 的 TUI」（同一条代码路径，Node 门槛只检查一次） |
 | `cowcat setup` | 交互式配置向导 | **未接线**：配置的**写入**路径尚未实现（键已定，见 ADR-063；现在直接编辑 `~/.cowcat/config.json`） |
 
 子命令表是**数据**（`packages/cli/src/cli/spec.ts`：名字、摘要、参数 schema、**选项**、处理函数），帮助文本与参数/选项校验都从表生成，不做嵌套子命令。T4 落的是**结构与三个出口码**：

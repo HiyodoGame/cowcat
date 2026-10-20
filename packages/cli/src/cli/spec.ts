@@ -64,6 +64,10 @@ const sessionFlag: FlagSpec = {
   value: '<id>',
   summary: '继续一个已有会话，而不是新建一个',
 };
+const allFlag: FlagSpec = {
+  name: '--all',
+  summary: '连子会话一起列出（默认只列顶层会话）',
+};
 
 /**
  * The subcommand table is data (ADR-060), for the same reason the protocol's method
@@ -117,8 +121,8 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: 'sessions',
     summary: '会话管理：list | resume <id>',
     args: z.union([z.tuple([z.literal('list')]), z.tuple([z.literal('resume'), z.string().min(1)])]),
-    flags: [configFlag],
-    usage: 'cowcat sessions list | resume <id>',
+    flags: [configFlag, allFlag],
+    usage: 'cowcat sessions list [--all] | resume <id>',
     status: 'ready',
     run: runSessions,
   },

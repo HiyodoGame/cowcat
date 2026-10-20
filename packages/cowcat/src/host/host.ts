@@ -390,7 +390,15 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     configWarnings: loaded.warnings.map((warning) => `${warning.source}: ${warning.problem}`),
 
     async listSessions(): Promise<readonly SessionSummary[]> {
-      return index.list();
+      const entries = await index.list();
+      // The parent link travels with the summary so a client can fold children out of its
+      // own view (ADR-079 ④): the host lists what is on disk, the frontend decides what to
+      // show.
+      return entries.map((entry) => ({
+        sessionId: entry.sessionId,
+        lastSeq: entry.lastSeq,
+        ...(entry.parentSessionId === null ? {} : { parentSessionId: entry.parentSessionId }),
+      }));
     },
 
     async createSession(sessionId: string | null): Promise<SessionSummary> {

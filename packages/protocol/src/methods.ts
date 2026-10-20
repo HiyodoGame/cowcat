@@ -59,6 +59,13 @@ export type ApprovalVerdict = Params<'approval.respond'>['verdict'];
 export interface SessionSummary {
   readonly sessionId: string;
   readonly lastSeq: number;
+  /**
+   * The session that delegated this one (ADR-079 ③), absent for a top-level session.
+   *
+   * Additive: a client that ignores it lists children as if they were top-level, which is
+   * what every client did before delegation existed.
+   */
+  readonly parentSessionId?: string;
 }
 
 export interface AttachmentBytes {

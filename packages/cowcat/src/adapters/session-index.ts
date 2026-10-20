@@ -13,6 +13,8 @@ import { join } from 'node:path';
 export interface SessionIndexEntry {
   readonly sessionId: string;
   readonly lastSeq: number;
+  /** The delegating session, or null for a top-level one (ADR-079 ③). */
+  readonly parentSessionId: string | null;
 }
 
 export interface SessionIndexDeps {
@@ -47,9 +49,11 @@ export function createSessionIndex(dir: string, deps: SessionIndexDeps = {}): Se
         // A file that cannot be read is reported rather than listed as "no events":
         // `lastSeq: 0` would be a statement about the session, and we do not have one.
         const text = await read(path);
+        const lines = text.split('\n').filter((line) => line.length > 0);
         entries.push({
           sessionId: name.slice(0, -LOG_SUFFIX.length),
-          lastSeq: text.split('\n').filter((line) => line.length > 0).length,
+          lastSeq: lines.length,
+          parentSessionId: parentOf(lines[0]),
         });
       }
       return entries;
@@ -59,4 +63,29 @@ export function createSessionIndex(dir: string, deps: SessionIndexDeps = {}): Se
 
 function isMissing(error: unknown): boolean {
   return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'ENOENT';
+}
+
+/**
+ * The delegating session id from a header line, or null.
+ *
+ * Defensive rather than strict: this index answers "what is on disk", and it runs before any
+ * session is opened. A line that is not JSON is a log `readAll` will refuse later with a real
+ * message; turning it into a crash here would make one corrupt file hide every other session.
+ */
+function parentOf(firstLine: string | undefined): string | null {
+  if (firstLine === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(firstLine);
+    if (!isRecord(parsed)) return null;
+    const parent = parsed.parent;
+    if (!isRecord(parent)) return null;
+    const id = parent.sessionId;
+    return typeof id === 'string' && id !== '' ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

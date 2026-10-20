@@ -660,8 +660,7 @@ test('an explore delegation runs a child session and returns only its report', a
     [{ type: 'text', text: 'three files, all empty' }],
     [{ type: 'text', text: 'finished' }],
   ]);
-  const store = new MemoryEventStore();
-  const fixture = await start({ cwd, home, model, store });
+  const fixture = await start({ cwd, home, model });
   t.after(() => fixture.close());
 
   await fixture.client.initialize();
@@ -692,16 +691,25 @@ test('an explore delegation runs a child session and returns only its report', a
 
   // The child is a real session with its own log and its own header, and the header says
   // who delegated it (ADR-079 ③) — the one fact the parent log cannot reconstruct alone.
-  const childLog = await store.readAll(childId as string);
-  const header = childLog[0];
-  assert.ok(header !== undefined && header.type === 'session.opened');
-  assert.deepEqual(header.parent, { sessionId: 'sess_parent', role: 'explore' });
+  const childFile = join(home, '.cowcat', 'sessions', `${String(childId)}.jsonl`);
+  const childHeader = JSON.parse(readFileSync(childFile, 'utf8').split('\n')[0] ?? '{}') as Record<string, unknown>;
+  assert.equal(childHeader.type, 'session.opened');
+  assert.deepEqual(childHeader.parent, { sessionId: 'sess_parent', role: 'explore' });
 
   // Only the report reaches the parent's next request, not the child's transcript.
   const nextRequest = model.requests[2];
   assert.ok(nextRequest !== undefined);
   const sent = JSON.stringify(nextRequest.messages);
   assert.match(sent, /three files, all empty/);
+
+  // `session.list` carries the link so a client can fold children out of its own view.
+  const summaries = await fixture.host.listSessions();
+  const childSummary = summaries.find((summary) => summary.sessionId === childId);
+  assert.ok(childSummary !== undefined);
+  assert.equal(childSummary.parentSessionId, 'sess_parent');
+  const parentSummary = summaries.find((summary) => summary.sessionId === 'sess_parent');
+  assert.ok(parentSummary !== undefined);
+  assert.equal(parentSummary.parentSessionId, undefined);
 });
 
 test('a general delegation asks before it runs, and a rejection never spawns the child', async (t) => {
