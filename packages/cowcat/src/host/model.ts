@@ -44,7 +44,10 @@ export interface ModelSelection {
   /** `null` when the config did not ask for a level. */
   readonly effort: string | null;
   readonly provider: string;
-  readonly apiKeyEnv: string;
+  /** `null` when the provider only has a legacy inline key (ADR-089). */
+  readonly apiKeyEnv: string | null;
+  /** A legacy inline key, used only when the environment does not provide one. */
+  readonly apiKey: string | null;
   /** `null` means the SDK's default endpoint. */
   readonly baseUrl: string | null;
   /**
@@ -91,10 +94,11 @@ export function selectModel(settings: ResolvedModelSettings): ModelSelection {
 
   const builtin = BUILTIN_PROVIDERS[provider];
   const override: ProviderSettings | undefined = settings.providers[provider];
-  const apiKeyEnv = override?.apiKeyEnv ?? builtin?.apiKeyEnv;
+  const apiKeyEnv = override?.apiKeyEnv ?? builtin?.apiKeyEnv ?? null;
+  const inlineKey = override?.apiKey ?? null;
   const baseUrl = override?.baseUrl ?? builtin?.baseUrl ?? null;
 
-  if (apiKeyEnv === undefined) {
+  if (apiKeyEnv === null && inlineKey === null) {
     throw new ModelConfigError(
       'unknown-provider',
       `unknown provider: ${provider}`,
@@ -103,6 +107,10 @@ export function selectModel(settings: ResolvedModelSettings): ModelSelection {
   }
 
   const warnings: string[] = [];
+  if (inlineKey !== null) {
+    // No value, no length — "there is an inline key" is the whole fact needed.
+    warnings.push(`provider "${provider}" uses an inline apiKey from a legacy v1 config; it is used in memory and never written (move it to an environment variable)`);
+  }
   if (builtin !== undefined && builtin.protocol !== preset.protocol) {
     warnings.push(
       `provider "${provider}" is built in as the ${builtin.protocol} protocol, but the preset "${settings.preset}" says ${preset.protocol}; the preset wins`,
@@ -115,6 +123,7 @@ export function selectModel(settings: ResolvedModelSettings): ModelSelection {
     effort: settings.effort,
     provider,
     apiKeyEnv,
+    apiKey: inlineKey,
     baseUrl,
     warnings,
   };
@@ -151,12 +160,16 @@ export function createModelPort(
   env: Readonly<Record<string, string | undefined>>,
   options: CreateModelOptions = {},
 ): ModelPort {
-  const apiKey = env[selection.apiKeyEnv];
+  // Environment first: an inline key is a legacy fallback, never the preferred source.
+  const fromEnv = selection.apiKeyEnv === null ? undefined : env[selection.apiKeyEnv];
+  const apiKey = fromEnv !== undefined && fromEnv !== '' ? fromEnv : (selection.apiKey ?? undefined);
   if (apiKey === undefined || apiKey === '') {
     throw new ModelConfigError(
       'missing-api-key',
-      `${selection.apiKeyEnv} is not set`,
-      `export ${selection.apiKeyEnv}=… (the key is read from the environment; it is never read from the config file)`,
+      selection.apiKeyEnv === null ? 'no API key is available for this provider' : `${selection.apiKeyEnv} is not set`,
+      selection.apiKeyEnv === null
+        ? 'add apiKeyEnv to the provider entry (the key is read from the environment)'
+        : `export ${selection.apiKeyEnv}=… (the key is read from the environment; it is never read from the config file)`,
     );
   }
 

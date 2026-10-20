@@ -219,3 +219,68 @@ test('the schema and the Rule types hold the same keys', () => {
   assert.equal(ruleKeys, true);
   assert.equal(whenKeys, true);
 });
+
+// ---------------------------------------------------------------------------
+// v1 compatibility (ADR-089)
+// ---------------------------------------------------------------------------
+
+test('a v1 config is translated: model string, providers with inline keys, sandbox', () => {
+  const loaded = loadConfig([
+    src('user', {
+      model: 'zai-coding-plan/glm-5.3-flash',
+      providers: {
+        'zai-coding-plan': { apiKey: 'sk-inline-test' },
+        'volcengine-coding-plan': { apiKey: 'ark-inline-test' },
+      },
+      sandbox: 'off',
+    }),
+  ]);
+
+  assert.ok(loaded.ok);
+  assert.equal(loaded.config.model.preset, 'zai-coding-plan/glm-5.3-flash');
+  assert.equal(loaded.config.model.providers['zai-coding-plan']?.apiKey, 'sk-inline-test');
+  assert.equal(loaded.config.sandbox.mode, 'off');
+  const problems = loaded.warnings.map((warning) => warning.problem).join('\n');
+  assert.match(problems, /legacy v1 config/u);
+  assert.match(problems, /inline apiKey/u);
+  // The value must never travel into a warning (ADR-089).
+  assert.ok(!problems.includes('sk-inline-test'));
+  assert.ok(!problems.includes('ark-inline-test'));
+});
+
+test('v1 sandbox objects map envDeny, and v1 permissions are reported as not migrated', () => {
+  const loaded = loadConfig([
+    src('user', {
+      model: 'anthropic/claude-sonnet-5-5',
+      sandbox: { envDeny: ['MY_SECRET', '/^FOO_/', 42] },
+      permissions: [{ tool: 'Bash', allow: true }],
+      maxTokens: 1234,
+    }),
+  ]);
+
+  assert.ok(loaded.ok);
+  assert.deepEqual(loaded.config.sandbox.env.deny, ['MY_SECRET', '/^FOO_/']);
+  const problems = loaded.warnings.map((warning) => warning.problem).join('\n');
+  assert.match(problems, /permissions are not migrated/u);
+  assert.match(problems, /maxTokens/u);
+});
+
+test('a v2 document still refuses an inline apiKey: compatibility is shape-gated', () => {
+  const loaded = loadConfig([
+    src('user', {
+      model: { preset: 'acme/gpt-x', providers: { acme: { apiKey: 'sk-should-not-be-accepted' } } },
+    }),
+  ]);
+  assert.ok(!loaded.ok);
+  assert.match(loaded.errors.map((error) => error.problem).join('\n'), /apiKey/u);
+});
+
+test('a malformed v1 model or providers ref is a load error, not a silent default', () => {
+  const model = loadConfig([src('user', { model: 'no-slash' })]);
+  assert.ok(!model.ok);
+  assert.match(model.errors[0]?.problem ?? '', /provider\/model/u);
+
+  const providers = loadConfig([src('user', { model: 'a/b', providers: [] })]);
+  assert.ok(!providers.ok);
+  assert.match(providers.errors[0]?.problem ?? '', /providers must be an object/u);
+});

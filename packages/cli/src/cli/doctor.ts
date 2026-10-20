@@ -204,9 +204,15 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
     note('模型', `${selection.id}（${selection.preset.protocol} → ${selection.baseUrl ?? 'SDK 默认端点'}）`);
     for (const warning of selection.warnings) line(`注意：${warning}`);
     // The key's PRESENCE is checked and its value is never read into a string that could
-    // be printed (ADR-063 D3).
-    const present = (process.env[selection.apiKeyEnv] ?? '') !== '';
-    row('key', `${selection.apiKeyEnv} ${present ? '已设置' : '未设置（发不出请求）'}`, present);
+    // be printed (ADR-063 D3, ADR-089).
+    if (selection.apiKey !== null) {
+      note('key', 'v1 内联 apiKey（仅在内存中使用，不会写回；建议改用 apiKeyEnv + 环境变量）');
+    } else if (selection.apiKeyEnv !== null) {
+      const present = (process.env[selection.apiKeyEnv] ?? '') !== '';
+      row('key', `${selection.apiKeyEnv} ${present ? '已设置' : '未设置（发不出请求）'}`, present);
+    } else {
+      row('key', '没有可用的密钥来源', false);
+    }
   } catch (error) {
     if (error instanceof ModelConfigError) {
       note('模型', `未配置（${error.problem}）—— 一次回合需要 model.preset`);

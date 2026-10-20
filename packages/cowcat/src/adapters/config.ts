@@ -199,7 +199,10 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
     return { ok: false, errors: [{ source: source.path, problem: `not valid JSON: ${error instanceof Error ? error.message : String(error)}` }] };
   }
 
-  const document = documentSchema.safeParse(parsed);
+  const raw = parsed;
+  if (isRecord(raw) && isV1Document(raw)) return translateV1(raw, source.path);
+
+  const document = documentSchema.safeParse(raw);
   if (!document.success) return { ok: false, errors: describeIssues(document.error.issues, source.path) };
 
   const warnings: ConfigWarning[] = [];
@@ -342,4 +345,159 @@ export function loadConfig(sources: readonly ConfigSource[]): ConfigLoadResult {
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, config: resolveConfig(layers), warnings };
+}
+
+// ---------------------------------------------------------------------------
+// v1 config compatibility (ADR-089)
+// ---------------------------------------------------------------------------
+
+/**
+ * The v1 document is recognised by SHAPE, not by a version field (v1 never wrote one):
+ * a string `model` (v2 requires an object) or a provider entry carrying `apiKey`.
+ * A v2 document can never match: its schema refuses both.
+ */
+function isV1Document(document: Record<string, unknown>): boolean {
+  if (typeof document['model'] === 'string') return true;
+  // A v2 document with an inline `apiKey` must still be refused by the strict schema, so a
+  // provider entry alone is not enough: only the absence of `model` (v1's default) plus an
+  // inline key counts as v1.
+  if (document['model'] !== undefined) return false;
+  const providers = document['providers'];
+  return isRecord(providers) && Object.values(providers).some((entry) => isRecord(entry) && typeof entry['apiKey'] === 'string');
+}
+
+function translateV1(document: Record<string, unknown>, source: string): { readonly ok: true; readonly value: DecodedSource } | { readonly ok: false; readonly errors: readonly ConfigError[] } {
+  const warnings: ConfigWarning[] = [
+    {
+      source,
+      problem: 'legacy v1 config: read in compatibility mode (ADR-089); the file is not rewritten',
+    },
+  ];
+
+  const translated = translateV1Model(document, warnings, source);
+  if (!translated.ok) return { ok: false, errors: [{ source, problem: translated.problem }] };
+
+  const sandbox = translateV1Sandbox(document['sandbox'], warnings, source);
+  const layer: ConfigLayer = {
+    ...(translated.value === undefined ? {} : { model: translated.value }),
+    ...(sandbox === undefined ? {} : { sandbox }),
+  };
+
+  if (document['permissions'] !== undefined) {
+    warnings.push({ source, problem: 'v1 permissions are not migrated: declare v2 rules under "rules" (a rule language difference, not a syntax rename)' });
+  }
+  const handled = new Set(['model', 'providers', 'provider', 'baseURL', 'baseUrl', 'api', 'apiKey', 'apiKeyEnv', 'sandbox', 'permissions']);
+  const ignored = Object.keys(document).filter((key) => !handled.has(key));
+  if (ignored.length > 0) {
+    const shown = ignored.slice(0, 8).join(', ');
+    warnings.push({ source, problem: `v1 keys not migrated: ${shown}${ignored.length > 8 ? ', …' : ''}` });
+  }
+
+  return { ok: true, value: { layer, warnings } };
+}
+
+function translateV1Model(
+  document: Record<string, unknown>,
+  warnings: ConfigWarning[],
+  source: string,
+): { readonly ok: true; readonly value: ModelSettings | undefined } | { readonly ok: false; readonly problem: string } {
+  const flatProvider = typeof document['provider'] === 'string' && document['provider'] !== '' ? document['provider'] : null;
+  const rawModel = document['model'];
+
+  let preset: string;
+  if (typeof rawModel === 'string' && rawModel !== '') {
+    preset = rawModel.includes('/') || flatProvider === null ? rawModel : `${flatProvider}/${rawModel}`;
+  } else if (rawModel === undefined) {
+    // v1's own default; keeping it means "no model configured" cannot appear just because
+    // the old file relied on the default.
+    preset = 'anthropic/claude-sonnet-5-5';
+  } else {
+    return { ok: false, problem: 'model must be a "provider/model" string in a v1 config' };
+  }
+  if (!preset.includes('/') || preset.startsWith('/') || preset.endsWith('/')) {
+    return { ok: false, problem: `v1 model must be "provider/model", got "${preset}"` };
+  }
+
+  const providers: Record<string, ProviderSettings> = {};
+  const rawProviders = document['providers'];
+  if (rawProviders !== undefined && !isRecord(rawProviders)) {
+    return { ok: false, problem: 'providers must be an object in a v1 config' };
+  }
+  const providerRecord = isRecord(rawProviders) ? rawProviders : {};
+  for (const [id, entry] of Object.entries(providerRecord)) {
+    if (isRecord(entry)) providers[id] = v1Provider(entry);
+  }
+
+  // Legacy flat fields are a patch on the resolved provider (v1 semantics), so they win
+  // over the same provider's entry.
+  const flatBaseUrl = firstString(document['baseURL'], document['baseUrl'], document['api']);
+  const flat: ProviderSettings = {
+    ...(typeof document['apiKey'] === 'string' && document['apiKey'] !== '' ? { apiKey: document['apiKey'] } : {}),
+    ...(typeof document['apiKeyEnv'] === 'string' && document['apiKeyEnv'] !== '' ? { apiKeyEnv: document['apiKeyEnv'] } : {}),
+    ...(flatBaseUrl === null ? {} : { baseUrl: flatBaseUrl }),
+  };
+  if (flatProvider !== null && Object.keys(flat).length > 0) {
+    providers[flatProvider] = { ...providers[flatProvider], ...flat };
+  }
+
+  if (Object.values(providers).some((provider) => provider.apiKey !== undefined)) {
+    warnings.push({
+      source,
+      problem: 'v1 inline apiKey present: used in memory only, never written and never logged; prefer apiKeyEnv + an environment variable',
+    });
+  }
+
+  return {
+    ok: true,
+    value: {
+      preset,
+      ...(Object.keys(providers).length === 0 ? {} : { providers }),
+    },
+  };
+}
+
+function v1Provider(entry: Record<string, unknown>): ProviderSettings {
+  const apiKey = typeof entry['apiKey'] === 'string' && entry['apiKey'] !== '' ? entry['apiKey'] : undefined;
+  const apiKeyEnv =
+    typeof entry['apiKeyEnv'] === 'string' && entry['apiKeyEnv'] !== ''
+      ? entry['apiKeyEnv']
+      : Array.isArray(entry['env']) && typeof entry['env'][0] === 'string'
+        ? entry['env'][0]
+        : undefined;
+  const baseUrl = firstString(entry['baseURL'], entry['baseUrl'], entry['api']);
+  return {
+    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
+    ...(baseUrl === null ? {} : { baseUrl }),
+  };
+}
+
+function translateV1Sandbox(value: unknown, warnings: ConfigWarning[], source: string): SandboxSettings | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') {
+    if (value === 'off' || value === 'light' || value === 'system') return { mode: value };
+    warnings.push({ source, problem: `v1 sandbox "${value}" is not a known mode; using the default` });
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    warnings.push({ source, problem: 'v1 sandbox is neither a mode string nor an object; using the default' });
+    return undefined;
+  }
+  const mode = value['mode'];
+  const deny = value['envDeny'];
+  return {
+    ...(mode === 'off' || mode === 'light' || mode === 'system' ? { mode } : {}),
+    ...(Array.isArray(deny) ? { env: { deny: deny.filter((entry): entry is string => typeof entry === 'string') } } : {}),
+  };
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

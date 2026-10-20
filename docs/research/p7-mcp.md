@@ -244,6 +244,6 @@
 
 **实测暴露并修掉的一个真 bug**：`run --yes` 在 `approval.requested` 事件到达时立即回答，但内核是「先写事件、再调 `approve()`」，答案在桥注册前到达 → `no approval is pending`，回合随后挂到 5 分钟审批超时。宿主改为按 `callId` 暂存早到的答案（ADR-064 ⑧ 的 T2 修正），并加了确定性回归测试（回合开始前就回答）。
 
-**另一个与 MCP 无关、但会影响 P8 的发现**：真实 `~/.cowcat/config.json` 是 **v1 形状**（`"model": "zai-coding-plan/glm-5.3-flash"` + `providers.*.apiKey`），v2 的严格 schema 直接拒绝（`doctor` 报 `model: expected object` 与 `Unrecognized key: "providers"`）。本次全程用临时 `COWCAT_HOME` 隔离；P8 切换前必须做配置迁移或兼容读取。
+**另一个与 MCP 无关、但会影响 P8 的发现**：真实 `~/.cowcat/config.json` 是 **v1 形状**（`"model": "zai-coding-plan/glm-5.3-flash"` + `providers.*.apiKey`），v2 的严格 schema 原本直接拒绝。**已在 P8 第一步解决**：`loadConfig` 按形状识别 v1 并在内存中翻译（ADR-089），真实 home 的 `doctor` 与一次真实回合都已通过；`permissions`、项目 `.cowcat/config.json`、`mcp.json` 仍未迁移。
 
 **仍未验证**：`npx`/`.cmd` 入口（Windows 上 `shell:false` 无法直接执行 `.cmd`）、macOS/Linux 的 `light` 档路径白名单、真实服务器的 `list_changed` 行为。
