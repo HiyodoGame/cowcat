@@ -18,6 +18,14 @@ export {
   type CompactionTrigger,
   type ContextUsage,
 } from './kernel/context.js';
+export {
+  COMPACT_INSTRUCTION,
+  compactContext,
+  selectTailStart,
+  summaryMessage,
+  type CompactDeps,
+  type CompactOutcome,
+} from './kernel/compact.js';
 export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';

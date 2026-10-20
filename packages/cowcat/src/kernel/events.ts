@@ -82,6 +82,26 @@ export type KernelEvent = EventBase &
         /** What the summary call cost (ADR-041). `null` when the provider reported nothing. */
         readonly usage: ModelUsage | null;
       }
+    | {
+        /**
+         * A compaction started (ADR-072). Paired with `context.compaction.finished`.
+         *
+         * The pair is a **lock in the log**, not in memory: a crash between them leaves an
+         * unmatched start, which is detectable evidence rather than a session that
+         * silently believes it is still compacting. Logged before the summary call, so a
+         * process that dies mid-call does not look like one that never tried.
+         */
+        readonly type: 'context.compaction.started';
+        readonly trigger: CompactionTrigger;
+        readonly model: string;
+      }
+    | {
+        /** The compaction attempt ended, successfully or not (ADR-072). */
+        readonly type: 'context.compaction.finished';
+        readonly ok: boolean;
+        /** Why it failed, in the words the provider or the kernel used. `null` on success. */
+        readonly error: string | null;
+      }
     | { readonly type: 'policy.decided'; readonly callId: string; readonly decision: Decision }
     | {
         /**

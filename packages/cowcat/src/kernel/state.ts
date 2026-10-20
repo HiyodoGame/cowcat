@@ -45,6 +45,14 @@ export interface SessionState {
    */
   readonly lastUsage: UsageAnchor | null;
   /**
+   * Whether a compaction has started and not finished (ADR-072).
+   *
+   * Derived from the log so a reopened session knows an attempt was interrupted. It is
+   * a guard, not a blocker: a second `started` is accepted (recovery), and only the
+   * `finished` that follows the last attempt clears it.
+   */
+  readonly compactionOpen: boolean;
+  /**
    * Actions answered `always`, for the rest of this session (ADR-031 decision 3).
    *
    * Derived from the log rather than held beside it, which is what makes the promise
@@ -81,6 +89,7 @@ export function initialState(sessionId: string): SessionState {
     messages: [],
     messageSeqs: [],
     lastUsage: null,
+    compactionOpen: false,
     grants: [],
     readFiles: [],
     todos: [],
@@ -162,6 +171,10 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         lastUsage: null,
       };
     }
+    case 'context.compaction.started':
+      return { ...base, compactionOpen: true };
+    case 'context.compaction.finished':
+      return { ...base, compactionOpen: false };
     case 'tool.finished': {
       const readFiles = registerRead(state.readFiles, event);
       return {

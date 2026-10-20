@@ -186,6 +186,18 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     model: z.string(),
     usage: modelUsageSchema.nullable(),
   }),
+  z.object({
+    ...base,
+    type: z.literal('context.compaction.started'),
+    trigger: z.enum(['auto', 'manual', 'overflow']),
+    model: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('context.compaction.finished'),
+    ok: z.boolean(),
+    error: z.string().nullable(),
+  }),
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
   z.object({ ...base, type: z.literal('todo.updated'), todos: z.readonly(z.array(todoItemSchema)) }),
   z.object({
@@ -264,6 +276,9 @@ const sessionStateSchema = z.object({
   lastUsage: z
     .object({ tokens: z.number().int().nonnegative(), anchorSeq: z.number().int().nonnegative() })
     .nullable(),
+  // The compaction lock (ADR-072). A snapshot written mid-compaction keeps it open, which
+  // is exactly what the log says too.
+  compactionOpen: z.boolean(),
   // The `always` answers this session has given. Part of the state, not a side
   // table, so a snapshot that dropped them would silently re-ask questions the user
   // already answered.
