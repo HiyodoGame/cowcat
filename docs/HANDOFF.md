@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-20（P7 子 agent：调研 → ADR → T1 内核 → T2 组合根 → T3 协议与前端）**。
-> 交接时仓库状态：**`main` = `d842bfd`**（#76 T2 合入）；当前分支 **`feat/p7-subagent-t3`**（T3，工作区干净，PR 见 GitHub）。
+> 最近一次更新：**2026-10-20（P7 子 agent 收口：调研 → ADR → T1~T4）**。
+> 交接时仓库状态：**`main` = `19349fd`**（#77 T3 合入）；当前分支 **`feat/p7-subagent-t4`**（T4 端到端收口，工作区干净，PR 见 GitHub）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**，tui 用便携版 Node **26.12.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`gh`、`npm`、探针脚本）；**【CI 远端】**GitHub Actions 的运行结果（**只观察状态，未在本地复现**）；**【上游】**厂商文档或实现；**【registry】**npm registry 查询；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更**：stdout 不是 TTY；`ZHIPU_API_KEY` 在本机 shell 里不存在；未调用 `opencode_console` 的任何写操作。
@@ -19,16 +19,17 @@
 
 ### 本次会话（2026-10-20）实际做了什么
 
-**2 个 PR 合入 + 1 份专项调研**：
+**6 个 PR 合入 + 1 份专项调研 + 本分支的 T4**：
 
 | PR | 内容 | 结果 |
 |---|---|---|
 | **#73** | P7 前沿调研与计划校准（`docs/research/p7-frontier-survey.md` + `dev-plan-v2.md` 的 P7 表） | 核对三处「文档落后于代码」的陈述后 **squash 合入**（`4828d39`），远端分支已删 |
 | **#72** | `doctor` 报告指令链（ADR-078 T6）——`instr` 行 | **复审后修两处 P1 再合入**（`cad6e06`） |
 | **#74** | P7 **子 agent** 专项调研（`docs/research/p7-subagents.md`）+ HANDOFF 重写 | **squash 合入**（`8129660`） |
-| 本分支 | **子 agent T3**：`SessionSummary.parentSessionId`、`sessions list` 折叠（`--all`）、TUI 一条子会话完成摘要 | 待合 |
-| **#76** | 子 agent T2：组合根实现 `SubagentPort`、`parent` 头、角色工具/规则、`maxRounds`/`partial` | **squash 合入**（`d842bfd`） |
 | **#75** | 子 agent T1：ADR-079~082 + 内核契约（事件、`Task` 虚拟工具、`unattended`） | **squash 合入**（`be5c4f1`） |
+| **#76** | 子 agent T2：组合根实现 `SubagentPort`、`parent` 头、角色工具/规则、`maxRounds`/`partial` | **squash 合入**（`d842bfd`） |
+| **#77** | 子 agent T3：`SessionSummary.parentSessionId`、`sessions list` 折叠（`--all`）、TUI 摘要行 | **squash 合入**（`19349fd`） |
+| 本分支 | **子 agent T4**：端到端收口——子会话的协议重放、取消父回合后子会话 `cancelled` 且锁已释放 | 待合 |
 
 **开工第一件事是核对摸底报告**（`repo-explorer` 的只读报告把它交给主 Agent 的 4 项）：分支/PR 状态、`core.hooksPath`、Node 版本、`dist/` 新鲜度。结果：**报告依据的 HANDOFF 快照落后两个阶段**（还停在 P6 T10 / PR #65），仓库已到 P7（ADR-070~078）。已在本次交接重写。
 
@@ -38,7 +39,7 @@
 2. 测试原本 `(（这个目录往上没有…|folder not trusted: skipped)` **两个分支都放过**，注释却声称校验了文件名与行数 → 钉成 `folder not trusted: skipped AGENTS\.md \(\d+ lines\)`，trust 行收到 `.*未受信`。
    顺带把全局文件名下沉成 `GLOBAL_INSTRUCTION_FILENAME`（`policy/instructions.ts`），`host`/`doctor` 不再各写一遍字面量；ADR-065 ⑤、ADR-078 状态与 `06-frontend.md` 动词表同 PR 更新。
 
-**用户拍板**：① 「先合 #73 并复审 #72」；② 「先修 P1+文档后合」；③ 「继续做 P7 下一行，每做完一个阶段更新 HANDOFF」；④ 「合 #74，继续 ADR+T1」。
+**用户拍板**：① 「先合 #73 并复审 #72」；② 「先修 P1+文档后合」；③ 「继续做 P7 下一行，每做完一个阶段更新 HANDOFF」；④ 「合 #74，继续 ADR+T1」；⑤ 「合 #75，继续 T2」；⑥ 「合 #76，继续 T3」；⑦ 「合 #77，继续 T4」。
 
 **子 agent 的 T1（本分支）**：先按工作规则 3 把 ADR-079~082 追加到 ADR 表末，再落内核契约：
 
@@ -63,13 +64,18 @@
 - `sessions list` 默认折叠子会话，`--all` 才列并标出父会话（选项进表，ADR-065 ③）；
 - TUI：`subagent.finished` 渲染一行「子会话 sess_x（explore）完成：N 轮」，`started` **不单独成行**（一行出现又悬着比晚到更差）；**专用卡片延后**——`Task` 的工具卡已经承载报告与 `sessionId`，再画一张只是重复。
 
+**子 agent 的 T4（本分支）**：端到端收口，两条都在 `host.test.ts` 里用真实协议客户端驱动。
+
+- **重放**：父回合结束后 `session.open(<childId>)` 能重放子会话（`replayed >= 2`），且重放出的头事件带 `parent`——前端不需要读父日志就知道谁委派的。
+- **取消**：`DelegatingHangingModel` 让父回合发出 `Task` 后**子会话**挂住；`turn.cancel` 之后父回合 `cancelled`、父日志的 `subagent.finished.state = 'cancelled'`、子日志有 `turn.transitioned → cancelled`，并且 **`.jsonl.lock` 已不存在**（`finally` 里的 `close()` 真的执行了）。
+
 ---
 
 ## 2. 当前状态
 
 ### 已验证 —— 【本机测试】/【本机命令】（Windows）
 
-- 【本机测试】`packages/cowcat` → **642 tests / 626 pass / 0 fail / 16 skipped**（Node 24.18.0；`pretest` = `tsc` + ESLint 通过）
+- 【本机测试】`packages/cowcat` → **643 tests / 627 pass / 0 fail / 16 skipped**（Node 24.18.0；`pretest` = `tsc` + ESLint 通过）
 - 【本机测试】`packages/cli` → **21 / 21 pass**（新增一条 `sessions list` 折叠子会话的用例）
 - 【本机测试】`packages/tui` → **48 / 48 pass**（用 `npx --yes node@26.12.0 --test "dist/test/**/*.test.js"` 跑；本机系统 Node 24 加载不了 opentui）；`npm run build` + `npm run lint` 通过
 - 【本机测试】`packages/cli` → **20 / 20 pass**（含收紧后的 `doctor` 断言：链确实读到仓库根 `AGENTS.md` 且被信任闸门挡住）
@@ -87,7 +93,7 @@
 ### 项目状态
 
 - **P6 完成**（含用户人眼验收；#66 修掉「不可读附件让会话永久失败」，ADR-069）
-- **P7 进行中**：上下文压缩（ADR-070~074）、记忆与项目指令（ADR-075~078）已落地；**子 agent：调研（#74）、T1（#75）、T2（#76）、T3（本分支）已落地**——真实会话能用 `Task`，子会话默认不出现在 `sessions list`，TUI 有一条完成摘要；**T4 端到端收口未做**；其余 14 行候选未开工
+- **P7 进行中**：上下文压缩（ADR-070~074）、记忆与项目指令（ADR-075~078）、**子 agent（ADR-079~082，T1~T4）已完成**；其余 15 行候选未开工，按前沿调研下一行是 **MCP**（D2：对齐 2026-07-28 规范）
 - 四个包：`packages/protocol`（Node ≥22）、`packages/cowcat`（Node ≥22，内核 + 组合根）、`packages/tui`（Node ≥26.4，渲染器）、`packages/cli`（Node ≥22，可执行文件）；`protocol` 被另外三个以 `file:` 依赖（**junction：不装依赖、不构建**）
 - 四个包都是 `private: true`、`0.0.0`，**从未发布**；`schemaVersion` 仍是 **1**（ADR-019）
 - **运行时依赖 3 / 6 不变**（`zod`、`openai`、`@anthropic-ai/sdk`）；`packages/cli` 的唯一第三方依赖是 `zod`
@@ -97,12 +103,11 @@
 
 ## 3. 项目唯一下一步
 
-**继续子 agent 的 T4（端到端收口），然后把这一行翻成「已完成」。**
+**子 agent 这一行已完成。下一步是 P7 的下一行：MCP（按前沿调研 D2，先出专项调研再写代码）。**
 
-- **T1~T3 已落地**：真实会话里模型能看到 `Task` 并委派；子会话独立日志、头里有 `parent`；`explore` 免问、`general` 问人；`sessions list` 默认折叠子会话（`--all` 列出）；TUI 有一行完成摘要。
-- **T4**：一条从前端视角的完整验收——协议事件流里出现 `subagent.started/finished`、子会话能 `session.open` 重放、`sessions list --all` 标出父子、取消父回合后子会话也是 `cancelled` 且不留锁。
-- **仍未做的事**：真实模型请求仍是零实测（§6），子 agent 的收益判断全部待实测。
-- **可选**：调查「子会话的 `ask` 提升到父会话」——ADR-081 ③ 记的是已知限制，不是结论。
+- **子 agent 已交付**：内核契约（T1）、组合根（T2）、协议与前端（T3）、端到端收口（T4）。真实会话里模型能看到 `Task`；子会话独立日志、头里有 `parent`；`explore` 免问、`general` 问人、子会话的 `ask` 一律拒绝；`max_turns` 到顶是 `completed + partial`；`sessions list` 默认折叠子会话；取消父回合会终结子会话并释放锁。
+- **MCP 的开工方式**（工作规则 1）：先写 `docs/research/p7-mcp.md`——对齐 **2026-07-28 规范**（OAuth 2.1 + PKCE、elicitation、tool search / registry）、stdio 服务器必须经 `ProcessPort` 因而天然被沙箱覆盖、凭证不进 `process.env`、v1 的旧规范实现**只迁结论不迁代码**。调研 PR 只出决定草案与 ADR 清单。
+- **仍未做的事**：真实模型请求仍是零实测（§6），子 agent 的收益与成本判断全部待实测；子会话的 `ask` 提升到父会话是 ADR-081 ③ 记的已知限制，不是结论。
 
 ---
 
@@ -153,7 +158,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 ## 6. 未验证 / 待确认
 
 1. **一次真实模型请求都没跑过**（跨会话未变）：所有回合行为都在宿主层用注入模型验证。`ZHIPU_API_KEY` 不在本机 shell 里。
-2. **子 agent 到 T3**：内核、组合根、协议与前端都有；T4 的端到端验收（子会话重放、取消后无残留锁）未做。调研里的收益判断（15× token / 90.2% 提升）来自**研究型**任务，不必然适用于编码。`research/p7-subagents.md` §8 列了 6 条待验证。
+2. **子 agent 已完成 T1~T4，但收益仍是推断**：调研里的 15× token / 90.2% 提升来自**研究型**任务，不必然适用于编码；我们的验证只到「形状与边界正确」（`research/p7-subagents.md` §8 的 6 条待验证）。
 3. **子会话未测**：父子两个锁文件在 Windows 上同时持有的行为、父取消后子会话的残留清理，都要等 T1/T2 才谈得上。
 4. **`session.list` 目前没有父子字段**：子会话一旦落地就会混进顶层列表，T2/T3 必须处理。
 5. **帧快照刻意不含宽字符**：CJK 字宽跨平台一致性没实测过，CJK 宽度用「按 cell 数断言」单独测。
