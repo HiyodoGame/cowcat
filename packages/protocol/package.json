@@ -1,7 +1,6 @@
 {
   "name": "@corescense/cowcat-protocol",
-  "version": "0.0.0",
-  "private": true,
+  "version": "1.0.0-beta.1",
   "description": "CowCat's headless protocol: JSON-RPC over stdio, the in-memory transport, and the serve() lifecycle. Knows no renderer and no kernel.",
   "type": "module",
   "license": "MIT",
@@ -17,6 +16,18 @@
   "files": [
     "dist/src"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HiyodoGame/cowcat.git",
+    "directory": "packages/protocol"
+  },
+  "homepage": "https://github.com/HiyodoGame/cowcat#readme",
+  "bugs": {
+    "url": "https://github.com/HiyodoGame/cowcat/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

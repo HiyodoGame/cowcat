@@ -25,7 +25,7 @@
 | P5 | 工具层 | **已完成**（T0–T7 全部落地；测试 436 → 555；ADR-047~054） |
 | P6 | 前端：headless 协议与 TUI | **已完成**：T1–T10 全部落地（ADR-055~069），出口标准的两条接缝由 `packages/cli/test/exit-criteria.test.ts` 与 tui 的 lint 规则保证；**人眼验收 2026-10-20 由用户实测通过**，验收中发现「不可读附件让会话永久失败」并由 #66 修复（ADR-069） |
 | P7 | 功能模块（逐个调研） | **进行中**：上下文压缩已落地（#67 调研 / #68 实现，ADR-070~074）；记忆与项目指令已落地（#69 调研、#70 链与渲染、#71 注入与压缩后重注入，ADR-075~078；#72 doctor 报告已合）；前沿排期已出（R3~R8 与七个新增候选行，见 `research/p7-frontier-survey.md`）；**子 agent 调研已合（#74），ADR-079~082 已落表，T1~T4 全部落地**；**MCP 专项调研已合（#79）并补读 2026-07-28 的 elicitation / versioning / tools / discover，ADR-083~087 已落表；T1（stdio + tools）已合（#80）；T2（分页 + 工具变更订阅，ADR-088）已合（#81）；真实端点实测完成（bigmodel/glm-5.3-flash + server-everything 2.0.0）** |
-| P8 | 发布切换与旧代码删除 | **进行中**：v1 配置兼容已落地（ADR-089，真实 `~/.cowcat/config.json` 的 doctor 与一次真实回合已通过）；包切换、删 `agent/`、CI 重构、CHANGELOG、`setup` 迁移仍未做 |
+| P8 | 发布切换与旧代码删除 | **进行中**：v1 配置兼容（ADR-089）与包切换（ADR-090，四包 `1.0.0-beta.1`、发布暂存脚本、tarball 安装检查）已落地；删 `agent/`、CI 重构、CHANGELOG、`setup` 迁移仍未做 |
 | R1 | Windows 原生沙箱调研 | 远期 |
 | R2 | 鸿蒙运行时调研 | 远期 |
 | R3 | ACP 适配器调研（编辑器接入，`packages/protocol` 之上） | 远期 |

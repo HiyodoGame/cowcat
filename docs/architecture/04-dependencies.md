@@ -49,7 +49,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 
 | 边 | 阶段 | 为什么不算一次「引入」 |
 |---|---|---|
-| `packages/cowcat` → `@corescense/cowcat-protocol`（`file:../protocol`） | P6 T4a 2/3（ADR-062 ③、ADR-064 ⑤） | 这是**同一个仓库**里的 `file:` 链接，不带来任何第三方代码——3 / 6 量的是「引入方带进来了什么外部代码」，而这条边的另一头是我们自己的包（`private`、更不发布）。**代价记在别处**：`file:` 是 junction，npm 不装目标的依赖也不构建它，所以 `packages/cowcat` 的**三条 CI 腿**各自要多一步 `npm --prefix ../protocol ci && run build`（本 PR 已加）。将来若改成 npm workspace，这条边与那三步一起消失 |
+| `packages/cowcat` → `@corescense/cowcat-protocol`（`file:../protocol`） | P6 T4a 2/3（ADR-062 ③、ADR-064 ⑤） | 这是**同一个仓库**里的 `file:` 链接，不带来任何第三方代码——3 / 6 量的是「引入方带进来了什么外部代码」，而这条边的另一头是我们自己的包（P8 起可发布，见 ADR-090）。**代价记在别处**：`file:` 是 junction，npm 不装目标的依赖也不构建它，所以 `packages/cowcat` 的**三条 CI 腿**各自要多一步 `npm --prefix ../protocol ci && run build`（本 PR 已加）。发布时 `tools/pack-release.mjs` 会把这条边改写成精确版本（ADR-090） |
 
 ## 明确不引入的
 

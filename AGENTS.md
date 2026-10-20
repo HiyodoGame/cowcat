@@ -7,7 +7,7 @@
 | 树 | 内容 | 能不能改 |
 |---|---|---|
 | `agent/` | 旧 v1 完整 CLI（纯 JS ESM、零运行时依赖、Node ≥ 20），包名 `@corescense/cowcat` | **P8 切换前只接收安全修复，不接收功能**（`docs/dev-plan-v2.md` 工作规则 7） |
-| `packages/cowcat/` | v2 内核（TypeScript strict → ESM，Node ≥ 22），包名 `@corescense/cowcat-core`，`private: true` **从未发布** | **新能力一律进这里** |
+| `packages/cowcat/` | v2 内核（TypeScript strict → ESM，Node ≥ 22），包名 `@corescense/cowcat-core`，随 P8 起可发布 | **新能力一律进这里** |
 
 ## 构建与测试
 
