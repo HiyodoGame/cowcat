@@ -47,6 +47,10 @@ class FailingTestProcess implements ProcessPort {
       termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
     });
   }
+
+  open(): Promise<never> {
+    return Promise.reject(new Error('FailingTestProcess.open() is not used in this test'));
+  }
 }
 
 test('one turn: read, edit, plan, run a command behind an approval, and hit two truncations', async (t) => {

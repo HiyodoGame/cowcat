@@ -52,6 +52,7 @@ export { DEFAULT_RULES } from './policy/defaults.js';
 export {
   CONFIG_LAYERS,
   DEFAULT_CONFIG,
+  DEFAULT_MCP_SETTINGS,
   DEFAULT_MODEL_SETTINGS,
   resolveConfig,
   type ConfigLayer,
@@ -59,10 +60,14 @@ export {
   type ConfigLayers,
   type CowcatConfig,
   type CustomPresetSettings,
+  type McpServerSettings,
+  type McpSettings,
   type ModelSettings,
   type ProviderSettings,
+  type ResolvedMcpSettings,
   type ResolvedModelSettings,
   type RuleOrigin,
+  type SourcedMcpServer,
   type SourcedRule,
 } from './policy/config.js';
 export { trustedRules, isTrusted, type TrustState } from './policy/trust.js';
@@ -121,6 +126,8 @@ export {
 export {
   defaultSandboxProfile,
   type ProcessPort,
+  type ProcessHandle,
+  type ProcessExit,
   type ProcessSpec,
   type ProcessResult,
   type TerminationRecord,
@@ -229,9 +236,11 @@ export {
 export {
   HOST_BASELINE_RULES,
   loadHostConfig,
+  selectMcpServers,
   withHostRules,
   type HostConfigOptions,
   type HostConfigResult,
+  type SelectedMcpServers,
 } from './host/config.js';
 export { HostConfigError, createHost, type CowcatHost, type CreateHostOptions } from './host/host.js';
 export {
@@ -295,3 +304,21 @@ export {
   type ReadTextFile,
 } from './adapters/config-files.js';
 export { createSessionIndex, type SessionIndex, type SessionIndexEntry } from './adapters/session-index.js';
+export {
+  McpClient,
+  McpClientError,
+  MCP_LEGACY_VERSION,
+  MCP_MODERN_VERSION,
+  type McpClientOptions,
+  type McpEra,
+  type McpToolDefinition,
+  type McpToolList,
+} from './adapters/mcp/client.js';
+export { createMcpTools, mcpToolName, MCP_TOOL_PREFIX } from './adapters/mcp/tools.js';
+export {
+  startMcpServers,
+  type McpServerConfig,
+  type McpServerStatus,
+  type McpServers,
+  type StartMcpServersOptions,
+} from './adapters/mcp/servers.js';

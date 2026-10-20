@@ -7,6 +7,8 @@ import {
   type CowcatConfig,
   type CustomPresetSettings,
   type ModelSettings,
+  type McpServerSettings,
+  type McpSettings,
   type ProviderSettings,
   type SandboxSettings,
 } from '../policy/config.js';
@@ -109,6 +111,20 @@ const documentSchema = z.strictObject({
   rules: z.array(z.unknown()).optional(),
   sandbox: sandboxSchema.optional(),
   model: modelSchema.optional(),
+  mcp: z
+    .strictObject({
+      servers: z
+        .record(
+          z.string(),
+          z.strictObject({
+            command: z.string().min(1),
+            args: z.array(z.string()).optional(),
+            env: z.record(z.string(), z.string()).optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 export interface ConfigSource {
@@ -215,6 +231,7 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
         ...(rules.length === 0 ? {} : { rules }),
         ...(document.data.sandbox === undefined ? {} : { sandbox: toSandbox(document.data.sandbox) }),
         ...(document.data.model === undefined ? {} : { model: toModel(document.data.model) }),
+        ...(document.data.mcp === undefined ? {} : { mcp: toMcp(document.data.mcp) }),
       },
       warnings,
     },
@@ -259,6 +276,19 @@ function toProviderSettings(input: z.infer<typeof providerSettingsSchema>): Prov
 // Bridges zod's "optional means absent or undefined" to `SandboxSettings`'s "absent,
 // never undefined" under `exactOptionalPropertyTypes`. Spreading only the present keys
 // is the same bridge `toWhen` builds for rules.
+function toMcp(input: z.infer<typeof documentSchema>['mcp']): McpSettings {
+  if (input?.servers === undefined) return {};
+  const servers: Record<string, McpServerSettings> = {};
+  for (const [name, entry] of Object.entries(input.servers)) {
+    servers[name] = {
+      command: entry.command,
+      ...(entry.args === undefined ? {} : { args: entry.args }),
+      ...(entry.env === undefined ? {} : { env: entry.env }),
+    };
+  }
+  return { servers };
+}
+
 function toSandbox(input: z.infer<typeof sandboxSchema>): SandboxSettings {
   return {
     ...(input.mode === undefined ? {} : { mode: input.mode }),

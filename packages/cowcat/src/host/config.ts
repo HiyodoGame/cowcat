@@ -1,5 +1,6 @@
 import type { Rule } from '../policy/decide.js';
-import type { CowcatConfig } from '../policy/config.js';
+import type { CowcatConfig, ResolvedMcpSettings } from '../policy/config.js';
+import type { McpServerConfig } from '../adapters/mcp/servers.js';
 import {
   createConfigFileReader,
   type ConfigFileReader,
@@ -47,6 +48,49 @@ export const HOST_BASELINE_RULES: readonly Rule[] = [
 /** The rules a session runs with: the config's, then the root's own baseline. */
 export function withHostRules(rules: readonly Rule[]): readonly Rule[] {
   return [...rules, ...HOST_BASELINE_RULES];
+}
+
+/** What a host may start, plus every reason something was left out (ADR-085). */
+export interface SelectedMcpServers {
+  readonly servers: Readonly<Record<string, McpServerConfig>>;
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Applies the trust gate and the credential rule to the merged MCP config.
+ *
+ * Kept out of `createHost` so both halves are testable without spawning anything: the
+ * gate is a policy decision, and the host's job is only to start what comes back.
+ */
+export function selectMcpServers(mcp: ResolvedMcpSettings, options: { readonly trusted: boolean }): SelectedMcpServers {
+  const servers: Record<string, McpServerConfig> = {};
+  const warnings: string[] = [];
+  let untrusted = 0;
+
+  for (const [name, entry] of Object.entries(mcp.servers)) {
+    if (entry.origin === 'project' && !options.trusted) {
+      untrusted += 1;
+      continue;
+    }
+    let env = entry.settings.env;
+    if (entry.origin === 'project' && env !== undefined) {
+      // A committed file may say WHAT to run; it may not say which secret comes with it.
+      // The entry stays, so the server still starts with the environment the user's own
+      // shell already provides.
+      warnings.push(`mcp server "${name}" (project layer): env ignored — project config may not supply credentials`);
+      env = undefined;
+    }
+    servers[name] = {
+      command: entry.settings.command,
+      ...(entry.settings.args === undefined ? {} : { args: entry.settings.args }),
+      ...(env === undefined ? {} : { env }),
+    };
+  }
+
+  if (untrusted > 0) {
+    warnings.push(`mcp: skipped ${String(untrusted)} server(s) from the project layer because this workspace is not trusted`);
+  }
+  return { servers, warnings };
 }
 
 export interface HostConfigOptions {

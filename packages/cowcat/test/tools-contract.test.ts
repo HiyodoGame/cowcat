@@ -40,6 +40,10 @@ class UnreachableProcess implements ProcessPort {
       termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
     });
   }
+
+  open(): Promise<never> {
+    return Promise.reject(new Error('UnreachableProcess.open() is not used in this test'));
+  }
 }
 
 function tools(cwd: string): readonly ToolPort[] {

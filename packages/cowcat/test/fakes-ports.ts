@@ -35,6 +35,10 @@ export class RecordingProcess implements ProcessPort {
     if (next !== undefined) return next;
     return quietResult();
   }
+
+  open(): Promise<never> {
+    return Promise.reject(new Error('RecordingProcess.open() is not used in this test'));
+  }
 }
 
 /** A run that produced nothing and terminated nothing. The baseline for assertions. */
