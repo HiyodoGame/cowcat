@@ -1,5 +1,5 @@
 import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort } from '../ports/index.js';
-import type { EventInput, KernelEvent, SessionUpdate } from './events.js';
+import type { EventInput, KernelEvent, SessionParent, SessionUpdate } from './events.js';
 import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
 import { initialState, reduce, replay, type SessionState } from './state.js';
 import { canTransition, IllegalTransitionError, isTerminal, type TurnState } from './turn.js';
@@ -22,6 +22,11 @@ export interface SessionDeps {
   // create() and recorded in the header for the same reason: a log that says "these
   // commands ran" without saying in what shell is not reproducible (ADR-012).
   readonly shell: SessionShell;
+}
+
+/** What a `create` may attach that no later append can add (ADR-079 ③). */
+export interface SessionCreateOptions {
+  readonly parent?: SessionParent;
 }
 
 export class Session {
@@ -63,7 +68,7 @@ export class Session {
     }
   }
 
-  static async create(deps: SessionDeps, sessionId: string): Promise<Session> {
+  static async create(deps: SessionDeps, sessionId: string, options: SessionCreateOptions = {}): Promise<Session> {
     const lock = await deps.lock.acquire(sessionId);
     try {
       // Refusing an existing log keeps create the only writer of the header: a
@@ -78,6 +83,7 @@ export class Session {
         schemaVersion: SCHEMA_VERSION,
         cowcatVersion: deps.cowcatVersion,
         shell: deps.shell,
+        ...(options.parent === undefined ? {} : { parent: options.parent }),
       });
       return session;
     } catch (error) {

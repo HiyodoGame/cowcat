@@ -1,9 +1,9 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
+import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
 import type { InstructionPort } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
-import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput } from './subagent.js';
+import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput, type TaskInput } from './subagent.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
 import { contextCeiling, contextUsage } from './context.js';
@@ -76,6 +76,14 @@ export interface TurnDeps {
    */
   readonly instructions?: InstructionNeeds;
   /**
+   * The most model rounds this turn may take (ADR-082 ②), or unlimited when omitted.
+   *
+   * A delegated child sets this from the `max_turns` the parent asked for. Hitting the
+   * cap is a normal ending with `partial: true`, not an error: the work that was done is
+   * still work, and upstream reports it the same way.
+   */
+  readonly maxRounds?: number;
+  /**
    * Runs delegated tasks (ADR-079/080). Omitted means `Task` is not put on the wire at
    * all — which is exactly how a child session is kept from delegating further: its
    * `TurnDeps` simply has no port (ADR-081 ④).
@@ -109,7 +117,13 @@ export type TurnNote =
    * Instructions were found but not injected (ADR-030/077). Reported so the user learns
    * the workspace's rules are not in play — the notice is the point, not the absence.
    */
-  | { readonly kind: 'instructions-skipped'; readonly reason: string };
+  | { readonly kind: 'instructions-skipped'; readonly reason: string }
+  /**
+   * The delegation cap stopped the turn with work still to do (ADR-082 ②). Reported
+   * rather than thrown: the rounds that ran produced real results, and the caller needs
+   * to know the answer is partial before handing it to a model as final.
+   */
+  | { readonly kind: 'rounds-exhausted'; readonly rounds: number };
 
 export interface TurnOutcome {
   /**
@@ -123,6 +137,11 @@ export interface TurnOutcome {
   readonly turnId: string;
   readonly state: TerminalTurnState;
   readonly reason: string | null;
+  /**
+   * True when `maxRounds` stopped the turn (ADR-082 ②). A partial answer is still an
+   * answer, but a caller must not present it as "the model finished".
+   */
+  readonly partial: boolean;
   /** Empty in the common case; see TurnNote. */
   readonly notes: readonly TurnNote[];
 }
@@ -147,6 +166,8 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
   // One automatic compaction check per turn (ADR-073): the history only grows while the
   // turn runs, and a second attempt after a failure would retry a call that just failed.
   let compactionChecked = false;
+  // Model calls made so far; the delegation cap counts these, not tool calls (ADR-082 ②).
+  let rounds = 0;
   try {
     for (;;) {
       if (signal.aborted) throw new TurnAborted('aborted before the model was called');
@@ -170,11 +191,20 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
           await ensureInstructions(deps, notes);
         }
       }
+      if (deps.maxRounds !== undefined && rounds >= deps.maxRounds) {
+        // The cap is a normal ending: finishing → completed, with the caller told the
+        // answer is partial rather than being handed a silent truncation.
+        notes.push({ kind: 'rounds-exhausted', rounds });
+        await session.transition('finishing');
+        await session.transition('completed');
+        return { turnId, state: 'completed', reason: null, partial: true, notes };
+      }
       const calls = await streamModel(deps, effort.providerOptions, signal);
+      rounds += 1;
       if (calls.length === 0) {
         await session.transition('finishing');
         await session.transition('completed');
-        return { turnId, state: 'completed', reason: null, notes };
+        return { turnId, state: 'completed', reason: null, partial: false, notes };
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
@@ -211,7 +241,7 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
     const reason = error instanceof Error ? error.message : String(error);
     const turn = session.state.turn;
     if (turn !== null && !isTerminal(turn.state)) await session.transition(outcome, reason);
-    return { turnId, state: outcome, reason, notes };
+    return { turnId, state: outcome, reason, partial: false, notes };
   }
 }
 
@@ -475,13 +505,27 @@ async function askForApproval(
 async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
   const { session } = deps;
   const turnId = session.turnId;
+  const isTask = deps.subagents !== undefined && call.name === TASK_TOOL_NAME;
+  // A malformed delegation is refused before policy: there is no action to adjudicate,
+  // and asking a person about a call that cannot run is theatre.
+  let taskInput: TaskInput | null = null;
+  if (isTask) {
+    const parsed = parseTaskInput(call.input);
+    if (!parsed.ok) return { result: { ok: false, output: `invalid Task input: ${parsed.reason}` }, path: null };
+    taskInput = parsed.input;
+  }
   const tool = deps.tools.get(call.name);
   // `Task` is not in `deps.tools`: it is the kernel's own tool, present only when a port
   // was supplied (ADR-080 ②/③). Its spec still goes through the same decision path, so
   // delegating is as auditable as running a command.
-  const taskSpec = deps.subagents !== undefined && call.name === TASK_TOOL_NAME ? TASK_SPEC : null;
+  const taskSpec = isTask ? TASK_SPEC : null;
   const spec = taskSpec ?? tool?.spec;
   if (spec === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
+
+  // Risk is the child's ceiling rather than the tool's own category (ADR-080 ①): `explore`
+  // can only read, so the existing `reads-are-free` baseline lets it through without a
+  // question; `general` can execute, so it asks until a rule or a person says otherwise.
+  const risk: ToolRisk = taskInput === null ? spec.risk : taskInput.role === 'explore' ? 'read' : 'exec';
 
   // Built once: the request needs it canonicalised, and the log records the same value
   // (ADR-049) — computing it twice is how the two spellings would drift apart.
@@ -491,7 +535,7 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
     kind: 'tool',
     callId: call.callId,
     name: call.name,
-    risk: spec.risk,
+    risk,
     input: call.input,
     ...fields,
   };
@@ -585,7 +629,10 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 
   // Delegation is the one "tool" the kernel runs itself (ADR-080 ②). Reaching this point
   // means it was not denied and, when the rules asked, that a person allowed it.
-  if (taskSpec !== null) return await runSubagentCall(deps, call, signal);
+  if (taskSpec !== null) {
+    if (taskInput === null) return { result: { ok: false, output: 'invalid Task input' }, path: null };
+    return await runSubagentCall(deps, call, taskInput, signal);
+  }
   // Unreachable by construction (`spec` came from one of the two), kept so the two
   // branches stay typed without a non-null assertion, which the repository forbids.
   if (tool === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
@@ -611,13 +658,16 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
  * A failed spawn is a tool result, not a failed turn: the model can decide to do the work
  * itself, and the parent's log still says what was tried.
  */
-async function runSubagentCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
+async function runSubagentCall(
+  deps: TurnDeps,
+  call: ToolCall,
+  task: TaskInput,
+  signal: AbortSignal,
+): Promise<CompletedCall> {
   const subagents = deps.subagents;
   if (subagents === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
 
-  const parsed = parseTaskInput(call.input);
-  if (!parsed.ok) return { result: { ok: false, output: `invalid Task input: ${parsed.reason}` }, path: null };
-  const { description, prompt, role, maxTurns } = parsed.input;
+  const { description, prompt, role, maxTurns } = task;
 
   const childSessionId = deps.ids.next('sess');
   const turnId = deps.session.turnId;
@@ -633,7 +683,15 @@ async function runSubagentCall(deps: TurnDeps, call: ToolCall, signal: AbortSign
   let outcome: SubagentOutcome;
   try {
     outcome = await subagents.port.spawn(
-      { sessionId: childSessionId, callId: call.callId, description, prompt, role, maxTurns },
+      {
+        parentSessionId: deps.session.state.sessionId,
+        sessionId: childSessionId,
+        callId: call.callId,
+        description,
+        prompt,
+        role,
+        maxTurns,
+      },
       signal,
     );
   } catch (error) {

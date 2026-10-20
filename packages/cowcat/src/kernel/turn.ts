@@ -13,7 +13,7 @@ export type TerminalTurnState = 'completed' | 'cancelled' | 'failed';
 
 const TRANSITIONS: Readonly<Record<TurnState, readonly TurnState[]>> = {
   idle: ['requesting'],
-  requesting: ['streaming', 'failed', 'cancelled'],
+  requesting: ['streaming', 'finishing', 'failed', 'cancelled'],
   streaming: ['finishing', 'awaiting_tools', 'failed', 'cancelled'],
   awaiting_tools: ['awaiting_approval', 'requesting', 'failed', 'cancelled'],
   awaiting_approval: ['awaiting_tools', 'failed', 'cancelled'],

@@ -42,7 +42,7 @@ test('a plain answer completes the turn in one model call', async () => {
   const { store, session, deps } = await setup(model, []);
   const outcome = await runTurn(deps, 'hi', new AbortController().signal);
 
-  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'completed', reason: null, notes: [] });
+  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'completed', reason: null, partial: false, notes: [] });
   assert.equal(session.state.turn?.state, 'completed');
   assert.deepEqual(session.state.messages, [
     { role: 'user', text: 'hi' },
@@ -158,7 +158,7 @@ test('a model error fails the turn with its reason, and the log says so', async 
   const { store, session, deps } = await setup(model, []);
   const outcome = await runTurn(deps, 'hi', new AbortController().signal);
 
-  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'failed', reason: 'upstream 503', notes: [] });
+  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'failed', reason: 'upstream 503', partial: false, notes: [] });
   assert.equal(session.state.turn?.state, 'failed');
   const last = store.events.at(-1);
   assert.equal(last?.type, 'turn.transitioned');

@@ -148,6 +148,8 @@ export interface TurnDepsOptions {
   readonly subagents?: { readonly port: SubagentPort };
   /** Why approvals cannot be answered here (ADR-081 ③). */
   readonly unattended?: string;
+  /** Model-round cap (ADR-082 ②). */
+  readonly maxRounds?: number;
 }
 
 // One place to build TurnDeps, for the same reason sessionDeps exists: the shape
@@ -173,6 +175,7 @@ export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOp
     ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
     ...(options.subagents === undefined ? {} : { subagents: options.subagents }),
     ...(options.unattended === undefined ? {} : { unattended: options.unattended }),
+    ...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
     tools: options.tools ?? new Map(),
     rules: options.rules ?? DEFAULT_RULES,
     fs: options.fs ?? fakeFs(),

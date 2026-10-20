@@ -155,6 +155,9 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     schemaVersion: z.number().int().positive(),
     cowcatVersion: z.string(),
     shell: sessionShellSchema,
+    // Added with delegation (ADR-079 ③); absent means a top-level session, which is what
+    // every log written before this field existed says.
+    parent: z.object({ sessionId: z.string(), role: z.enum(['explore', 'general']) }).optional(),
   }),
   z.object({ ...base, type: z.literal('turn.opened'), input: z.string() }),
   z.object({

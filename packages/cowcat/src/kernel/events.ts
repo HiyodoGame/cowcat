@@ -23,11 +23,23 @@ export interface InstructionSource {
   readonly bytes: number;
 }
 
+/**
+ * Who delegated this session (ADR-079 ③).
+ *
+ * Optional on the header, and absent on every log written before delegation existed:
+ * "no parent" is the shape of a top-level session, which is why the format did not need
+ * a version bump.
+ */
+export interface SessionParent {
+  readonly sessionId: string;
+  readonly role: SubagentRole;
+}
+
 // Durable facts. Anything in this union is written to the session log before it
 // is applied to state, so replaying the log reproduces the session exactly.
 export type KernelEvent = EventBase &
   (
-    | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell }
+    | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell; readonly parent?: SessionParent | undefined }
     | { readonly type: 'turn.opened'; readonly input: string }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
     | {

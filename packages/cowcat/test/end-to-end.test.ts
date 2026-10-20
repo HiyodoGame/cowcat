@@ -94,7 +94,7 @@ test('one turn: read, edit, plan, run a command behind an approval, and hit two 
   const outcome = await runTurn(turnDeps(session, model, { tools: new Map(tools.map((tool) => [tool.spec.name, tool])), rules, approve }), 'fix the failing test', signal);
 
   // The turn completed, and the edit is on disk.
-  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'completed', reason: null, notes: [] });
+  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'completed', reason: null, partial: false, notes: [] });
   assert.equal(readFileSync(join(root, 'src', 'a.ts'), 'utf8'), 'export const value = 2;\n');
 
   // Exactly three questions, in call order: `DEFAULT_RULES` allows reads and nothing

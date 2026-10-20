@@ -48,11 +48,15 @@ import {
   type PlatformPort,
   type ProcessPort,
   type SnapshotPort,
+  type SubagentOutcome,
+  type SubagentRequest,
   type ToolPort,
+  type ModelUsage,
 } from '../ports/index.js';
 import { ModelConfigError, createModelPort, selectModel, type ModelSelection } from './model.js';
 import { loadHostConfig, withHostRules } from './config.js';
 import { cowcatPaths, type CowcatPaths } from './paths.js';
+import { rulesForRole, toolsForRole } from './subagent-roles.js';
 import type { ConfigFileReader, ReadTextFile } from '../adapters/config-files.js';
 
 // The composition root (ADR-062 ②, ADR-064): the one place that assembles the kernel,
@@ -227,6 +231,82 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       }
       throw error;
     }
+  }
+
+  /**
+   * Runs one delegated task (ADR-079/080/081/082).
+   *
+   * A child is a real session — its own log, its own lock, its own turn — so a failure in
+   * it cannot corrupt the parent's history. Everything a child may NOT have is expressed
+   * by what this function passes: no `subagents` (so no `Task`, depth 0), no `TodoWrite`,
+   * a role tool subset, narrowed rules, and `unattended` so an approval question cannot
+   * hang a session nobody is watching.
+   */
+  async function spawnSubagent(request: SubagentRequest, signal: AbortSignal): Promise<SubagentOutcome> {
+    const configured = currentModel();
+    const child = await Session.create(sessionDeps, request.sessionId, {
+      parent: { sessionId: request.parentSessionId, role: request.role },
+    });
+    try {
+      const childDeps: TurnDeps = {
+        session: child,
+        model: configured.port,
+        preset: configured.selection.preset,
+        ...(configured.selection.effort === null ? {} : { effort: configured.selection.effort }),
+        tools: toolsForRole(tools, request.role),
+        rules: rulesForRole(rules, tools, request.role),
+        fs,
+        // Never consulted: `unattended` refuses every ask before the bridge is reached.
+        approve: () => Promise.resolve('reject'),
+        ids: sessionDeps.ids,
+        maxRounds: request.maxTurns,
+        unattended: 'sub agents cannot ask a human; report what you needed instead',
+        // The same chain the parent got: same workspace, same trust (ADR-082 ④).
+        instructions: {
+          port: new FileInstructionSource({ fs }),
+          cwd: options.cwd,
+          trust: { trusted: workspaceTrusted },
+          global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
+        },
+      };
+      const outcome = await runTurn(childDeps, request.prompt, signal);
+      return {
+        sessionId: request.sessionId,
+        role: request.role,
+        state: outcome.state,
+        report: finalReport(child),
+        turns: child.state.messages.filter((message) => message.role === 'assistant').length,
+        partial: outcome.partial,
+        usage: await summedUsage(request.sessionId),
+        reason: outcome.reason,
+      };
+    } finally {
+      // The child's lock lives for its whole life (ADR-010); leaving it held would make the
+      // session unopenable from another process.
+      await child.close();
+    }
+  }
+
+  /** The child's own `model.usage` events, summed (ADR-082 ③: kept out of the parent). */
+  async function summedUsage(sessionId: string): Promise<ModelUsage | null> {
+    const events = await store.readAll(sessionId);
+    const total = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+    let seen = false;
+    for (const event of events) {
+      if (event.type !== 'model.usage') continue;
+      seen = true;
+      total.input += event.usage.input;
+      total.output += event.usage.output;
+      total.cacheRead += event.usage.cacheRead;
+      total.cacheCreation += event.usage.cacheCreation;
+    }
+    return seen ? total : null;
+  }
+
+  /** The child's last assistant text, which is the report the parent gets. */
+  function finalReport(child: Session): string {
+    const last = [...child.state.messages].reverse().find((message) => message.role === 'assistant');
+    return last?.text ?? '';
   }
 
   function deliver(rec: SessionRecord, update: SessionUpdate): void {
@@ -411,6 +491,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
           trust: { trusted: workspaceTrusted },
           global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
         },
+        // Delegation is available to a top-level session only: the child's deps are built
+        // without this field, which is what makes depth 0 the default (ADR-081 ④).
+        subagents: { port: { spawn: spawnSubagent } },
       };
 
       let failure: unknown = null;

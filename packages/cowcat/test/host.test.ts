@@ -635,3 +635,119 @@ test('the session header records the shell this host resolved', async (t) => {
 test('the client and the server agree on the protocol version', () => {
   assert.equal(PROTOCOL_VERSION, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Delegation (ADR-079~082), driven the way a frontend drives it
+// ---------------------------------------------------------------------------
+
+test('an explore delegation runs a child session and returns only its report', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [
+      {
+        type: 'tool_call',
+        call: {
+          callId: 'call_task',
+          name: 'Task',
+          input: { description: 'list the files', prompt: 'list every file here', agent: 'explore' },
+        },
+      },
+      { type: 'stop', reason: { kind: 'toolCalls', raw: 'tool_calls' } },
+    ],
+    [{ type: 'text', text: 'three files, all empty' }],
+    [{ type: 'text', text: 'finished' }],
+  ]);
+  const store = new MemoryEventStore();
+  const fixture = await start({ cwd, home, model, store });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_parent');
+  await fixture.client.openSession('sess_parent');
+  await fixture.client.sendTurn('sess_parent', 'delegate the listing');
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  const started = first(fixture.events(), 'subagent.started');
+  const childId = field(started, 'childSessionId');
+  assert.equal(typeof childId, 'string');
+
+  // Read-only delegation is free: `reads-are-free` matches the role's risk, so no human
+  // is asked and the child runs immediately (ADR-080 ①).
+  assert.equal(first(fixture.events(), 'approval.requested'), undefined);
+
+  const finished = first(fixture.events(), 'subagent.finished');
+  assert.equal(field(finished, 'state'), 'completed');
+  assert.equal(field(finished, 'turns'), 1);
+  assert.equal(field(finished, 'ok'), true);
+
+  const done = first(fixture.events(), 'tool.finished');
+  assert.equal(field(done, 'ok'), true);
+  assert.match(String(field(done, 'output')), /three files, all empty/);
+
+  // The child is a real session with its own log and its own header, and the header says
+  // who delegated it (ADR-079 ③) — the one fact the parent log cannot reconstruct alone.
+  const childLog = await store.readAll(childId as string);
+  const header = childLog[0];
+  assert.ok(header !== undefined && header.type === 'session.opened');
+  assert.deepEqual(header.parent, { sessionId: 'sess_parent', role: 'explore' });
+
+  // Only the report reaches the parent's next request, not the child's transcript.
+  const nextRequest = model.requests[2];
+  assert.ok(nextRequest !== undefined);
+  const sent = JSON.stringify(nextRequest.messages);
+  assert.match(sent, /three files, all empty/);
+});
+
+test('a general delegation asks before it runs, and a rejection never spawns the child', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [
+      {
+        type: 'tool_call',
+        call: {
+          callId: 'call_task',
+          name: 'Task',
+          input: { description: 'edit the files', prompt: 'rewrite the config', agent: 'general' },
+        },
+      },
+      { type: 'stop', reason: { kind: 'toolCalls', raw: 'tool_calls' } },
+    ],
+    [{ type: 'text', text: 'doing it myself' }],
+  ]);
+  const store = new MemoryEventStore();
+  const fixture = await start({ cwd, home, model, store });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_parent');
+  await fixture.client.openSession('sess_parent');
+  await fixture.client.sendTurn('sess_parent', 'delegate the rewrite');
+
+  await fixture.until('the approval request', () => first(fixture.events(), 'approval.requested') !== undefined);
+  const requested = first(fixture.events(), 'approval.requested');
+  assert.equal(field(requested, 'name'), 'Task');
+  const callId = field(requested, 'callId');
+  assert.equal(typeof callId, 'string');
+
+  await fixture.client.respondApproval('sess_parent', callId as string, 'reject');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  // A refused delegation leaves no child behind: no started fact, and no second session
+  // header in the store.
+  assert.equal(first(fixture.events(), 'subagent.started'), undefined);
+  const done = first(fixture.events(), 'tool.finished');
+  assert.equal(field(done, 'ok'), false);
+  assert.match(String(field(done, 'output')), /rejected by user/);
+  assert.equal(store.events.filter((event) => event.type === 'session.opened').length, 1);
+});

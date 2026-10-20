@@ -8,6 +8,8 @@ import {
   type ModelChunk,
   type KernelEvent,
   type Rule,
+  type ActionRequest,
+  type ApprovalVerdict,
   type SubagentOutcome,
   type SubagentPort,
   type SubagentRequest,
@@ -60,6 +62,8 @@ async function setup(
     readonly rules?: readonly Rule[];
     readonly tools?: readonly ToolPort[];
     readonly unattended?: string;
+    readonly maxRounds?: number;
+    readonly approve?: (request: ActionRequest) => Promise<ApprovalVerdict>;
   } = {},
 ): Promise<{ readonly store: MemoryEventStore; readonly deps: ReturnType<typeof turnDeps> }> {
   const store = new MemoryEventStore();
@@ -69,6 +73,8 @@ async function setup(
     ...(options.rules === undefined ? {} : { rules: options.rules }),
     ...(options.port === undefined ? {} : { subagents: { port: options.port } }),
     ...(options.unattended === undefined ? {} : { unattended: options.unattended }),
+    ...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
+    ...(options.approve === undefined ? {} : { approve: options.approve }),
   });
   return { store, deps };
 }
@@ -258,4 +264,52 @@ test('an unattended session refuses an ask immediately and says who refused (ADR
   const done = eventsOf(store.events, 'tool.finished').find((e) => e.name === 'Write');
   assert.ok(done !== undefined);
   assert.equal(done.output, 'rejected: sub agents cannot ask a human');
+});
+
+test('explore is free because it can only read; general asks (ADR-080 ①)', async () => {
+  const asked: string[] = [];
+  const approve = (request: ActionRequest): Promise<ApprovalVerdict> => {
+    asked.push(request.name);
+    return Promise.resolve('reject');
+  };
+  let spawned = 0;
+  const port: SubagentPort = {
+    spawn: (request) => {
+      spawned += 1;
+      return Promise.resolve(outcomeFor(request));
+    },
+  };
+
+  const explore = new ScriptedModel([
+    callStep(TASK_TOOL_NAME, { ...taskInput, agent: 'explore' }),
+    textStep('done'),
+  ]);
+  const first = await setup(explore, { port, approve });
+  const done = await runTurn(first.deps, 'hi', new AbortController().signal);
+  assert.equal(done.state, 'completed');
+  assert.deepEqual(asked, [], 'a read-only delegation must not need a human');
+  assert.equal(spawned, 1);
+
+  asked.length = 0;
+  const general = new ScriptedModel([
+    callStep(TASK_TOOL_NAME, { ...taskInput, agent: 'general' }),
+    textStep('doing it myself'),
+  ]);
+  const second = await setup(general, { port, approve });
+  const refused = await runTurn(second.deps, 'hi', new AbortController().signal);
+  assert.equal(refused.state, 'completed');
+  assert.deepEqual(asked, [TASK_TOOL_NAME], 'the same call under `general` asks first');
+  assert.equal(spawned, 1, 'a rejected delegation never reaches the port');
+});
+
+test('maxRounds stops the turn with a partial answer (ADR-082 ②)', async () => {
+  const port: SubagentPort = { spawn: (request) => Promise.resolve(outcomeFor(request)) };
+  const model = new ScriptedModel([callStep(TASK_TOOL_NAME, taskInput), textStep('never reached')]);
+  const { deps } = await setup(model, { port, maxRounds: 1 });
+
+  const outcome = await runTurn(deps, 'hi', new AbortController().signal);
+  assert.equal(outcome.state, 'completed');
+  assert.equal(outcome.partial, true);
+  assert.deepEqual(outcome.notes, [{ kind: 'rounds-exhausted', rounds: 1 }]);
+  assert.equal(model.requests.length, 1, 'the cap stops before the second model call');
 });
