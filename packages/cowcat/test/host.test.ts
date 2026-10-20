@@ -13,7 +13,7 @@
 //     protocol error a client can branch on, not as a dead process.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -116,6 +116,44 @@ class FakeProcess implements ProcessPort {
 /** A model whose stream never produces anything until it is cancelled. */
 class HangingModel implements ModelPort {
   stream(_request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelChunk> {
+    return {
+      [Symbol.asyncIterator]: () => ({
+        next: () =>
+          new Promise<IteratorResult<ModelChunk>>((_resolve, reject) => {
+            signal.addEventListener('abort', () => {
+              reject(new Error('aborted by the client'));
+            }, { once: true });
+          }),
+      }),
+    };
+  }
+}
+
+/**
+ * Parent asks for a delegation on its first call; everything after that hangs until the
+ * turn is cancelled.
+ *
+ * The point is the second call: it happens inside the CHILD session, so cancellation has to
+ * travel parent → spawn → child turn → child lock release (ADR-081 ⑤).
+ */
+class DelegatingHangingModel implements ModelPort {
+  calls = 0;
+
+  stream(_request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelChunk> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      return (async function* (): AsyncIterable<ModelChunk> {
+        yield {
+          type: 'tool_call',
+          call: {
+            callId: 'call_task',
+            name: 'Task',
+            input: { description: 'wait for ever', prompt: 'wait for ever' },
+          },
+        };
+        yield { type: 'stop', reason: { kind: 'toolCalls', raw: 'tool_calls' } };
+      })();
+    }
     return {
       [Symbol.asyncIterator]: () => ({
         next: () =>
@@ -710,6 +748,15 @@ test('an explore delegation runs a child session and returns only its report', a
   const parentSummary = summaries.find((summary) => summary.sessionId === 'sess_parent');
   assert.ok(parentSummary !== undefined);
   assert.equal(parentSummary.parentSessionId, undefined);
+
+  // The child log replays over the protocol like any other session (ADR-079 ①), and its
+  // header is how a frontend learns who delegated it without reading the parent's log.
+  const reopened = await fixture.client.openSession(childId as string);
+  assert.ok(reopened.replayed >= 2);
+  const childHeaderEvent = fixture
+    .events()
+    .find((event) => event.type === 'session.opened' && field(event, 'sessionId') === childId);
+  assert.deepEqual(field(childHeaderEvent, 'parent'), { sessionId: 'sess_parent', role: 'explore' });
 });
 
 test('a general delegation asks before it runs, and a rejection never spawns the child', async (t) => {
@@ -758,4 +805,47 @@ test('a general delegation asks before it runs, and a rejection never spawns the
   assert.equal(field(done, 'ok'), false);
   assert.match(String(field(done, 'output')), /rejected by user/);
   assert.equal(store.events.filter((event) => event.type === 'session.opened').length, 1);
+});
+
+test('cancelling the parent stops the child session and releases its lock (ADR-081 ⑤)', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new DelegatingHangingModel();
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_parent');
+  await fixture.client.openSession('sess_parent');
+  await fixture.client.sendTurn('sess_parent', 'delegate and wait');
+
+  await fixture.until('the child to start', () => first(fixture.events(), 'subagent.started') !== undefined);
+  const childId = field(first(fixture.events(), 'subagent.started'), 'childSessionId');
+  assert.equal(typeof childId, 'string');
+
+  await fixture.client.cancelTurn('sess_parent');
+  await fixture.until('the parent to be cancelled', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'cancelled'),
+  );
+
+  // Both sides carry an ending: the parent says the delegation was cancelled, and the
+  // child's own log says its turn was.
+  const finished = first(fixture.events(), 'subagent.finished');
+  assert.equal(field(finished, 'state'), 'cancelled');
+  assert.equal(field(finished, 'ok'), false);
+
+  const childFile = join(home, '.cowcat', 'sessions', `${String(childId)}.jsonl`);
+  const childTypes = readFileSync(childFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as { readonly type?: string; readonly to?: string });
+  assert.ok(
+    childTypes.some((event) => event.type === 'turn.transitioned' && event.to === 'cancelled'),
+    'the child turn must record its cancellation',
+  );
+
+  // And the lock is gone: a cancelled child must not leave a session nobody can reopen.
+  assert.equal(existsSync(join(home, '.cowcat', 'sessions', `${String(childId)}.jsonl.lock`)), false);
 });
