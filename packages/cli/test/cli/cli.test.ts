@@ -190,6 +190,10 @@ test('doctor reports what it can check, and names the model it could not find', 
   assert.match(text, /配置\s+没有配置文件/);
   assert.match(text, /trust\s+/);
   assert.match(text, /rules\s+\d+ 条/);
+  // What the model would be told about this repository (ADR-075~078). A fresh isolated
+  // home has no trust entry, so the honest answer here is the skip — and it must name
+  // the file and how much was withheld.
+  assert.match(text, /instr\s+(（这个目录往上没有 AGENTS\.md|folder not trusted: skipped)/, text);
   assert.match(text, /sandbox\s+mode \w+ \/ backend \w+ \/ network \w+/);
   // Two different questions, two rows: the build runs here, and the TUI's floor is the
   // renderer's (ADR-065 ①).
