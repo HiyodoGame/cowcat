@@ -157,6 +157,22 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // allowed read twice.
       return base;
 
+    case 'subagent.started':
+      // One line, and it arrives when the delegation ENDS: a row that appears and never
+      // resolves reads worse than one that shows up with its result (ADR-079 ①). The
+      // started fact is still in the log for an audit that wants the timing.
+      return base;
+
+    case 'subagent.finished': {
+      const done = flag(event, 'ok') === true;
+      const template = done ? copyFor(base.lang).subagentDone : copyFor(base.lang).subagentFailed;
+      const line = template
+        .replace('{session}', text(event, 'childSessionId') ?? '?')
+        .replace('{role}', text(event, 'role') ?? '?')
+        .replace('{n}', String(number(event, 'turns') ?? 0));
+      return add(base, notice(base, seq, done ? 'info' : 'warn', line));
+    }
+
     default:
       return unsupported(base, updateType(event) ?? 'unknown');
   }

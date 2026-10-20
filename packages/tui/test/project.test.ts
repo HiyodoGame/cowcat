@@ -269,3 +269,31 @@ test('a closed transport is a fact about the view, not a wipe', () => {
   assert.equal(closed.closed, true);
   assert.deepEqual(closed.entries, view.entries);
 });
+
+test('a finished delegation is one line that names the child; the start is not a line at all', () => {
+  const view = [
+    event('subagent.started', { callId: 'c1', childSessionId: 'sess_child', role: 'explore', description: 'list files' }),
+    event('subagent.finished', {
+      callId: 'c1',
+      childSessionId: 'sess_child',
+      role: 'explore',
+      ok: true,
+      state: 'completed',
+      turns: 2,
+      partial: false,
+      usage: null,
+      reason: null,
+    }),
+  ].reduce(project, fresh());
+
+  // One line, not two: a row that appears and only resolves later reads worse than one that
+  // arrives with its result (ADR-079 ①). The started fact stays in the log either way.
+  assert.equal(view.entries.length, 1);
+  const entry = view.entries[0];
+  assert.ok(entry !== undefined);
+  assert.equal(entry.kind, 'notice');
+  assert.match(entry.text, /sess_child/);
+  assert.match(entry.text, /explore/);
+  assert.match(entry.text, /2/);
+  assert.equal(view.unsupported.includes('subagent.started'), false);
+});

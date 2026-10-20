@@ -23,6 +23,10 @@ export interface Copy {
   readonly unsupportedEvent: string;
   /** A compaction line: `{n}` is how many messages were replaced (ADR-074). */
   readonly compacted: string;
+  /** A delegation that finished: `{session}`, `{role}`, `{n}` rounds (ADR-079). */
+  readonly subagentDone: string;
+  /** A delegation that did not: same placeholders. */
+  readonly subagentFailed: string;
   readonly attachment: string;
   /** The label an image line carries: `图片 image/png 320×200`. */
   readonly image: string;
@@ -48,6 +52,8 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     empty: '（这一回合没有输出）',
     unsupportedEvent: '（这个事件这一版不认识）',
     compacted: '上下文已压缩（{n} 条 → 一段摘要）',
+    subagentDone: '子会话 {session}（{role}）完成：{n} 轮',
+    subagentFailed: '子会话 {session}（{role}）没跑完：{n} 轮',
     attachment: '附件',
     image: '图片',
     truncated: '（输出被截断）',
@@ -68,6 +74,8 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     empty: '(nothing came back this turn)',
     unsupportedEvent: '(an event this build does not know)',
     compacted: 'context compacted ({n} messages → one summary)',
+    subagentDone: 'sub session {session} ({role}) finished: {n} rounds',
+    subagentFailed: 'sub session {session} ({role}) did not finish: {n} rounds',
     attachment: 'attachment',
     image: 'image',
     truncated: '(output was truncated)',

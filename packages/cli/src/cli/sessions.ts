@@ -1,4 +1,5 @@
 import { EXIT } from './exit.js';
+import { flagOn } from './flags.js';
 import { statePaths } from './host.js';
 import type { CommandContext } from './spec.js';
 import { startTui } from './tui.js';
@@ -31,13 +32,20 @@ export async function runSessions(context: CommandContext): Promise<number> {
   const { createSessionIndex } = await import('@corescense/cowcat-core');
   const paths = await statePaths();
   const sessions = await createSessionIndex(paths.sessionsDir).list();
+  // Children are listed only when asked for (ADR-079 ④): they are evidence of a delegation,
+  // not something a person opens by hand, and a long session with a few delegations would
+  // otherwise bury the sessions that person actually started.
+  const shown = flagOn(context.flags, 'all')
+    ? sessions
+    : sessions.filter((session) => session.parentSessionId === null);
 
-  if (sessions.length === 0) {
+  if (shown.length === 0) {
     context.stdout(`没有会话（${paths.sessionsDir}）`);
     return EXIT.ok;
   }
-  for (const session of sessions) {
-    context.stdout(`${session.sessionId}\t${String(session.lastSeq)} 条事件`);
+  for (const session of shown) {
+    const parent = session.parentSessionId === null ? '' : `\t子会话，父会话 ${session.parentSessionId}`;
+    context.stdout(`${session.sessionId}\t${String(session.lastSeq)} 条事件${parent}`);
   }
   return EXIT.ok;
 }

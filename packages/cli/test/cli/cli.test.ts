@@ -176,6 +176,36 @@ test('a session on disk shows up in sessions list', async (t) => {
   assert.match(run.out.join('\n'), /sess_listed\t1 条事件/);
 });
 
+test('sessions list hides delegated children unless --all asks for them', async (t) => {
+  const home = isolatedHome(t);
+  const { JsonlEventStore, SCHEMA_VERSION } = await import('@corescense/cowcat-core');
+  const store = new JsonlEventStore(join(home, 'sessions'));
+  const header = (sessionId: string, parent?: { readonly sessionId: string; readonly role: 'explore' }) => ({
+    type: 'session.opened' as const,
+    seq: 1,
+    ts: 1,
+    sessionId,
+    turnId: null,
+    schemaVersion: SCHEMA_VERSION,
+    cowcatVersion: '0.0.0-test',
+    shell: { kind: 'posix' as const, executable: '/bin/sh' },
+    ...(parent === undefined ? {} : { parent }),
+  });
+  await store.append(header('sess_top'));
+  await store.append(header('sess_child', { sessionId: 'sess_top', role: 'explore' }));
+
+  const plain = await cli(['sessions', 'list']);
+  assert.equal(plain.code, EXIT.ok);
+  assert.match(plain.out.join('\n'), /sess_top/);
+  assert.doesNotMatch(plain.out.join('\n'), /sess_child/, 'a child is evidence of a delegation, not a session a person opens');
+
+  const all = await cli(['sessions', 'list', '--all']);
+  assert.equal(all.code, EXIT.ok);
+  const text = all.out.join('\n');
+  assert.match(text, /sess_child/);
+  assert.match(text, /父会话 sess_top/);
+});
+
 test('doctor reports what it can check, and names the model it could not find', async (t) => {
   isolatedHome(t);
   const run = await cli(['doctor']);
