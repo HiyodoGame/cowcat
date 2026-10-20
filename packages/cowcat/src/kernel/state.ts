@@ -8,11 +8,50 @@ export interface TurnView {
   readonly state: TurnState;
 }
 
+/**
+ * A provider's usage count and the log position it describes (ADR-070).
+ *
+ * `anchorSeq` is the seq of the assistant message that request produced. Everything at
+ * or below it was part of that count; everything after it is estimated locally until the
+ * next report.
+ */
+export interface UsageAnchor {
+  readonly tokens: number;
+  readonly anchorSeq: number;
+}
+
 export interface SessionState {
   readonly sessionId: string;
   readonly lastSeq: number;
   readonly turn: TurnView | null;
   readonly messages: readonly Message[];
+  /**
+   * The seq of the event each message came from, positionally aligned with `messages`
+   * (ADR-071).
+   *
+   * Kept beside the messages rather than inside `Message` so the adapters keep seeing a
+   * message and nothing else. It exists because "which messages are still sent" is a
+   * question about the **log**, not about the text: a compaction shadows a range of
+   * seqs, and only the seq knows where that range ends.
+   */
+  readonly messageSeqs: readonly number[];
+  /**
+   * What the provider reported for its last request, and where in the log that request
+   * ended (ADR-070). `null` until the model has answered once, and after every
+   * compaction — the messages the count described are no longer the ones being sent.
+   *
+   * Folded rather than held beside the log, for the same reason as `todos`: a reopened
+   * session should not have to re-ask the provider to know how full it is.
+   */
+  readonly lastUsage: UsageAnchor | null;
+  /**
+   * Whether a compaction has started and not finished (ADR-072).
+   *
+   * Derived from the log so a reopened session knows an attempt was interrupted. It is
+   * a guard, not a blocker: a second `started` is accepted (recovery), and only the
+   * `finished` that follows the last attempt clears it.
+   */
+  readonly compactionOpen: boolean;
   /**
    * Actions answered `always`, for the rest of this session (ADR-031 decision 3).
    *
@@ -43,7 +82,18 @@ export interface SessionState {
 }
 
 export function initialState(sessionId: string): SessionState {
-  return { sessionId, lastSeq: 0, turn: null, messages: [], grants: [], readFiles: [], todos: [] };
+  return {
+    sessionId,
+    lastSeq: 0,
+    turn: null,
+    messages: [],
+    messageSeqs: [],
+    lastUsage: null,
+    compactionOpen: false,
+    grants: [],
+    readFiles: [],
+    todos: [],
+  };
 }
 
 // Pure and total over valid logs. A log that contradicts itself (a transition
@@ -63,6 +113,7 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         ...base,
         turn: { id: event.turnId, state: 'idle' },
         messages: [...state.messages, { role: 'user', text: event.input }],
+        messageSeqs: [...state.messageSeqs, event.seq],
       };
     }
     case 'turn.transitioned': {
@@ -81,13 +132,49 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
           ...state.messages,
           { role: 'assistant', text: event.text, toolCalls: event.toolCalls, reasoning: event.reasoning },
         ],
+        messageSeqs: [...state.messageSeqs, event.seq],
       };
     case 'model.usage':
-      // Nothing to derive: what a call cost does not change the conversation, and
-      // putting it into the state would make every replay compare numbers that no
-      // later decision reads. The event is in the log for whoever reports or audits
-      // cost (ADR-041).
-      return base;
+      // The only thing folded from usage is the anchor (ADR-070): how full the next
+      // request already is. What the call *cost* stays in the log for whoever reports or
+      // audits it (ADR-041); this is a different question, asked once per turn.
+      return {
+        ...base,
+        lastUsage: {
+          tokens: event.usage.input + event.usage.cacheRead + event.usage.cacheCreation + event.usage.output,
+          // The request ended at the model.message that this usage describes. Everything
+          // after it (the tool results this turn produced) is added by the estimator.
+          anchorSeq: state.lastSeq,
+        },
+      };
+    case 'context.compacted': {
+      // Keep the tail, replace the head (ADR-071). `throughSeq` is the watermark: the
+      // summary itself takes the compaction event's own seq, so a later compaction can
+      // shadow it the same way.
+      const kept: Message[] = [];
+      const keptSeqs: number[] = [];
+      for (const [index, message] of state.messages.entries()) {
+        const seq = state.messageSeqs[index];
+        if (seq !== undefined) {
+          if (seq > event.throughSeq) {
+            kept.push(message);
+            keptSeqs.push(seq);
+          }
+        }
+      }
+      return {
+        ...base,
+        messages: [{ role: 'user', text: event.summary }, ...kept],
+        messageSeqs: [event.seq, ...keptSeqs],
+        // The anchor counted messages that are no longer sent; keeping it would
+        // over-estimate this session forever. The next request re-establishes it.
+        lastUsage: null,
+      };
+    }
+    case 'context.compaction.started':
+      return { ...base, compactionOpen: true };
+    case 'context.compaction.finished':
+      return { ...base, compactionOpen: false };
     case 'tool.finished': {
       const readFiles = registerRead(state.readFiles, event);
       return {
@@ -106,6 +193,7 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
             attachments: event.attachments ?? [],
           },
         ],
+        messageSeqs: [...state.messageSeqs, event.seq],
         // Same array when nothing changed: a replay of many tool calls should not
         // allocate a new list for each one that was not a read.
         ...(readFiles === state.readFiles ? {} : { readFiles }),

@@ -132,6 +132,19 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       return { ...base, todos: records(event, 'todos').map(todoOf) };
     }
 
+    case 'context.compacted': {
+      // One line, no summary body: the summary is what the *model* reads, and it is
+      // already in the history. Collapsed by default matches §4.2 of the brand guide
+      // (ADR-074); there is no "open it" affordance yet.
+      const dropped = number(event, 'dropped') ?? 0;
+      return add(base, notice(base, seq, 'info', copyFor(base.lang).compacted.replace('{n}', String(dropped))));
+    }
+
+    case 'context.compaction.started':
+    case 'context.compaction.finished':
+      // The lock's edges are plumbing, not transcript material.
+      return base;
+
     case 'policy.decided':
       // Deliberately silent: the verdict reaches the transcript through the result it
       // produced ("denied by <rule>: <reason>"), and repeating it would print every

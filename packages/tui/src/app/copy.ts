@@ -21,6 +21,8 @@ export interface Copy {
   readonly cancelled: string;
   readonly empty: string;
   readonly unsupportedEvent: string;
+  /** A compaction line: `{n}` is how many messages were replaced (ADR-074). */
+  readonly compacted: string;
   readonly attachment: string;
   /** The label an image line carries: `图片 image/png 320×200`. */
   readonly image: string;
@@ -45,6 +47,7 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     cancelled: '停下了。',
     empty: '（这一回合没有输出）',
     unsupportedEvent: '（这个事件这一版不认识）',
+    compacted: '上下文已压缩（{n} 条 → 一段摘要）',
     attachment: '附件',
     image: '图片',
     truncated: '（输出被截断）',
@@ -64,6 +67,7 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     cancelled: 'Stopped.',
     empty: '(nothing came back this turn)',
     unsupportedEvent: '(an event this build does not know)',
+    compacted: 'context compacted ({n} messages → one summary)',
     attachment: 'attachment',
     image: 'image',
     truncated: '(output was truncated)',

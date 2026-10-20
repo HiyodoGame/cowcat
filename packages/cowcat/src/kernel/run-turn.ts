@@ -2,6 +2,8 @@ import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/ap
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, ToolGrant, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
+import { compactContext } from './compact.js';
+import { contextCeiling, contextUsage } from './context.js';
 import type { ModelPreset } from './preset.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
@@ -61,7 +63,12 @@ export interface TurnDeps {
  */
 export type TurnNote =
   | { readonly kind: 'tools-unsupported'; readonly model: string }
-  | { readonly kind: 'effort-not-declared'; readonly model: string; readonly effort: string };
+  | { readonly kind: 'effort-not-declared'; readonly model: string; readonly effort: string }
+  /**
+   * A compaction that should have run did not (ADR-072). Reported rather than thrown,
+   * because the turn can still continue on the history it already has.
+   */
+  | { readonly kind: 'compaction-failed'; readonly reason: string };
 
 export interface TurnOutcome {
   /**
@@ -93,9 +100,29 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
   await session.openTurn(input);
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
+  // One automatic compaction check per turn (ADR-073): the history only grows while the
+  // turn runs, and a second attempt after a failure would retry a call that just failed.
+  let compactionChecked = false;
   try {
     for (;;) {
       if (signal.aborted) throw new TurnAborted('aborted before the model was called');
+      if (!compactionChecked) {
+        compactionChecked = true;
+        const ceiling = contextCeiling(deps.preset.limits.context);
+        if (ceiling !== null && contextUsage(session.state).total > ceiling) {
+          const outcome = await compactContext(
+            {
+              session,
+              model: deps.model,
+              preset: deps.preset,
+              tools: deps.preset.toolCalls ? [...deps.tools.values()].map((tool) => tool.spec) : [],
+            },
+            'auto',
+            signal,
+          );
+          if (!outcome.ok && outcome.reason !== null) notes.push({ kind: 'compaction-failed', reason: outcome.reason });
+        }
+      }
       const calls = await streamModel(deps, effort.providerOptions, signal);
       if (calls.length === 0) {
         await session.transition('finishing');

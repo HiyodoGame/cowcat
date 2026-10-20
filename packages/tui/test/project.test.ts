@@ -216,6 +216,25 @@ test('the todo list is replaced wholesale, and its status is not ours to interpr
   );
 });
 
+test('a compaction earns one line with the count, and the lock edges stay out of the transcript', () => {
+  const beforeStart = project(fresh(), event('context.compaction.started', { trigger: 'auto', model: 'test' }));
+  assert.deepEqual(beforeStart.entries, [], 'starting is plumbing');
+
+  const compacted = project(
+    beforeStart,
+    event('context.compacted', { dropped: 12, trigger: 'auto', summary: '## Objective\nx', throughSeq: 9 }),
+  );
+  assert.equal(compacted.entries.length, 1);
+  const line = compacted.entries[0];
+  assert.ok(line !== undefined);
+  assert.match(line.kind === 'notice' ? line.text : '', /12/);
+  assert.equal(line.kind, 'notice');
+  assert.deepEqual(compacted.unsupported, [], 'a known event is not an unknown one');
+
+  const finished = project(compacted, event('context.compaction.finished', { ok: true, error: null }));
+  assert.equal(finished.entries.length, 1, 'finishing adds nothing');
+});
+
 test('an unknown event type earns exactly one line', () => {
   // `fresh()` also resets the sequence counter the event builder uses, so the numbers in
   // this test are the ones the assertions talk about.

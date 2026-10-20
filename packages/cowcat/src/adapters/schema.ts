@@ -175,6 +175,29 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     stopReason: stopReasonSchema.nullable(),
   }),
   z.object({ ...base, type: z.literal('model.usage'), usage: modelUsageSchema }),
+  z.object({
+    ...base,
+    type: z.literal('context.compacted'),
+    trigger: z.enum(['auto', 'manual', 'overflow']),
+    summary: z.string(),
+    throughSeq: z.number().int().nonnegative(),
+    shadowed: z.readonly(z.array(z.number().int().positive())),
+    dropped: z.number().int().nonnegative(),
+    model: z.string(),
+    usage: modelUsageSchema.nullable(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('context.compaction.started'),
+    trigger: z.enum(['auto', 'manual', 'overflow']),
+    model: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('context.compaction.finished'),
+    ok: z.boolean(),
+    error: z.string().nullable(),
+  }),
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
   z.object({ ...base, type: z.literal('todo.updated'), todos: z.readonly(z.array(todoItemSchema)) }),
   z.object({
@@ -245,6 +268,17 @@ const sessionStateSchema = z.object({
   lastSeq: z.number().int().nonnegative(),
   turn: turnViewSchema.nullable(),
   messages: z.readonly(z.array(messageSchema)),
+  // The seq each message came from (ADR-071). Same length as `messages`; a snapshot that
+  // disagrees is not a state we understand, and a snapshot missing the field replays.
+  messageSeqs: z.readonly(z.array(z.number().int().positive())),
+  // The provider's last report and where it ended (ADR-070). `null` until one arrives,
+  // and reset by every compaction.
+  lastUsage: z
+    .object({ tokens: z.number().int().nonnegative(), anchorSeq: z.number().int().nonnegative() })
+    .nullable(),
+  // The compaction lock (ADR-072). A snapshot written mid-compaction keeps it open, which
+  // is exactly what the log says too.
+  compactionOpen: z.boolean(),
   // The `always` answers this session has given. Part of the state, not a side
   // table, so a snapshot that dropped them would silently re-ask questions the user
   // already answered.
