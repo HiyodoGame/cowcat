@@ -212,16 +212,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     sandbox: sandbox.profile,
     process: processes,
     version,
-    reserved: [...builtinTools.keys()],
+    baseTools: builtinTools,
     warn: (message) => {
       warnings.push(message);
     },
     signal: mcpLifetime.signal,
   });
-  const tools: ReadonlyMap<string, ToolPort> = new Map([
-    ...builtinTools,
-    ...mcp.tools.map((tool) => [tool.spec.name, tool] as const),
-  ]);
+  const tools: ReadonlyMap<string, ToolPort> = mcp.table;
   const store = options.store ?? new JsonlEventStore(paths.sessionsDir);
   const sessionDeps: SessionDeps = {
     store,

@@ -23,6 +23,10 @@ const PROBE_TIMEOUT_MS = 5_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CLOSE_GRACE_MS = 2_000;
 const RESULT_CAP_CHARS = 20_000;
+const ACK_TIMEOUT_MS = 2_000;
+/** Pagination bounds: a broken server must not make discovery unbounded (ADR-088). */
+const MAX_TOOL_PAGES = 100;
+const MAX_TOOLS = 5_000;
 
 const MODERN_PROTOCOL = 'io.modelcontextprotocol/protocolVersion';
 const CLIENT_INFO = 'io.modelcontextprotocol/clientInfo';
@@ -80,6 +84,10 @@ export class McpClient {
   #closed = false;
   #exited: ProcessExit | null = null;
   #terminated = false;
+  #listChanged = false;
+  #subscriptionId: number | null = null;
+  readonly #toolListeners = new Set<() => void>();
+  readonly #ackWaiters = new Map<number, (acknowledged: boolean) => void>();
   #unsubscribeLine: (() => void) | null = null;
   #unsubscribeExit: (() => void) | null = null;
   #resolveExit: ((exit: ProcessExit) => void) | null = null;
@@ -142,35 +150,115 @@ export class McpClient {
   }
 
   async listTools(): Promise<McpToolList> {
-    const result = await this.#request('tools/list', {});
-    const record = requireRecord(result, 'tools/list result');
-    const raw = record['tools'];
-    if (!Array.isArray(raw)) throw new McpClientError('protocol', 'tools/list result has no tools array');
-
     const tools: McpToolDefinition[] = [];
     const warnings: string[] = [];
-    for (const entry of raw) {
-      if (!isRecord(entry)) {
-        warnings.push('a tool entry was not an object and was skipped');
-        continue;
+    const names = new Set<string>();
+    const cursors = new Set<string>();
+    let cursor: string | null = null;
+    let pages = 0;
+
+    for (;;) {
+      pages += 1;
+      if (pages > MAX_TOOL_PAGES) {
+        warnings.push(`tools/list stopped after ${String(MAX_TOOL_PAGES)} pages; the remaining tools are not listed`);
+        break;
       }
-      const name = entry['name'];
-      const inputSchema = entry['inputSchema'];
-      if (typeof name !== 'string' || name === '' || !isRecord(inputSchema)) {
-        warnings.push(`a tool entry was skipped: ${typeof name === 'string' && name !== '' ? name : '(unnamed)'} has no usable inputSchema`);
-        continue;
+      const result = await this.#request('tools/list', cursor === null ? {} : { cursor });
+      const record = requireRecord(result, 'tools/list result');
+      const raw = record['tools'];
+      if (!Array.isArray(raw)) throw new McpClientError('protocol', 'tools/list result has no tools array');
+
+      for (const entry of raw) {
+        if (!isRecord(entry)) {
+          warnings.push('a tool entry was not an object and was skipped');
+          continue;
+        }
+        const name = entry['name'];
+        const inputSchema = entry['inputSchema'];
+        if (typeof name !== 'string' || name === '' || !isRecord(inputSchema)) {
+          warnings.push(`a tool entry was skipped: ${typeof name === 'string' && name !== '' ? name : '(unnamed)'} has no usable inputSchema`);
+          continue;
+        }
+        if (names.has(name)) {
+          warnings.push(`duplicate tool name "${name}" in one server; the later entry was ignored`);
+          continue;
+        }
+        names.add(name);
+        tools.push({
+          name,
+          description: typeof entry['description'] === 'string' ? entry['description'] : '',
+          inputSchema,
+        });
+        if (tools.length >= MAX_TOOLS) {
+          warnings.push(`tools/list stopped at ${String(MAX_TOOLS)} tools; the remaining tools are not listed`);
+          return { tools, warnings };
+        }
       }
-      tools.push({
-        name,
-        description: typeof entry['description'] === 'string' ? entry['description'] : '',
-        inputSchema,
-      });
+
+      const next = record['nextCursor'];
+      if (typeof next !== 'string' || next === '') break;
+      if (cursors.has(next)) {
+        warnings.push('tools/list repeated a pagination cursor; pagination stopped');
+        break;
+      }
+      cursors.add(next);
+      cursor = next;
     }
-    if (record['nextCursor'] !== undefined) {
-      // Pagination is not implemented (ADR-087 ⑦). Saying so beats silently listing less.
-      warnings.push('tools/list returned nextCursor; only the first page is available');
-    }
+
+    if (pages > 1) warnings.push(`tools/list returned ${String(pages)} pages`);
     return { tools, warnings };
+  }
+
+  /**
+   * Starts watching for tool-list changes (ADR-088).
+   *
+   * Modern servers need an explicit `subscriptions/listen`; the acknowledgment is a
+   * notification, not the request's result, so this waits briefly for it and otherwise
+   * keeps going (the subscription may still work). Legacy servers push
+   * `notifications/tools/list_changed` on their own.
+   *
+   * Returns a warning string when watching is not possible; `null` means "attempted".
+   */
+  async watchTools(): Promise<string | null> {
+    if (!this.#listChanged) return 'the server does not advertise tools.listChanged; tool changes are not watched';
+    if (this.#era === 'legacy') return null;
+
+    const id = this.#nextId;
+    this.#nextId += 1;
+    this.#subscriptionId = id;
+    const acknowledged = new Promise<boolean>((resolve) => {
+      this.#ackWaiters.set(id, resolve);
+    });
+    this.#handle.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id,
+        method: 'subscriptions/listen',
+        params: this.#decorate({ notifications: { toolsListChanged: true } }),
+      }),
+    );
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(false);
+      }, ACK_TIMEOUT_MS);
+    });
+    try {
+      const acked = await Promise.race([acknowledged, timedOut]);
+      return acked ? null : 'the server did not acknowledge the tools subscription; changes may still arrive';
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      this.#ackWaiters.delete(id);
+    }
+  }
+
+  /** Registers a listener for `notifications/tools/list_changed`. Returns an unsubscribe. */
+  onToolsChanged(listener: () => void): () => void {
+    this.#toolListeners.add(listener);
+    return () => {
+      this.#toolListeners.delete(listener);
+    };
   }
 
   /**
@@ -244,6 +332,7 @@ export class McpClient {
     if (record === null || !isRecord(record['tools'])) {
       throw new McpClientError('protocol', 'the MCP server does not declare the tools capability');
     }
+    this.#listChanged = record['tools']['listChanged'] === true;
   }
 
   #onLine(line: string): void {
@@ -259,7 +348,10 @@ export class McpClient {
       return;
     }
     const id = message['id'];
-    if (typeof id !== 'number') return;
+    if (typeof id !== 'number') {
+      this.#onNotification(message);
+      return;
+    }
     const pending = this.#pending.get(id);
     if (pending === undefined) return;
     this.#pending.delete(id);
@@ -273,6 +365,30 @@ export class McpClient {
       return;
     }
     pending.resolve(message['result']);
+  }
+
+  #onNotification(message: Record<string, unknown>): void {
+    const method = message['method'];
+    if (typeof method !== 'string') return;
+    const params = isRecord(message['params']) ? message['params'] : {};
+
+    if (method === 'notifications/subscriptions/acknowledged') {
+      const id = readSubscriptionId(params);
+      if (id === null) return;
+      const waiter = this.#ackWaiters.get(id);
+      if (waiter === undefined) return;
+      const filter = isRecord(params['notifications']) ? params['notifications'] : {};
+      waiter(filter['toolsListChanged'] === true);
+      return;
+    }
+
+    if (method === 'notifications/tools/list_changed') {
+      const id = readSubscriptionId(params);
+      // A single subscription is enough for one client; a notification for another
+      // subscription on the same channel is not ours (ADR-088).
+      if (id !== null && this.#subscriptionId !== null && id !== this.#subscriptionId) return;
+      for (const listener of [...this.#toolListeners]) listener();
+    }
   }
 
   #onExit(exit: ProcessExit): void {
@@ -434,4 +550,10 @@ function readStrings(value: unknown): readonly string[] {
 function readSupportedVersions(data: unknown): readonly string[] {
   if (!isRecord(data)) return [];
   return readStrings(data['supported']);
+}
+
+function readSubscriptionId(params: Record<string, unknown>): number | null {
+  const meta = isRecord(params['_meta']) ? params['_meta'] : null;
+  const id = meta === null ? undefined : meta['io.modelcontextprotocol/subscriptionId'];
+  return typeof id === 'number' ? id : null;
 }
