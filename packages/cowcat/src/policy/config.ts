@@ -104,6 +104,12 @@ export interface ProviderSettings {
   readonly baseUrl?: string;
   /** The environment variable that holds the key. A name, never the key (ADR-063). */
   readonly apiKeyEnv?: string;
+  /**
+   * A key read from a **legacy v1 config** (ADR-089). It exists only in the translated
+   * in-memory layer: the v2 document schema does not accept it, it is never written, and
+   * it is never included in warnings or logs. New configs must use `apiKeyEnv`.
+   */
+  readonly apiKey?: string;
 }
 
 /**

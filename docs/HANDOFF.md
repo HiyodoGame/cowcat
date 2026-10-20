@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-21（MCP T2 合入；真实端点实测；审批早到竞态修复）**。
-> 交接时仓库状态：**`main` = `b578f43`**（#81 MCP T2 合入）；当前分支 **`fix/oneshot-approval-race`**（未提交/未推送）。
+> 最近一次更新：**2026-10-21（审批竞态修复合入；P8 v1 配置兼容）**。
+> 交接时仓库状态：**`main` = `f4afe52`**（#82 合入）；当前分支 **`feat/p8-v1-config`**（未提交/未推送）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`doctor`、探针脚本）；**【CI 远端】**GitHub Actions（**本次没有推送，未观察**）；**【上游】**厂商文档或实现；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更。**
@@ -75,13 +75,32 @@
 - **实测抓到一个真 bug**：`run --yes` 在 `approval.requested` 事件到达时立刻回答，但内核先写事件、后调 `approve()`，答案在桥注册前到达 → `no approval is pending`，回合挂到 5 分钟超时。已修：宿主按 `callId` 暂存早到的答案（ADR-064 ⑧ 的 T2 修正），并加了确定性回归测试。
 - **另一个与 MCP 无关的发现**：真实 `~/.cowcat/config.json` 是 **v1 形状**（`model` 字符串 + `providers.*.apiKey`），v2 严格 schema 拒绝（`doctor` 两项 FAIL）。P8 切换前必须迁移或兼容读取。
 
+### P8 第一步：v1 配置兼容（ADR-089）
+
+真实配置不再被拒绝——`loadConfig` 按**形状**识别 v1 并翻译成 v2 的内存层，**不重写文件**：
+
+- `model: "provider/model"` → `model.preset`；
+- 顶层 `providers` → `model.providers`（`baseURL`/`api` → `baseUrl`，`apiKey` 只留在内存，`env[0]` → `apiKeyEnv`）；
+- `sandbox: "off"|"light"`、`{ envDeny }` → `sandbox.mode` / `sandbox.env.deny`；
+- `permissions` 明确**不迁移**（是另一套规则语言），未知键列出来；
+- 内联 `apiKey`：环境变量优先，**不写回、不进日志、不进警告内容**；`doctor` 只报「有内联 key」。
+
+补了两个 coding-plan 内置 provider（`zai-coding-plan`、`volcengine-coding-plan`），因为真实配置的模型是 `zai-coding-plan/glm-5.3-flash`，而 v2 原先只认识 `zai` 与 `bigmodel`。
+
+**真实 home 验证**（没有改用户的文件）：
+
+- `cowcat doctor` 从「2 项 FAIL」变成通过，模型解析为 `zai-coding-plan/glm-5.3-flash`（openai → `https://api.z.ai/api/coding/paas/v4`），key 行显示「v1 内联 apiKey」；
+- `cowcat run "Reply with exactly one word: READY"` 用真实配置的内联 key 跑通，输出 `READY`，退出 0。
+
+**未迁移**：v1 的项目 `.cowcat/config.json`、`mcp.json`、`state.json` 都没有自动读。`mcp.json` 是独立文件与独立信任模型，需要单独决定。
+
 ---
 
 ## 2. 当前状态
 
 ### 已验证 —— 【本机测试】/【构建】/【本机命令】
 
-- 【本机测试】`packages/cowcat` → **656 tests / 640 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
+- 【本机测试】`packages/cowcat` → **662 tests / 646 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
 - 【本机测试】`packages/cli` → **21 / 21 pass**
 - 【本机测试】`packages/tui` → 本会话未改该包、**未重跑**（上一轮 48 / 48；CI 两条腿当时通过）
 - 【本机命令】`node tools/lint-probe.mjs` → 未重跑（本会话没加分层规则；`npm run lint` 已过）
@@ -100,6 +119,7 @@
 - T2 变更：旧版推送、现代 `subscriptions/listen` + ack 均能触发刷新；活表从 6 个工具变成 7 个（`mcp__fake__added`），内置 `TodoWrite` 不受影响。
 - **真实端点**（非注入模型）：`bigmodel/glm-5.3-flash` 两次真实回合都成功；一次对假服务器，一次对 `server-everything@2.0.0`（§1）。
 - **审批竞态**：回合开始前就回答 `respondApproval`，答案被暂存并在 `approve()` 到达时消费，Write 真正执行（回归测试）。
+- **v1 配置**：真实 `~/.cowcat/config.json` 被翻译后 `doctor` 通过，且一次真实回合用内联 key 成功；v2 文档带 `apiKey` 仍被严格 schema 拒绝（形状门控测试）。
 
 ### 项目状态
 
@@ -112,19 +132,19 @@
 
 ## 3. 项目唯一下一步
 
-**先提交并推送审批竞态修复；然后是 P8 配置迁移。**
+**先提交并推送 P8 配置兼容；然后继续 P8 的其余部分。**
 
-理由：真实端点实测确认了 `~/.cowcat/config.json` 的 **v1/v2 形状冲突**——现有用户的配置会被 v2 直接拒绝。P8 是切换阶段，这件事不解决，切换后第一次启动就会失败。
+P8 还没做的（按 `dev-plan-v2.md`）：
 
-之后候选：
+1. **包切换**：`packages/cowcat` 去 `private`、核对 `bin`/`engines`/`files`、tarball 检查（`tools/check-tarball.mjs` 已有）。
+2. **删除 `agent/`**，旧文档归档到 `docs/archive/`；CI 的 legacy 腿随之删除。
+3. **CHANGELOG** 从 `1.0.0-beta.1` 起算；版本号只在发布批次里改。
+4. **`cowcat setup`**：接线时顺便提供一次性写出 v2 配置的迁移（不含密钥，ADR-089 ⑤）。
+5. **v1 残留数据**：项目 `.cowcat/config.json`、`~/.cowcat/mcp.json`、`state.json` 仍未迁移；`mcp.json` 需要单独决定（独立文件 + `mcpTrusted` 语义）。
 
-1. **MCP 剩余**：`npx`/`.cmd` 入口（Windows `shell:false` 下不能直接执行 `.cmd`）、真实服务器的 `list_changed`、`light` 档在 macOS/Linux 的路径白名单。
-2. **`input_required` / elicitation**：仍报未支持。
-3. **`doctor` 连接状态**：与「诊断命令不执行项目代码」冲突，保持不做。
-4. **`mcp.servers` 用户文档**：目前只有 ADR 与研究文档。
-5. **TUI 人眼验收**：仍是 P6 的唯一剩余项。
+MCP 剩余项（`.cmd`/`npx` 入口、真实 `list_changed`、macOS `light` 档）继续排在 P8 之后。
 
-**仍未做的事**：真实回合只跑了「单工具、无审批交互（`--yes`）」这一种形状；多轮工具、拒绝路径、压缩后继续、子 agent 的真实端点都还没有跑。
+**仍未做的事**：真实回合只跑了「单工具 + `--yes`」；多轮工具、拒绝路径、压缩、子 agent 的真实端点都还没有跑。
 
 ---
 
@@ -166,17 +186,17 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 
 ## 6. 未验证 / 待确认
 
-1. **真实模型只验证了一种形状**：`bigmodel/glm-5.3-flash` 的单轮、单工具、`--yes` 路径。多轮工具、拒绝路径、压缩后继续、子 agent 的真实端点都没跑；`zai`（OpenAI 协议）路由返回 429 余额不足。
+1. **真实模型只验证了两种形状**：`bigmodel/glm-5.3-flash` 的临时配置、以及真实 home 的 `zai-coding-plan/glm-5.3-flash`（v1 兼容层）；都是单轮、单工具、`--yes`。多轮工具、拒绝路径、压缩后继续、子 agent 的真实端点都没跑。
 2. **MCP 只在 Windows 上验证**：`light` 档的 macOS/Linux 路径未测；`system` 档被显式拒绝（没有执行器）也未测。
 3. **`npx`/`.cmd` 入口未验证**：Windows 的 `.cmd` 不能 `shell:false` 直启；真实服务器测试用的是包内 `dist/index.js` + `node`。
 4. **真实服务器的 `list_changed`/分页未触发**：`server-everything` 只做了 `tools/list` + `tools/call`；订阅 ack 行为仍是未知。
 5. **`doctor` 不连接服务器**：配置层的名字与受信结论可见，工具数不可见。
-6. **v1/v2 配置冲突（新，P8 阻塞项）**：现有 `~/.cowcat/config.json` 是 v1 形状，v2 严格 schema 直接拒绝（`doctor` 两项 FAIL）。切换前必须迁移或兼容读取。
+6. **v1 配置兼容已做（ADR-089），但不是全量迁移**：`permissions`、v1 项目 `.cowcat/config.json`、`~/.cowcat/mcp.json`、`state.json` 都没有读；内联 `apiKey` 仍留在旧文件里（只在内存使用）。
 7. **子 agent 的收益仍是推断**（研究型任务的 15× / 90.2% 不必然适用于编码）。
 8. **前序遗留、未复现**：`agent/` 的两个 macOS flake；`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不在仓库里；v1 套件（762 项）本会话未跑。
 9. **`packages/cli` 与 `packages/protocol` 尚未进分支保护 required 列表**（改仓库设置是用户的事）。
 10. **`cowcat setup` 未接线**；滚动回看、预览模态、Plan/Act 双模式仍未做。
-11. **本次修复未推送**：分支只在本地，CI 未跑。
+11. **本次改动未推送**：分支只在本地，CI 未跑。
 
 ---
 
@@ -185,13 +205,16 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 | 路径 | 内容 |
 |---|---|
 | [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**：P0–P8 阶段表、P7 的模块表、R3~R8 远期项 |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~088**（070~074 压缩；075~078 指令；079~082 子 agent；083~088 MCP） |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~089**（070~074 压缩；075~078 指令；079~082 子 agent；083~088 MCP；089 v1 配置兼容） |
 | [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 进程网关：`run()` 与 `open()` 两种形状、脱敏、终止 |
 | [`research/p7-mcp.md`](research/p7-mcp.md) | 本次产出：上游对照（含补读后的修正）、决定、ADR 清单、待验证 |
 | `packages/cowcat/src/ports/process.ts` | `ProcessSpec` / `ProcessResult` / `ProcessHandle` / `open()` 契约 |
 | `packages/cowcat/src/adapters/process.ts` | `NodeProcess.open()`：按行切分、stderr 尾部、一次终止 |
 | `packages/cowcat/src/adapters/mcp/` | `client.ts`（双时代 + JSON-RPC + 分页/订阅）、`tools.ts`（命名/risk）、`servers.ts`（启动/冲突/活表刷新/关闭） |
 | `packages/cowcat/src/host/config.ts` | `selectMcpServers()`：受信闸门 + 项目层 env 丢弃 |
+| `packages/cowcat/src/adapters/config.ts` | v2 严格解码 + v1 兼容翻译（`isV1Document` / `translateV1`） |
+| `packages/cowcat/src/host/presets.ts` | 内置 provider/preset（含 `zai-coding-plan`、`volcengine-coding-plan`） |
+| `packages/cowcat/src/host/model.ts` | 选择与建端口；环境变量优先，v1 内联 key 仅作回退 |
 | `packages/cowcat/src/host/host.ts` | 构造时启动 MCP、合并工具表、`close()` 关闭 |
 | `packages/cowcat/test/mcp.test.ts` | 协议与进程边界（现代/旧版/崩溃/取消/脱敏/冲突/分页/变更订阅/活表） |
 | `packages/cowcat/test/fixtures/fake-mcp-server.ts` | 假服务器（stdio、换行分隔 JSON-RPC） |

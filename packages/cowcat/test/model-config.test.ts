@@ -222,3 +222,30 @@ test('the adapter goes to the configured endpoint, with the model the preset nam
   assert.match(transport.requests[0]?.url ?? '', /^https:\/\/gateway\.example\/v1\//);
   assert.equal(transport.requests[0]?.body['model'], 'gpt-x');
 });
+
+test('a v1 inline apiKey is usable, and the environment still wins', () => {
+  const selection = selectModel(
+    emptySettings({
+      preset: 'zai-coding-plan/glm-5.3-flash',
+      providers: { 'zai-coding-plan': { apiKey: 'sk-inline-test' } },
+    }),
+  );
+  assert.equal(selection.apiKey, 'sk-inline-test');
+  assert.equal(selection.apiKeyEnv, 'ZHIPU_API_KEY');
+  assert.match(selection.warnings.join('\n'), /inline apiKey/u);
+  // No environment value: the inline key is the fallback and the port is buildable.
+  assert.ok(createModelPort(selection, {}));
+});
+
+test('a custom provider may have only an inline key (apiKeyEnv is null)', () => {
+  const selection = selectModel(
+    emptySettings({
+      preset: 'acme/gpt-x',
+      presets: { 'acme/gpt-x': { protocol: 'openai', model: 'gpt-x' } },
+      providers: { acme: { apiKey: 'sk-acme', baseUrl: 'https://acme.example/v1' } },
+    }),
+  );
+  assert.equal(selection.apiKeyEnv, null);
+  assert.equal(selection.apiKey, 'sk-acme');
+  assert.ok(createModelPort(selection, {}));
+});

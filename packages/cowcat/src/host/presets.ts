@@ -52,6 +52,17 @@ export const BUILTIN_PROVIDERS: Readonly<Record<string, BuiltinProvider>> = {
    * a key is issued for one of them.
    */
   bigmodel: { protocol: 'anthropic', apiKeyEnv: 'ZHIPU_API_KEY', baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
+  /**
+   * Coding-plan routes. They serve the same GLM family as `zai`, but at a different
+   * endpoint and (for the same model id) often with a different quota. A separate
+   * provider id is what lets a v1 config keep meaning what it meant (ADR-089).
+   */
+  'zai-coding-plan': { protocol: 'openai', apiKeyEnv: 'ZHIPU_API_KEY', baseUrl: 'https://api.z.ai/api/coding/paas/v4' },
+  'volcengine-coding-plan': {
+    protocol: 'openai',
+    apiKeyEnv: 'ARK_CODING_PLAN_API_KEY',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+  },
 };
 
 /**
@@ -116,6 +127,30 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
   },
   'bigmodel/glm-5.3': {
     protocol: 'anthropic',
+    model: 'glm-5.3',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
+  'zai-coding-plan/glm-5.3-flash': {
+    protocol: 'openai',
+    model: 'glm-5.3-flash',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
+  'zai-coding-plan/glm-5.3': {
+    protocol: 'openai',
+    model: 'glm-5.3',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
+  'volcengine-coding-plan/glm-5.3-flash': {
+    protocol: 'openai',
+    model: 'glm-5.3-flash',
+    limits: { output: 131072, context: 1000000 },
+    toolCalls: true,
+  },
+  'volcengine-coding-plan/glm-5.3': {
+    protocol: 'openai',
     model: 'glm-5.3',
     limits: { output: 131072, context: 1000000 },
     toolCalls: true,
