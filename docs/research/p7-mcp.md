@@ -196,7 +196,7 @@
 1. **沙箱与 stdio 服务器的兼容性**【推断】：`light` 档的读写白名单是否会挡住服务器自己的二进制与依赖目录（例如 `npx` 的缓存）——需要实测，否则「天然被沙箱覆盖」会变成「天然起不来」。**T1 只测到一半**：Windows 上 `light` 只做 env 脱敏与审计，假服务器（`node`）能正常启动；bwrap / seatbelt 的路径白名单是否挡住 `npx` 缓存仍未验证。
 2. **分页与工具变更**：T2 已实现分页（上限 100 页 / 5,000 工具）与变更订阅（ADR-088）；但真实服务器里有多少会发送 `tools/list_changed`、其订阅 ack 行为是否一致，未实测。
 3. **v1 结论**：`agent/src/mcp.js`（33 KB）仍未逐行读；它的重连、通知订阅、工具缓存策略需要单独过一遍才能说「迁哪些结论」。
-4. **真实服务器**：T1 只用假服务器验证协议形状；`npx -y @modelcontextprotocol/server-*` 这类真实入口未跑过（本机也没有可用的网络授权）。
+4. **真实服务器**：`@modelcontextprotocol/server-everything@2.0.0` 已实际连上（§9）；但 `npx`/`.cmd` 入口、以及真实服务器的 `list_changed` 行为仍未验证。
 
 ---
 
@@ -227,3 +227,23 @@
 - `packages/protocol/src/methods.ts`（9 个方法）
 - `agent/src/mcp.js`、`mcpnotify.js`、`mcpsubs.js`（v1 旧规范实现，只迁结论）
 - `docs/research/p7-frontier-survey.md` D2、`docs/architecture/README.md`（ADR-014/015/016/028/077）
+
+---
+
+## 9. 真实端点实测（2026-10-21）
+
+【实测】不是调研推演，是实际跑出来的：
+
+| 项 | 值 |
+|---|---|
+| 模型端点 | `bigmodel/glm-5.3-flash`（Anthropic 协议，`ZHIPU_API_KEY`，`https://open.bigmodel.cn/api/anthropic`） |
+| 第一次尝试 | `zai/glm-5.3-flash`（OpenAI 协议）→ **429 Insufficient balance**（key 有效，账号无余额） |
+| 假 MCP 服务器 | 仓库内 `fake-mcp-server`（modern，`node` 直跑） |
+| 真 MCP 服务器 | `@modelcontextprotocol/server-everything@2.0.0`，`node dist/index.js stdio`（npm 装到临时目录，不走 `npx`） |
+| 结果 | 两次 `cowcat run --yes` 都退出 0；模型发出 `mcp__fake__echo` / `mcp__everything__echo`，工具返回 `echo: hello` / `Echo: hello-real`，模型在最终回答里引用 |
+
+**实测暴露并修掉的一个真 bug**：`run --yes` 在 `approval.requested` 事件到达时立即回答，但内核是「先写事件、再调 `approve()`」，答案在桥注册前到达 → `no approval is pending`，回合随后挂到 5 分钟审批超时。宿主改为按 `callId` 暂存早到的答案（ADR-064 ⑧ 的 T2 修正），并加了确定性回归测试（回合开始前就回答）。
+
+**另一个与 MCP 无关、但会影响 P8 的发现**：真实 `~/.cowcat/config.json` 是 **v1 形状**（`"model": "zai-coding-plan/glm-5.3-flash"` + `providers.*.apiKey`），v2 的严格 schema 直接拒绝（`doctor` 报 `model: expected object` 与 `Unrecognized key: "providers"`）。本次全程用临时 `COWCAT_HOME` 隔离；P8 切换前必须做配置迁移或兼容读取。
+
+**仍未验证**：`npx`/`.cmd` 入口（Windows 上 `shell:false` 无法直接执行 `.cmd`）、macOS/Linux 的 `light` 档路径白名单、真实服务器的 `list_changed` 行为。

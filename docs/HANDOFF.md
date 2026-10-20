@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-21（MCP T1 合入；T2 分页与变更订阅）**。
-> 交接时仓库状态：**`main` = `01a5a59`**（#80 MCP T1 合入）；当前分支 **`feat/p7-mcp-t2`**（MCP T2，未提交/未推送）。
+> 最近一次更新：**2026-10-21（MCP T2 合入；真实端点实测；审批早到竞态修复）**。
+> 交接时仓库状态：**`main` = `b578f43`**（#81 MCP T2 合入）；当前分支 **`fix/oneshot-approval-race`**（未提交/未推送）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`doctor`、探针脚本）；**【CI 远端】**GitHub Actions（**本次没有推送，未观察**）；**【上游】**厂商文档或实现；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更。**
@@ -61,13 +61,27 @@
 - 测试从 7 项增加到 11 项：分页、旧版推送、现代订阅、活表刷新（`mcp__fake__change` → `mcp__fake__added`）。
 - **`doctor` 仍然不连接服务器**（ADR-084 ⑤），所以「连接状态」这一项没有做——它与「诊断命令不执行项目代码」冲突。
 
+### 真实端点实测（2026-10-21）
+
+用临时 `COWCAT_HOME` 跑了两条完整链路（没有碰用户的 `~/.cowcat/config.json`）：
+
+| 链路 | 结果 |
+|---|---|
+| `bigmodel/glm-5.3-flash` + 仓库假 MCP 服务器 | 模型调用 `mcp__fake__echo`，输出 `echo: hello`，退出 0 |
+| `bigmodel/glm-5.3-flash` + `@modelcontextprotocol/server-everything@2.0.0` | 模型调用 `mcp__everything__echo`，输出 `Echo: hello-real`，退出 0 |
+
+- `zai/glm-5.3-flash`（OpenAI 协议）先试过：**429 Insufficient balance**——key 有效，账号没有余额。`bigmodel`（Anthropic 协议）可用。
+- 真服务器用 npm 装到临时目录、`node dist/index.js stdio` 启动；**没有走 `npx`**。
+- **实测抓到一个真 bug**：`run --yes` 在 `approval.requested` 事件到达时立刻回答，但内核先写事件、后调 `approve()`，答案在桥注册前到达 → `no approval is pending`，回合挂到 5 分钟超时。已修：宿主按 `callId` 暂存早到的答案（ADR-064 ⑧ 的 T2 修正），并加了确定性回归测试。
+- **另一个与 MCP 无关的发现**：真实 `~/.cowcat/config.json` 是 **v1 形状**（`model` 字符串 + `providers.*.apiKey`），v2 严格 schema 拒绝（`doctor` 两项 FAIL）。P8 切换前必须迁移或兼容读取。
+
 ---
 
 ## 2. 当前状态
 
 ### 已验证 —— 【本机测试】/【构建】/【本机命令】
 
-- 【本机测试】`packages/cowcat` → **655 tests / 639 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
+- 【本机测试】`packages/cowcat` → **656 tests / 640 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
 - 【本机测试】`packages/cli` → **21 / 21 pass**
 - 【本机测试】`packages/tui` → 本会话未改该包、**未重跑**（上一轮 48 / 48；CI 两条腿当时通过）
 - 【本机命令】`node tools/lint-probe.mjs` → 未重跑（本会话没加分层规则；`npm run lint` 已过）
@@ -84,6 +98,8 @@
 - 宿主端到端：项目层 `cowcat.json` 声明服务器 + 工作区受信 → 模型能在回合里调用 `mcp__fake__echo`，`tool.finished.ok = true`，且没有触发审批（用户层 allow 规则匹配）。
 - T2 分页：`paginated` 模式两页合并，warning 记 `2 pages`。
 - T2 变更：旧版推送、现代 `subscriptions/listen` + ack 均能触发刷新；活表从 6 个工具变成 7 个（`mcp__fake__added`），内置 `TodoWrite` 不受影响。
+- **真实端点**（非注入模型）：`bigmodel/glm-5.3-flash` 两次真实回合都成功；一次对假服务器，一次对 `server-everything@2.0.0`（§1）。
+- **审批竞态**：回合开始前就回答 `respondApproval`，答案被暂存并在 `approve()` 到达时消费，Write 真正执行（回归测试）。
 
 ### 项目状态
 
@@ -96,17 +112,19 @@
 
 ## 3. 项目唯一下一步
 
-**先提交并推送 MCP T2 的 PR；然后补真实端点实测，或继续 MCP T3。**
+**先提交并推送审批竞态修复；然后是 P8 配置迁移。**
 
-T2 之后的已知缺口（都不阻塞合并）：
+理由：真实端点实测确认了 `~/.cowcat/config.json` 的 **v1/v2 形状冲突**——现有用户的配置会被 v2 直接拒绝。P8 是切换阶段，这件事不解决，切换后第一次启动就会失败。
 
-1. **`light` 档在 macOS/Linux 是否挡得住真实服务器**：本次只在 Windows 上跑了 `node` 假服务器（Windows 的 `light` 只做脱敏）。bwrap/seatbelt 的路径白名单是否挡住 `npx` 缓存，仍未验证。
-2. **`tools/call` 的 `input_required`**：报未支持，不实现 elicitation。
-3. **真实服务器**：`npx -y @modelcontextprotocol/server-*` 未跑过（本机没有网络授权）；真实服务器的订阅 ack 行为也未知。
-4. **`doctor` 连接状态**：与「诊断命令不执行项目代码」冲突，T2 明确不做；工具数只在宿主启动后进 `configWarnings`。
-5. **`mcp.servers` 的用户文档**：目前只有 ADR 与研究文档，没有面向用户的配置示例。
+之后候选：
 
-**仍未做的事**：真实模型请求仍是零实测（§6.1）。MCP 的验证是「协议形状 + 进程边界」，不是「模型会用这些工具」。
+1. **MCP 剩余**：`npx`/`.cmd` 入口（Windows `shell:false` 下不能直接执行 `.cmd`）、真实服务器的 `list_changed`、`light` 档在 macOS/Linux 的路径白名单。
+2. **`input_required` / elicitation**：仍报未支持。
+3. **`doctor` 连接状态**：与「诊断命令不执行项目代码」冲突，保持不做。
+4. **`mcp.servers` 用户文档**：目前只有 ADR 与研究文档。
+5. **TUI 人眼验收**：仍是 P6 的唯一剩余项。
+
+**仍未做的事**：真实回合只跑了「单工具、无审批交互（`--yes`）」这一种形状；多轮工具、拒绝路径、压缩后继续、子 agent 的真实端点都还没有跑。
 
 ---
 
@@ -140,21 +158,25 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 20. **Windows 上子进程的 cwd 锁住目录**：测试清理临时目录时必须**先关宿主（终止服务器）再 `rmSync`**，否则 EPERM。`t.after` 的注册顺序不可依赖，本次改成单个 after 里顺序执行。
 21. **`server/discover` 的探测不能写死错误码**：旧版服务器回 `-32601`/`-32602` 或干脆不回；只有 `DiscoverResult` 与 `-32022` 才说明它是现代服务器。
 22. **现代 MCP 的 `list_changed` 要先订阅**：不发 `subscriptions/listen` 就不会收到；确认信号是 `notifications/subscriptions/acknowledged`（通知，不是请求的 result），所以等 result 会一直等下去。旧版服务器则直接推通知。两种都要处理。
+23. **`approval.requested` 先写、`approve()` 后调**：任何「看到事件就立刻回答」的前端都会撞上这个窗口（`run --yes` 实测）。宿主必须暂存早到的答案，不能直接报 `no approval is pending`。
+24. **真实 `~/.cowcat/config.json` 是 v1 形状**：`model` 是字符串、`providers.*.apiKey` 是内联密钥；v2 的严格 schema 会拒绝。跑任何 v2 真实端点测试都要用 `COWCAT_HOME` 指向临时目录，别拿用户配置做实验。
+25. **Windows 上 `npx` 是 `.cmd`**：`ProcessPort` 用 `shell:false`，不能直接 spawn `.cmd`。真实 MCP 服务器测试要指向包内的 `dist/index.js` 并用 `node` 启动，或另做 `.cmd` 解析（尚未做）。
 
 ---
 
 ## 6. 未验证 / 待确认
 
-1. **一次真实模型请求都没跑过**（跨会话未变）：所有回合行为都在宿主层用注入模型验证。`ZHIPU_API_KEY` 不在本机 shell 里。
+1. **真实模型只验证了一种形状**：`bigmodel/glm-5.3-flash` 的单轮、单工具、`--yes` 路径。多轮工具、拒绝路径、压缩后继续、子 agent 的真实端点都没跑；`zai`（OpenAI 协议）路由返回 429 余额不足。
 2. **MCP 只在 Windows 上验证**：`light` 档的 macOS/Linux 路径未测；`system` 档被显式拒绝（没有执行器）也未测。
-3. **真实 MCP 服务器未连接**：只用了仓库内假服务器（`test/fixtures/fake-mcp-server.ts`）。
-4. **真实服务器未连接**：只用了仓库内假服务器（`test/fixtures/fake-mcp-server.ts`）；分页与 `list_changed` 的触发也是假服务器模拟的，真实服务器的 ack 行为未知。
+3. **`npx`/`.cmd` 入口未验证**：Windows 的 `.cmd` 不能 `shell:false` 直启；真实服务器测试用的是包内 `dist/index.js` + `node`。
+4. **真实服务器的 `list_changed`/分页未触发**：`server-everything` 只做了 `tools/list` + `tools/call`；订阅 ack 行为仍是未知。
 5. **`doctor` 不连接服务器**：配置层的名字与受信结论可见，工具数不可见。
-6. **子 agent 的收益仍是推断**（研究型任务的 15× / 90.2% 不必然适用于编码）。
-7. **前序遗留、未复现**：`agent/` 的两个 macOS flake；`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不在仓库里；v1 套件（762 项）本会话未跑。
-8. **`packages/cli` 与 `packages/protocol` 尚未进分支保护 required 列表**（改仓库设置是用户的事）。
-9. **`cowcat setup` 未接线**；滚动回看、预览模态、Plan/Act 双模式仍未做。
-10. **本次未推送**：分支只在本地，CI 未跑。
+6. **v1/v2 配置冲突（新，P8 阻塞项）**：现有 `~/.cowcat/config.json` 是 v1 形状，v2 严格 schema 直接拒绝（`doctor` 两项 FAIL）。切换前必须迁移或兼容读取。
+7. **子 agent 的收益仍是推断**（研究型任务的 15× / 90.2% 不必然适用于编码）。
+8. **前序遗留、未复现**：`agent/` 的两个 macOS flake；`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不在仓库里；v1 套件（762 项）本会话未跑。
+9. **`packages/cli` 与 `packages/protocol` 尚未进分支保护 required 列表**（改仓库设置是用户的事）。
+10. **`cowcat setup` 未接线**；滚动回看、预览模态、Plan/Act 双模式仍未做。
+11. **本次修复未推送**：分支只在本地，CI 未跑。
 
 ---
 

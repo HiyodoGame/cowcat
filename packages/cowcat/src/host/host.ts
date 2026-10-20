@@ -143,6 +143,8 @@ export interface CowcatHost extends ProtocolHost {
   close(): Promise<void>;
 }
 
+const MAX_EARLY_APPROVALS = 8;
+
 interface PendingApproval {
   readonly callId: string;
   readonly resolve: (verdict: ApprovalVerdict) => void;
@@ -156,6 +158,12 @@ interface SessionRecord {
   /** Resolved by the `turn.opened` the host sees, so `turn.send` can answer early. */
   turnWaiters: Array<(turnId: string) => void>;
   pendingApproval: PendingApproval | null;
+  /**
+   * Answers that arrived before the kernel reached the bridge (ADR-065 ② is instant;
+   * the event is emitted before `approve()` is called). Holding them by call id is what
+   * keeps a fast `run --yes` from losing its own answer to the event/subscribe seam.
+   */
+  readonly earlyApprovals: Map<string, ApprovalVerdict>;
   running: { readonly controller: AbortController; readonly done: Promise<void> } | null;
 }
 
@@ -363,6 +371,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       lastSeq: session.state.lastSeq,
       turnWaiters: [],
       pendingApproval: null,
+      earlyApprovals: new Map(),
       running: null,
     };
     rec.unsubscribe = session.subscribe((update) => {
@@ -539,6 +548,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       void settled.then(() => {
         rec.running = null;
         rec.pendingApproval = null;
+        // An answer for a call that never reached the bridge must not outlive the turn.
+        rec.earlyApprovals.clear();
         rec.turnWaiters = [];
       });
       // RACE, not all: the reply has to go out while the turn is still running, and the
@@ -568,16 +579,23 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void> {
       const rec = open(sessionId);
       const pending = rec.pendingApproval;
-      if (pending === null || pending.callId !== callId) {
+      if (pending !== null && pending.callId === callId) {
+        rec.pendingApproval = null;
+        pending.resolve(verdict);
+        return Promise.resolve();
+      }
+      // The event is emitted before the bridge is called, so a frontend that answers the
+      // moment it sees `approval.requested` can legitimately arrive first. Hold it for
+      // the bridge instead of rejecting an answer the user (or `--yes`) already gave.
+      if (rec.earlyApprovals.size >= MAX_EARLY_APPROVALS) {
         return Promise.reject(
-          new ProtocolHostError(`no approval is pending for call ${callId}`, ERROR_CODES.hostRefused, {
+          new ProtocolHostError(`too many approvals arrived before the kernel asked for call ${callId}`, ERROR_CODES.hostRefused, {
             sessionId,
             callId,
           }),
         );
       }
-      rec.pendingApproval = null;
-      pending.resolve(verdict);
+      rec.earlyApprovals.set(callId, verdict);
       return Promise.resolve();
     },
 
@@ -637,6 +655,12 @@ function askApproval(rec: SessionRecord, request: ActionRequest): Promise<Approv
   return new Promise<ApprovalVerdict>((resolve, reject) => {
     if (rec.pendingApproval !== null) {
       reject(new ProtocolHostError('an approval is already pending in this session', ERROR_CODES.hostRefused));
+      return;
+    }
+    const early = rec.earlyApprovals.get(request.callId);
+    if (early !== undefined) {
+      rec.earlyApprovals.delete(request.callId);
+      resolve(early);
       return;
     }
     rec.pendingApproval = { callId: request.callId, resolve };
