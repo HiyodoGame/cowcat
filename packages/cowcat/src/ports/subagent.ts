@@ -13,6 +13,8 @@ export type SubagentRole = 'explore' | 'general';
 export type SubagentState = 'completed' | 'failed' | 'cancelled';
 
 export interface SubagentRequest {
+  /** The session that delegated. Recorded in the child's header (ADR-079 ③). */
+  readonly parentSessionId: string;
   /**
    * The child's session id, minted by the kernel before the spawn.
    *

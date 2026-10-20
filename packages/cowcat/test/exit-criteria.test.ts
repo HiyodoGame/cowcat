@@ -78,7 +78,7 @@ async function runScriptedTurn(protocol: FixtureProtocol) {
   const { store, deps } = await openSession(adapter(protocol, transport.fetch), 'sess_p4', [readTool]);
   const outcome = await runTurn(deps, 'read a.txt', new AbortController().signal);
 
-  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'completed', reason: null, notes: [] });
+  assert.deepEqual(outcome, { turnId: 'turn_1', state: 'completed', reason: null, partial: false, notes: [] });
   return { events: await store.readAll('sess_p4'), requests: transport.requests.length };
 }
 
