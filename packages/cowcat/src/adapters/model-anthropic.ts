@@ -1,7 +1,7 @@
 import Anthropic, { APIConnectionError, APIError, APIUserAbortError } from '@anthropic-ai/sdk';
 import type { Message } from '../kernel/messages.js';
 import type { Attachment, ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
-import { materializeAttachment } from './attachments.js';
+import { tryMaterializeAttachment, unavailableAttachmentNote } from './attachments.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
 // The Anthropic adapter (ADR-036). Needed for Claude itself and for the four MiniMax
@@ -296,16 +296,26 @@ function isAllToolResults(content: Anthropic.ContentBlockParam[]): boolean {
  * tool read it off the file) and is cast to the vendor's literal union here, because a
  * vendor vocabulary is protocol knowledge and the kernel deliberately does not carry it
  * (ADR-035, and ADR-056's precedent for the same kind of cast).
+ *
+ * When the bytes are gone the block is a sentence instead (ADR-069): this protocol can
+ * carry text in a tool result, so the request still goes out and the model is told what
+ * it is not seeing.
  */
-function toAttachmentBlock(attachment: Attachment): Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam {
-  const materialized = materializeAttachment(attachment);
-  if (materialized.type === 'image') {
+function toAttachmentBlock(
+  attachment: Attachment,
+): Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam | Anthropic.TextBlockParam {
+  const materialized = tryMaterializeAttachment(attachment);
+  if (!materialized.ok) {
+    return { type: 'text', text: unavailableAttachmentNote(attachment, materialized.error.reason) };
+  }
+  const bytes = materialized.value;
+  if (bytes.type === 'image') {
     return {
       type: 'image',
       source: {
         type: 'base64',
-        media_type: materialized.mediaType as Anthropic.Base64ImageSource['media_type'],
-        data: materialized.base64,
+        media_type: bytes.mediaType as Anthropic.Base64ImageSource['media_type'],
+        data: bytes.base64,
       },
     };
   }
@@ -313,8 +323,8 @@ function toAttachmentBlock(attachment: Attachment): Anthropic.ImageBlockParam | 
     type: 'document',
     source: {
       type: 'base64',
-      media_type: materialized.mediaType as Anthropic.Base64PDFSource['media_type'],
-      data: materialized.base64,
+      media_type: bytes.mediaType as Anthropic.Base64PDFSource['media_type'],
+      data: bytes.base64,
     },
   };
 }

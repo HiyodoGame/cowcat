@@ -475,7 +475,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 
 ## P6 前端：headless 协议与 TUI
 
-> **T1~T10 全部落地（ADR-055~068）——自动部分完成；剩下的只有真实终端上的人眼验收**（清单在 [`architecture/06-frontend.md`](architecture/06-frontend.md) 的「T10 收口」）。T2 协议、T3 `serve` 与 stdio 传输、T4 CLI 入口、T5 附件契约、T6 `Read` 非文本分支、T4a 三步（协议独立成包 ADR-062、组合根与宿主 ADR-063/064、可执行文件 ADR-065）、T7 骨架（主题 token ADR-061、TUI 骨架 ADR-066）、T8 卡片（ADR-067）、T9 图片（ADR-068）：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
+> **T1~T10 全部落地（ADR-055~069）——自动部分完成；剩下的只有真实终端上的人眼验收**（清单在 [`architecture/06-frontend.md`](architecture/06-frontend.md) 的「T10 收口」）。T2 协议、T3 `serve` 与 stdio 传输、T4 CLI 入口、T5 附件契约、T6 `Read` 非文本分支、T4a 三步（协议独立成包 ADR-062、组合根与宿主 ADR-063/064、可执行文件 ADR-065）、T7 骨架（主题 token ADR-061、TUI 骨架 ADR-066）、T8 卡片（ADR-067）、T9 图片（ADR-068）：[`research/p6-frontend.md`](research/p6-frontend.md)（五个问题的决定草案、被否决方案、图像协议矩阵、以及**一次实测**：旧版宽度表的排序缺陷）。契约文档是 [`architecture/06-frontend.md`](architecture/06-frontend.md)。
 >
 > **两处评审裁定（2026-10-19）**：① TUI 渲染**采纳 `@opentui/core`**（opencode 的渲染器）→ ADR-056；② **工具结果里的内联图片进 P6**（原计划在 P7）→ ADR-057 把「附件通路」的契约工作提前到本阶段。两处裁定都把代价写进了 ADR 正文，不是隐含假设。
 >

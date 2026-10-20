@@ -214,8 +214,11 @@ export {
 } from './adapters/imageinfo.js';
 export {
   materializeAttachment,
+  tryMaterializeAttachment,
+  unavailableAttachmentNote,
   AttachmentUnavailableError,
   type MaterializeOptions,
+  type MaterializeOutcome,
   type MaterializedAttachment,
 } from './adapters/attachments.js';
 export {

@@ -1,7 +1,7 @@
 import OpenAI, { APIConnectionError, APIError, APIUserAbortError } from 'openai';
 import type { Message, ReasoningBlock } from '../kernel/messages.js';
 import type { Attachment, ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
-import { materializeAttachment } from './attachments.js';
+import { tryMaterializeAttachment, unavailableAttachmentNote } from './attachments.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
 
 // The OpenAI-compatible adapter (ADR-036): one protocol that 201 of the 209 catalogued
@@ -278,21 +278,29 @@ function toWireMessagesFor(
 function attachmentMessage(attachments: readonly Attachment[]): OpenAI.Chat.ChatCompletionMessageParam {
   const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
   const documents: string[] = [];
+  const missing: string[] = [];
   for (const attachment of attachments) {
     if (attachment.type === 'document') {
       documents.push(`${attachment.mediaType} at ${attachment.path} (${String(attachment.bytes)} bytes)`);
       continue;
     }
-    const materialized = materializeAttachment(attachment);
+    const materialized = tryMaterializeAttachment(attachment);
+    if (!materialized.ok) {
+      // An image whose file is gone is named, not dropped, and not fatal (ADR-069): the
+      // reference stays in the history, so failing here would fail every later turn too.
+      missing.push(unavailableAttachmentNote(attachment, materialized.error.reason));
+      continue;
+    }
     parts.push({
       type: 'image_url',
-      image_url: { url: `data:${materialized.mediaType};base64,${materialized.base64}` },
+      image_url: { url: `data:${materialized.value.mediaType};base64,${materialized.value.base64}` },
     });
   }
-  const text =
+  const head =
     documents.length === 0
       ? 'Attachments from the previous tool result:'
       : `Attachments from the previous tool result (documents are referenced, not inlined — this protocol has no portable document part):\n${documents.join('\n')}`;
+  const text = missing.length === 0 ? head : `${head}\n${missing.join('\n')}`;
   return { role: 'user', content: [{ type: 'text', text }, ...parts] };
 }
 
