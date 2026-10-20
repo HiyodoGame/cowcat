@@ -5,6 +5,7 @@ import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
 import type { ToolCall, ReasoningBlock } from './messages.js';
+import type { CompactionTrigger } from './context.js';
 import type { TurnState } from './turn.js';
 
 interface EventBase {
@@ -54,6 +55,32 @@ export type KernelEvent = EventBase &
          */
         readonly type: 'model.usage';
         readonly usage: ModelUsage;
+      }
+    | {
+        /**
+         * Older history replaced by a summary (ADR-071).
+         *
+         * The replaced events stay in the log — this is a fact about what the model is
+         * *sent from now on*, not a deletion. `throughSeq` is the watermark: every
+         * message whose originating event is at or below it stops being sent. Messages
+         * after it are kept verbatim, which is what makes "keep the recent tail" a
+         * property of the log rather than a copy of it.
+         *
+         * `shadowed` lists the exact seqs that stopped being sent, so an audit can tell
+         * "which messages did this compaction hide" without re-deriving the fold.
+         */
+        readonly type: 'context.compacted';
+        readonly trigger: CompactionTrigger;
+        /** What the model sees instead, as one user message (ADR-069's discipline: say it, don't drop it). */
+        readonly summary: string;
+        /** The last shadowed event seq. 0 means "nothing was shadowed", which the kernel refuses to write. */
+        readonly throughSeq: number;
+        readonly shadowed: readonly number[];
+        readonly dropped: number;
+        /** Which model wrote the summary (audit; ADR-073 keeps it the session's own). */
+        readonly model: string;
+        /** What the summary call cost (ADR-041). `null` when the provider reported nothing. */
+        readonly usage: ModelUsage | null;
       }
     | { readonly type: 'policy.decided'; readonly callId: string; readonly decision: Decision }
     | {

@@ -175,6 +175,10 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // difference, which is the point of projecting rather than rebuilding (ADR-043).
         out.push(withoutVolatile(event));
         break;
+      case 'context.compacted':
+        // A compaction is what the *next* request is built from; it adds no message of
+        // its own to the turn being projected, so nothing is pushed.
+        break;
       default: {
         const unhandled: never = event;
         throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);

@@ -6,7 +6,18 @@ export {
   SUPPORTED_SCHEMA_VERSIONS,
   UnsupportedSchemaVersionError,
 } from './kernel/schema-version.js';
-export { reduce, replay, initialState, type SessionState, type TurnView } from './kernel/state.js';
+export { reduce, replay, initialState, type SessionState, type TurnView, type UsageAnchor } from './kernel/state.js';
+export {
+  contextCeiling,
+  contextUsage,
+  estimateMessage,
+  estimateMessages,
+  estimateText,
+  RECENT_KEEP_TOKENS,
+  SHRINK_STEPS,
+  type CompactionTrigger,
+  type ContextUsage,
+} from './kernel/context.js';
 export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
