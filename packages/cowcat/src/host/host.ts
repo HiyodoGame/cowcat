@@ -25,6 +25,7 @@ import { NodeProcess } from '../adapters/process.js';
 import { createSandboxExecutor } from '../adapters/sandbox/executor.js';
 import { fsProbeFrom } from '../adapters/sandbox/fs-probe.js';
 import { createSessionIndex } from '../adapters/session-index.js';
+import { startMcpServers } from '../adapters/mcp/servers.js';
 import { FileTrustStore } from '../adapters/trust.js';
 import { FileInstructionSource } from '../adapters/instructions.js';
 import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
@@ -54,7 +55,7 @@ import {
   type ModelUsage,
 } from '../ports/index.js';
 import { ModelConfigError, createModelPort, selectModel, type ModelSelection } from './model.js';
-import { loadHostConfig, withHostRules } from './config.js';
+import { loadHostConfig, selectMcpServers, withHostRules } from './config.js';
 import { cowcatPaths, type CowcatPaths } from './paths.js';
 import { rulesForRole, toolsForRole } from './subagent-roles.js';
 import type { ConfigFileReader, ReadTextFile } from '../adapters/config-files.js';
@@ -195,7 +196,32 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       sandboxCommand: createSandboxExecutor({ platform, fsProbe: fsProbeFrom(fs) }),
     });
 
-  const tools = createTools({ cwd: options.cwd, platform, process: processes, sandbox: sandbox.profile });
+  const warnings: string[] = loaded.warnings.map((warning) => `${warning.source}: ${warning.problem}`);
+  const builtinTools = createTools({ cwd: options.cwd, platform, process: processes, sandbox: sandbox.profile });
+
+  // MCP servers (ADR-083~087). Project entries are executable entry points, so the same
+  // trust gate that guards their rules guards them; every skip is reported.
+  const selected = selectMcpServers(config.mcp, { trusted: workspaceTrusted });
+  warnings.push(...selected.warnings);
+
+  const mcpLifetime = new AbortController();
+  const mcp = await startMcpServers({
+    servers: selected.servers,
+    cwd: options.cwd,
+    env: options.env,
+    sandbox: sandbox.profile,
+    process: processes,
+    version,
+    reserved: [...builtinTools.keys()],
+    warn: (message) => {
+      warnings.push(message);
+    },
+    signal: mcpLifetime.signal,
+  });
+  const tools: ReadonlyMap<string, ToolPort> = new Map([
+    ...builtinTools,
+    ...mcp.tools.map((tool) => [tool.spec.name, tool] as const),
+  ]);
   const store = options.store ?? new JsonlEventStore(paths.sessionsDir);
   const sessionDeps: SessionDeps = {
     store,
@@ -387,7 +413,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     config,
     rules,
     sandbox,
-    configWarnings: loaded.warnings.map((warning) => `${warning.source}: ${warning.problem}`),
+    configWarnings: warnings,
 
     async listSessions(): Promise<readonly SessionSummary[]> {
       const entries = await index.list();
@@ -589,6 +615,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     },
 
     async close(): Promise<void> {
+      mcpLifetime.abort();
+      await mcp.close();
       for (const rec of sessions.values()) {
         rec.running?.controller.abort();
         await rec.running?.done;

@@ -168,6 +168,18 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
     note('instr', '（没有可注入的 AGENTS.md / CLAUDE.md：不存在或为空）');
   }
 
+  const mcpServers = Object.entries(loaded.config.mcp.servers);
+  if (mcpServers.length === 0) {
+    note('mcp', '未配置服务器');
+  } else {
+    const runnable = mcpServers.filter(([, entry]) => entry.origin !== 'project' || trusted);
+    const skipped = mcpServers.length - runnable.length;
+    note(
+      'mcp',
+      `${String(runnable.length)} 个：${runnable.map(([name]) => name).join(', ')}${skipped === 0 ? '' : `（未受信跳过 ${String(skipped)} 个）`}；doctor 不启动服务器`,
+    );
+  }
+
   const sandbox = resolveSandboxProfile(loaded.config.sandbox, { cwd, home, fs });
   note('sandbox', `mode ${sandbox.profile.mode} / backend ${sandbox.profile.backend} / network ${sandbox.profile.network}`);
   for (const limitation of sandbox.profile.limitations) line(`未被采纳：${limitation}`);

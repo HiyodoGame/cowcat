@@ -25,10 +25,15 @@
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { SandboxUnavailableError, type PlatformPort, type ProcessPort, type ProcessResult, type ProcessSpec, type SandboxBackend, type SandboxMode, type TerminationReason, type TerminationRecord } from '../ports/index.js';
+import { SandboxUnavailableError, type PlatformPort, type ProcessExit, type ProcessHandle, type ProcessPort, type ProcessResult, type ProcessSpec, type SandboxBackend, type SandboxMode, type TerminationReason, type TerminationRecord } from '../ports/index.js';
 import { redactEnv } from '../policy/env.js';
 import { OutputTail } from './output-tail.js';
 import { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './terminate.js';
+
+/** stderr kept from a long-lived child. Diagnosis only (ADR-087). */
+const OPEN_STDERR_CAP = 16_384;
+/** One protocol line above this is dropped instead of buffered without bound. */
+const MAX_LINE_CHARS = 1_048_576;
 
 /**
  * What the executor decided to run instead of the caller's argv. It carries more than
@@ -76,25 +81,11 @@ export class NodeProcess implements ProcessPort {
   }
 
   async run(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessResult> {
-    // Resolved before anything else, because it can REFUSE (ADR-016) and a refusal
-    // must not have started a process first. It returns more than argv: a backend, the
-    // limitations it could not express, an env override and a cleanup hook.
-    const sandboxed = spec.sandbox.mode === 'system' ? this.#resolveSandbox(spec) : null;
-    const argv = sandboxed?.argv ?? spec.argv;
+    const prepared = this.#prepare(spec);
+    const { argv, redaction, sandboxed } = prepared;
     const command = argv[0];
-    // An empty argv has no executable, and spawn's own error for it says nothing
-    // about which run was at fault. One line here beats a stack trace from deep inside.
+    // `#prepare` refuses an empty argv; this repeat is for the type system, not a second check.
     if (command === undefined) throw new Error('ProcessSpec.argv is empty: there is no executable to run');
-    // `off` is the one mode whose contract is "run the command as-is"; light and
-    // system both redact (ADR-015), which is the coverage the legacy version lacked.
-    const redacted =
-      spec.sandbox.mode === 'off'
-        ? { env: spec.env, removed: [] as readonly string[], ignoredDeny: [] as readonly string[] }
-        : redactEnv(spec.env, { deny: spec.sandbox.env.deny });
-    // The sandbox's own overrides (TMPDIR on macOS) are applied AFTER redaction, not
-    // before: they are the gateway's values, not the caller's, so redaction has
-    // nothing to say about them.
-    const redaction = sandboxed?.env === undefined ? redacted : { ...redacted, env: { ...redacted.env, ...sandboxed.env } };
 
     const stdout = new OutputTail(spec.outputCap ?? Number.POSITIVE_INFINITY);
     const stderr = new OutputTail(spec.outputCap ?? Number.POSITIVE_INFINITY);
@@ -228,6 +219,189 @@ const termination: { current: Promise<TerminationRecord> | null } = { current: n
       // ended" is true in all three cases.
       sandboxed?.cleanup?.();
     }
+  }
+
+  async open(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessHandle> {
+    // Already cancelled: do not start a process in order to kill it. `run()` returns a
+    // cancelled result for this case; `open()` has no handle to return, so it refuses.
+    if (signal.aborted) throw new Error('the process was cancelled before it was started');
+    const { argv, redaction, sandboxed } = this.#prepare(spec);
+    const command = argv[0];
+    if (command === undefined) throw new Error('ProcessSpec.argv is empty: there is no executable to run');
+
+    const child = spawn(command, argv.slice(1), {
+      cwd: spec.cwd,
+      env: { ...redaction.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: this.#platform.platform !== 'windows',
+      windowsHide: true,
+      shell: false,
+    });
+    child.stdin.on('error', () => {
+      // A server that refuses a write has already gone away; the exit fact is the
+      // report, not an exception from a pipe we own.
+    });
+
+    const stderr = new OutputTail(spec.outputCap ?? OPEN_STDERR_CAP);
+    const decodeStdout = new StringDecoder('utf8');
+    const decodeStderr = new StringDecoder('utf8');
+    const lineListeners = new Set<(line: string) => void>();
+    const exitListeners = new Set<(exit: ProcessExit) => void>();
+    const exit: { current: ProcessExit | null } = { current: null };
+    let buffer = '';
+
+    const emit = (line: string): void => {
+      for (const listener of lineListeners) listener(line);
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += decodeStdout.write(chunk);
+      // A peer that never sends a newline must not grow this buffer forever. Drop the
+      // partial message and resync on the next terminator: one lost line beats OOM.
+      if (buffer.length > MAX_LINE_CHARS) {
+        buffer = '';
+        return;
+      }
+      let index = buffer.indexOf('\n');
+      while (index >= 0) {
+        const line = buffer.slice(0, index).replace(/\r$/u, '');
+        buffer = buffer.slice(index + 1);
+        if (line !== '') emit(line);
+        index = buffer.indexOf('\n');
+      }
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr.push(decodeStderr.write(chunk));
+    });
+
+    const closed = new Promise<ProcessExit>((resolve) => {
+      child.once('close', (code, childSignal) => {
+        buffer += decodeStdout.end();
+        const rest = buffer.replace(/\r$/u, '');
+        if (rest !== '') emit(rest);
+        buffer = '';
+        stderr.push(decodeStderr.end());
+        const info: ProcessExit = {
+          exitCode: code,
+          signal: childSignal,
+          stderr: stderr.text,
+          stderrTruncated: stderr.truncated,
+        };
+        exit.current = info;
+        for (const listener of exitListeners) listener(info);
+        resolve(info);
+      });
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', () => {
+          resolve();
+        });
+        child.once('error', reject);
+      });
+    } catch (error) {
+      sandboxed?.cleanup?.();
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+
+    // The scratch directory lives as long as the child, not as long as this method.
+    void closed.then(() => {
+      sandboxed?.cleanup?.();
+    });
+
+    const waitForExit = async (ms: number): Promise<boolean> => {
+      let timer: NodeJS.Timeout | undefined;
+      const expired = new Promise<false>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(false);
+        }, ms);
+      });
+      try {
+        return await Promise.race([closed.then(() => true), expired]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    };
+
+    const termination: { current: Promise<TerminationRecord> | null } = { current: null };
+    const terminateOnce = (reason: TerminationReason): Promise<TerminationRecord> => {
+      termination.current ??= terminateTree({
+        child,
+        strategy: this.#platform.termination(),
+        reason,
+        waitForExit,
+        killer: this.#killer,
+      });
+      return termination.current;
+    };
+
+    const onAbort = (): void => {
+      void terminateOnce('cancel');
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void closed.then(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+
+    return {
+      pid: child.pid ?? null,
+      removedEnv: redaction.removed,
+      write: (line) => {
+        if (child.stdin.destroyed || !child.stdin.writable) return;
+        child.stdin.write(`${line}\n`);
+      },
+      closeStdin: () => {
+        if (!child.stdin.destroyed) child.stdin.end();
+      },
+      onStdoutLine: (listener) => {
+        lineListeners.add(listener);
+        return () => {
+          lineListeners.delete(listener);
+        };
+      },
+      onExit: (listener) => {
+        if (exit.current !== null) {
+          listener(exit.current);
+          return () => {
+            // Already delivered; there is nothing to remove.
+          };
+        }
+        exitListeners.add(listener);
+        return () => {
+          exitListeners.delete(listener);
+        };
+      },
+      terminate: terminateOnce,
+    };
+  }
+
+  /**
+   * Sandbox resolution, argv selection and env redaction — the part `run()` and
+   * `open()` must not implement twice (ADR-086).
+   */
+  #prepare(spec: ProcessSpec): {
+    readonly argv: readonly string[];
+    readonly redaction: { readonly env: Readonly<Record<string, string>>; readonly removed: readonly string[]; readonly ignoredDeny: readonly string[] };
+    readonly sandboxed: SandboxCommand | null;
+  } {
+    // Resolved before anything else, because it can REFUSE (ADR-016) and a refusal
+    // must not have started a process first. It returns more than argv: a backend, the
+    // limitations it could not express, an env override and a cleanup hook.
+    const sandboxed = spec.sandbox.mode === 'system' ? this.#resolveSandbox(spec) : null;
+    const argv = sandboxed?.argv ?? spec.argv;
+    if (argv[0] === undefined) throw new Error('ProcessSpec.argv is empty: there is no executable to run');
+    // `off` is the one mode whose contract is "run the command as-is"; light and
+    // system both redact (ADR-015), which is the coverage the legacy version lacked.
+    const redacted =
+      spec.sandbox.mode === 'off'
+        ? { env: spec.env, removed: [] as readonly string[], ignoredDeny: [] as readonly string[] }
+        : redactEnv(spec.env, { deny: spec.sandbox.env.deny });
+    // The sandbox's own overrides (TMPDIR on macOS) are applied AFTER redaction, not
+    // before: they are the gateway's values, not the caller's, so redaction has
+    // nothing to say about them.
+    const redaction = sandboxed?.env === undefined ? redacted : { ...redacted, env: { ...redacted.env, ...sandboxed.env } };
+    return { argv, redaction, sandboxed };
   }
 
   #resolveSandbox(spec: ProcessSpec): SandboxCommand {

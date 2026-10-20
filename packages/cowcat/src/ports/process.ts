@@ -201,6 +201,52 @@ export interface ProcessPort {
    * because the caller has to report all three to the model.
    */
   run(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessResult>;
+
+  /**
+   * Starts a child that stays alive for a conversation (ADR-086).
+   *
+   * `run()` closes stdin after one write, so it cannot carry a long-lived
+   * bidirectional channel such as an MCP stdio server. This method reuses the
+   * same gateway rules — sandbox resolution, env redaction, output caps,
+   * one termination path — and hands back a handle instead of a result.
+   *
+   * Rejects when the child cannot be started, for the same reason `run()` does.
+   * After that, everything is a fact on the handle (exit, termination record),
+   * never an exception.
+   */
+  open(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessHandle>;
+}
+
+/** How a long-lived child ended. `stderr` is the tail, for diagnosis only. */
+export interface ProcessExit {
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+  readonly stderr: string;
+  readonly stderrTruncated: boolean;
+}
+
+/**
+ * One live child (ADR-086). Lines, not bytes: every current consumer is a
+ * newline-delimited protocol, and splitting here is what keeps the framing rule
+ * in the gateway instead of in each adapter.
+ */
+export interface ProcessHandle {
+  readonly pid: number | null;
+  /** Names only, never values (ADR-015). */
+  readonly removedEnv: readonly string[];
+  /** Writes one message followed by a newline. A died child is a no-op, not a throw. */
+  write(line: string): void;
+  /** EOF on stdin — the portable graceful-shutdown signal (MCP stdio). */
+  closeStdin(): void;
+  /** One line at a time, without the terminator. Returns an unsubscribe function. */
+  onStdoutLine(listener: (line: string) => void): () => void;
+  /** Fires once, after the streams are drained. Returns an unsubscribe function. */
+  onExit(listener: (exit: ProcessExit) => void): () => void;
+  /**
+   * Terminates the whole tree once, through the same path as `run()` (ADR-014).
+   * Calling it twice returns the first record rather than killing twice.
+   */
+  terminate(reason: TerminationReason): Promise<TerminationRecord>;
 }
 
 /** Convenience: the profile a run gets when nothing is configured. `light` is the default tier. */

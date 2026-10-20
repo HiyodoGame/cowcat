@@ -51,6 +51,7 @@ const PROCESS: ProcessPort = {
       sandbox: { mode: spec.sandbox.mode, backend: null, limitations: [] },
       termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
     }),
+  open: (): Promise<never> => Promise.reject(new Error('open() is not used in this test')),
 };
 
 /** Two model calls: ask to write a file, then answer. No network, no key. */

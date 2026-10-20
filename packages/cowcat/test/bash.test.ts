@@ -53,6 +53,10 @@ class FakeProcess implements ProcessPort {
     if (this.failure !== undefined) return Promise.reject(this.failure);
     return Promise.resolve(resultOf(spec, this.overrides));
   }
+
+  open(): Promise<never> {
+    return Promise.reject(new Error('FakeProcess.open() is not used in this test'));
+  }
 }
 
 const tool = (process: ProcessPort, sandbox = defaultSandboxProfile(), env: Readonly<Record<string, string>> = { PATH: '/usr/bin' }) =>

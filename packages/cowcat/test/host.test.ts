@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ERROR_CODES,
   ProtocolClientError,
@@ -45,6 +46,7 @@ import {
 import { MemoryEventStore, ScriptedModel } from './support.js';
 
 const PRESET = 'anthropic/claude-sonnet-5-5';
+const MCP_SERVER = fileURLToPath(new URL('./fixtures/fake-mcp-server.js', import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -110,6 +112,10 @@ class FakeProcess implements ProcessPort {
       sandbox: { mode: spec.sandbox.mode, backend: null, limitations: [] },
       termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
     });
+  }
+
+  open(): Promise<never> {
+    return Promise.reject(new Error('FakeProcess.open() is not used in this test'));
   }
 }
 
@@ -179,7 +185,7 @@ interface Fixture {
 }
 
 async function start(
-  options: { readonly cwd: string; readonly home: string; readonly model: ModelPort } & Pick<
+  options: { readonly cwd: string; readonly home: string; readonly model: ModelPort; readonly env?: Readonly<Record<string, string>> } & Pick<
     CreateHostOptions,
     'platform' | 'process' | 'store'
   >,
@@ -187,7 +193,7 @@ async function start(
   const host = await createHost({
     cwd: options.cwd,
     home: options.home,
-    env: {},
+    env: options.env ?? {},
     version: '0.0.0-test',
     model: options.model,
     approvalTimeoutMs: 5_000,
@@ -848,4 +854,61 @@ test('cancelling the parent stops the child session and releases its lock (ADR-0
 
   // And the lock is gone: a cancelled child must not leave a session nobody can reopen.
   assert.equal(existsSync(join(home, '.cowcat', 'sessions', `${String(childId)}.jsonl.lock`)), false);
+});
+
+// ---------------------------------------------------------------------------
+// MCP (ADR-083~087), through the composed host
+// ---------------------------------------------------------------------------
+
+test('a project-declared MCP server contributes namespaced tools to a turn', async (t) => {
+  // Manual dirs, and one after hook that closes the host BEFORE removing them: on
+  // Windows the server child holds the workspace as its cwd, and removing it first fails
+  // with EPERM (a real ordering constraint, not a flaky cleanup).
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'cowcat-host-home-')));
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'cowcat-host-proj-')));
+  let fixture: Fixture | null = null;
+  t.after(async () => {
+    await fixture?.close();
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  writeUserConfig(home, {
+    model: { preset: PRESET },
+    // MCP tools are `exec` on purpose (ADR-084 ④); a user rule is what makes this test
+    // about wiring rather than about the approval bridge.
+    rules: [{ name: 'mcp-echo-is-fine', verdict: 'allow', when: { tool: 'mcp__fake__echo' } }],
+  });
+  writeJson(join(cwd, 'cowcat.json'), {
+    mcp: { servers: { fake: { command: process.execPath, args: [MCP_SERVER, 'modern'] } } },
+  });
+  writeJson(join(home, '.cowcat', 'trust.json'), { trusted: [cwd] });
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_mcp', name: 'mcp__fake__echo', input: { text: 'hello' } } }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const active = await start({
+    cwd,
+    home,
+    model,
+    env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+  });
+  fixture = active;
+
+  await active.client.initialize();
+  await active.client.createSession('sess_mcp');
+  await active.client.openSession('sess_mcp');
+  await active.client.sendTurn('sess_mcp', 'use the echo tool');
+
+  await active.until('the turn to complete', () =>
+    active.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  const finished = first(active.events(), 'tool.finished');
+  assert.equal(field(finished, 'name'), 'mcp__fake__echo');
+  assert.equal(field(finished, 'ok'), true);
+  assert.match(String(field(finished, 'output')), /echo: hello/u);
+  // No approval was asked: the user rule matched the namespaced name.
+  assert.equal(first(active.events(), 'approval.requested'), undefined);
 });

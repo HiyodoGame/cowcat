@@ -162,7 +162,7 @@ request.command ?? request.path ?? JSON.stringify(request.input ?? null)
 | `SnapshotPort` | 已实现（JSON 文件快照） | 回放加速；缺失或损坏一律回退全量回放，见 [02-kernel.md](02-kernel.md#快照) |
 | `ModelPort` | 接口已定，适配器 P4 | 流式模型调用，带 `AbortSignal` |
 | `ToolPort` | **已实现**（七个核心工具，P5） | 工具规格 + 执行；`run(input, signal, grant)` 的 `grant` **只**描述本次授予（`networkApproved`），不携带规则或意见（ADR-051）；工具经 `defineTool()` 装配、wire schema 由 zod 派生（ADR-047/052），住在 `adapters/tools/`：`read.ts` / `write.ts` / `edit.ts` / `glob.ts` / `grep.ts` / `bash.ts` / `todo.ts` |
-| `ProcessPort` | **已实现**（P2 T4，Node 适配器） | 唯一的子进程网关：脱敏、截断、终止都在里面；超时与取消走同一条终止路径（ADR-014、ADR-015）。沙箱执行器待做（T5），`system` 档在注入执行器前**显式拒绝**，不降级（ADR-016） |
+| `ProcessPort` | **已实现**（P2 T4，Node 适配器） | 唯一的子进程网关：脱敏、截断、终止都在里面；超时与取消走同一条终止路径（ADR-014、ADR-015）。`run()` 是一次性运行；`open()` 返回长驻句柄供 MCP stdio 使用（ADR-086）。`system` 档在注入执行器前**显式拒绝**，不降级（ADR-016） |
 | `FsPort` | **已实现**（P2 T3，Node 适配器） | 路径身份：canonical / samePath / kindOf / exists，**同步**；缓存挂实例且只在找到现存祖先时写入（ADR-017） |
 | `PlatformPort` | **已实现**（P2 T2，Node 适配器） | shell 解析（绝对路径 + 真跑验证）、进程树终止策略、沙箱后端**真跑**探测；结果按会话记忆一次（ADR-018） |
 
@@ -177,6 +177,11 @@ ProcessPort.run(spec, signal)
   → 启动（POSIX：detached 自成进程组；Windows：taskkill /T /F 的对象）
   → 取消或超时：终止整棵进程树（与超时同一条路径）
   → 返回 { exitCode, signal, stdout, stderr, truncated, termination }
+
+ProcessPort.open(spec, signal)          // ADR-086：长驻双工通道
+  → 同一个 spec 形状，返回句柄而不是结果
+  → 句柄：write(line) / closeStdin() / onStdoutLine / onExit / terminate(reason)
+  → 用途：MCP stdio；run() 仍是一次性，两者共用脱敏、沙箱与终止策略
 ```
 
 **契约里的三条边界**，每条都来自实测（[调研 §2 与附录 B](../research/p2-ports.md)），不是推断：

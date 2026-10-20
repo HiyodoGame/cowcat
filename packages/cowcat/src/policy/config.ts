@@ -185,6 +185,49 @@ function mergeProviders(
 }
 
 /**
+ * One MCP server definition (ADR-085). `command` + `args` is exactly the shape that
+ * makes a server an executable entry point, which is why the project layer needs trust.
+ * `env` is honoured only from layers the user controls; a project entry's env is
+ * dropped by the composition root with a warning.
+ */
+export interface McpServerSettings {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export interface McpSettings {
+  readonly servers?: Readonly<Record<string, McpServerSettings>>;
+}
+
+/** A server definition plus the layer that supplied it — trust is decided on the origin. */
+export interface SourcedMcpServer {
+  readonly settings: McpServerSettings;
+  readonly origin: ConfigLayerName;
+}
+
+export interface ResolvedMcpSettings {
+  readonly servers: Readonly<Record<string, SourcedMcpServer>>;
+}
+
+export const DEFAULT_MCP_SETTINGS: ResolvedMcpSettings = { servers: {} };
+
+/**
+ * A server is a unit: a later layer that names the same one replaces it wholesale, the
+ * same rule custom presets follow. Merging two different `command`s field by field would
+ * produce a server nobody wrote.
+ */
+function mergeMcp(base: ResolvedMcpSettings, layers: readonly (readonly [ConfigLayer | undefined, ConfigLayerName])[]): ResolvedMcpSettings {
+  const servers: Record<string, SourcedMcpServer> = { ...base.servers };
+  for (const [layer, origin] of layers) {
+    for (const [name, settings] of Object.entries(layer?.mcp?.servers ?? {})) {
+      servers[name] = { settings, origin };
+    }
+  }
+  return { servers };
+}
+
+/**
  * What one source contributes. Every key is optional: a source that says nothing
  * about a key does not override it (ADR-025 decision 1).
  */
@@ -192,6 +235,7 @@ export interface ConfigLayer {
   readonly rules?: readonly Rule[];
   readonly sandbox?: SandboxSettings;
   readonly model?: ModelSettings;
+  readonly mcp?: McpSettings;
 }
 
 // Three layers, lowest first. The legacy implementation had seven, one of which —
@@ -223,6 +267,7 @@ export interface CowcatConfig {
   readonly rules: readonly SourcedRule[];
   readonly sandbox: ResolvedSandboxSettings;
   readonly model: ResolvedModelSettings;
+  readonly mcp: ResolvedMcpSettings;
 }
 
 /** Layer 0. Not a file, and not overridable by omission. */
@@ -230,6 +275,7 @@ export const DEFAULT_CONFIG: CowcatConfig = {
   rules: DEFAULT_RULES.map((rule) => ({ rule, origin: 'default' as const })),
   sandbox: DEFAULT_SANDBOX_SETTINGS,
   model: DEFAULT_MODEL_SETTINGS,
+  mcp: DEFAULT_MCP_SETTINGS,
 };
 
 export interface ConfigLayers {
@@ -268,6 +314,11 @@ export function resolveConfig(layers: ConfigLayers): CowcatConfig {
       layers.session?.sandbox,
     ),
     model: mergeModel(mergeModel(mergeModel(DEFAULT_MODEL_SETTINGS, layers.user?.model), layers.project?.model), layers.session?.model),
+    mcp: mergeMcp(DEFAULT_MCP_SETTINGS, [
+      [layers.user, 'user'],
+      [layers.project, 'project'],
+      [layers.session, 'session'],
+    ]),
   };
 }
 
