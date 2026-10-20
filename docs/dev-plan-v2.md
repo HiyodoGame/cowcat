@@ -24,7 +24,7 @@
 | P4 | 模型层 | **已完成**（T1–T7 全部落地、T6 拆 T6a/b/c；测试 347 → 436；ADR-035~046） |
 | P5 | 工具层 | **已完成**（T0–T7 全部落地；测试 436 → 555；ADR-047~054） |
 | P6 | 前端：headless 协议与 TUI | **已完成**：T1–T10 全部落地（ADR-055~069），出口标准的两条接缝由 `packages/cli/test/exit-criteria.test.ts` 与 tui 的 lint 规则保证；**人眼验收 2026-10-20 由用户实测通过**，验收中发现「不可读附件让会话永久失败」并由 #66 修复（ADR-069） |
-| P7 | 功能模块（逐个调研） | **进行中**：上下文压缩已落地（#67 调研 / #68 实现，ADR-070~074）；记忆与项目指令已落地（#69 调研、#70 链与渲染、#71 注入与压缩后重注入，ADR-075~078；#72 doctor 报告已合）；前沿排期已出（R3~R8 与七个新增候选行，见 `research/p7-frontier-survey.md`）；**子 agent 调研已合（#74），ADR-079~082 已落表，T1~T4 全部落地**；**MCP 专项调研已合（#79）并补读 2026-07-28 的 elicitation / versioning / tools / discover，ADR-083~087 已落表；T1（stdio + tools）进行中** |
+| P7 | 功能模块（逐个调研） | **进行中**：上下文压缩已落地（#67 调研 / #68 实现，ADR-070~074）；记忆与项目指令已落地（#69 调研、#70 链与渲染、#71 注入与压缩后重注入，ADR-075~078；#72 doctor 报告已合）；前沿排期已出（R3~R8 与七个新增候选行，见 `research/p7-frontier-survey.md`）；**子 agent 调研已合（#74），ADR-079~082 已落表，T1~T4 全部落地**；**MCP 专项调研已合（#79）并补读 2026-07-28 的 elicitation / versioning / tools / discover，ADR-083~087 已落表；T1（stdio + tools）已合（#80）；T2（分页 + 工具变更订阅，ADR-088）进行中** |
 | P8 | 发布切换与旧代码删除 | 未开始 |
 | R1 | Windows 原生沙箱调研 | 远期 |
 | R2 | 鸿蒙运行时调研 | 远期 |
@@ -535,7 +535,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | 上下文压缩 | 压缩触发点、压缩结果是否作为事件入日志、与回放的关系 | P2、P5 |
 | 记忆（AGENTS.md / 项目指令） | 读取位置、优先级、与信任模型的关系 | P3 |
 | 子 agent | 子会话是否独立日志、结果如何回传、权限是否收窄；**排期提前到 MCP 之前**（D1）。**已完成**（[research/p7-subagents.md](research/p7-subagents.md)、ADR-079~082）：独立子会话 + `Task` 虚拟工具 + 只收不放的权限 + 结果预算；`sessions list` 默认折叠、TUI 一行摘要；端到端（重放 / 取消 / 锁清理）已验 | P3、P5 |
-| MCP | 官方 SDK 评估；stdio 服务器必须经 ProcessPort，因此天然被沙箱覆盖；对齐 **2026-07-28 规范**（D2：**无状态、逐请求 `_meta`**；HTTP 授权首选 Client ID Metadata Documents，**DCR 已 deprecated**）且首版**只做 stdio + tools**；v1 旧规范实现只迁结论不迁代码。**已调研并落表**（[research/p7-mcp.md](research/p7-mcp.md)）：ADR-083~087；**T1 进行中**（双时代探测、`mcp__server__tool`、项目层受信、`ProcessPort.open()`、崩溃不重启） | P2、P3 |
+| MCP | 官方 SDK 评估；stdio 服务器必须经 ProcessPort，因此天然被沙箱覆盖；对齐 **2026-07-28 规范**（D2：**无状态、逐请求 `_meta`**；HTTP 授权首选 Client ID Metadata Documents，**DCR 已 deprecated**）且首版**只做 stdio + tools**；v1 旧规范实现只迁结论不迁代码。**已调研并落表**（[research/p7-mcp.md](research/p7-mcp.md)）：ADR-083~088；**T1 已合（#80）**（双时代探测、`mcp__server__tool`、项目层受信、`ProcessPort.open()`、崩溃不重启）；**T2 进行中**（分页、`subscriptions/listen` / 旧版 `list_changed`、活工具表） | P2、P3 |
 | Hooks | 触发时机、失败语义、是否经过策略；出生即兼容 Claude Code hooks.json 格式的取舍（D3） | P3 |
 | Skills | 加载机制与工具暴露；渐进披露（首轮只注入目录、全文按需取用）（D4） | P5 |
 | 后台任务 | 生命周期与会话的关系，取消与清理 | P2 |

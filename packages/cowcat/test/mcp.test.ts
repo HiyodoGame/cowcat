@@ -11,6 +11,7 @@ import {
   type ProcessHandle,
   type ResolvedMcpSettings,
   type SandboxProfile,
+  type ToolPort,
 } from '../src/index.js';
 
 const SERVER = fileURLToPath(new URL('./fixtures/fake-mcp-server.js', import.meta.url));
@@ -19,6 +20,23 @@ const platform = nodePlatform({ env: process.env });
 
 function inheritedEnv(): Record<string, string> {
   return Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+function baseTool(name: string): ToolPort {
+  return {
+    spec: { name, description: 'a built-in tool', risk: 'read', inputSchema: { type: 'object', properties: {} } },
+    run: () => Promise.resolve({ ok: true, output: '' }),
+  };
+}
+
+async function until(what: string, predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
 }
 
 async function startServer(mode: string, options: { readonly sandbox?: SandboxProfile; readonly env?: Record<string, string> } = {}): Promise<ProcessHandle> {
@@ -46,7 +64,7 @@ test('a modern server is discovered with server/discover and its tools are calla
   assert.equal(client.protocolVersion, '2026-07-28');
 
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name), ['echo', 'fail', 'env', 'crash', 'hang']);
+  assert.deepEqual(listed.tools.map((tool) => tool.name), ['echo', 'fail', 'env', 'crash', 'hang', 'change']);
 
   const ok = await client.callTool('echo', { text: 'hi' }, new AbortController().signal);
   assert.equal(ok.ok, true);
@@ -69,7 +87,7 @@ test('a legacy server is reached through the initialize fallback', async (t) => 
   assert.equal(client.protocolVersion, '2025-11-25');
 
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 5);
+  assert.equal(listed.tools.length, 6);
   const ok = await client.callTool('echo', { text: 'old' }, new AbortController().signal);
   assert.equal(ok.ok, true);
   assert.match(ok.output, /echo: old/u);
@@ -159,7 +177,7 @@ test('startMcpServers namespaces tools, refuses collisions, and skips bad server
     sandbox: defaultSandboxProfile(),
     process: new NodeProcess({ platform }),
     version: 'test',
-    reserved: ['Read'],
+    baseTools: new Map([['TodoWrite', baseTool('TodoWrite')]]),
     warn: (message) => {
       warnings.push(message);
     },
@@ -167,20 +185,23 @@ test('startMcpServers namespaces tools, refuses collisions, and skips bad server
   });
 
   try {
-    assert.deepEqual(servers.tools.map((tool) => tool.spec.name).sort(), [
+    const names = [...servers.table.values()].map((tool) => tool.spec.name).filter((name) => name.startsWith('mcp__')).sort();
+    assert.deepEqual(names, [
+      'mcp__fake__change',
       'mcp__fake__crash',
       'mcp__fake__echo',
       'mcp__fake__env',
       'mcp__fake__fail',
       'mcp__fake__hang',
     ]);
-    const echo = servers.tools.find((tool) => tool.spec.name === 'mcp__fake__echo');
+    assert.ok(servers.table.has('TodoWrite'));
+    const echo = servers.table.get('mcp__fake__echo');
     assert.equal(echo?.spec.risk, 'exec');
     assert.match(warnings.join('\n'), /invalid server name "bad name"/u);
 
     const statuses = new Map(servers.statuses.map((status) => [status.name, status]));
     assert.equal(statuses.get('fake')?.connected, true);
-    assert.equal(statuses.get('fake')?.toolCount, 5);
+    assert.equal(statuses.get('fake')?.toolCount, 6);
     assert.equal(statuses.get('bad name')?.connected, false);
   } finally {
     await servers.close();
@@ -194,17 +215,104 @@ test('startMcpServers namespaces tools, refuses collisions, and skips bad server
     sandbox: defaultSandboxProfile(),
     process: new NodeProcess({ platform }),
     version: 'test',
-    reserved: ['mcp__fake__echo'],
+    baseTools: new Map([['mcp__fake__echo', baseTool('mcp__fake__echo')]]),
     warn: (message) => {
       conflictWarnings.push(message);
     },
     signal: new AbortController().signal,
   });
   try {
-    assert.deepEqual(conflicted.tools, []);
+    const names = [...conflicted.table.values()].map((tool) => tool.spec.name);
+    assert.deepEqual(names, ['mcp__fake__echo']);
     assert.equal(conflicted.statuses[0]?.connected, false);
-    assert.match(conflictWarnings.join('\n'), /collides with a built-in tool/u);
+    assert.match(conflictWarnings.join('\n'), /collides with an existing tool/u);
   } finally {
     await conflicted.close();
+  }
+});
+
+test('tools/list follows nextCursor across pages', async (t) => {
+  const handle = await startServer('paginated');
+  const client = new McpClient(handle, { clientVersion: 'test' });
+  t.after(async () => {
+    await client.close();
+  });
+
+  await client.start();
+  const listed = await client.listTools();
+  assert.deepEqual(listed.tools.map((tool) => tool.name), ['echo', 'fail', 'env', 'crash', 'hang', 'change']);
+  assert.match(listed.warnings.join('\n'), /2 pages/u);
+});
+
+test('a legacy server pushes list_changed without a subscription request', async (t) => {
+  const handle = await startServer('legacy');
+  const client = new McpClient(handle, { clientVersion: 'test' });
+  t.after(async () => {
+    await client.close();
+  });
+  await client.start();
+
+  let changes = 0;
+  client.onToolsChanged(() => {
+    changes += 1;
+  });
+  assert.equal(await client.watchTools(), null);
+
+  const changed = await client.callTool('change', {}, new AbortController().signal);
+  assert.equal(changed.ok, true);
+  await until('the list_changed notification', () => changes > 0);
+
+  const listed = await client.listTools();
+  assert.ok(listed.tools.some((tool) => tool.name === 'added'));
+});
+
+test('a modern server is subscribed with subscriptions/listen', async (t) => {
+  const handle = await startServer('modern');
+  const client = new McpClient(handle, { clientVersion: 'test' });
+  t.after(async () => {
+    await client.close();
+  });
+  await client.start();
+
+  let changes = 0;
+  client.onToolsChanged(() => {
+    changes += 1;
+  });
+  assert.equal(await client.watchTools(), null);
+
+  await client.callTool('change', {}, new AbortController().signal);
+  await until('the subscribed list_changed notification', () => changes > 0);
+});
+
+test('a tool-list change swaps only that server\'s tools in the live table', async () => {
+  const warnings: string[] = [];
+  const servers = await startMcpServers({
+    servers: { fake: { command: process.execPath, args: [SERVER, 'modern'] } },
+    cwd: CWD,
+    env: process.env,
+    sandbox: defaultSandboxProfile(),
+    process: new NodeProcess({ platform }),
+    version: 'test',
+    baseTools: new Map([['TodoWrite', baseTool('TodoWrite')]]),
+    warn: (message) => {
+      warnings.push(message);
+    },
+    signal: new AbortController().signal,
+  });
+
+  try {
+    assert.equal(servers.table.has('mcp__fake__added'), false);
+    const change = servers.table.get('mcp__fake__change');
+    assert.ok(change !== undefined);
+    const result = await change.run({}, new AbortController().signal, { networkApproved: false });
+    assert.equal(result.ok, true);
+
+    await until('the new tool to appear', () => servers.table.has('mcp__fake__added'));
+    assert.ok(servers.table.has('TodoWrite'));
+    assert.ok(servers.table.has('mcp__fake__echo'));
+    const status = servers.statuses.find((entry) => entry.name === 'fake');
+    assert.equal(status?.toolCount, 7);
+  } finally {
+    await servers.close();
   }
 });

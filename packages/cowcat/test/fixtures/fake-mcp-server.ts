@@ -58,7 +58,23 @@ const tools = [
     description: 'Never answer',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'change',
+    description: 'Add a tool and announce the change',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
+
+const currentTools = [...tools];
+let subscriptionId: number | null = null;
+
+const announceChange = (): void => {
+  send({
+    jsonrpc: '2.0',
+    method: 'notifications/tools/list_changed',
+    params: subscriptionId === null ? {} : { _meta: { 'io.modelcontextprotocol/subscriptionId': subscriptionId } },
+  });
+};
 
 const lines = createInterface({ input: process.stdin });
 
@@ -82,7 +98,7 @@ lines.on('line', (line) => {
     }
     result(id, {
       supportedVersions: ['2026-07-28'],
-      capabilities: { tools: {} },
+      capabilities: { tools: { listChanged: true } },
       _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'fake', version: '1.0.0' } },
     });
     return;
@@ -91,14 +107,33 @@ lines.on('line', (line) => {
   if (method === 'initialize') {
     result(id, {
       protocolVersion: '2025-11-25',
-      capabilities: { tools: {} },
+      capabilities: { tools: { listChanged: true } },
       serverInfo: { name: 'fake', version: '1.0.0' },
     });
     return;
   }
 
   if (method === 'tools/list') {
-    result(id, { tools });
+    const params = typeof record['params'] === 'object' && record['params'] !== null ? (record['params'] as Record<string, unknown>) : {};
+    if (mode === 'paginated') {
+      if (params['cursor'] === undefined) {
+        result(id, { tools: currentTools.slice(0, 2), nextCursor: 'page-2' });
+      } else {
+        result(id, { tools: currentTools.slice(2) });
+      }
+      return;
+    }
+    result(id, { tools: currentTools });
+    return;
+  }
+
+  if (method === 'subscriptions/listen') {
+    subscriptionId = id;
+    send({
+      jsonrpc: '2.0',
+      method: 'notifications/subscriptions/acknowledged',
+      params: { _meta: { 'io.modelcontextprotocol/subscriptionId': id }, notifications: { toolsListChanged: true } },
+    });
     return;
   }
 
@@ -123,6 +158,18 @@ lines.on('line', (line) => {
       process.exit(7);
     }
     if (name === 'hang') {
+      return;
+    }
+    if (name === 'change') {
+      if (!currentTools.some((tool) => tool.name === 'added')) {
+        currentTools.push({
+          name: 'added',
+          description: 'Appeared after a change notification',
+          inputSchema: { type: 'object', properties: {} },
+        });
+      }
+      announceChange();
+      result(id, { content: [{ type: 'text', text: 'changed' }] });
       return;
     }
     failure(id, -32602, `Unknown tool: ${String(name)}`);

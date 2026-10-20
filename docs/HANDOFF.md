@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-21（MCP 补读 + ADR-083~087 + T1 实现）**。
-> 交接时仓库状态：**`main` = `1b03a42`**（#79 MCP 调研合入）；当前分支 **`feat/p7-mcp-t1`**（MCP T1，未提交/未推送）。
+> 最近一次更新：**2026-10-21（MCP T1 合入；T2 分页与变更订阅）**。
+> 交接时仓库状态：**`main` = `01a5a59`**（#80 MCP T1 合入）；当前分支 **`feat/p7-mcp-t2`**（MCP T2，未提交/未推送）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`doctor`、探针脚本）；**【CI 远端】**GitHub Actions（**本次没有推送，未观察**）；**【上游】**厂商文档或实现；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更。**
@@ -54,13 +54,20 @@
 - `cli/doctor.ts`：`mcp` 行列出可运行的服务器与未受信跳过数（**不启动**服务器）。
 - 测试：`test/mcp.test.ts` 7 项 + `test/host.test.ts` 1 项端到端（协议客户端 → 真正宿主 → 真正子进程）。
 
+### T2：分页与工具变更订阅（ADR-088）
+
+- `client.ts`：`tools/list` 跟随 `nextCursor`（上限 100 页 / 5,000 工具，重名工具后来的忽略）；`watchTools()` 现代服务器发 `subscriptions/listen` 并等 2 秒 ack，旧版直接等推送；`onToolsChanged()` 分发 `notifications/tools/list_changed`，带 `subscriptionId` 时校验来源。
+- `servers.ts`：工具表改为**活表**（内置工具从 `baseTools` 传入）；收到通知后只替换该服务器拥有的工具；刷新失败保留旧表；运行期新工具冲突只跳过该工具并警告。
+- 测试从 7 项增加到 11 项：分页、旧版推送、现代订阅、活表刷新（`mcp__fake__change` → `mcp__fake__added`）。
+- **`doctor` 仍然不连接服务器**（ADR-084 ⑤），所以「连接状态」这一项没有做——它与「诊断命令不执行项目代码」冲突。
+
 ---
 
 ## 2. 当前状态
 
 ### 已验证 —— 【本机测试】/【构建】/【本机命令】
 
-- 【本机测试】`packages/cowcat` → **651 tests / 635 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
+- 【本机测试】`packages/cowcat` → **655 tests / 639 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
 - 【本机测试】`packages/cli` → **21 / 21 pass**
 - 【本机测试】`packages/tui` → 本会话未改该包、**未重跑**（上一轮 48 / 48；CI 两条腿当时通过）
 - 【本机命令】`node tools/lint-probe.mjs` → 未重跑（本会话没加分层规则；`npm run lint` 已过）
@@ -68,17 +75,19 @@
 
 ### 已验证 —— MCP 的具体行为（`test/mcp.test.ts`）
 
-- 现代服务器：`server/discover` 成功 → `era = modern`、版本 `2026-07-28`；`tools/list` 五个工具；`tools/call` 回文本。
+- 现代服务器：`server/discover` 成功 → `era = modern`、版本 `2026-07-28`；`tools/list` 六个工具；`tools/call` 回文本。
 - 旧版服务器：`server/discover` 回 `-32601` → 回退 `initialize`，`era = legacy`，工具仍可用。
 - 崩溃：调用中进程退出 → `ok: false`，理由含 `exited`；**没有重启**。
 - 取消：`AbortController.abort()` → 先发 `notifications/cancelled`，再终止进程；调用返回 `ok: false`。
 - env 脱敏：`light` 档下 `MCP_TEST_TOKEN` 被剥离（服务器看到 `missing`）；`off` 档不剥离（对照）。
 - 冲突/非法名：与内置工具同名 → 该服务器拒绝启动并点名；`bad name` → 不启动并报告。
 - 宿主端到端：项目层 `cowcat.json` 声明服务器 + 工作区受信 → 模型能在回合里调用 `mcp__fake__echo`，`tool.finished.ok = true`，且没有触发审批（用户层 allow 规则匹配）。
+- T2 分页：`paginated` 模式两页合并，warning 记 `2 pages`。
+- T2 变更：旧版推送、现代 `subscriptions/listen` + ack 均能触发刷新；活表从 6 个工具变成 7 个（`mcp__fake__added`），内置 `TodoWrite` 不受影响。
 
 ### 项目状态
 
-- **P6 完成**；**P7 进行中**：压缩（ADR-070~074）、指令（075~078）、子 agent（079~082）已完成；**MCP T1 已完成（083~087）**。
+- **P6 完成**；**P7 进行中**：压缩（ADR-070~074）、指令（075~078）、子 agent（079~082）已完成；**MCP T1 已合（083~087），T2 已完成（088，待提交）**。
 - 四个包仍全部 `private: true`、`0.0.0`，从未发布；`schemaVersion` 仍是 **1**（本次没有新事件类型）。
 - 运行时依赖不变（3 / 6）。
 - `cowcat` 六个动词：`tui` / `serve` / `run` / `sessions list|resume` / `doctor` 可用；`setup` 未接线。
@@ -87,25 +96,23 @@
 
 ## 3. 项目唯一下一步
 
-**先提交并推送 MCP T1 的 PR；然后决定是继续 MCP T2 还是补真实端点实测。**
+**先提交并推送 MCP T2 的 PR；然后补真实端点实测，或继续 MCP T3。**
 
-T1 的已知缺口（都不阻塞合并）：
+T2 之后的已知缺口（都不阻塞合并）：
 
 1. **`light` 档在 macOS/Linux 是否挡得住真实服务器**：本次只在 Windows 上跑了 `node` 假服务器（Windows 的 `light` 只做脱敏）。bwrap/seatbelt 的路径白名单是否挡住 `npx` 缓存，仍未验证。
-2. **分页与 `listChanged`**：首版只取 `tools/list` 第一页，不订阅变更；`nextCursor` 出现时报告但不用。
-3. **`tools/call` 的 `input_required`**：报未支持，不实现 elicitation。
-4. **真实服务器**：`npx -y @modelcontextprotocol/server-*` 未跑过（本机没有网络授权）。
-5. **工具数进诊断**：`doctor` 只报配置，不连接；工具数在宿主启动时进 `configWarnings`，还没有专门的状态行。
+2. **`tools/call` 的 `input_required`**：报未支持，不实现 elicitation。
+3. **真实服务器**：`npx -y @modelcontextprotocol/server-*` 未跑过（本机没有网络授权）；真实服务器的订阅 ack 行为也未知。
+4. **`doctor` 连接状态**：与「诊断命令不执行项目代码」冲突，T2 明确不做；工具数只在宿主启动后进 `configWarnings`。
+5. **`mcp.servers` 的用户文档**：目前只有 ADR 与研究文档，没有面向用户的配置示例。
 
-T2 候选（若继续 MCP）：`listChanged` 订阅、分页、`doctor` 连接状态、`mcp.servers` 的用户层 `env` 文档与示例。
-
-**仍未做的事**：真实模型请求仍是零实测（§6.1）。MCP T1 的验证是「协议形状 + 进程边界」，不是「模型会用这些工具」。
+**仍未做的事**：真实模型请求仍是零实测（§6.1）。MCP 的验证是「协议形状 + 进程边界」，不是「模型会用这些工具」。
 
 ---
 
 ## 4. 关键决策
 
-P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**ADR-001~087**）。本次五条见上表；与子 agent 的边界一致：**新事实用新事件 + 可选字段**，但 MCP 没有新增事件——工具名本身携带来源，避免再触发一次 `schema.ts` / transcript 的编译期守卫。
+P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**ADR-001~088**）。MCP 六条：083~087 是首版，088 是 T2 的分页与变更订阅。与子 agent 的边界一致：**新事实用新事件 + 可选字段**，但 MCP 没有新增事件——工具名本身携带来源，避免再触发一次 `schema.ts` / transcript 的编译期守卫。
 
 ---
 
@@ -132,6 +139,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 19. **`ProcessPort.run()` 的 `stdin` 是「写一次就关」**：MCP stdio 需要的双向通道不存在，必须用 `open()`（ADR-086）。「所有子进程都经网关」是结论，「网关能承载长驻通道」不是。
 20. **Windows 上子进程的 cwd 锁住目录**：测试清理临时目录时必须**先关宿主（终止服务器）再 `rmSync`**，否则 EPERM。`t.after` 的注册顺序不可依赖，本次改成单个 after 里顺序执行。
 21. **`server/discover` 的探测不能写死错误码**：旧版服务器回 `-32601`/`-32602` 或干脆不回；只有 `DiscoverResult` 与 `-32022` 才说明它是现代服务器。
+22. **现代 MCP 的 `list_changed` 要先订阅**：不发 `subscriptions/listen` 就不会收到；确认信号是 `notifications/subscriptions/acknowledged`（通知，不是请求的 result），所以等 result 会一直等下去。旧版服务器则直接推通知。两种都要处理。
 
 ---
 
@@ -140,7 +148,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 1. **一次真实模型请求都没跑过**（跨会话未变）：所有回合行为都在宿主层用注入模型验证。`ZHIPU_API_KEY` 不在本机 shell 里。
 2. **MCP 只在 Windows 上验证**：`light` 档的 macOS/Linux 路径未测；`system` 档被显式拒绝（没有执行器）也未测。
 3. **真实 MCP 服务器未连接**：只用了仓库内假服务器（`test/fixtures/fake-mcp-server.ts`）。
-4. **`tools/list` 分页/变更订阅**未实现；真实服务器若超过一页会少列工具。
+4. **真实服务器未连接**：只用了仓库内假服务器（`test/fixtures/fake-mcp-server.ts`）；分页与 `list_changed` 的触发也是假服务器模拟的，真实服务器的 ack 行为未知。
 5. **`doctor` 不连接服务器**：配置层的名字与受信结论可见，工具数不可见。
 6. **子 agent 的收益仍是推断**（研究型任务的 15× / 90.2% 不必然适用于编码）。
 7. **前序遗留、未复现**：`agent/` 的两个 macOS flake；`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不在仓库里；v1 套件（762 项）本会话未跑。
@@ -155,14 +163,14 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 | 路径 | 内容 |
 |---|---|
 | [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**：P0–P8 阶段表、P7 的模块表、R3~R8 远期项 |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~087**（070~074 压缩；075~078 指令；079~082 子 agent；083~087 MCP） |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~088**（070~074 压缩；075~078 指令；079~082 子 agent；083~088 MCP） |
 | [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 进程网关：`run()` 与 `open()` 两种形状、脱敏、终止 |
 | [`research/p7-mcp.md`](research/p7-mcp.md) | 本次产出：上游对照（含补读后的修正）、决定、ADR 清单、待验证 |
 | `packages/cowcat/src/ports/process.ts` | `ProcessSpec` / `ProcessResult` / `ProcessHandle` / `open()` 契约 |
 | `packages/cowcat/src/adapters/process.ts` | `NodeProcess.open()`：按行切分、stderr 尾部、一次终止 |
-| `packages/cowcat/src/adapters/mcp/` | `client.ts`（双时代 + JSON-RPC）、`tools.ts`（命名/risk）、`servers.ts`（启动/冲突/关闭） |
+| `packages/cowcat/src/adapters/mcp/` | `client.ts`（双时代 + JSON-RPC + 分页/订阅）、`tools.ts`（命名/risk）、`servers.ts`（启动/冲突/活表刷新/关闭） |
 | `packages/cowcat/src/host/config.ts` | `selectMcpServers()`：受信闸门 + 项目层 env 丢弃 |
 | `packages/cowcat/src/host/host.ts` | 构造时启动 MCP、合并工具表、`close()` 关闭 |
-| `packages/cowcat/test/mcp.test.ts` | 协议与进程边界（现代/旧版/崩溃/取消/脱敏/冲突） |
+| `packages/cowcat/test/mcp.test.ts` | 协议与进程边界（现代/旧版/崩溃/取消/脱敏/冲突/分页/变更订阅/活表） |
 | `packages/cowcat/test/fixtures/fake-mcp-server.ts` | 假服务器（stdio、换行分隔 JSON-RPC） |
 | `docs/HANDOFF.md` | 本文件 |
