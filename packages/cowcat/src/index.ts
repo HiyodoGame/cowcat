@@ -63,7 +63,16 @@ export { approvalKey, type ApprovalBy, type ApprovalVerdict } from './policy/app
 export { AuditConsumer, type AuditSummary } from './policy/audit.js';
 export { JsonlAuditSink, type JsonlAuditSinkOptions } from './adapters/audit.js';
 export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';
-export { INSTRUCTION_FILENAMES, decideInstruction, describeInstructionSkip, type InstructionDecision } from './policy/instructions.js';
+export {
+  INSTRUCTION_FILENAMES,
+  INSTRUCTION_MAX_BYTES,
+  LOCAL_INSTRUCTION_FILENAMES,
+  decideInstruction,
+  describeInstructionSkip,
+  renderInstructions,
+  type InstructionDecision,
+  type RenderedInstructions,
+} from './policy/instructions.js';
 export { FileInstructionSource, type FileInstructionSourceOptions } from './adapters/instructions.js';
 export {
   loadConfig,

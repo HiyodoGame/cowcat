@@ -1,13 +1,13 @@
-// InstructionPort — reading the project's own instructions (ADR-029).
+// InstructionPort — reading the project's own instructions (ADR-076).
 //
 // The file is `AGENTS.md`: an open format used by 60k+ projects and stewarded by the
 // Agentic AI Foundation, with `CLAUDE.md` kept as a compatibility fallback. The
 // legacy implementation looked for a proprietary `COWCAT.md` FIRST, so a repository
 // that wrote the standard file had it silently ignored (agent/src/project.js:6).
 //
-// This is a port rather than a plain function because reading a file is host work;
-// which file wins, and whether it may be injected at all, are decisions that live in
-// policy (policy/instructions.ts) where they can be tested without a filesystem.
+// This is a port rather than a plain function because reading a file is host work; which
+// files win, how they are rendered, and whether they may be injected at all are decisions
+// that live in policy (policy/instructions.ts) where they can be tested without a filesystem.
 
 export interface InstructionFile {
   /** The filename it was found under, e.g. `AGENTS.md`. */
@@ -19,11 +19,18 @@ export interface InstructionFile {
 
 export interface InstructionPort {
   /**
-   * The nearest instruction file at or above `cwd`, or null when there is none.
+   * The instruction chain that applies to `cwd`, **broad to specific** (ADR-076).
    *
-   * "Nearest" is the standard's rule — the closest file wins. A file that exists but
-   * is empty does not count, so an accidental empty `AGENTS.md` cannot shadow a
-   * populated `CLAUDE.md` beside it.
+   * The chain runs from the project root (the directory with `.git`) down to `cwd`, one
+   * base file per directory (`AGENTS.md`, else `CLAUDE.md`) plus that directory's local
+   * overlay. A directory with nothing in it contributes nothing, and an empty file does
+   * not count — an accidentally created empty `AGENTS.md` must not shadow a populated
+   * `CLAUDE.md` beside it.
+   *
+   * Outside a repository the chain is just `cwd`. A path that cannot be read
+   * contributes nothing rather than failing the walk: instructions are guidance, and a
+   * session that refuses to start over a broken file would be worse than one that says
+   * afterwards what it did not load.
    */
-  nearest(cwd: string): Promise<InstructionFile | null>;
+  chain(cwd: string): Promise<readonly InstructionFile[]>;
 }
