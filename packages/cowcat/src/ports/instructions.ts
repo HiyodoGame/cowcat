@@ -17,6 +17,14 @@ export interface InstructionFile {
   readonly content: string;
 }
 
+export interface InstructionChainOptions {
+  /**
+   * A user-global file read before the project chain (ADR-075), e.g. `~/.cowcat/AGENTS.md`.
+   * Absent or unreadable contributes nothing.
+   */
+  readonly global?: string;
+}
+
 export interface InstructionPort {
   /**
    * The instruction chain that applies to `cwd`, **broad to specific** (ADR-076).
@@ -32,5 +40,5 @@ export interface InstructionPort {
    * session that refuses to start over a broken file would be worse than one that says
    * afterwards what it did not load.
    */
-  chain(cwd: string): Promise<readonly InstructionFile[]>;
+  chain(cwd: string, options?: InstructionChainOptions): Promise<readonly InstructionFile[]>;
 }

@@ -145,6 +145,12 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // The lock's edges are plumbing, not transcript material.
       return base;
 
+    case 'instructions.loaded':
+      // Project instructions are context, not conversation: the transcript does not
+      // reprint AGENTS.md. The event exists so a replay shows what the model was told
+      // (ADR-078), not so the terminal repeats it.
+      return base;
+
     case 'policy.decided':
       // Deliberately silent: the verdict reaches the transcript through the result it
       // produced ("denied by <rule>: <reason>"), and repeating it would print every

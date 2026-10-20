@@ -9,6 +9,7 @@ import {
   type ProtocolHost,
   type SessionSummary,
 } from '@corescense/cowcat-protocol';
+import { join } from 'node:path';
 import { createBashTool } from '../adapters/tools/bash.js';
 import { createEditTool } from '../adapters/tools/edit.js';
 import { createGlobTool } from '../adapters/tools/glob.js';
@@ -25,6 +26,7 @@ import { createSandboxExecutor } from '../adapters/sandbox/executor.js';
 import { fsProbeFrom } from '../adapters/sandbox/fs-probe.js';
 import { createSessionIndex } from '../adapters/session-index.js';
 import { FileTrustStore } from '../adapters/trust.js';
+import { FileInstructionSource } from '../adapters/instructions.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
 import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
 import type { KernelEvent, SessionUpdate } from '../kernel/events.js';
@@ -174,7 +176,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const trustStore =
     options.trustStore ?? new FileTrustStore({ file: paths.trustFile, fs });
   const trust = await trustStore.load();
-  const rules = withHostRules(trustedRules(config, { trusted: isTrusted(trust.trusted, options.cwd, fs) }));
+  // Whether this workspace is trusted gates two things: its own rules (ADR-028) and
+  // whether its instructions are injected at all (ADR-030/077).
+  const workspaceTrusted = isTrusted(trust.trusted, options.cwd, fs);
+  const rules = withHostRules(trustedRules(config, { trusted: workspaceTrusted }));
 
   const platform = options.platform ?? new NodePlatform({ env: options.env });
   const sandbox = resolveSandboxProfile(config.sandbox, { cwd: options.cwd, home: options.home, fs });
@@ -397,6 +402,14 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         approve: (request: ActionRequest) => askApproval(rec, request),
         ...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
         ids: sessionDeps.ids,
+        // The chain is read per turn but injected once (ADR-078): the fold decides
+        // whether it is still in `messages`, so a compaction puts it back.
+        instructions: {
+          port: new FileInstructionSource({ fs }),
+          cwd: options.cwd,
+          trust: { trusted: workspaceTrusted },
+          global: join(paths.dir, 'AGENTS.md'),
+        },
       };
 
       let failure: unknown = null;

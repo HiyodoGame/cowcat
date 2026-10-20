@@ -26,7 +26,7 @@ export {
   type CompactDeps,
   type CompactOutcome,
 } from './kernel/compact.js';
-export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
+export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type InstructionNeeds, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ReasoningBlock, ToolCall } from './kernel/messages.js';

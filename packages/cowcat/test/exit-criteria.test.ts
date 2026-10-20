@@ -184,6 +184,11 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // The lock's edges are plumbing: they are in the log so an interrupted attempt is
         // detectable, not so a transcript shows them.
         break;
+      case 'instructions.loaded':
+        // Project instructions are context, not conversation: the transcript does not
+        // reprint AGENTS.md. They are in the log so a replay shows what the model was
+        // told (ADR-078).
+        break;
       default: {
         const unhandled: never = event;
         throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);
