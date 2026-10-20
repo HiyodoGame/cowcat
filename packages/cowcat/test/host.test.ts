@@ -344,6 +344,38 @@ test('a turn asks before writing, and the answer releases the call', async (t) =
   assert.ok(types.indexOf('approval.requested') < types.indexOf('approval.answered'));
 });
 
+test('an approval answered before the kernel asks is held, not lost', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_early', name: 'Write', input: { file_path: join(cwd, 'early.txt'), content: 'ok\n' } } }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_early');
+  await fixture.client.openSession('sess_early');
+
+  // The event is emitted before the bridge is called, so a frontend that answers the
+  // instant it sees `approval.requested` can arrive first. Answering before the turn
+  // even starts pins that seam deterministically (`run --yes` does the fast version).
+  await fixture.client.respondApproval('sess_early', 'call_early', 'once');
+
+  await fixture.client.sendTurn('sess_early', 'write it');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  assert.equal(readFileSync(join(cwd, 'early.txt'), 'utf8'), 'ok\n');
+  const answered = first(fixture.events(), 'approval.answered');
+  assert.equal(field(answered, 'verdict'), 'once');
+  assert.equal(field(answered, 'by'), 'user');
+});
+
 test('TodoWrite never asks, because the host baseline says so', async (t) => {
   const home = tempDir(t, 'cowcat-host-home-');
   const cwd = tempDir(t, 'cowcat-host-proj-');
