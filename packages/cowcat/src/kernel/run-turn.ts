@@ -1,8 +1,9 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, ToolGrant, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
+import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
 import type { InstructionPort } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
+import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput } from './subagent.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
 import { contextCeiling, contextUsage } from './context.js';
@@ -74,6 +75,20 @@ export interface TurnDeps {
    * filesystem, no injection.
    */
   readonly instructions?: InstructionNeeds;
+  /**
+   * Runs delegated tasks (ADR-079/080). Omitted means `Task` is not put on the wire at
+   * all — which is exactly how a child session is kept from delegating further: its
+   * `TurnDeps` simply has no port (ADR-081 ④).
+   */
+  readonly subagents?: { readonly port: SubagentPort };
+  /**
+   * Why nobody can answer an approval in this session (ADR-081 ③).
+   *
+   * When set, every `ask` is refused immediately and recorded as `by: 'unattended'`.
+   * The alternative — asking and waiting — costs the approval timeout (ADR-032) to learn
+   * that there was no reader, which is the worst of the three outcomes.
+   */
+  readonly unattended?: string;
 }
 
 /**
@@ -263,7 +278,7 @@ async function streamModel(
   providerOptions: Readonly<Record<string, unknown>> | undefined,
   signal: AbortSignal,
 ): Promise<readonly ToolCall[]> {
-  const { session, model, preset, tools } = deps;
+  const { session, model, preset } = deps;
   const turnId = session.turnId;
   if (turnId === null) throw new Error('streamModel outside a turn');
 
@@ -271,7 +286,7 @@ async function streamModel(
     messages: session.state.messages,
     // The preset's `toolCalls` gates the one place tools are put on the wire; a model
     // that cannot take them runs the same turn without (ADR-046 decision ③).
-    tools: preset.toolCalls ? [...tools.values()].map((tool) => tool.spec) : [],
+    tools: preset.toolCalls ? wireTools(deps) : [],
     model: preset.model,
     ...(preset.limits.output === undefined ? {} : { maxTokens: preset.limits.output }),
     ...(providerOptions === undefined ? {} : { providerOptions }),
@@ -319,6 +334,14 @@ async function streamModel(
 
   await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, reasoning, stopReason });
   return calls;
+}
+
+// The tools a request carries: the registered ones, plus the one the kernel answers
+// itself (ADR-080 ③). Built in one place so `compaction`'s subordinate call — which
+// passes `deps.tools` directly — cannot accidentally offer `Task` to a summarizer.
+function wireTools(deps: TurnDeps): readonly ToolSpec[] {
+  const specs = [...deps.tools.values()].map((tool) => tool.spec);
+  return deps.subagents === undefined ? specs : [...specs, TASK_SPEC];
 }
 
 // The log is JSON, and the log is the source of truth: a fact that cannot survive a
@@ -453,17 +476,22 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   const { session } = deps;
   const turnId = session.turnId;
   const tool = deps.tools.get(call.name);
-  if (tool === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
+  // `Task` is not in `deps.tools`: it is the kernel's own tool, present only when a port
+  // was supplied (ADR-080 ②/③). Its spec still goes through the same decision path, so
+  // delegating is as auditable as running a command.
+  const taskSpec = deps.subagents !== undefined && call.name === TASK_TOOL_NAME ? TASK_SPEC : null;
+  const spec = taskSpec ?? tool?.spec;
+  if (spec === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
 
   // Built once: the request needs it canonicalised, and the log records the same value
   // (ADR-049) — computing it twice is how the two spellings would drift apart.
-  const fields = actionFields(deps.fs, tool.spec, call.input);
+  const fields = actionFields(deps.fs, spec, call.input);
   const path = fields.path ?? null;
   const request: ActionRequest = {
     kind: 'tool',
     callId: call.callId,
     name: call.name,
-    risk: tool.spec.risk,
+    risk: spec.risk,
     input: call.input,
     ...fields,
   };
@@ -479,7 +507,7 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   // into a tool would give it a window onto the state machine the layers forbid.
   // Checked before an approval prompt is raised — asking about a write that will be
   // refused is theatre.
-  const unread = unreadTarget(deps, tool.spec, path);
+  const unread = unreadTarget(deps, spec, path);
   if (unread !== null) return { result: { ok: false, output: unread }, path };
 
   // Whether THIS call was granted by a person — the only thing `ToolGrant.networkApproved`
@@ -503,6 +531,28 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         by: 'policy',
       });
       approved = true;
+    } else if (deps.unattended !== undefined) {
+      // Nobody can answer here (ADR-081 ③). The question and the refusal are both
+      // written: a log that shows only the refusal would look like the kernel made the
+      // decision on its own, and a log that shows only the question would look like the
+      // turn is still waiting.
+      await session.emit({
+        type: 'approval.requested',
+        turnId,
+        callId: call.callId,
+        name: call.name,
+        rule: decision.rule,
+        reason: decision.reason,
+      });
+      await session.emit({
+        type: 'approval.answered',
+        turnId,
+        callId: call.callId,
+        key,
+        verdict: 'reject',
+        by: 'unattended',
+      });
+      return { result: { ok: false, output: `rejected: ${deps.unattended}` }, path };
     } else {
       await session.transition('awaiting_approval', decision.rule);
       // The question is written before it is asked, so a log that ends here says what
@@ -533,6 +583,13 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
     }
   }
 
+  // Delegation is the one "tool" the kernel runs itself (ADR-080 ②). Reaching this point
+  // means it was not denied and, when the rules asked, that a person allowed it.
+  if (taskSpec !== null) return await runSubagentCall(deps, call, signal);
+  // Unreachable by construction (`spec` came from one of the two), kept so the two
+  // branches stay typed without a non-null assertion, which the repository forbids.
+  if (tool === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
+
   const grant: ToolGrant = { networkApproved: approved };
   try {
     return { result: await tool.run(call.input, signal, grant), path };
@@ -541,4 +598,88 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
     const message = error instanceof Error ? error.message : String(error);
     return { result: { ok: false, output: message }, path };
   }
+}
+
+/**
+ * Run one `Task` call (ADR-080/082).
+ *
+ * Three things happen here that a `ToolPort` could not do: the child's session id is
+ * minted before anything can fail (so the parent log names it even when creation dies),
+ * the two `subagent.*` facts are written to the parent log, and the returned report is
+ * clipped before it enters the parent's context.
+ *
+ * A failed spawn is a tool result, not a failed turn: the model can decide to do the work
+ * itself, and the parent's log still says what was tried.
+ */
+async function runSubagentCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
+  const subagents = deps.subagents;
+  if (subagents === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
+
+  const parsed = parseTaskInput(call.input);
+  if (!parsed.ok) return { result: { ok: false, output: `invalid Task input: ${parsed.reason}` }, path: null };
+  const { description, prompt, role, maxTurns } = parsed.input;
+
+  const childSessionId = deps.ids.next('sess');
+  const turnId = deps.session.turnId;
+  await deps.session.emit({
+    type: 'subagent.started',
+    turnId,
+    callId: call.callId,
+    childSessionId,
+    role,
+    description,
+  });
+
+  let outcome: SubagentOutcome;
+  try {
+    outcome = await subagents.port.spawn(
+      { sessionId: childSessionId, callId: call.callId, description, prompt, role, maxTurns },
+      signal,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const state = signal.aborted ? 'cancelled' : 'failed';
+    await deps.session.emit({
+      type: 'subagent.finished',
+      turnId,
+      callId: call.callId,
+      childSessionId,
+      role,
+      ok: false,
+      state,
+      turns: 0,
+      partial: false,
+      usage: null,
+      reason,
+    });
+    // A cancelled parent ends its turn; the child's own end is the port's business.
+    if (signal.aborted) throw error;
+    return { result: { ok: false, output: `sub agent failed: ${reason}` }, path: null };
+  }
+
+  await deps.session.emit({
+    type: 'subagent.finished',
+    turnId,
+    callId: call.callId,
+    childSessionId: outcome.sessionId,
+    role: outcome.role,
+    ok: outcome.state === 'completed',
+    state: outcome.state,
+    turns: outcome.turns,
+    partial: outcome.partial,
+    usage: outcome.usage,
+    reason: outcome.reason,
+  });
+
+  if (signal.aborted) throw new TurnAborted('aborted while a sub agent was running');
+
+  const { text, truncation } = clipReport(outcome.report);
+  return {
+    result: {
+      ok: outcome.state === 'completed',
+      output: formatTaskResult(outcome, text),
+      ...(truncation === null ? {} : { truncation }),
+    },
+    path: null,
+  };
 }

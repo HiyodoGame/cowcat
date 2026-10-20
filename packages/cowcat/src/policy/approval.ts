@@ -11,8 +11,14 @@ export type ApprovalVerdict = 'once' | 'always' | 'reject';
  * explicitly is what keeps the log honest — otherwise an `ask` in the log would be
  * followed by a tool that ran with no answer in between, which reads like the kernel
  * ignored its own decision.
+ *
+ * `'unattended'` is the third non-person: nobody can be asked here at all (a delegated
+ * child session, ADR-081 ③). It is not a timeout — waiting five minutes to learn that
+ * no reader exists would be theatre — and it is not `'policy'`, which means an earlier
+ * human answer still stands. Keeping them apart is what lets a log answer "did a person
+ * decide this?" without guessing.
  */
-export type ApprovalBy = 'user' | 'policy' | 'timeout';
+export type ApprovalBy = 'user' | 'policy' | 'timeout' | 'unattended';
 
 /**
  * The identity of "this same action" for an `always` answer.

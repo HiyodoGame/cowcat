@@ -29,7 +29,7 @@ const approvalVerdictSchema = z.enum(['once', 'always', 'reject']);
 // `policy` is reachable here even though it is not one of the two answers a person
 // can give: it is what a standing `always` from earlier in the same session records
 // when it lets a later call through (ADR-031).
-const approvalBySchema = z.enum(['user', 'policy', 'timeout']);
+const approvalBySchema = z.enum(['user', 'policy', 'timeout', 'unattended']);
 
 // The gateway's own account of what it did (ADR-033). Mirrors ports/process.ts; the
 // compile-time assertion in test/schema.test.ts holds the two together through
@@ -241,6 +241,27 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // Same for attachments (ADR-057): a log written before this field existed decodes to
     // `null`, which says "the tool reported nothing" rather than "it produced no image".
     attachments: nullableFromAbsent(z.readonly(z.array(attachmentSchema))),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('subagent.started'),
+    callId: z.string(),
+    childSessionId: z.string(),
+    role: z.enum(['explore', 'general']),
+    description: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('subagent.finished'),
+    callId: z.string(),
+    childSessionId: z.string(),
+    role: z.enum(['explore', 'general']),
+    ok: z.boolean(),
+    state: z.enum(['completed', 'failed', 'cancelled']),
+    turns: z.number().int().nonnegative(),
+    partial: z.boolean(),
+    usage: modelUsageSchema.nullable(),
+    reason: z.string().nullable(),
   }),
 ]);
 
