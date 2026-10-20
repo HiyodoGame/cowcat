@@ -2,6 +2,7 @@ import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
 import type { Attachment, Truncation, TodoItem } from '../ports/index.js';
 import type { ModelUsage, StopReason } from '../ports/model.js';
+import type { SubagentRole, SubagentState } from '../ports/subagent.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
 import type { ToolCall, ReasoningBlock } from './messages.js';
@@ -199,6 +200,43 @@ export type KernelEvent = EventBase &
          * travel this path (`attachment.read` is how a frontend asks for them).
          */
         readonly attachments: readonly Attachment[] | null;
+      }
+    | {
+        /**
+         * A delegated run started (ADR-079 ①).
+         *
+         * Written in the PARENT log, and before the child log is known to exist: the
+         * child session id is minted first (ADR-080 ④), so a spawn that fails still
+         * leaves a parent/child link rather than a delegation nobody can trace.
+         */
+        readonly type: 'subagent.started';
+        readonly callId: string;
+        readonly childSessionId: string;
+        readonly role: SubagentRole;
+        readonly description: string;
+      }
+    | {
+        /**
+         * The delegated run ended (ADR-079 ①), successfully or not.
+         *
+         * The child's own conversation is NOT here — it lives in the child's log. What
+         * this event carries is what the parent needs to explain the delegation: how it
+         * ended, how many rounds it took, whether the cap stopped it, and what it cost.
+         *
+         * `usage` is the child's total, kept apart from `model.usage` on purpose: the
+         * parent's compaction trigger reads `lastUsage`, and folding a child's tokens in
+         * would make the parent compact as if it had read them (ADR-082 ③).
+         */
+        readonly type: 'subagent.finished';
+        readonly callId: string;
+        readonly childSessionId: string;
+        readonly role: SubagentRole;
+        readonly ok: boolean;
+        readonly state: SubagentState;
+        readonly turns: number;
+        readonly partial: boolean;
+        readonly usage: ModelUsage | null;
+        readonly reason: string | null;
       }
   );
 

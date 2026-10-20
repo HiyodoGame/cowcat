@@ -228,6 +228,12 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         ...(readFiles === state.readFiles ? {} : { readFiles }),
       };
     }
+    case 'subagent.started':
+    case 'subagent.finished':
+      // Delegation is a fact about the parent log, not about its messages: what the model
+      // sees is the `tool.finished` that follows. Nothing is derived, so replay ignores
+      // these two — the same shape `policy.decided` has, for the same reason.
+      return base;
     case 'policy.decided':
       return base;
     case 'todo.updated':

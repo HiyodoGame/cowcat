@@ -170,6 +170,13 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
       case 'approval.answered':
         out.push({ ...withoutVolatile(event), callId: projectedId(event.callId) });
         break;
+      case 'subagent.started':
+      case 'subagent.finished':
+        // No message of their own: delegation reaches the transcript through the
+        // `tool.finished` that follows (its output names the child session, ADR-079).
+        // They are still projected as facts, so a run that delegates shows it here.
+        out.push(withoutVolatile(event));
+        break;
       case 'todo.updated':
         // Compared as the log wrote it: a list added to a turn would show up here as a
         // difference, which is the point of projecting rather than rebuilding (ADR-043).

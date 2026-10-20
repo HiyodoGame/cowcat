@@ -27,6 +27,13 @@ export {
   type CompactOutcome,
 } from './kernel/compact.js';
 export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type InstructionNeeds, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
+export {
+  SUBAGENT_REPORT_MAX_CHARS,
+  TASK_SPEC,
+  TASK_TOOL_NAME,
+  type TaskInput,
+  type TaskParse,
+} from './kernel/subagent.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
 export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ReasoningBlock, ToolCall } from './kernel/messages.js';
@@ -96,6 +103,11 @@ export {
   type TodoItem,
   type TodoStatus,
   type Truncation,
+  type SubagentOutcome,
+  type SubagentPort,
+  type SubagentRequest,
+  type SubagentRole,
+  type SubagentState,
   type ModelPort,
   type ModelChunk,
   type ModelRequest,
