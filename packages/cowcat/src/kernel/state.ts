@@ -53,6 +53,17 @@ export interface SessionState {
    */
   readonly compactionOpen: boolean;
   /**
+   * The seq of the `instructions.loaded` message currently in `messages`, or null when
+   * there is none (ADR-078).
+   *
+   * This is the whole "should I inject?" question: a compaction shadows the message and
+   * resets this to null, so the next turn re-injects — the rule lives in the fold rather
+   * than in a caller that has to remember to re-run.
+   */
+  readonly instructionsSeq: number | null;
+  /** How many times instructions have been injected, which decides `start` vs `refresh`. */
+  readonly instructionsCount: number;
+  /**
    * Actions answered `always`, for the rest of this session (ADR-031 decision 3).
    *
    * Derived from the log rather than held beside it, which is what makes the promise
@@ -90,6 +101,8 @@ export function initialState(sessionId: string): SessionState {
     messageSeqs: [],
     lastUsage: null,
     compactionOpen: false,
+    instructionsSeq: null,
+    instructionsCount: 0,
     grants: [],
     readFiles: [],
     todos: [],
@@ -169,8 +182,24 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         // The anchor counted messages that are no longer sent; keeping it would
         // over-estimate this session forever. The next request re-establishes it.
         lastUsage: null,
+        // The instructions were the first message, so the summary swallowed them
+        // (ADR-078 ①). Clearing this makes the next turn inject them again.
+        ...(state.instructionsSeq !== null && state.instructionsSeq <= event.throughSeq
+          ? { instructionsSeq: null }
+          : {}),
       };
     }
+    case 'instructions.loaded':
+      // A message-producing event like `turn.opened`: what the model was told about the
+      // repository is part of the conversation, so a replay reproduces it without
+      // touching the filesystem (ADR-078).
+      return {
+        ...base,
+        messages: [...state.messages, { role: 'user', text: event.text }],
+        messageSeqs: [...state.messageSeqs, event.seq],
+        instructionsSeq: event.seq,
+        instructionsCount: state.instructionsCount + 1,
+      };
     case 'context.compaction.started':
       return { ...base, compactionOpen: true };
     case 'context.compaction.finished':

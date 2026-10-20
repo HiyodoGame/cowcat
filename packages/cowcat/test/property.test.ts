@@ -234,6 +234,8 @@ function stateWithTurnIn(state: TurnState): SessionState {
     messageSeqs: [],
     lastUsage: null,
     compactionOpen: false,
+    instructionsSeq: null,
+    instructionsCount: 0,
     grants: [],
     readFiles: [],
     todos: [],

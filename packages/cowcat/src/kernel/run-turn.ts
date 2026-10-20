@@ -1,6 +1,8 @@
 import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, ToolGrant, ToolPort, ToolResult, ToolSpec } from '../ports/index.js';
+import type { InstructionPort } from '../ports/index.js';
+import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
 import { contextCeiling, contextUsage } from './context.js';
@@ -17,6 +19,19 @@ import { isTerminal, type TerminalTurnState } from './turn.js';
  * pause as a no would be unusable interactively.
  */
 export const DEFAULT_APPROVAL_TIMEOUT_MS = 300_000;
+
+export interface InstructionNeeds {
+  /** Reads the chain (ADR-076). */
+  readonly port: InstructionPort;
+  /** The directory whose chain applies. */
+  readonly cwd: string;
+  /** Whether this workspace is trusted (ADR-030/077). */
+  readonly trust: { readonly trusted: boolean };
+  /** The user-global file, if the host has one (ADR-075). */
+  readonly global?: string;
+  /** Overrides INSTRUCTION_MAX_BYTES (ADR-076). */
+  readonly maxBytes?: number;
+}
 
 export interface TurnDeps {
   readonly session: Session;
@@ -53,6 +68,12 @@ export interface TurnDeps {
   /** Overrides DEFAULT_APPROVAL_TIMEOUT_MS. Tests use a short one. */
   readonly approvalTimeoutMs?: number;
   readonly ids: IdSource;
+  /**
+   * Where workspace instructions come from, when the caller has them (ADR-078). Omitted
+   * means the session runs without them, which is what a kernel test wants: no
+   * filesystem, no injection.
+   */
+  readonly instructions?: InstructionNeeds;
 }
 
 /**
@@ -68,7 +89,12 @@ export type TurnNote =
    * A compaction that should have run did not (ADR-072). Reported rather than thrown,
    * because the turn can still continue on the history it already has.
    */
-  | { readonly kind: 'compaction-failed'; readonly reason: string };
+  | { readonly kind: 'compaction-failed'; readonly reason: string }
+  /**
+   * Instructions were found but not injected (ADR-030/077). Reported so the user learns
+   * the workspace's rules are not in play — the notice is the point, not the absence.
+   */
+  | { readonly kind: 'instructions-skipped'; readonly reason: string };
 
 export interface TurnOutcome {
   /**
@@ -97,6 +123,9 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
   if (!deps.preset.toolCalls) notes.push({ kind: 'tools-unsupported', model: deps.preset.model });
   if (effort.note !== null) notes.push(effort.note);
 
+  // Instructions go in **before** the turn opens, so the model reads the repository's
+  // rules ahead of the request rather than after it (ADR-078 ①).
+  await ensureInstructions(deps, notes);
   await session.openTurn(input);
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
@@ -121,6 +150,9 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
             signal,
           );
           if (!outcome.ok && outcome.reason !== null) notes.push({ kind: 'compaction-failed', reason: outcome.reason });
+          // A compaction shadows the instruction message, so the fix is to put it back
+          // (ADR-078 ①) — in the same turn, before the next request goes out.
+          await ensureInstructions(deps, notes);
         }
       }
       const calls = await streamModel(deps, effort.providerOptions, signal);
@@ -186,6 +218,44 @@ function wireEffort(preset: ModelPreset, effort: string | undefined): EffortWiri
     return { providerOptions: undefined, note: { kind: 'effort-not-declared', model: preset.model, effort } };
   }
   return { providerOptions: declared, note: null };
+}
+
+/**
+ * Make sure the model's history carries the workspace instructions (ADR-078).
+ *
+ * Called once before a turn opens, and again right after a compaction. Doing nothing
+ * when `instructionsSeq` is set **is** the dedupe — the fold decides, not a counter in
+ * memory, so a reopened session does not inject a second copy either.
+ */
+async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<void> {
+  const needs = deps.instructions;
+  if (needs === undefined) return;
+  if (deps.session.state.instructionsSeq !== null) return;
+
+  try {
+    const files = await needs.port.chain(needs.cwd, needs.global === undefined ? {} : { global: needs.global });
+    const decision = decideInstruction(files, needs.trust, needs.maxBytes);
+    if (decision.kind === 'none') return;
+    if (decision.kind === 'skipped-untrusted') {
+      const reason = describeInstructionSkip(decision);
+      if (reason !== null) notes.push({ kind: 'instructions-skipped', reason });
+      return;
+    }
+    const encoder = new TextEncoder();
+    await deps.session.emit({
+      type: 'instructions.loaded',
+      turnId: deps.session.turnId,
+      // `start` for the first injection of the session; every later one is a refresh
+      // after a compaction shadowed the previous message.
+      trigger: deps.session.state.instructionsCount === 0 ? 'start' : 'refresh',
+      text: decision.text,
+      files: decision.files.map((file) => ({ path: file.path, bytes: encoder.encode(file.content).length })),
+    });
+  } catch (error) {
+    // Instructions are guidance. A broken read is reported, never fatal — the same rule
+    // compaction follows (ADR-072 ④).
+    notes.push({ kind: 'instructions-skipped', reason: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 async function streamModel(

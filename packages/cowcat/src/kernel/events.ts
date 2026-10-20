@@ -15,6 +15,13 @@ interface EventBase {
   readonly turnId: string | null;
 }
 
+/** One instruction file that made it into the injected text (ADR-078). */
+export interface InstructionSource {
+  readonly path: string;
+  /** UTF-8 bytes after the budget was applied. */
+  readonly bytes: number;
+}
+
 // Durable facts. Anything in this union is written to the session log before it
 // is applied to state, so replaying the log reproduces the session exactly.
 export type KernelEvent = EventBase &
@@ -101,6 +108,24 @@ export type KernelEvent = EventBase &
         readonly ok: boolean;
         /** Why it failed, in the words the provider or the kernel used. `null` on success. */
         readonly error: string | null;
+      }
+    | {
+        /**
+         * The workspace instructions the model is now being sent (ADR-078).
+         *
+         * A message-producing event, like `turn.opened`: what the model is told about the
+         * repository is part of the conversation it sees, and a session that cannot
+         * replay it cannot answer "what was it actually told?". `text` is the rendered
+         * chain (ADR-076), so a replay needs no filesystem at all.
+         *
+         * `trigger` says why it happened: `start` for the first injection of a session,
+         * `refresh` when a compaction shadowed the previous one (ADR-078 ①).
+         */
+        readonly type: 'instructions.loaded';
+        readonly trigger: 'start' | 'refresh';
+        readonly text: string;
+        /** What went into `text`, in the order it appears. Bytes are post-budget. */
+        readonly files: readonly InstructionSource[];
       }
     | { readonly type: 'policy.decided'; readonly callId: string; readonly decision: Decision }
     | {
