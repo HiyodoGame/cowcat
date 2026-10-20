@@ -130,7 +130,7 @@ packages/protocol/   @corescense/cowcat-protocol   Node >=22   wire + 传输 + s
 packages/cowcat/     @corescense/cowcat-core       Node >=22   内核 + 适配器 + 组合根 src/host/
 packages/tui/        @corescense/cowcat-tui        Node >=26.4 opentui 渲染器 + 协议客户端（T7 填 app/ ui/ components/）
                      ↑ 整个包都不许 import 内核（ADR-059 ③，禁令从 src/cli/** 扩到 src/**）
-packages/cli/        @corescense/cowcat-cli        Node >=22   bin + 子命令表 + doctor（唯一同时看得到两边的包）
+packages/cli/        @corescense/cowcat         Node >=22   bin + 子命令表 + doctor（唯一同时看得到两边的包）
                      ↑ 不许直接 import @opentui/*（进渲染器只有一个门：@corescense/cowcat-tui）
 
 依赖方向：protocol ← cowcat ← cli，protocol ← tui ← cli（无环）

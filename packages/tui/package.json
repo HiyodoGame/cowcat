@@ -1,8 +1,7 @@
 {
   "name": "@corescense/cowcat-tui",
-  "version": "0.0.0",
-  "private": true,
-  "description": "CowCat v2 frontend: TUI over the headless protocol. Not published yet, and the only package on the Node 26 floor.",
+  "version": "1.0.0-beta.1",
+  "description": "CowCat's terminal renderer: TUI over the headless protocol. The only package on the Node 26 floor.",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -17,6 +16,18 @@
   "files": [
     "dist/src"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HiyodoGame/cowcat.git",
+    "directory": "packages/tui"
+  },
+  "homepage": "https://github.com/HiyodoGame/cowcat#readme",
+  "bugs": {
+    "url": "https://github.com/HiyodoGame/cowcat/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

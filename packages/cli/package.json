@@ -1,12 +1,11 @@
 {
-  "name": "@corescense/cowcat-cli",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@corescense/cowcat",
+  "version": "1.0.0-beta.1",
   "description": "CowCat's executable: the subcommand table, `serve` over the real host, `run`, `sessions` and `doctor`. The only package that sees the protocol and the renderer at once (ADR-062 ③).",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "cowcat": "./dist/src/cli/main.js"
+    "cowcat": "dist/src/cli/main.js"
   },
   "engines": {
     "node": ">=22"
@@ -20,6 +19,18 @@
   "files": [
     "dist/src"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HiyodoGame/cowcat.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/HiyodoGame/cowcat#readme",
+  "bugs": {
+    "url": "https://github.com/HiyodoGame/cowcat/issues"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

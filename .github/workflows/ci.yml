@@ -459,12 +459,24 @@ jobs:
   package:
     name: package whitelist
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Check what npm publish would upload
-        run: node tools/check-tarball.mjs
+      - name: Build the protocol package (file dependency)
+        run: |
+          npm --prefix packages/protocol ci
+          npm --prefix packages/protocol run build
+      - name: Build the kernel, renderer and executable
+        run: |
+          npm --prefix packages/cowcat ci
+          npm --prefix packages/cowcat run build
+          npm --prefix packages/tui ci
+          npm --prefix packages/tui run build
+          npm --prefix packages/cli ci
+          npm --prefix packages/cli run build
+      - name: Check what npm publish would upload, then install the tarballs
+        run: node tools/check-tarball.mjs --install
