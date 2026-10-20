@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-21（审批竞态修复合入；P8 v1 配置兼容）**。
-> 交接时仓库状态：**`main` = `f4afe52`**（#82 合入）；当前分支 **`feat/p8-v1-config`**（未提交/未推送）。
+> 最近一次更新：**2026-10-21（P8 包切换合入；删除 agent/，CI 收敛）**。
+> 交接时仓库状态：**`main` = `b352684`**（#84 包切换合入）；当前分支 **`chore/p8-remove-agent`**（未提交/未推送）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`doctor`、探针脚本）；**【CI 远端】**GitHub Actions（**本次没有推送，未观察**）；**【上游】**厂商文档或实现；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更。**
@@ -94,6 +94,24 @@
 
 **未迁移**：v1 的项目 `.cowcat/config.json`、`mcp.json`、`state.json` 都没有自动读。`mcp.json` 是独立文件与独立信任模型，需要单独决定。
 
+### P8 包切换（#84）与删除 v1（本分支）
+
+**包切换**（ADR-090）：
+
+- `packages/cli` 改名为 **`@corescense/cowcat`**，四包统一 `1.0.0-beta.1`、去掉 `private`；
+- `tools/pack-release.mjs` 把四包复制到暂存目录，内部 `file:` 依赖改写成精确版本，排除 `.map` 与 test，再 `npm pack`；
+- `--install` 会把四个 tarball 装进临时项目并跑 `cowcat --version`，本机已通过；
+- CI 的 `package whitelist` 腿改为构建四包后打包并安装。
+
+**删除 v1**（本分支）：
+
+- `agent/` 整棵树删除，仓库只剩 `packages/*`；
+- 根目录 `bin/cowcat` 指向 `packages/cli/dist/src/cli/main.js`；
+- 旧 CI 的 `scope`、`test`、`test-windows`、`test node 24` 与 macOS legacy 作业全部删除；
+- v1 专用探针删除（`legacy-config-probe`、`legacy-trust-probe`、`probe-guards`、`p5-glob-grep-probe`、`p6-tui-probe`、`run-ccagent-kimi`）；
+- 旧文档归档到 `docs/archive/`（ROADMAP、sandbox 研究/计划、fix-plan、MCP channel、read-multimodal、v1 USAGE、TUI redesign）；
+- README / AGENTS / CONTRIBUTING / SECURITY / PUBLISH / changelog 改成 v2 口径。
+
 ---
 
 ## 2. 当前状态
@@ -101,7 +119,9 @@
 ### 已验证 —— 【本机测试】/【构建】/【本机命令】
 
 - 【本机测试】`packages/cowcat` → **662 tests / 646 pass / 0 fail / 16 skipped**（`pretest` = `tsc` + ESLint 通过）
+- 【本机测试】`packages/protocol` → **42 / 42 pass**
 - 【本机测试】`packages/cli` → **21 / 21 pass**
+- 【本机测试】`packages/tui` → **48 / 48 pass**（`npx --yes node@26.12.0 --test "dist/test/**/*.test.js"`）
 - 【本机测试】`packages/tui` → 本会话未改该包、**未重跑**（上一轮 48 / 48；CI 两条腿当时通过）
 - 【本机命令】`node tools/lint-probe.mjs` → 未重跑（本会话没加分层规则；`npm run lint` 已过）
 - 【本机命令】`cowcat doctor` 实跑：新增 `mcp 未配置服务器` 行；其余行不变
@@ -120,11 +140,13 @@
 - **真实端点**（非注入模型）：`bigmodel/glm-5.3-flash` 两次真实回合都成功；一次对假服务器，一次对 `server-everything@2.0.0`（§1）。
 - **审批竞态**：回合开始前就回答 `respondApproval`，答案被暂存并在 `approve()` 到达时消费，Write 真正执行（回归测试）。
 - **v1 配置**：真实 `~/.cowcat/config.json` 被翻译后 `doctor` 通过，且一次真实回合用内联 key 成功；v2 文档带 `apiKey` 仍被严格 schema 拒绝（形状门控测试）。
+- **发布包**：`node tools/check-tarball.mjs --install` 四包打包通过；临时安装后 `cowcat --version` = `1.0.0-beta.1`，`--help` 正常；tarball 无 test/src/.map/file:。
+- **删除 agent 后**：四包测试分别 646 / 42 / 21 / 48 全过。
 
 ### 项目状态
 
-- **P6 完成**；**P7 进行中**：压缩（ADR-070~074）、指令（075~078）、子 agent（079~082）已完成；**MCP T1 已合（083~087），T2 已完成（088，待提交）**。
-- 四个包仍全部 `private: true`、`0.0.0`，从未发布；`schemaVersion` 仍是 **1**（本次没有新事件类型）。
+- **P6 完成**；**P7 完成**（压缩、指令、子 agent、MCP）；**P8 进行中**：v1 配置兼容（089）、包切换（090）、删除 `agent/` 已完成；发布、CHANGELOG、`setup` 未完成。
+- 四个包版本 `1.0.0-beta.1`，`private` 已去掉，但**尚未发布**（registry 仍是 v1 `0.15.0`）。
 - 运行时依赖不变（3 / 6）。
 - `cowcat` 六个动词：`tui` / `serve` / `run` / `sessions list|resume` / `doctor` 可用；`setup` 未接线。
 
@@ -132,25 +154,23 @@
 
 ## 3. 项目唯一下一步
 
-**先提交并推送 P8 配置兼容；然后继续 P8 的其余部分。**
+**先提交并推送删除 `agent/` 的 PR；然后是发布批次。**
 
-P8 还没做的（按 `dev-plan-v2.md`）：
+P8 还没做的：
 
-1. **包切换**：`packages/cowcat` 去 `private`、核对 `bin`/`engines`/`files`、tarball 检查（`tools/check-tarball.mjs` 已有）。
-2. **删除 `agent/`**，旧文档归档到 `docs/archive/`；CI 的 legacy 腿随之删除。
-3. **CHANGELOG** 从 `1.0.0-beta.1` 起算；版本号只在发布批次里改。
-4. **`cowcat setup`**：接线时顺便提供一次性写出 v2 配置的迁移（不含密钥，ADR-089 ⑤）。
-5. **v1 残留数据**：项目 `.cowcat/config.json`、`~/.cowcat/mcp.json`、`state.json` 仍未迁移；`mcp.json` 需要单独决定（独立文件 + `mcpTrusted` 语义）。
+1. **发布批次**：四个 `package.json` 与 `tools/pack-release.mjs` 的 `VERSION` 已是 `1.0.0-beta.1`；需要人工 2FA 从暂存目录按 protocol → core → tui → cli 发布（`docs/PUBLISH.md`）。
+2. **分支保护 contexts**：旧 `scope` / `test · node 22` 等 required checks 已从 CI 删除，仓库设置里要同步移除，否则 PR 会等一个永不上报的检查（仓库设置，不由代码完成）。
+3. **`cowcat setup`**：仍未接线；接线时提供一次性 v2 配置写出（不含密钥）。
+4. **v1 残留迁移**：`~/.cowcat/mcp.json`、项目 `.cowcat/config.json`、`state.json` 未自动读。
+5. **CHANGELOG 发布标记**：`docs/changelog.md` 的 `1.0.0-beta.1` 段落仍带「未发布」，发布时摘掉。
 
-MCP 剩余项（`.cmd`/`npx` 入口、真实 `list_changed`、macOS `light` 档）继续排在 P8 之后。
-
-**仍未做的事**：真实回合只跑了「单工具 + `--yes`」；多轮工具、拒绝路径、压缩、子 agent 的真实端点都还没有跑。
+MCP 剩余项（`.cmd`/`npx` 入口、真实 `list_changed`、macOS `light` 档）排在发布之后。
 
 ---
 
 ## 4. 关键决策
 
-P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**ADR-001~088**）。MCP 六条：083~087 是首版，088 是 T2 的分页与变更订阅。与子 agent 的边界一致：**新事实用新事件 + 可选字段**，但 MCP 没有新增事件——工具名本身携带来源，避免再触发一次 `schema.ts` / transcript 的编译期守卫。
+P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**ADR-001~090**）。MCP 六条：083~087 是首版，088 是 T2；P8 两条：089 v1 配置兼容、090 发布包切换。与子 agent 的边界一致：**新事实用新事件 + 可选字段**，但 MCP 没有新增事件——工具名本身携带来源，避免再触发一次 `schema.ts` / transcript 的编译期守卫。
 
 ---
 
@@ -181,6 +201,9 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 23. **`approval.requested` 先写、`approve()` 后调**：任何「看到事件就立刻回答」的前端都会撞上这个窗口（`run --yes` 实测）。宿主必须暂存早到的答案，不能直接报 `no approval is pending`。
 24. **真实 `~/.cowcat/config.json` 是 v1 形状**：`model` 是字符串、`providers.*.apiKey` 是内联密钥；v2 的严格 schema 会拒绝。跑任何 v2 真实端点测试都要用 `COWCAT_HOME` 指向临时目录，别拿用户配置做实验。
 25. **Windows 上 `npx` 是 `.cmd`**：`ProcessPort` 用 `shell:false`，不能直接 spawn `.cmd`。真实 MCP 服务器测试要指向包内的 `dist/index.js` 并用 `node` 启动，或另做 `.cmd` 解析（尚未做）。
+26. **删除 `agent/` 不会删除历史引用**：源码注释、调研文档里仍有 `agent/src/...:行号`，它们是迁移依据的历史证据，不要当成活路径去读。根目录 `bin/cowcat`、README、AGENTS、CI 必须一起改。
+27. **required check 按 job name 匹配**：删掉 legacy job 后，仓库分支保护里的旧 contexts 仍会等一个永不上报的检查。这是仓库设置，代码改完要人工同步。
+28. **发布 tarball 里的 `file:` 依赖必须改写**：本地 `npm pack` 直接发出去，消费者装不上。用 `tools/pack-release.mjs`，并跑 `--install` 演练。
 
 ---
 
@@ -193,10 +216,10 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 5. **`doctor` 不连接服务器**：配置层的名字与受信结论可见，工具数不可见。
 6. **v1 配置兼容已做（ADR-089），但不是全量迁移**：`permissions`、v1 项目 `.cowcat/config.json`、`~/.cowcat/mcp.json`、`state.json` 都没有读；内联 `apiKey` 仍留在旧文件里（只在内存使用）。
 7. **子 agent 的收益仍是推断**（研究型任务的 15× / 90.2% 不必然适用于编码）。
-8. **前序遗留、未复现**：`agent/` 的两个 macOS flake；`agent/src/llm/presets.js:2` 指向的 `tools/distill-providers.mjs` 不在仓库里；v1 套件（762 项）本会话未跑。
-9. **`packages/cli` 与 `packages/protocol` 尚未进分支保护 required 列表**（改仓库设置是用户的事）。
+8. **前序遗留随 `agent/` 一起删除**：两个 macOS flake、`distill-providers.mjs` 缺失、v1 套件都不再适用。
+9. **分支保护 contexts**：删除 legacy jobs 后，仓库设置里的旧 required checks 仍存在；需要人工移除，并把新的包腿加进去。
 10. **`cowcat setup` 未接线**；滚动回看、预览模态、Plan/Act 双模式仍未做。
-11. **本次改动未推送**：分支只在本地，CI 未跑。
+11. **本次改动未推送**：分支只在本地，CI 未跑；四个包**尚未发布**。
 
 ---
 
@@ -205,7 +228,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 | 路径 | 内容 |
 |---|---|
 | [`dev-plan-v2.md`](dev-plan-v2.md) | **权威计划**：P0–P8 阶段表、P7 的模块表、R3~R8 远期项 |
-| [`architecture/README.md`](architecture/README.md) | **ADR-001~089**（070~074 压缩；075~078 指令；079~082 子 agent；083~088 MCP；089 v1 配置兼容） |
+| [`architecture/README.md`](architecture/README.md) | **ADR-001~090**（070~074 压缩；075~078 指令；079~082 子 agent；083~088 MCP；089 v1 配置兼容；090 发布包切换） |
 | [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 进程网关：`run()` 与 `open()` 两种形状、脱敏、终止 |
 | [`research/p7-mcp.md`](research/p7-mcp.md) | 本次产出：上游对照（含补读后的修正）、决定、ADR 清单、待验证 |
 | `packages/cowcat/src/ports/process.ts` | `ProcessSpec` / `ProcessResult` / `ProcessHandle` / `open()` 契约 |

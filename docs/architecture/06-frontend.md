@@ -120,7 +120,7 @@ T3 交付的是**进程**，不是宿主：`stdioTransport`（行帧）+ `serve(
 
 ## 前端分层（ADR-056、ADR-062）
 
-前端是**独立包**（`packages/tui/`，`private: true`），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
+前端是**独立包**（`packages/tui/`，P8 起可发布），它自己声明 `engines.node >=26.4.0`（opentui 的门槛），而内核包保持 Node ≥ 22 不变。（T1 已按此建成该包与它的两条 Node 26 CI 腿；实测见下文「T1 前提验证」。）
 
 **包结构（ADR-062；1/3、2/3 与 3/3 都已落地）**：
 

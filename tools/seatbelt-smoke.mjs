@@ -1,9 +1,9 @@
 // Seatbelt smoke test: does `sandbox-exec` accept OUR profile, and does the
 // command inside it actually run?
 //
-// Split on purpose. The test suite (agent/test/sandbox-macos.test.mjs) asserts
-// outcomes, so when it fails you learn "the sandbox produced nothing" and not
-// WHY. `--bisect` narrows it further by replaying the profile one section at a
+// Split on purpose. The test suite (packages/cowcat/test/sandbox-macos.test.ts)
+// asserts outcomes, so when it fails you learn "the sandbox produced nothing" and
+// not WHY. `--bisect` narrows it further by replaying the profile one section at a
 // time, which is the only practical way to find the rule that is killing dyld:
 // a Seatbelt violation that the kernel considers fatal kills the process with
 // SIGKILL, so there is no error message — just a signal and silence.

@@ -1,6 +1,12 @@
 #!/bin/sh
 # CowCat global launcher shim — resolves the repo location from this script's
 # own path, so the repo can live anywhere and still be on PATH.
+#
+# It points at the built executable. Build once with:
+#   (cd packages/protocol && npm ci && npm run build)
+#   (cd packages/cowcat && npm ci && npm run build)
+#   (cd packages/tui && npm ci && npm run build)
+#   (cd packages/cli && npm ci && npm run build)
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
-exec node "$DIR/../agent/bin/cowcat.mjs" "$@"
+exec node "$DIR/../packages/cli/dist/src/cli/main.js" "$@"

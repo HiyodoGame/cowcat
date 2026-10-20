@@ -14,13 +14,11 @@
 # (test/sandbox-macos.test.mjs G1/G2/G3, private temp dir, `rm` still works) in
 # the merge gate instead of in a log nobody reads.
 #
-# Two jobs, not one: `test` is the legacy suite, `cowcat` is the v2 package. They
-# cover different ground — the legacy one needs `sandbox-exec` to actually apply a
-# profile, the v2 one needs a POSIX host to settle which shell gets picked. macOS
-# is the only place the second question can be answered, because macOS is the
-# platform where /bin/bash is NOT the default shell (docs/research/p2-shell-detection.md §3),
-# so `test/platform.test.ts`'s assertion that POSIX resolves /bin/bash is a real
-# measurement here and would pass trivially on Linux.
+# One job: the v2 package on macOS. macOS is the only place two questions can be
+# answered for real — the Seatbelt backend actually applies a profile, and POSIX
+# shell resolution picks /bin/bash rather than whichever shell the image prefers
+# (docs/research/p2-shell-detection.md §3). The legacy suite that used to live here
+# was deleted in P8.
 #
 # Draft PRs are excluded for the same reason as ci.yml: they cannot be merged.
 # `workflow_dispatch` remains for re-running a specific case by hand.
@@ -46,52 +44,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: test · node 22 · macos-15
-    runs-on: macos-15
-    timeout-minutes: 25
-    # Same draft guard as ci.yml. On a push `github.event.pull_request.draft` is
-    # null, so the first clause is what lets main pushes through.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    defaults:
-      run:
-        working-directory: agent
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: agent/package-lock.json
-      - name: Install (npm ci)
-        run: npm ci
-      # No sandbox dependency to install: sandbox-exec ships with macOS. The
-      # probe in src/sandbox/probe.js checks that it can actually apply a
-      # profile (not just that the binary exists), and the enforcement tests
-      # skip with that classification if it cannot.
-      - name: Report the backend preflight
-        # awk, not sed: renderInspect() puts section headers back to back with no
-        # blank line between them, so a /^$/ terminator would either print to the
-        # end of the output or nothing at all.
-        run: node bin/cowcat.mjs doctor inspect | awk '/^\[sandbox\]/{f=1;next} /^\[/{f=0} f'
-      # Separates "sandbox-exec rejected our profile" from "the command ran and
-      # the rules were wrong". The test suite below can only report that the
-      # sandbox produced nothing; this prints the exit code and stderr of the
-      # sandbox exec itself, which is the difference between a broken profile
-      # and a broken rule.
-      - name: Seatbelt profile smoke test
-        working-directory: .
-        run: |
-          node tools/seatbelt-smoke.mjs
-          echo
-          node tools/seatbelt-smoke.mjs --net
-      - name: Lint + tests (pretest runs eslint)
-        run: npm test
-
   cowcat:
-    # The v2 package on macOS. Same draft guard as the job above, no scope check:
-    # a required check that skips on some PRs blocks exactly those PRs, and the v2
-    # suite finishes in seconds, so there is nothing to gate.
+    # The v2 package on macOS. No scope check: a required check that skips on some
+    # PRs blocks exactly those PRs, and the suite finishes in seconds.
     name: packages/cowcat · node 22 · macos-15
     runs-on: macos-15
     timeout-minutes: 15

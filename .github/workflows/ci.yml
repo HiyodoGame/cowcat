@@ -1,63 +1,42 @@
-# CI: two packages, one gate each, and a cheap scope check in front of the legacy one.
+# CI: four v2 packages, one gate each, and a publish whitelist.
 #
 # ── Why this is shaped the way it is ─────────────────────────────────────────
-# This repository is PUBLIC, so GitHub Actions minutes are free on every runner
-# (Linux 1x, Windows 2x, macOS 10x multipliers no longer bill us). The shape used
-# to be dictated by a private Pro quota — measured 2026-10-16, one day of ordinary
-# PR work (68 runs) cost ~795 billable minutes, 26% of the monthly allowance, with
-# the Windows job (33%) and the Node-version legs (31%) the largest items. That
-# reasoning expired with the quota, so every leg now runs on every non-draft PR:
+# This repository is PUBLIC, so GitHub Actions minutes are free on every runner.
+# Every leg therefore runs on every non-draft PR:
 #
-#   legacy agent/ (until P8)   Linux on every non-draft PR; its Windows and Node 24
-#                              legs only when the scope check says agent/ changed
-#   packages/cowcat (v2)       Linux + Windows on every non-draft PR
-#   packages/protocol (P6)     Linux on every non-draft PR — pure JS, on the kernel's
-#                              Node 22 floor; the tui legs build it on both platforms too
-#   packages/tui (P6)          Linux + Windows on every non-draft PR — same reason as
-#                              cowcat, plus a different Node floor: opentui needs
-#                              >=26.4 (ADR-056) and ships its native core per platform,
-#                              so the two runners answer two different questions
-#   packages/cli (P6)          Linux on every non-draft PR — the executable. It is on the
-#                              KERNEL's Node floor (22, ADR-065 ①) and its one interesting
-#                              property is the build CHAIN: two `file:` dependencies have
+#   packages/protocol          Linux, Node 22 — pure JS, no renderer and no kernel
+#   packages/cowcat            Linux + Windows, Node 22 (macOS lives in ci-macos.yml,
+#                              where the Seatbelt backend can be verified for real)
+#   packages/tui               Linux + Windows, Node 26.4 — opentui ships a native
+#                              core per platform, so the two runners answer different
+#                              questions
+#   packages/cli               Linux, Node 22 — the executable. Its interesting
+#                              property is the build CHAIN: `file:` dependencies have
 #                              to be built before it can compile at all
-#   package whitelist          every non-draft PR (cheap, guards what npm publishes)
-#   CI (macOS)                 every non-draft PR + every main push — the only place
-#                              the Seatbelt backend is verified for real
+#   package whitelist          every non-draft PR — packs all four, installs the
+#                              tarballs and runs `cowcat --version`
+#   CI (macOS)                 every non-draft PR + every main push
 #   draft PRs                  nothing — a draft cannot be merged, and
 #                              `ready_for_review` re-triggers a full run
 #
 # Required checks are exactly the jobs that report on EVERY non-draft PR. That is
 # the whole rule: a required check that only sometimes reports blocks every PR
-# that skipped it. So `test · node 22 · windows-latest` and
-# `test · node 24 · ubuntu-latest` run on PRs but stay out of the required list
-# (the scope check may skip them), while the v2 Windows leg and the macOS leg are
-# required because they always run.
-#
-# The legacy `test` job keeps its name because branch protection requires it.
-# When `agent/` is untouched its steps are skipped inside a job that still reports
-# success, so the required check is satisfied without paying for the suite.
-#
-# Dropped on purpose: Node 20 (end-of-life 2026-04-30).
+# that skipped it.
 #
 # Linux legs are pinned to `ubuntu-24.04` (2026-10-17). `ubuntu-latest` starts
 # moving to Ubuntu 26.04 on 2026-10-19 and completes by 2026-11-19
 # (actions/runner-images#14748), so for weeks the same commit could land on either
 # image. That matters here because this gate installs bubblewrap + an AppArmor
-# profile, and when that fails the sandbox tests SKIP instead of failing (see the
-# test job) — a moving image could switch coverage off while the required check
-# stays green. Pinning keeps the signal readable, the same call ci-macos.yml made
-# for macos-15.
+# profile, and when that fails the sandbox tests SKIP instead of failing — a moving
+# image could switch coverage off while the required check stays green.
 #
 # The job `name:` fields still read `ubuntu-latest` on purpose: a required status
 # check is matched by job NAME, so renaming them means updating the branch
 # protection contexts in the same window, or every PR blocks on a check that can
 # no longer report. `runs-on` is the truth; those names are legacy identifiers.
-# Rename them and the protection contexts together in one deliberate change.
 #
-# The live checks under agent/test/live/ are deliberately NOT part of this: they
-# need a configured provider / real API key (see agent/test/live/README.md) or a
-# running MCP server, so they stay opt-in on a developer machine.
+# Dropped on purpose: Node 20 (end-of-life 2026-04-30) and the legacy `agent/`
+# suite (deleted in P8).
 name: CI
 
 on:
@@ -77,154 +56,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  scope:
-    name: scope · does the legacy agent/ change?
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    outputs:
-      legacy: ${{ steps.check.outputs.legacy }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - id: check
-        shell: bash
-        env:
-          EVENT: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          # A skipped gate must never be a guess: anything we cannot compare
-          # (manual run, brand-new branch, base commit missing) runs the suite.
-          case "$EVENT" in
-            pull_request) base="$PR_BASE" ;;
-            push) base="$PUSH_BEFORE" ;;
-            *) base="" ;;
-          esac
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
-            legacy=true
-          elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(agent/|\.github/workflows/ci\.yml$)'; then
-            legacy=true
-          else
-            legacy=false
-          fi
-          echo "legacy=$legacy" >> "$GITHUB_OUTPUT"
-          echo "legacy suite: $legacy (compared with ${base:-nothing})"
-
-  test:
-    name: test · node 22 · ubuntu-latest
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    needs: scope
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    defaults:
-      run:
-        working-directory: agent
-    steps:
-      - uses: actions/checkout@v7
-        if: needs.scope.outputs.legacy == 'true'
-      - uses: actions/setup-node@v7
-        if: needs.scope.outputs.legacy == 'true'
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: agent/package-lock.json
-      # node_modules is restored directly instead of re-running `npm ci`. The
-      # lock file is in the key, so a dependency change misses the cache and
-      # falls through to a real install; only the exact same tree is reused.
-      - uses: actions/cache@v6
-        if: needs.scope.outputs.legacy == 'true'
-        id: node-modules
-        with:
-          path: agent/node_modules
-          key: node-modules-${{ runner.os }}-22-${{ hashFiles('agent/package-lock.json') }}
-      - name: Install (npm ci)
-        if: needs.scope.outputs.legacy == 'true' && steps.node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-      # bubblewrap is what the system-level sandbox drives on Linux. Ubuntu 23.10+
-      # restricts unprivileged user namespaces via AppArmor, so bwrap fails until
-      # the profile is loaded — the same fix our preflight tells users about. If
-      # this step stops working, test/sandbox-linux.test.mjs skips (with the
-      # reason) instead of failing, and the log says which classification it hit.
-      - name: Install sandbox deps (Linux)
-        if: needs.scope.outputs.legacy == 'true'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap
-          sudo apt-get install -y apparmor-profiles 2>/dev/null || true
-          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
-      - name: Lint + tests (pretest runs eslint)
-        if: needs.scope.outputs.legacy == 'true'
-        run: npm test
-
-  test-windows:
-    # Runs on every non-draft PR, but only when the scope check says `agent/`
-    # changed — which is also why it is NOT a required check: a required check
-    # that skips on some PRs blocks exactly those PRs.
-    name: test · node 22 · windows-latest
-    runs-on: windows-latest
-    timeout-minutes: 20
-    needs: scope
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.scope.outputs.legacy == 'true'
-    defaults:
-      run:
-        working-directory: agent
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: agent/package-lock.json
-      - uses: actions/cache@v6
-        id: node-modules
-        with:
-          path: agent/node_modules
-          key: node-modules-${{ runner.os }}-22-${{ hashFiles('agent/package-lock.json') }}
-      - name: Install (npm ci)
-        if: steps.node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-      - name: Lint + tests (pretest runs eslint)
-        run: npm test
-
-  test-node24:
-    # Node-version compatibility. Same shape as the Windows leg above: every
-    # non-draft PR, but only when `agent/` is in scope, and therefore not required.
-    name: test · node 24 · ubuntu-latest
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    needs: scope
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.scope.outputs.legacy == 'true'
-    defaults:
-      run:
-        working-directory: agent
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: agent/package-lock.json
-      - uses: actions/cache@v6
-        id: node-modules
-        with:
-          path: agent/node_modules
-          key: node-modules-${{ runner.os }}-24-${{ hashFiles('agent/package-lock.json') }}
-      - name: Install (npm ci)
-        if: steps.node-modules.outputs.cache-hit != 'true'
-        run: npm ci
-      - name: Install sandbox deps (Linux)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap
-          sudo apt-get install -y apparmor-profiles 2>/dev/null || true
-          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict 2>/dev/null || true
-      - name: Lint + tests (pretest runs eslint)
-        run: npm test
-
   cowcat:
     # The v2 kernel. Cheap by construction: no sandbox, no network, and the suite
     # finishes in seconds, so the cost is checkout and setup. The single exception

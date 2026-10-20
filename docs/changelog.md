@@ -1,6 +1,37 @@
 # CowCat changelog
 
+## 1.0.0-beta.1（未发布）—— v2 切换（P8）
+
+v1（`agent/`）删除，仓库只剩四个 v2 包；npm 包名 `@corescense/cowcat` 由 `packages/cli` 接管。
+
+### 新增
+
+- **事件溯源内核**：一次回合 = 一串只追加的事件；会话可重放，压缩是按 `seq` 水位线的替换事实（ADR-019/070~074）。
+- **策略与审批**：裁决矩阵、信任闸门、审批超时、读后写闸门（ADR-027~034、049）。
+- **模型层**：Anthropic / OpenAI 兼容适配器、重试与退避、用量记账（ADR-035~046）。
+- **工具**：Read / Write / Edit / Glob / Grep / Bash / TodoWrite，进程执行只经 `ProcessPort`（ADR-014/015/047~054）。
+- **TUI 与 headless**：opentui 渲染器、协议方法表、`serve` / `run` / `sessions` / `doctor`（ADR-055~069）。
+- **P7**：上下文压缩、AGENTS.md 指令链、子 agent（ADR-070~082）。
+- **MCP**：stdio + tools、双时代探测、动态工具表、信任与凭证边界、分页与 `tools.list_changed`（ADR-083~088）。
+- **v1 配置兼容**：`model` 字符串与内联 `apiKey` 在内存中翻译，不重写文件（ADR-089）。
+- **发布切换**：四包 `1.0.0-beta.1`，发布暂存脚本把 `file:` 改写为精确版本（ADR-090）。
+
+### 删除
+
+- `agent/`（v1 CLI）、v1 的旧探针与旧 CI 腿；旧文档归档到 `docs/archive/`。
+
+### 已知限制
+
+- `cowcat setup` 未接线；真实端点只验证了单轮单工具路径。
+- 真实 MCP 服务器只验证了 `@modelcontextprotocol/server-everything@2.0.0`。
+- v1 的 `permissions`、`~/.cowcat/mcp.json`、项目 `.cowcat/config.json`、`state.json` 不自动迁移。
+
+---
+
 ## 0.16.0（未发布）—— macOS 系统级 Bash 沙箱（Phase 2）+ macOS 路径身份修复 + macOS CI 腿
+
+> 历史（v1）。`agent/` 已在 1.0.0-beta.1 删除，以下仅作发布与事故记录保留。
+
 
 系统级沙箱的 v1 平台范围按拍板是 **Linux + macOS**；0.15.0 只交付了 Linux 后端。这个版本补齐 macOS，并把"怎么验证"这件事本身补上——因为本机没有 Mac，而没有真机的断言等于没有断言。
 
