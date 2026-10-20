@@ -248,7 +248,7 @@ packages/tui/src/
 | `cowcat` | 进 TUI（默认） | **可用**：`project()` 骨架 + `cowcat tui`（`--session <id>` 继续一个会话） |
 | `cowcat serve` | headless 协议服务（stdio）——TUI 与 IDE 都连它，也是无终端测试的入口 | **可用**（真实宿主：会话、回合、审批、附件都接上了） |
 | `cowcat run "<prompt>"` | 一次性回合（非交互） | **可用**：`--yes` 放行审批，`--session <id>` 继续一个会话；默认逐条拒绝（ADR-065 ②） |
-| `cowcat doctor` | Node、配置、信任、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；不查渲染器的原生二进制，说明理由） |
+| `cowcat doctor` | Node、配置、信任、指令链（注入了哪几份 / 跳过了什么）、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；指令链一行在 ADR-078 T6 补上；不查渲染器的原生二进制，说明理由） |
 | `cowcat sessions list \| resume <id>` | 会话管理 | **都可用了**：`list` 直接读会话目录，`resume` 就是「带 id 的 TUI」（同一条代码路径，Node 门槛只检查一次） |
 | `cowcat setup` | 交互式配置向导 | **未接线**：配置的**写入**路径尚未实现（键已定，见 ADR-063；现在直接编辑 `~/.cowcat/config.json`） |
 

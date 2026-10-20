@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { EXIT } from './exit.js';
 import { flagValue } from './flags.js';
 import { statePaths } from './host.js';
@@ -90,9 +91,13 @@ type Line = (text: string) => void;
 /** The rows that need the kernel. One dynamic import, so `--help` never pays for it. */
 async function reportKernel(context: CommandContext, row: Row, note: Note, line: Line): Promise<void> {
   const {
+    FileInstructionSource,
     FileTrustStore,
+    GLOBAL_INSTRUCTION_FILENAME,
     ModelConfigError,
     NodeFs,
+    decideInstruction,
+    describeInstructionSkip,
     isTrusted,
     loadHostConfig,
     nodePlatform,
@@ -143,6 +148,25 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
   // The rules a session actually runs with — the config's (project `allow` gated by
   // trust) plus the composition root's own baseline, not the config's alone.
   note('rules', `${String(withHostRules(trustedRules(loaded.config, { trusted })).length)} 条（含组合根的 TodoWrite 免问基线）`);
+
+  // What the model would be told about this repository (ADR-075~078). Reported here
+  // because "it did not follow AGENTS.md" is unanswerable without seeing what loaded —
+  // and because a skip is the one outcome that has to be loud.
+  const chain = await new FileInstructionSource({ fs }).chain(cwd, { global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME) });
+  const instructions = decideInstruction(chain, { trusted });
+  if (instructions.kind === 'injected') {
+    note('instr', `${String(instructions.files.length)} 份：${instructions.files.map((file) => basename(file.path)).join(', ')}`);
+    for (const file of instructions.files) line(`  ${file.path}`);
+    for (const omitted of instructions.omitted) line(`超出预算未注入：${omitted.path}`);
+    if (instructions.truncated !== null) line(`超出预算已截断：${instructions.truncated.path}`);
+  } else if (instructions.kind === 'skipped-untrusted') {
+    note('instr', describeInstructionSkip(instructions) ?? '未注入');
+  } else {
+    // `none` also covers "there is an AGENTS.md and it is empty" — `FileInstructionSource`
+    // drops empty files before the decision sees them — so claiming there is no file would
+    // be the one kind of mistake this row exists to prevent.
+    note('instr', '（没有可注入的 AGENTS.md / CLAUDE.md：不存在或为空）');
+  }
 
   const sandbox = resolveSandboxProfile(loaded.config.sandbox, { cwd, home, fs });
   note('sandbox', `mode ${sandbox.profile.mode} / backend ${sandbox.profile.backend} / network ${sandbox.profile.network}`);

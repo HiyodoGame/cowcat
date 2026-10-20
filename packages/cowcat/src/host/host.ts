@@ -27,6 +27,7 @@ import { fsProbeFrom } from '../adapters/sandbox/fs-probe.js';
 import { createSessionIndex } from '../adapters/session-index.js';
 import { FileTrustStore } from '../adapters/trust.js';
 import { FileInstructionSource } from '../adapters/instructions.js';
+import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
 import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
 import type { KernelEvent, SessionUpdate } from '../kernel/events.js';
@@ -408,7 +409,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
           port: new FileInstructionSource({ fs }),
           cwd: options.cwd,
           trust: { trusted: workspaceTrusted },
-          global: join(paths.dir, 'AGENTS.md'),
+          global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
         },
       };
 

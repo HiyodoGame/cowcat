@@ -188,8 +188,14 @@ test('doctor reports what it can check, and names the model it could not find', 
   // With no config file the defaults are in effect, and that is stated rather than
   // reported as a fault.
   assert.match(text, /配置\s+没有配置文件/);
-  assert.match(text, /trust\s+/);
+  assert.match(text, /trust\s+.*未受信/);
   assert.match(text, /rules\s+\d+ 条/);
+  // What the model would be told about this repository (ADR-075~078). The isolated home
+  // has no trust entry while the chain still finds the repository's AGENTS.md, so the
+  // honest answer is the skip, with the file named and the withheld line count given.
+  // Both halves are pinned on purpose: accepting "no file" would also pass if the walk
+  // stopped early, and accepting any `instr` row would pass if the trust gate regressed.
+  assert.match(text, /instr\s+folder not trusted: skipped AGENTS\.md \(\d+ lines\)/);
   assert.match(text, /sandbox\s+mode \w+ \/ backend \w+ \/ network \w+/);
   // Two different questions, two rows: the build runs here, and the TUI's floor is the
   // renderer's (ADR-065 ①).

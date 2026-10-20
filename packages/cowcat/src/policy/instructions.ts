@@ -13,6 +13,15 @@ import type { TrustState } from './trust.js';
 export const INSTRUCTION_FILENAMES = ['AGENTS.md', 'CLAUDE.md'] as const;
 
 /**
+ * The user-global file's name, under the state directory (ADR-075).
+ *
+ * Two call sites build that path — the session's wiring and `doctor` — and the second
+ * one is only useful if it reports the chain a session would actually load. Left as two
+ * literals in two packages, the two would drift without anything failing.
+ */
+export const GLOBAL_INSTRUCTION_FILENAME = 'AGENTS.md';
+
+/**
  * The per-directory overlays, tried after the base file (ADR-076).
  *
  * A `*.local.md` file is the personal counterpart of the shared one — Claude Code's

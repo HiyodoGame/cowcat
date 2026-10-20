@@ -64,6 +64,7 @@ export { AuditConsumer, type AuditSummary } from './policy/audit.js';
 export { JsonlAuditSink, type JsonlAuditSinkOptions } from './adapters/audit.js';
 export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';
 export {
+  GLOBAL_INSTRUCTION_FILENAME,
   INSTRUCTION_FILENAMES,
   INSTRUCTION_MAX_BYTES,
   LOCAL_INSTRUCTION_FILENAMES,
