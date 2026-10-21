@@ -1,5 +1,5 @@
 import type { TuiView } from './view.js';
-import { closePalette, toggleExpanded, toggleTodos } from './view.js';
+import { closePalette, toggleExpanded, toggleThinking, toggleTodos } from './view.js';
 
 /**
  * The commands, and the effects they can ask for.
@@ -16,7 +16,9 @@ export type CommandEffect =
   | { readonly kind: 'view'; readonly view: TuiView }
   | { readonly kind: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly text: string }
   | { readonly kind: 'cancel' }
-  | { readonly kind: 'quit' };
+  | { readonly kind: 'quit' }
+  /** Ask the loop for the session list; it is the only thing here that needs the client. */
+  | { readonly kind: 'sessions' };
 
 export interface TuiCommand {
   /** As typed, without the slash. */
@@ -26,10 +28,11 @@ export interface TuiCommand {
 }
 
 export const KEYS_HELP = [
-  '回车 发送（审批待回答时：y / n / always）',
+  '回车 发送（审批待回答时：y / n / always / s）',
   'Esc 取消正在跑的回合；命令面板开着时关掉它',
-  'Ctrl-P 命令面板 · Ctrl-O 展开/折叠最后一张工具卡 · Ctrl-C 退出',
+  'Ctrl-P 命令面板 · Ctrl-O 展开/折叠最后一张工具卡 · Ctrl-T 思考内容 · Ctrl-C 退出',
   '直接输入 /命令 也可以（/help 看这个列表）',
+  '恢复会话：退出后用 cowcat sessions list 看 id，再 cowcat sessions resume <id>',
 ].join('　');
 
 export const COMMANDS: readonly TuiCommand[] = [
@@ -48,6 +51,12 @@ export const COMMANDS: readonly TuiCommand[] = [
     },
   },
   { name: 'cancel', summary: '取消正在跑的回合', run: () => ({ kind: 'cancel' }) },
+  {
+    name: 'thinking',
+    summary: '展开 / 折叠 AI 的思考内容',
+    run: (view) => ({ kind: 'view', view: toggleThinking(closePalette(view)) }),
+  },
+  { name: 'sessions', summary: '列出会话与恢复命令', run: () => ({ kind: 'sessions' }) },
   { name: 'help', summary: '键位与用法', run: (view) => ({ kind: 'notice', level: 'info', text: KEYS_HELP.replace('（/help 看这个列表）', '').trim() + `　【${view.sessionId ?? '无会话'}】` }) },
   { name: 'quit', summary: '退出 cowcat', run: () => ({ kind: 'quit' }) },
 ];

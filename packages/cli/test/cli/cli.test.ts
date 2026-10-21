@@ -175,6 +175,8 @@ test('a session on disk shows up in sessions list', async (t) => {
   const run = await cli(['sessions', 'list']);
   assert.equal(run.code, EXIT.ok);
   assert.match(run.out.join('\n'), /sess_listed\t1 条事件/);
+  // The id alone is not an instruction; the copyable command is the point (issue #103).
+  assert.match(run.out.join('\n'), /恢复：cowcat sessions resume sess_listed/u);
 });
 
 test('sessions list hides delegated children unless --all asks for them', async (t) => {

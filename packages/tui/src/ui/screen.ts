@@ -79,6 +79,8 @@ export interface Screen {
   /** Every keypress, including the ones the input swallowed. */
   onKey(handler: (key: KeyEvent) => void): () => void;
   clearInput(): void;
+  /** The input's text right now — used to hint at `/` commands while typing. */
+  inputValue(): string;
   focus(): void;
   destroy(): void;
 }
@@ -256,6 +258,9 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     },
     clearInput() {
       input.value = '';
+    },
+    inputValue() {
+      return input.value;
     },
     focus() {
       input.focus();

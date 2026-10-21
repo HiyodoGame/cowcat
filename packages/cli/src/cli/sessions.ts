@@ -46,6 +46,9 @@ export async function runSessions(context: CommandContext): Promise<number> {
   for (const session of shown) {
     const parent = session.parentSessionId === null ? '' : `\t子会话，父会话 ${session.parentSessionId}`;
     context.stdout(`${session.sessionId}\t${String(session.lastSeq)} 条事件${parent}`);
+    // The id alone is not an instruction; the measured complaint was "I don't know how to
+    // resume". A copyable line costs one row per session and answers it where it is asked.
+    context.stdout(`  恢复：cowcat sessions resume ${session.sessionId}`);
   }
   return EXIT.ok;
 }

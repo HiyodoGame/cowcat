@@ -69,8 +69,28 @@ export function project(view: TuiView, event: WireEvent): TuiView {
     case 'model.message': {
       const content = text(event, 'text') ?? '';
       const toolCalls = records(event, 'toolCalls');
+      const reasoning = records(event, 'reasoning');
+      const thinking: string[] = [];
+      let redacted = 0;
+      for (const block of reasoning) {
+        if (text(block, 'type') === 'thinking') {
+          const value = text(block, 'text');
+          if (value !== null && value.trim() !== '') thinking.push(value);
+        } else if (text(block, 'type') === 'redacted') {
+          redacted += 1;
+        }
+      }
       const next: TuiView = { ...base, streaming: '', calls: withCalls(base.calls, toolCalls) };
-      if (content !== '') return add(next, { kind: 'assistant', seq, text: content, calls: toolCalls.length });
+      if (content !== '') {
+        return add(next, {
+          kind: 'assistant',
+          seq,
+          text: content,
+          calls: toolCalls.length,
+          reasoning: thinking,
+          redactedThinking: redacted,
+        });
+      }
       // An empty answer with calls is normal — the calls ARE the answer. An empty answer
       // with nothing at all is worth a line, or the turn looks like it did nothing.
       if (toolCalls.length === 0) return add(next, notice(next, seq, 'info', copyFor(next.lang).empty));

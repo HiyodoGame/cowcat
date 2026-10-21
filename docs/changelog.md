@@ -8,6 +8,8 @@
 - **回合提示进入日志**：指令被跳过、压缩失败、轮数用尽等六类 `TurnNote` 现在写成 `turn.noted` 事件；`run` 打到 stderr，TUI 显示为 notice（#95，ADR-093）。新增事件意味着旧二进制读新日志会解码失败，beta 期接受。
 - **审批新增 `session` 档**：本会话内该工具不再问；`always` 仍是「只对这一条动作」，两处文案改成与实际一致（#96，ADR-094）。
 - **审批卡片带危险提示**：`rm -rf`、强制推送、远端删除等命令单独一行 `alert` 提示，只提示、不改变裁决（#97，ADR-095）。
+- **TUI 命令可发现性**：输入 `/` 时输入行实时列出匹配命令（含新增的 `/thinking`、`/sessions`）；`cowcat sessions list` 每行附带可直接复制的 `cowcat sessions resume <id>`（#103）。
+- **TUI 思考内容**：有 reasoning 的回合显示一行「思考 · N 段」，`Ctrl-T` 或 `/thinking` 展开，展开内容用 dim 样式与回答区分（#104）。
 
 ## 1.0.0-beta.2（2026-10-21）—— TUI 门槛提示与文档修正
 

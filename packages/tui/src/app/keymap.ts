@@ -24,7 +24,8 @@ export type Intent =
   /** Toggle the palette — the same intent opens and closes it. */
   | { readonly kind: 'palette' }
   | { readonly kind: 'paletteMove'; readonly delta: number }
-  | { readonly kind: 'toggleLastCard' };
+  | { readonly kind: 'toggleLastCard' }
+  | { readonly kind: 'toggleThinking' };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -35,6 +36,8 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
         return { kind: 'palette' };
       case 'o':
         return { kind: 'toggleLastCard' };
+      case 't':
+        return { kind: 'toggleThinking' };
       default:
         return null;
     }
