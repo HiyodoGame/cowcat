@@ -52,7 +52,7 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
 
   if (view.approval !== null) {
     if (view.streaming !== '') lines.push(line('', 'text'));
-    push({ lines: approvalCardLines(view.approval, options), images: [] });
+    push({ lines: approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }), images: [] });
   }
 
   return { lines, images };

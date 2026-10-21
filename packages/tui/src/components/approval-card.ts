@@ -1,4 +1,5 @@
-import type { ApprovalView } from '../app/view.js';
+import type { ApprovalChoice, ApprovalView } from '../app/view.js';
+import { APPROVAL_CHOICES } from '../app/view.js';
 import { copyFor } from '../app/copy.js';
 import { card, type CardBodyLine } from '../ui/card.js';
 import { line, type Line } from '../ui/line.js';
@@ -22,6 +23,8 @@ export interface ApprovalCardOptions {
   readonly width: number;
   /** Milliseconds now. Injected: a card that read the clock would not be a pure function. */
   readonly now: number;
+  /** Which answer is highlighted; `APPROVAL_CHOICES` order. */
+  readonly cursor: number;
 }
 
 export function approvalCardLines(approval: ApprovalView, options: ApprovalCardOptions): readonly Line[] {
@@ -35,7 +38,18 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
   if (approval.reason !== null) body.push({ text: `理由：${approval.reason}`, token: 'textDim' });
   // The only line on this card that is not dim: a warning is the reason to read it twice.
   if (approval.warning !== null) body.push({ text: `注意：${approval.warning}`, token: 'alert' });
-  if (!answered) body.push({ text: copy.approveKeys, token: 'textDim' });
+  if (!answered) {
+    // The four answers as rows, because "remember to type always" is a memory test, not a
+    // choice. The letters still work for anyone who has the habit (run.ts keeps them).
+    for (const [index, choice] of APPROVAL_CHOICES.entries()) {
+      const selected = index === options.cursor;
+      body.push({
+        text: `${selected ? '▸' : ' '} ${labelFor(choice, approval.name)}`,
+        token: selected ? 'act' : 'textDim',
+      });
+    }
+    body.push({ text: copy.approveKeys, token: 'textDim' });
+  }
   if (waitingLong) {
     // §2.2's line for exactly this moment. It is the whole "waiting is an interaction" rule.
     body.push({ text: copy.approvalWaiting, token: 'act' });
@@ -48,6 +62,20 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
     body,
     width: options.width,
   });
+}
+
+/** The option labels. The session grant names the tool: that was #96's whole confusion. */
+function labelFor(choice: ApprovalChoice, tool: string): string {
+  switch (choice) {
+    case 'once':
+      return '允许一次';
+    case 'session':
+      return `本会话内 ${tool} 都不再问`;
+    case 'always':
+      return '只对这一个动作（同一条命令不再问）';
+    case 'reject':
+      return '拒绝';
+  }
 }
 
 function describeVerdict(approval: ApprovalView): string {

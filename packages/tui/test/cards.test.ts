@@ -231,11 +231,17 @@ test('a pending approval is a card with the quip, the rule and the keys; ten sec
   assert.match(freshText, /\[待回答\]/);
   assert.match(freshText, /我要跑这个了/);
   assert.match(freshText, /规则：exec-asks/);
-  assert.match(freshText, /y = 允许/);
+  assert.match(freshText, /允许一次/);
+  assert.match(freshText, /本会话内 Bash 都不再问/u);
+  assert.match(freshText, /▸ 允许一次/);
   assert.doesNotMatch(freshText, /你还在吗/);
   assertCardWidths(fresh.body, 'approval fresh');
   // The keys are on the input line, so the card needs no room for them twice.
-  assert.match(fresh.placeholder, /Bash：y = 允许/);
+  assert.match(fresh.placeholder, /Bash：↑↓ 选择/u);
+
+  // The highlight is a view field, so the frame is a pure function of it too.
+  const moved = frameOf({ ...asked, approvalCursor: 2 }, { width: WIDTH, now: 1_000 });
+  assert.match(moved.body.map((row) => row.text).join('\n'), /▸ 只对这一个动作/u);
 
   const nudged = frameOf(asked, { width: WIDTH, now: 1_000 + 10_001 });
   assert.match(nudged.body.map((row) => row.text).join('\n'), /你还在吗/);
@@ -357,6 +363,104 @@ test('an image box keeps its ratio until the row budget says otherwise', () => {
   // A tiny square image is not stretched, and it is still two rows: four columns of cells are
   // twice as tall as the four pixels were wide.
   assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: 4, height: 4 }), { cols: 4, rows: 2 });
+});
+
+test('the status bar says what is running, and counts running sub-agents', () => {
+  const running: TuiView = {
+    ...initialView(),
+    sessionId: 'sess_run',
+    turn: { id: 'turn_1', state: 'awaiting_tools', reason: null },
+    pendingTools: [{ callId: 'c1', name: 'Bash' }],
+  };
+  const line = statusLine(running, { now: 0 });
+  assert.match(line.text, /执行 Bash/u);
+  assert.equal(line.token, 'act');
+  // The spinner cell is a function of the clock, not of the process.
+  assert.notEqual(statusLine(running, { now: 0 }).text, statusLine(running, { now: 300 }).text);
+
+  const withAgent: TuiView = {
+    ...running,
+    agents: [
+      {
+        childSessionId: 'sess_child',
+        role: 'explore',
+        description: '看 src 目录',
+        state: 'running',
+        turns: 2,
+        startedAt: 0,
+      },
+    ],
+  };
+  assert.match(statusLine(withAgent, { now: 1_000 }).text, /子 agent 1 个运行中/u);
+
+  const idle = statusLine({ ...initialView(), sessionId: 'sess_idle' }, { now: 0 });
+  assert.doesNotMatch(idle.text, /⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏/u, 'no spinner when nothing is running');
+});
+
+test('a running sub-agent is a panel; a finished one collapses to its notice', () => {
+  const view = viewOf([
+    event('turn.opened', { input: '派一个子 agent' }),
+    event('subagent.started', {
+      callId: 'c1',
+      childSessionId: 'sess_child',
+      role: 'explore',
+      description: '看 src 目录',
+    }),
+  ]);
+  const frame = frameOf(view, { width: WIDTH, now: 5_000 });
+  const text = frame.body.map((row) => row.text).join('\n');
+  assert.match(text, /子 agent 1 个运行中/u);
+  assert.match(text, /explore/u);
+  assert.match(text, / · \d+s/u);
+
+  const done = project(
+    view,
+    event('subagent.finished', {
+      callId: 'c1',
+      childSessionId: 'sess_child',
+      role: 'explore',
+      ok: true,
+      state: 'completed',
+      turns: 3,
+      partial: false,
+      usage: null,
+      reason: null,
+    }),
+  );
+  assert.equal(done.agents[0]?.state, 'completed');
+  assert.doesNotMatch(
+    frameOf(done, { width: WIDTH, now: 5_000 }).body.map((row) => row.text).join('\n'),
+    /个运行中/u,
+    'the panel is for running agents only',
+  );
+});
+
+test('a pending tool is named until its result arrives', () => {
+  const asked = viewOf([
+    event('turn.opened', { input: '跑测试' }),
+    event('model.message', {
+      text: '',
+      toolCalls: [{ callId: 'c1', name: 'Bash', input: { command: 'npm test' } }],
+      reasoning: [],
+      stopReason: null,
+    }),
+  ]);
+  assert.deepEqual(asked.pendingTools, [{ callId: 'c1', name: 'Bash' }]);
+
+  const finished = project(
+    asked,
+    event('tool.finished', {
+      callId: 'c1',
+      name: 'Bash',
+      ok: true,
+      output: 'ok',
+      facts: null,
+      truncation: null,
+      path: null,
+      attachments: null,
+    }),
+  );
+  assert.deepEqual(finished.pendingTools, []);
 });
 
 test('the status bar says where the session is, and truncates rather than wrapping', () => {

@@ -1,7 +1,7 @@
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
-import { withLangFrom, withAttachment, type ApprovalView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
+import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
 
 /**
  * The pure function the whole frontend is built on (ADR-059 ②, ADR-066 ②).
@@ -55,6 +55,8 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         // answer: both are cleared by the terminal transition that makes them stale.
         approval: done ? null : base.approval,
         streaming: done ? '' : base.streaming,
+        // No tool of a finished turn is still running, whatever the log's last word was.
+        pendingTools: done ? [] : base.pendingTools,
       };
     }
 
@@ -80,7 +82,16 @@ export function project(view: TuiView, event: WireEvent): TuiView {
           redacted += 1;
         }
       }
-      const next: TuiView = { ...base, streaming: '', calls: withCalls(base.calls, toolCalls) };
+      const next: TuiView = {
+        ...base,
+        streaming: '',
+        calls: withCalls(base.calls, toolCalls),
+        // The calls this message asked for are now in flight; the status line names them
+        // until each result arrives. Without this, "Bash is running" had nothing to show.
+        pendingTools: toolCalls
+          .map((call) => ({ callId: text(call, 'callId') ?? '', name: text(call, 'name') ?? '(unnamed)' }))
+          .filter((tool) => tool.callId !== ''),
+      };
       if (content !== '') {
         return add(next, {
           kind: 'assistant',
@@ -109,12 +120,16 @@ export function project(view: TuiView, event: WireEvent): TuiView {
     case 'tool.finished': {
       // The reference, not the bytes (ADR-057): record what the card will need to ask for.
       const attachments = records(event, 'attachments');
-      const withImages =
-        attachments.length === 0 ? base : attachments.reduce(upsertAttachment, base);
-      return add(withImages, {
+      const callId = text(event, 'callId') ?? '';
+      const withImages = attachments.length === 0 ? base : attachments.reduce(upsertAttachment, base);
+      const cleared: TuiView = {
+        ...withImages,
+        pendingTools: withImages.pendingTools.filter((tool) => tool.callId !== callId),
+      };
+      return add(cleared, {
         kind: 'tool',
         seq,
-        callId: text(event, 'callId') ?? '',
+        callId,
         name: text(event, 'name') ?? '(unnamed)',
         ok: flag(event, 'ok') === true,
         output: text(event, 'output') ?? '',
@@ -139,7 +154,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         verdict: null,
         by: null,
       };
-      return { ...base, approval };
+      return { ...base, approval, approvalCursor: 0 };
     }
 
     case 'approval.answered': {
@@ -186,20 +201,46 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // allowed read twice.
       return base;
 
-    case 'subagent.started':
-      // One line, and it arrives when the delegation ENDS: a row that appears and never
-      // resolves reads worse than one that shows up with its result (ADR-079 ①). The
-      // started fact is still in the log for an audit that wants the timing.
-      return base;
+    case 'subagent.started': {
+      const childSessionId = text(event, 'childSessionId') ?? '';
+      if (childSessionId === '') return base;
+      return {
+        ...base,
+        agents: [
+          ...base.agents,
+          {
+            childSessionId,
+            role: text(event, 'role') ?? '?',
+            description: text(event, 'description') ?? '',
+            state: 'running',
+            turns: 0,
+            startedAt: number(event, 'ts') ?? 0,
+          },
+        ],
+      };
+    }
 
     case 'subagent.finished': {
       const done = flag(event, 'ok') === true;
+      const childSessionId = text(event, 'childSessionId') ?? '?';
+      const ended = text(event, 'state');
+      const state: AgentView['state'] =
+        ended === 'completed' || ended === 'failed' || ended === 'cancelled' ? ended : done ? 'completed' : 'failed';
+      const agents = base.agents.map((agent) =>
+        agent.childSessionId === childSessionId
+          ? {
+              ...agent,
+              state,
+              turns: number(event, 'turns') ?? agent.turns,
+            }
+          : agent,
+      );
       const template = done ? copyFor(base.lang).subagentDone : copyFor(base.lang).subagentFailed;
       const line = template
-        .replace('{session}', text(event, 'childSessionId') ?? '?')
+        .replace('{session}', childSessionId)
         .replace('{role}', text(event, 'role') ?? '?')
         .replace('{n}', String(number(event, 'turns') ?? 0));
-      return add(base, notice(base, seq, done ? 'info' : 'warn', line));
+      return add({ ...base, agents }, notice(base, seq, done ? 'info' : 'warn', line));
     }
 
     default:

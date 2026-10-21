@@ -82,6 +82,28 @@ export interface ApprovalView {
   readonly by: string | null;
 }
 
+/** The four answers, in the order the card offers them. */
+export type ApprovalChoice = 'once' | 'session' | 'always' | 'reject';
+
+export const APPROVAL_CHOICES: readonly ApprovalChoice[] = ['once', 'session', 'always', 'reject'];
+
+/** A delegated run, as the status panel and the status line need it. */
+export interface AgentView {
+  readonly childSessionId: string;
+  readonly role: string;
+  readonly description: string;
+  readonly state: 'running' | 'completed' | 'failed' | 'cancelled';
+  readonly turns: number;
+  /** The `subagent.started` timestamp; the panel shows how long it has been running. */
+  readonly startedAt: number;
+}
+
+/** A tool call that has been asked for and has not finished yet. */
+export interface PendingTool {
+  readonly callId: string;
+  readonly name: string;
+}
+
 /** A tool call the model asked for, before its result arrives. */
 export interface ToolCallView {
   readonly name: string;
@@ -133,6 +155,12 @@ export interface TuiView {
   readonly streaming: string;
   readonly turn: TurnView | null;
   readonly approval: ApprovalView | null;
+  /** Which of `APPROVAL_CHOICES` is highlighted while the question is open. */
+  readonly approvalCursor: number;
+  /** Tool calls that are in flight: the status line names them. */
+  readonly pendingTools: readonly PendingTool[];
+  /** Delegated runs, newest last. Finished ones stay for the session's history. */
+  readonly agents: readonly AgentView[];
   /**
    * Every tool call the log has seen, by `callId`.
    *
@@ -182,6 +210,9 @@ export function initialView(): TuiView {
     streaming: '',
     turn: null,
     approval: null,
+    approvalCursor: 0,
+    pendingTools: [],
+    agents: [],
     calls: {},
     expanded: [],
     thinkingExpanded: false,
@@ -216,6 +247,22 @@ export function toggleThinking(view: TuiView): TuiView {
 
 export function withInput(view: TuiView, input: string): TuiView {
   return view.input === input ? view : { ...view, input };
+}
+
+/** The answer the highlighted row stands for. */
+export function approvalChoiceAt(view: TuiView): ApprovalChoice {
+  return APPROVAL_CHOICES[view.approvalCursor] ?? 'once';
+}
+
+/** Move the highlight, clamped: a list of four is not a carousel. */
+export function moveApprovalCursor(view: TuiView, delta: number): TuiView {
+  const next = Math.max(0, Math.min(APPROVAL_CHOICES.length - 1, view.approvalCursor + delta));
+  return next === view.approvalCursor ? view : { ...view, approvalCursor: next };
+}
+
+/** The answers that are still running, for the panel. */
+export function runningAgents(view: TuiView): readonly AgentView[] {
+  return view.agents.filter((agent) => agent.state === 'running');
 }
 
 export function toggleTodos(view: TuiView): TuiView {
