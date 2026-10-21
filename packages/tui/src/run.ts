@@ -249,6 +249,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = withScroll(view.current, intent.delta);
           draw();
           return;
+        case 'scrollBottom':
+          view.current = resetScroll(view.current);
+          draw();
+          return;
         case 'slashMove': {
           const count = slashMatches(view.current.input).length;
           view.current = moveSlash(view.current, intent.delta, count);

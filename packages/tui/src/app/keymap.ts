@@ -36,7 +36,9 @@ export type Intent =
   /** Complete the highlighted `/` command into the input. */
   | { readonly kind: 'slashAccept' }
   /** Close the `/` menu (Escape while it is open). */
-  | { readonly kind: 'slashClose' };
+  | { readonly kind: 'slashClose' }
+  /** Jump back to the newest row and resume following. */
+  | { readonly kind: 'scrollBottom' };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -49,6 +51,8 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
         return { kind: 'toggleLastCard' };
       case 't':
         return { kind: 'toggleThinking' };
+      case 'end':
+        return { kind: 'scrollBottom' };
       default:
         return null;
     }

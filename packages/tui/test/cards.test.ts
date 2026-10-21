@@ -565,6 +565,10 @@ test('the status line names the model and counts seconds', () => {
   assert.match(line.text, /glm-5\.3-flash/u);
   assert.match(line.text, /12s/u);
   assert.doesNotMatch(line.text, /zai-coding-plan\//u);
+
+  const paused = statusLine({ ...view, scrollOffset: 5, newSinceScroll: 3 }, { now: 12_000 });
+  assert.match(paused.text, /已暂停跟随/u);
+  assert.match(paused.text, /3 条新输出/u);
 });
 
 test('the status bar says where the session is, and truncates rather than wrapping', () => {
