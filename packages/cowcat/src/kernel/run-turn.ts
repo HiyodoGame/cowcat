@@ -1,4 +1,5 @@
-import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
+import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
+import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
 import type { InstructionPort } from '../ports/index.js';
@@ -612,17 +613,26 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 
   if (decision.verdict === 'ask') {
     const key = approvalKey(request);
-    if (session.state.grants.includes(key)) {
-      // A standing `always` from earlier in this session (ADR-031 decision 3). No
-      // question is asked — it was already answered, and asking again is theatre —
+    const toolKey = toolGrantKey(request.name);
+    // Recorded with the question (ADR-095): a warning that only lives in the frontend
+    // cannot be replayed, and the log is where "what was the user told?" is answered.
+    const warning = assessCommand(request.command)?.message ?? null;
+    const standing: ApprovalVerdict | null = session.state.grants.includes(key)
+      ? 'always'
+      : session.state.grants.includes(toolKey)
+        ? 'session'
+        : null;
+    if (standing !== null) {
+      // A standing answer from earlier in this session (ADR-031 decision 3, ADR-094).
+      // No question is asked — it was already answered, and asking again is theatre —
       // but the answer IS recorded, with `by: 'policy'`, so the log does not show an
       // `ask` that was somehow ignored. The `key` is the link back to that question.
       await session.emit({
         type: 'approval.answered',
         turnId,
         callId: call.callId,
-        key,
-        verdict: 'always',
+        key: standing === 'always' ? key : toolKey,
+        verdict: standing,
         by: 'policy',
       });
       approved = true;
@@ -638,6 +648,7 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         name: call.name,
         rule: decision.rule,
         reason: decision.reason,
+        ...(warning === null ? {} : { warning }),
       });
       await session.emit({
         type: 'approval.answered',
@@ -659,13 +670,16 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         name: call.name,
         rule: decision.rule,
         reason: decision.reason,
+        ...(warning === null ? {} : { warning }),
       });
       const outcome = await askForApproval(deps, request, decision, signal);
       await session.emit({
         type: 'approval.answered',
         turnId,
         callId: call.callId,
-        key,
+        // A `session` answer grants the tool, so the recorded key has to be the tool-level
+        // one: `reduce` rebuilds the grants from the ANSWER, never from the question.
+        key: outcome.verdict === 'session' ? toolKey : key,
         verdict: outcome.verdict,
         by: outcome.by,
       });

@@ -1,5 +1,14 @@
 # CowCat changelog
 
+## 未发布 —— beta 反馈期的四条修复
+
+来自一次真实项目会话（27 分钟、42 次工具调用、36 次审批）的复盘，对应 ADR-092~095。
+
+- **新增 `cowcat trust [dir] [--list] [--remove]`**：在此之前信任记录只有读取方，项目层 `allow`、项目 MCP 与 `AGENTS.md` 在正常安装下永远不生效，而跳过只在 `doctor` 里看得到（#94，ADR-092）。
+- **回合提示进入日志**：指令被跳过、压缩失败、轮数用尽等六类 `TurnNote` 现在写成 `turn.noted` 事件；`run` 打到 stderr，TUI 显示为 notice（#95，ADR-093）。新增事件意味着旧二进制读新日志会解码失败，beta 期接受。
+- **审批新增 `session` 档**：本会话内该工具不再问；`always` 仍是「只对这一条动作」，两处文案改成与实际一致（#96，ADR-094）。
+- **审批卡片带危险提示**：`rm -rf`、强制推送、远端删除等命令单独一行 `alert` 提示，只提示、不改变裁决（#97，ADR-095）。
+
 ## 1.0.0-beta.2（2026-10-21）—— TUI 门槛提示与文档修正
 
 - `cowcat tui` / `sessions resume` 在 Node < 26.4 时，除说明 opentui 门槛外，再打印一条可直接粘贴的 `npx --yes node@26.12.0 "<CLI 入口>" tui`（`sessions resume` 保留 id）。

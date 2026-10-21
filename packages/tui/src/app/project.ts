@@ -114,6 +114,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         name: text(event, 'name') ?? '(unnamed)',
         rule: text(event, 'rule') ?? '(unnamed rule)',
         reason: text(event, 'reason'),
+        warning: text(event, 'warning'),
         askedAt: number(event, 'ts') ?? 0,
         verdict: null,
         by: null,

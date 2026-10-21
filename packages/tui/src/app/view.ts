@@ -65,6 +65,8 @@ export interface ApprovalView {
   readonly name: string;
   readonly rule: string;
   readonly reason: string | null;
+  /** What the command would cost if it went wrong (ADR-095), already worded. */
+  readonly warning: string | null;
   /** The event's `ts`. A clock is what turns "waiting" into the brand's nudge after 10s. */
   readonly askedAt: number;
   /** `null` while the question is open; the verdict afterwards. */

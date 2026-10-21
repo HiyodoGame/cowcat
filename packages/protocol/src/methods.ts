@@ -40,7 +40,7 @@ export const PARAMS = {
   'approval.respond': z.strictObject({
     sessionId: z.string().min(1),
     callId: z.string().min(1),
-    verdict: z.enum(['once', 'always', 'reject']),
+    verdict: z.enum(['once', 'always', 'session', 'reject']),
   }),
   'attachment.read': z.strictObject({
     id: z.string().min(1),

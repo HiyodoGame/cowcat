@@ -33,6 +33,8 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
     { text: `规则：${approval.rule}`, token: 'textDim' },
   ];
   if (approval.reason !== null) body.push({ text: `理由：${approval.reason}`, token: 'textDim' });
+  // The only line on this card that is not dim: a warning is the reason to read it twice.
+  if (approval.warning !== null) body.push({ text: `注意：${approval.warning}`, token: 'alert' });
   if (!answered) body.push({ text: copy.approveKeys, token: 'textDim' });
   if (waitingLong) {
     // §2.2's line for exactly this moment. It is the whole "waiting is an interaction" rule.
@@ -54,7 +56,9 @@ function describeVerdict(approval: ApprovalView): string {
     case 'once':
       return '已允许（这一次）。';
     case 'always':
-      return '已允许（以后同类都不再问）。';
+      return '已允许（只对这一个动作；同一条命令再来不会问）。';
+    case 'session':
+      return '已允许（本会话内这个工具都不再问）。';
     case 'reject':
       return approval.by === 'timeout' ? '没人回答，超时按拒绝处理。' : copy.denied;
     default:

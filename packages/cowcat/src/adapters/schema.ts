@@ -25,7 +25,7 @@ const turnStateSchema = z.enum([
 
 const verdictSchema = z.enum(['allow', 'ask', 'deny']);
 
-const approvalVerdictSchema = z.enum(['once', 'always', 'reject']);
+const approvalVerdictSchema = z.enum(['once', 'always', 'session', 'reject']);
 // `policy` is reachable here even though it is not one of the two answers a person
 // can give: it is what a standing `always` from earlier in the same session records
 // when it lets a later call through (ADR-031).
@@ -225,6 +225,8 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     name: z.string(),
     rule: z.string(),
     reason: z.string().nullable(),
+    // Optional, not nullable: a log written before ADR-095 has no opinion to record.
+    warning: z.string().optional(),
   }),
   z.object({
     ...base,

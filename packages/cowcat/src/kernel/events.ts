@@ -179,6 +179,12 @@ export type KernelEvent = EventBase &
         readonly name: string;
         readonly rule: string;
         readonly reason: string | null;
+        /**
+         * What the command would cost if it went wrong (ADR-095). Absent when the tool
+         * has no command or nothing matched — absent, not `null`, because every log
+         * written before this field existed simply has no opinion to record.
+         */
+        readonly warning?: string | undefined;
       }
     | {
         // `key` is what an `always` answer grants, and it is recorded on the ANSWER

@@ -235,9 +235,18 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
       const approval = view.current.approval;
       if (approval !== null && approval.verdict === null) {
-        const verdict = trimmed === 'y' ? 'once' : trimmed === 'always' ? 'always' : trimmed === 'n' ? 'reject' : null;
+        const verdict =
+          trimmed === 'y'
+            ? 'once'
+            : trimmed === 'always'
+              ? 'always'
+              : trimmed === 's'
+                ? 'session'
+                : trimmed === 'n'
+                  ? 'reject'
+                  : null;
         if (verdict === null) {
-          view.current = addNotice(view.current, 'info', 'y / n / always 三选一，再回车。');
+          view.current = addNotice(view.current, 'info', 'y / n / always / s 四选一，再回车。');
           draw();
           return;
         }

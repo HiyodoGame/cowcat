@@ -78,6 +78,8 @@ export async function runOneShot(context: CommandContext): Promise<number> {
           case 'approval.requested': {
             const callId = field(update, 'callId');
             if (typeof callId !== 'string') return;
+            const warning = field(update, 'warning');
+            if (typeof warning === 'string' && warning !== '') context.stderr(`  ! ${warning}`);
             context.stderr(
               yes
                 ? '  · 审批：放行（--yes）'

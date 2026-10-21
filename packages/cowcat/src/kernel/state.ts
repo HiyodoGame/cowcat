@@ -249,7 +249,12 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       // about the session's policy. The answer is, and it arrives next.
       return base;
     case 'approval.answered':
-      return event.verdict === 'always' ? { ...base, grants: [...state.grants, event.key] } : base;
+      // Both standing answers are keys. `always` stores the exact action; `session`
+      // stores the tool-level key it was emitted with (ADR-094), so a reopened session
+      // gets the narrower grant back and not something wider.
+      return event.verdict === 'always' || event.verdict === 'session'
+        ? { ...base, grants: [...state.grants, event.key] }
+        : base;
   }
 }
 
