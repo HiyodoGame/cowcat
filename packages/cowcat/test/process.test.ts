@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,6 +70,75 @@ test('a run reports stdout, stderr and the exit code', async () => {
   assert.equal(result.signal, null);
   assert.equal(result.truncated, false);
   assert.deepEqual(result.dropped, { stdout: 0, stderr: 0 });
+});
+
+test('an optional sink sees the same characters as the result, and a broken sink cannot fail the run (ADR-107)', async () => {
+  const signal = new AbortController().signal;
+  const seen: { stream: string; text: string }[] = [];
+  const result = await port().run(
+    spec({ argv: node('process.stdout.write("one\\ntwo\\n"); process.stderr.write("err\\n")') }),
+    signal,
+    {
+      onOutput: (stream, text) => {
+        seen.push({ stream, text });
+      },
+    },
+  );
+
+  const joined = (name: string): string =>
+    seen
+      .filter((chunk) => chunk.stream === name)
+      .map((chunk) => chunk.text)
+      .join('');
+  // Coalescing may split the stream anywhere; the characters, in order, must be the same
+  // ones the result reports. This is the property the live view's suffix guarantee rests on.
+  assert.equal(joined('stdout'), result.stdout);
+  assert.equal(joined('stderr'), result.stderr);
+
+  const broken = await port().run(
+    spec({ argv: node('process.stdout.write("still fine")') }),
+    signal,
+    {
+      onOutput: () => {
+        throw new Error('renderer bug');
+      },
+    },
+  );
+  assert.equal(broken.exitCode, 0);
+  assert.equal(broken.stdout, 'still fine');
+});
+
+test('the sink sees output while the command is still running (ADR-107)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cowcat-sink-'));
+  const gate = join(dir, 'go');
+  // A handshake instead of a sleep: the child waits for a file the SINK creates. If the
+  // sink only fired at close, the gate never appears, the child exits 1 after 5s, and the
+  // assertion below fails — no timing assumptions about how fast CI is.
+  const script = [
+    "process.stdout.write('first\\n')",
+    "const fs = require('node:fs')",
+    `const gate = ${JSON.stringify(gate)}`,
+    'const guard = setTimeout(() => { clearInterval(timer); process.exit(1) }, 5000)',
+    'const timer = setInterval(() => {',
+    '  if (!fs.existsSync(gate)) return',
+    '  clearInterval(timer)',
+    '  clearTimeout(guard)',
+    '  process.stdout.write("second\\n")',
+    '}, 10)',
+  ].join(';');
+
+  try {
+    const result = await port().run(spec({ argv: node(script) }), new AbortController().signal, {
+      onOutput: (stream, text) => {
+        if (stream === 'stdout' && text.includes('first')) writeFileSync(gate, '');
+      },
+    });
+
+    assert.equal(result.exitCode, 0, 'the child only exits cleanly if "first" reached the sink while it was alive');
+    assert.equal(result.stdout, 'first\nsecond\n');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a run that ended on its own records no termination', async () => {

@@ -131,6 +131,7 @@ export {
   type ProcessExit,
   type ProcessSpec,
   type ProcessResult,
+  type OutputSink,
   type TerminationRecord,
   type TerminationReason,
   type TerminationMethod,
@@ -223,6 +224,7 @@ export {
 } from './policy/sandbox-defaults.js';
 export { expand, isAbsolutePath, resolveEntries, type ResolveRequest, type ResolveResult } from './policy/sandbox-paths.js';
 export { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './adapters/terminate.js';
+export { OutputFlow, OUTPUT_MAX_CHARS, OUTPUT_WINDOW_MS, type OutputChunk, type OutputSchedule } from './adapters/output-flow.js';
 export { OutputTail } from './adapters/output-tail.js';
 export { NodePlatform, nodePlatform, type NodePlatformOptions } from './adapters/platform.js';
 export { BUILTIN_PRESETS, BUILTIN_PROVIDERS, type BuiltinProvider } from './host/presets.js';

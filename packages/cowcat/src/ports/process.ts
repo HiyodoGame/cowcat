@@ -190,17 +190,32 @@ export interface AppliedSandbox {
   readonly limitations: readonly string[];
 }
 
+/**
+ * Where a run's output goes while it is still running (ADR-107).
+ *
+ * Advisory on purpose: this is for a frontend's live view, not for the log. The durable
+ * record is still `ProcessResult` (and, one layer up, `tool.finished`), so a sink that
+ * throws or a consumer that stops listening cannot change what the run reports.
+ */
+export interface OutputSink {
+  readonly onOutput: (stream: 'stdout' | 'stderr', text: string) => void;
+}
+
 export interface ProcessPort {
   /**
    * Runs one child to completion. `signal` aborts it, and aborting follows the
    * same path as a timeout — one terminate(), not two (ADR-014).
+   *
+   * `sink` is additive and optional (ADR-107): the same run, with its output also
+   * handed to a live view. Decoding happens once, so the sink and the result see
+   * the same characters.
    *
    * Rejects only when the child could not be STARTED, or when the requested
    * sandbox mode is unavailable on this platform. Once started, the run resolves:
    * a non-zero exit, a signal and a failed termination are results, not errors,
    * because the caller has to report all three to the model.
    */
-  run(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessResult>;
+  run(spec: ProcessSpec, signal: AbortSignal, sink?: OutputSink): Promise<ProcessResult>;
 
   /**
    * Starts a child that stays alive for a conversation (ADR-086).
