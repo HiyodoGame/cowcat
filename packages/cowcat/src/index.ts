@@ -71,7 +71,8 @@ export {
   type SourcedRule,
 } from './policy/config.js';
 export { trustedRules, isTrusted, type TrustState } from './policy/trust.js';
-export { approvalKey, type ApprovalBy, type ApprovalVerdict } from './policy/approval.js';
+export { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from './policy/approval.js';
+export { assessCommand, type CommandRisk, type CommandWarning } from './policy/command-risk.js';
 export { AuditConsumer, type AuditSummary } from './policy/audit.js';
 export { JsonlAuditSink, type JsonlAuditSinkOptions } from './adapters/audit.js';
 export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';

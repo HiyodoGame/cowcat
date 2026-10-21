@@ -213,6 +213,45 @@ test('an `always` does NOT cover a different command', async () => {
   assert.deepEqual(asked, ['c1', 'c2'], 'a different path is a different action');
 });
 
+test('a `session` answer covers the whole tool for the rest of the session', async () => {
+  // ADR-094: the coarse grant exists as its own answer, so `always` keeps its exact
+  // meaning. A different command under the same tool is exactly the case measured in
+  // the beta session (36 Bash calls, 11 `always` answers, 0 reuses).
+  const store = new MemoryEventStore();
+  const session = await Session.create(sessionDeps(store), 'sess_session_grant');
+  const asked: string[] = [];
+  const approver = async (request: ActionRequest): Promise<ApprovalVerdict> => {
+    asked.push(request.callId);
+    return asked.length === 1 ? 'session' : 'reject';
+  };
+
+  await runTurn(
+    turnDeps(session, modelFor({ callId: 'c1', name: 'write_file', input: { file_path: '/repo/a.txt' } }), {
+      tools: new Map([['write_file', writer()]]),
+      approve: approver,
+    }),
+    'go',
+    new AbortController().signal,
+  );
+  await runTurn(
+    turnDeps(session, modelFor({ callId: 'c2', name: 'write_file', input: { file_path: '/repo/b.txt' } }), {
+      tools: new Map([['write_file', writer()]]),
+      approve: approver,
+    }),
+    'go',
+    new AbortController().signal,
+  );
+
+  assert.deepEqual(asked, ['c1'], 'the second call used the session grant');
+  const answers = store.events.filter((event) => event.type === 'approval.answered');
+  const second = answers[1];
+  assert.ok(second !== undefined);
+  assert.equal(second.by, 'policy');
+  assert.equal(second.verdict, 'session');
+  // The grant is tool-level, not action-level: that is what makes it reusable.
+  assert.equal(second.key, 'write_file\u0000*');
+});
+
 test('grants come back when the session is replayed', async () => {
   // The property the whole design turns on: a grant is derived from the log, so
   // "replaying reproduces the live session" holds for approvals too.

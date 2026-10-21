@@ -243,6 +243,28 @@ test('a pending approval is a card with the quip, the rule and the keys; ten sec
   assert.match(statusLine(asked, { now: 11_001 }).text, /你还在吗/);
 });
 
+test('a destructive command gets its own line, in the alert token', () => {
+  seq = 0;
+  const asked = viewOf([
+    event('turn.opened', { input: '停掉线上站点' }),
+    event('approval.requested', {
+      callId: 'c7',
+      name: 'Bash',
+      rule: 'no-rule-matched',
+      reason: 'no rule covers Bash',
+      warning: '删除远端项目（不可逆，域名与部署历史随之消失）',
+    }),
+  ]);
+
+  const frame = frameOf(asked, { width: WIDTH, now: 1_000 });
+  assert.match(frame.body.map((row) => row.text).join('\n'), /注意：删除远端项目/);
+  // The one line meant to interrupt a habitual "y" must not be dim like the rule row.
+  const warning = frame.body.find((row) => row.text.includes('注意：'));
+  assert.ok(warning !== undefined);
+  assert.equal(warning.token, 'alert');
+  assertCardWidths(frame.body, 'approval warning');
+});
+
 test('an answered approval says what happened', () => {
   seq = 0;
   const view = viewOf([

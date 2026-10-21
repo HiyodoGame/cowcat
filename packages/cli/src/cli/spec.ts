@@ -7,6 +7,7 @@ import { runServe } from './serve.js';
 import { runSessions } from './sessions.js';
 import { runSetup } from './setup.js';
 import { runTui } from './tui.js';
+import { runTrust } from './trust.js';
 
 export interface CommandContext {
   readonly args: readonly string[];
@@ -96,11 +97,19 @@ const printFlag: FlagSpec = {
   name: '--print',
   summary: '只把结果打到 stdout，不写文件',
 };
+const trustListFlag: FlagSpec = {
+  name: '--list',
+  summary: '列出已信任的目录',
+};
+const trustRemoveFlag: FlagSpec = {
+  name: '--remove',
+  summary: '撤销对该目录的信任',
+};
 
 /**
  * The subcommand table is data (ADR-060), for the same reason the protocol's method
  * table is: help text, argument validation and dispatch all read it, so a command
- * cannot be added to one and forgotten in another. Six verbs, one level, no nesting.
+ * cannot be added to one and forgotten in another. Seven verbs, one level, no nesting.
  *
  * Since T4a 3/3 this table lives in `packages/cli` and the wired verbs reach the kernel
  * through `createHost` (ADR-062 ③, ADR-064). `setup` writes the user config directly and
@@ -162,6 +171,15 @@ export const COMMANDS: readonly CommandSpec[] = [
     usage: 'cowcat setup --migrate | --preset <provider/model> [--api-key-env NAME] [--base-url URL] [--force] [--print]',
     status: 'ready',
     run: runSetup,
+  },
+  {
+    name: 'trust',
+    summary: '信任一个目录（项目层 allow 与 AGENTS.md 才会生效）',
+    args: z.union([z.tuple([]), z.tuple([z.string().min(1)])]),
+    flags: [trustListFlag, trustRemoveFlag],
+    usage: 'cowcat trust [dir] [--list] [--remove]',
+    status: 'ready',
+    run: runTrust,
   },
 ];
 

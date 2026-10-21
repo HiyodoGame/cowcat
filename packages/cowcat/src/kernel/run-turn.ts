@@ -1,4 +1,5 @@
-import { approvalKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
+import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
+import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
 import type { InstructionPort } from '../ports/index.js';
@@ -101,9 +102,10 @@ export interface TurnDeps {
 
 /**
  * A static fact the run worked under, not something the run observed (ADR-046
- * decisions ③/④): a model the preset says cannot take tools, or a reasoning level the
- * preset never described. The log has no place for these — an event records what
- * happened, and configuration is not an event — so they ride the outcome instead.
+ * decisions ③/④), plus the run-time outcomes that have to be reported rather than
+ * thrown (ADR-072, ADR-082). They ride the outcome for callers that reason about the
+ * run, and `runTurn` also records each one as a `turn.noted` event (ADR-093) so a
+ * frontend that only sees the log still learns about it.
  */
 export type TurnNote =
   | { readonly kind: 'tools-unsupported'; readonly model: string }
@@ -149,17 +151,80 @@ export interface TurnOutcome {
 class TurnAborted extends Error {}
 
 export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal): Promise<TurnOutcome> {
+  const notes: TurnNote[] = [];
+  const outcome = await runTurnBody(deps, input, signal, notes);
+  return { ...outcome, notes };
+}
+
+/**
+ * Records a note as an event at the moment it happens (ADR-093).
+ *
+ * Eagerly, not at the end: a frontend that stops reading when the turn completes
+ * (`run` unsubscribes on the terminal transition) would otherwise miss a notice written
+ * after it — which is exactly what the first end-to-end check found. Writing it now also
+ * keeps the log's order honest: the skip is a fact about the turn that is about to run,
+ * not an epilogue to it.
+ *
+ * Failure to write is swallowed: a log that cannot take the notice must not turn a
+ * finished turn into a failed one — the same rule compaction follows for its own failure
+ * (ADR-072 ④).
+ */
+async function recordNote(
+  deps: TurnDeps,
+  notes: TurnNote[],
+  note: TurnNote,
+  turnId: string | null,
+): Promise<void> {
+  notes.push(note);
+  try {
+    await deps.session.emit({
+      type: 'turn.noted',
+      // Null before `turn.opened`: a note about the configuration the turn will run
+      // under has no turn yet, and the union says so rather than inventing one.
+      turnId,
+      note: note.kind,
+      message: describeTurnNote(note),
+    });
+  } catch {
+    // A closed session is the ordinary way this fails; the turn's outcome is unaffected.
+  }
+}
+
+/** The one-line rendering. Kernel-side so every frontend shows the same words. */
+export function describeTurnNote(note: TurnNote): string {
+  switch (note.kind) {
+    case 'tools-unsupported':
+      return `模型 ${note.model} 不支持工具调用，本回合没有工具可用`;
+    case 'effort-not-declared':
+      return `preset 没有声明 effort「${note.effort}」，已按默认发送`;
+    case 'compaction-failed':
+      return `上下文压缩失败：${note.reason}（回合继续，历史未被替换）`;
+    case 'instructions-skipped':
+      return `工作区指令未注入：${note.reason}`;
+    case 'rounds-exhausted':
+      return `达到回合上限（${String(note.rounds)} 轮），结果不完整`;
+  }
+}
+
+async function runTurnBody(
+  deps: TurnDeps,
+  input: string,
+  signal: AbortSignal,
+  notes: TurnNote[],
+): Promise<Omit<TurnOutcome, 'notes'>> {
   const { session } = deps;
   const effort = wireEffort(deps.preset, deps.effort);
+  const note = async (item: TurnNote, turnId: string | null): Promise<void> => {
+    await recordNote(deps, notes, item, turnId);
+  };
   // Computed once, before anything can fail: they describe the configuration the run
   // works under, so every exit carries them (ADR-046).
-  const notes: TurnNote[] = [];
-  if (!deps.preset.toolCalls) notes.push({ kind: 'tools-unsupported', model: deps.preset.model });
-  if (effort.note !== null) notes.push(effort.note);
+  if (!deps.preset.toolCalls) await note({ kind: 'tools-unsupported', model: deps.preset.model }, null);
+  if (effort.note !== null) await note(effort.note, null);
 
   // Instructions go in **before** the turn opens, so the model reads the repository's
   // rules ahead of the request rather than after it (ADR-078 ①).
-  await ensureInstructions(deps, notes);
+  await ensureInstructions(deps, (item) => note(item, null));
   await session.openTurn(input);
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
@@ -185,26 +250,26 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
             'auto',
             signal,
           );
-          if (!outcome.ok && outcome.reason !== null) notes.push({ kind: 'compaction-failed', reason: outcome.reason });
+          if (!outcome.ok && outcome.reason !== null) await note({ kind: 'compaction-failed', reason: outcome.reason }, turnId);
           // A compaction shadows the instruction message, so the fix is to put it back
           // (ADR-078 ①) — in the same turn, before the next request goes out.
-          await ensureInstructions(deps, notes);
+          await ensureInstructions(deps, (item) => note(item, turnId));
         }
       }
       if (deps.maxRounds !== undefined && rounds >= deps.maxRounds) {
         // The cap is a normal ending: finishing → completed, with the caller told the
         // answer is partial rather than being handed a silent truncation.
-        notes.push({ kind: 'rounds-exhausted', rounds });
+        await note({ kind: 'rounds-exhausted', rounds }, turnId);
         await session.transition('finishing');
         await session.transition('completed');
-        return { turnId, state: 'completed', reason: null, partial: true, notes };
+        return { turnId, state: 'completed', reason: null, partial: true };
       }
       const calls = await streamModel(deps, effort.providerOptions, signal);
       rounds += 1;
       if (calls.length === 0) {
         await session.transition('finishing');
         await session.transition('completed');
-        return { turnId, state: 'completed', reason: null, partial: false, notes };
+        return { turnId, state: 'completed', reason: null, partial: false };
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
@@ -241,7 +306,7 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
     const reason = error instanceof Error ? error.message : String(error);
     const turn = session.state.turn;
     if (turn !== null && !isTerminal(turn.state)) await session.transition(outcome, reason);
-    return { turnId, state: outcome, reason, partial: false, notes };
+    return { turnId, state: outcome, reason, partial: false };
   }
 }
 
@@ -272,7 +337,10 @@ function wireEffort(preset: ModelPreset, effort: string | undefined): EffortWiri
  * when `instructionsSeq` is set **is** the dedupe — the fold decides, not a counter in
  * memory, so a reopened session does not inject a second copy either.
  */
-async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<void> {
+async function ensureInstructions(
+  deps: TurnDeps,
+  note: (item: TurnNote) => Promise<void>,
+): Promise<void> {
   const needs = deps.instructions;
   if (needs === undefined) return;
   if (deps.session.state.instructionsSeq !== null) return;
@@ -283,7 +351,7 @@ async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<vo
     if (decision.kind === 'none') return;
     if (decision.kind === 'skipped-untrusted') {
       const reason = describeInstructionSkip(decision);
-      if (reason !== null) notes.push({ kind: 'instructions-skipped', reason });
+      if (reason !== null) await note({ kind: 'instructions-skipped', reason });
       return;
     }
     const encoder = new TextEncoder();
@@ -299,7 +367,7 @@ async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<vo
   } catch (error) {
     // Instructions are guidance. A broken read is reported, never fatal — the same rule
     // compaction follows (ADR-072 ④).
-    notes.push({ kind: 'instructions-skipped', reason: error instanceof Error ? error.message : String(error) });
+    await note({ kind: 'instructions-skipped', reason: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -561,17 +629,26 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 
   if (decision.verdict === 'ask') {
     const key = approvalKey(request);
-    if (session.state.grants.includes(key)) {
-      // A standing `always` from earlier in this session (ADR-031 decision 3). No
-      // question is asked — it was already answered, and asking again is theatre —
+    const toolKey = toolGrantKey(request.name);
+    // Recorded with the question (ADR-095): a warning that only lives in the frontend
+    // cannot be replayed, and the log is where "what was the user told?" is answered.
+    const warning = assessCommand(request.command)?.message ?? null;
+    const standing: ApprovalVerdict | null = session.state.grants.includes(key)
+      ? 'always'
+      : session.state.grants.includes(toolKey)
+        ? 'session'
+        : null;
+    if (standing !== null) {
+      // A standing answer from earlier in this session (ADR-031 decision 3, ADR-094).
+      // No question is asked — it was already answered, and asking again is theatre —
       // but the answer IS recorded, with `by: 'policy'`, so the log does not show an
       // `ask` that was somehow ignored. The `key` is the link back to that question.
       await session.emit({
         type: 'approval.answered',
         turnId,
         callId: call.callId,
-        key,
-        verdict: 'always',
+        key: standing === 'always' ? key : toolKey,
+        verdict: standing,
         by: 'policy',
       });
       approved = true;
@@ -587,6 +664,7 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         name: call.name,
         rule: decision.rule,
         reason: decision.reason,
+        ...(warning === null ? {} : { warning }),
       });
       await session.emit({
         type: 'approval.answered',
@@ -608,13 +686,16 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         name: call.name,
         rule: decision.rule,
         reason: decision.reason,
+        ...(warning === null ? {} : { warning }),
       });
       const outcome = await askForApproval(deps, request, decision, signal);
       await session.emit({
         type: 'approval.answered',
         turnId,
         callId: call.callId,
-        key,
+        // A `session` answer grants the tool, so the recorded key has to be the tool-level
+        // one: `reduce` rebuilds the grants from the ANSWER, never from the question.
+        key: outcome.verdict === 'session' ? toolKey : key,
         verdict: outcome.verdict,
         by: outcome.by,
       });

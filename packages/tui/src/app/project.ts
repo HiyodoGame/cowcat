@@ -58,6 +58,14 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       };
     }
 
+    case 'turn.noted': {
+      // The fact is durable (ADR-093) but it reads as a notice: it is not part of the
+      // assistant's answer, and putting it in the transcript's message half would make a
+      // replay look like the model said it.
+      const message = text(event, 'message') ?? '';
+      return message === '' ? base : add(base, notice(base, seq, 'warn', message));
+    }
+
     case 'model.message': {
       const content = text(event, 'text') ?? '';
       const toolCalls = records(event, 'toolCalls');
@@ -106,6 +114,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         name: text(event, 'name') ?? '(unnamed)',
         rule: text(event, 'rule') ?? '(unnamed rule)',
         reason: text(event, 'reason'),
+        warning: text(event, 'warning'),
         askedAt: number(event, 'ts') ?? 0,
         verdict: null,
         by: null,

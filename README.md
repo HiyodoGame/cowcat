@@ -64,6 +64,7 @@ node packages/cli/dist/src/cli/main.js doctor
 | `cowcat serve` | headless JSON-RPC over stdio |
 | `cowcat sessions list\|resume <id>` | 会话列表 / 恢复 |
 | `cowcat doctor` | 环境、配置、信任、指令链、沙箱、模型与 key 逐项检查 |
+| `cowcat trust [dir] [--list] [--remove]` | 信任一个目录（项目层 `allow` 与 `AGENTS.md` 才会生效），或列出/撤销 |
 | `cowcat setup --migrate` | 把现有 v1 配置翻译成 v2（备份原文件，不写密钥） |
 | `cowcat setup --preset <provider/model>` | 新建 v2 配置（`--api-key-env` / `--base-url` / `--force` / `--print`） |
 

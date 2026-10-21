@@ -1,7 +1,7 @@
 import type { ActionRequest } from './decide.js';
 
 /** What a user (or a timeout) can answer an approval request with. */
-export type ApprovalVerdict = 'once' | 'always' | 'reject';
+export type ApprovalVerdict = 'once' | 'always' | 'session' | 'reject';
 
 /**
  * Who answered.
@@ -26,9 +26,11 @@ export type ApprovalBy = 'user' | 'policy' | 'timeout' | 'unattended';
  * Precise on purpose. Keying on the tool name alone would mean that approving one
  * `Bash` command grants every `Bash` command for the rest of the session, which the
  * legacy implementation was careful not to do — it keyed Bash on the whole command
- * and the file tools on the path. v2 has no per-tool switch to make that choice in;
- * it uses the fields every request already declares (`command`, then `path`), and
- * falls back to the whole input only for tools that declare neither.
+ * and the file tools on the path. v2 keeps that for `always`; the coarse "this whole
+ * tool, this session" grant exists as its own answer (`session`, ADR-094) so the two
+ * questions are not conflated. `always` uses the fields every request already declares
+ * (`command`, then `path`), and falls back to the whole input only for tools that
+ * declare neither.
  *
  * The input fallback uses `JSON.stringify`, so two calls that differ only in key
  * order are two keys. That is conservative — a re-ordered call asks again rather
@@ -39,4 +41,22 @@ export function approvalKey(request: ActionRequest): string {
   // A NUL separator cannot occur in a tool name from a model, so the two halves
   // cannot be made to collide by naming a tool `a<something>b`.
   return `${request.name}\u0000${subject}`;
+}
+
+/**
+ * The key an `session` answer grants: the whole tool, for this session only.
+ *
+ * `always` is deliberately exact (ADR-031 decision 3): it grants the command that was
+ * shown, not the tool. That precision is right for the question "is this action okay?"
+ * and wrong for the question users actually answer with "always" — thirty-six Bash
+ * calls in one measured session, thirty-six different commands, eleven `always` answers
+ * and zero reuses. So the coarse grant exists, but as its own answer (`session`) with
+ * its own label, rather than by quietly redefining `always` and widening an existing
+ * grant people had already given.
+ *
+ * The subject is `*` because a NUL cannot appear in a tool name and a subject that is
+ * exactly `*` cannot be produced by a real command or path without being one.
+ */
+export function toolGrantKey(name: string): string {
+  return `${name}\u0000*`;
 }

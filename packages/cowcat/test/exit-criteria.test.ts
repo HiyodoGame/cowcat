@@ -196,6 +196,11 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // reprint AGENTS.md. They are in the log so a replay shows what the model was
         // told (ADR-078).
         break;
+      case 'turn.noted':
+        // A note is reported beside the conversation, not inside it (ADR-093): the
+        // projection of a turn is what was said, and a skip notice is not something the
+        // model said. The TUI renders it through `project`, which has its own switch.
+        break;
       default: {
         const unhandled: never = event;
         throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);

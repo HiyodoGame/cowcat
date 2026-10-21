@@ -173,6 +173,7 @@ test('an approval is opened by its request and closed by the answer to *that* ca
     name: 'Bash',
     rule: 'exec-asks',
     reason: null,
+    warning: null,
     askedAt: request.ts,
     verdict: null,
     by: null,
@@ -188,6 +189,7 @@ test('an approval is opened by its request and closed by the answer to *that* ca
     name: 'Bash',
     rule: 'exec-asks',
     reason: null,
+    warning: null,
     askedAt: request.ts,
     verdict: 'reject',
     by: 'user',
@@ -296,4 +298,25 @@ test('a finished delegation is one line that names the child; the start is not a
   assert.match(entry.text, /explore/);
   assert.match(entry.text, /2/);
   assert.equal(view.unsupported.includes('subagent.started'), false);
+});
+
+
+test('turn.noted is a notice, not assistant text, and a replay says the same thing', () => {
+  const log: readonly WireEvent[] = [
+    event('turn.opened', { input: '看看这个仓库' }),
+    event('turn.noted', { note: 'instructions-skipped', message: '工作区指令未注入：folder not trusted' }),
+  ];
+
+  const once = log.reduce(project, fresh());
+  const twice = log.reduce(project, fresh());
+
+  const entry = once.entries.at(-1);
+  assert.ok(entry !== undefined);
+  assert.equal(entry.kind, 'notice');
+  assert.equal(entry.level, 'warn');
+  assert.match(entry.text, /工作区指令未注入/u);
+  // The model did not say this, so it must not enter the answered half of the transcript.
+  assert.equal(once.entries.filter((item) => item.kind === 'assistant').length, 0);
+  assert.deepEqual(twice.entries, once.entries);
+  assert.equal(once.unsupported.includes('turn.noted'), false);
 });

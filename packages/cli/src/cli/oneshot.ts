@@ -78,6 +78,8 @@ export async function runOneShot(context: CommandContext): Promise<number> {
           case 'approval.requested': {
             const callId = field(update, 'callId');
             if (typeof callId !== 'string') return;
+            const warning = field(update, 'warning');
+            if (typeof warning === 'string' && warning !== '') context.stderr(`  ! ${warning}`);
             context.stderr(
               yes
                 ? '  · 审批：放行（--yes）'
@@ -86,6 +88,12 @@ export async function runOneShot(context: CommandContext): Promise<number> {
             host.respondApproval(sessionId, callId, yes ? 'once' : 'reject').catch((error: unknown) => {
               context.stderr(`  · 审批答案没能送达：${error instanceof Error ? error.message : String(error)}`);
             });
+            return;
+          }
+          case 'turn.noted': {
+            // A note is about the run, not about the answer: stderr keeps it out of a pipe.
+            const message = field(update, 'message');
+            if (typeof message === 'string' && message !== '') context.stderr(`cowcat run: ${message}`);
             return;
           }
           case 'turn.transitioned': {
