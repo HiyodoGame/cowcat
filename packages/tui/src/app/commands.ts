@@ -28,7 +28,7 @@ export interface TuiCommand {
 }
 
 export const KEYS_HELP = [
-  '回车 发送（审批待回答时：y / n / always / s）',
+  '回车 发送（审批时：↑↓ 选择 + 回车确认，y / n / always / s 也可）',
   'Esc 取消正在跑的回合；命令面板开着时关掉它',
   'Ctrl-P 命令面板 · Ctrl-O 展开/折叠最后一张工具卡 · Ctrl-T 思考内容 · Ctrl-C 退出',
   '直接输入 /命令 也可以（/help 看这个列表）',

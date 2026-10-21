@@ -4,8 +4,10 @@ import { COMMANDS, lastToolCallId, parseCommand, type CommandEffect } from './ap
 import { intentFor } from './app/keymap.js';
 import { addNotice, closeView, project, streamText } from './app/project.js';
 import {
+  approvalChoiceAt,
   closePalette,
   initialView,
+  moveApprovalCursor,
   movePalette,
   openPalette,
   pendingAttachments,
@@ -65,6 +67,28 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     // because a component that read it would not be a pure function.
     if (disposed) return;
     screen.update(frameOf(view.current, { width: screen.contentWidth(), now: Date.now() }));
+    syncActivity();
+  };
+
+  /**
+   * The spinner tick, and its off switch.
+   *
+   * Only while a turn is running: an idle terminal must not be repainted ten times a second,
+   * and a snapshot with a fixed clock stays deterministic. `COWCAT_ANIMATIONS=off` keeps the
+   * status word but freezes the cell, which is the CI- and screenshot-friendly mode.
+   */
+  const activity: { timer: ReturnType<typeof setInterval> | null } = { timer: null };
+  const animationsOff = process.env['COWCAT_ANIMATIONS'] === 'off';
+  const syncActivity = (): void => {
+    const state = view.current.turn?.state;
+    const running = state !== undefined && !TERMINAL.has(state);
+    const want = running && !animationsOff && !disposed;
+    if (want && activity.timer === null) {
+      activity.timer = setInterval(draw, 250);
+    } else if (!want && activity.timer !== null) {
+      clearInterval(activity.timer);
+      activity.timer = null;
+    }
   };
 
   let quit: (code: number) => void = () => undefined;
@@ -182,6 +206,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = toggleThinking(view.current);
           draw();
           return;
+        case 'approvalMove':
+          view.current = moveApprovalCursor(view.current, intent.delta);
+          draw();
+          return;
       }
     }
 
@@ -289,18 +317,21 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
       const approval = view.current.approval;
       if (approval !== null && approval.verdict === null) {
+        // Empty input + Enter is the highlighted row; a typed letter is the old habit.
         const verdict =
-          trimmed === 'y'
-            ? 'once'
-            : trimmed === 'always'
-              ? 'always'
-              : trimmed === 's'
-                ? 'session'
-                : trimmed === 'n'
-                  ? 'reject'
-                  : null;
+          trimmed === ''
+            ? approvalChoiceAt(view.current)
+            : trimmed === 'y'
+              ? 'once'
+              : trimmed === 'always'
+                ? 'always'
+                : trimmed === 's'
+                  ? 'session'
+                  : trimmed === 'n'
+                    ? 'reject'
+                    : null;
         if (verdict === null) {
-          view.current = addNotice(view.current, 'info', 'y / n / always / s 四选一，再回车。');
+          view.current = addNotice(view.current, 'info', '↑↓ 选择 + 回车，或输入 y / n / always / s。');
           draw();
           return;
         }
@@ -329,6 +360,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     // Order matters and so does the flag: stop drawing, drop the listeners, then destroy.
     disposed = true;
     clearTimeout(nudgeTimer);
+    if (activity.timer !== null) clearInterval(activity.timer);
     for (const off of detach) off();
     screen.destroy();
     render.destroy();

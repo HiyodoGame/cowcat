@@ -25,7 +25,9 @@ export type Intent =
   | { readonly kind: 'palette' }
   | { readonly kind: 'paletteMove'; readonly delta: number }
   | { readonly kind: 'toggleLastCard' }
-  | { readonly kind: 'toggleThinking' };
+  | { readonly kind: 'toggleThinking' }
+  /** Move the approval card's highlight; only meaningful while a question is open. */
+  | { readonly kind: 'approvalMove'; readonly delta: number };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -53,5 +55,12 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   }
 
   if (key.name === 'escape') return { kind: 'cancel' };
+
+  // Arrow keys belong to the open question while there is one: the input line is showing
+  // four rows of answers, not a prompt to type into.
+  if (view.approval !== null && view.approval.verdict === null) {
+    if (key.name === 'up') return { kind: 'approvalMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'approvalMove', delta: 1 };
+  }
   return null;
 }

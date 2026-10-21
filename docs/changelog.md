@@ -10,6 +10,8 @@
 - **审批卡片带危险提示**：`rm -rf`、强制推送、远端删除等命令单独一行 `alert` 提示，只提示、不改变裁决（#97，ADR-095）。
 - **TUI 命令可发现性**：输入 `/` 时输入行实时列出匹配命令（含新增的 `/thinking`、`/sessions`）；`cowcat sessions list` 每行附带可直接复制的 `cowcat sessions resume <id>`（#103）。
 - **TUI 思考内容**：有 reasoning 的回合显示一行「思考 · N 段」，`Ctrl-T` 或 `/thinking` 展开，展开内容用 dim 样式与回答区分（#104）。
+- **TUI 审批选项**：卡片列出四个答案（一次 / 本会话该工具 / 只对这一个动作 / 拒绝），`↑↓` 选择 + 回车确认；`y/n/always/s` 仍可用（#105）。
+- **TUI 运行态**：状态条显示 spinner 与当前动作（等模型 / 执行哪个工具 / 收尾），子 agent 运行时多一行「子 agent N 个运行中」并有面板列出 role、描述、轮次与耗时（#108，ADR-096）。`COWCAT_ANIMATIONS=off` 可冻结动画。
 
 ## 1.0.0-beta.2（2026-10-21）—— TUI 门槛提示与文档修正
 

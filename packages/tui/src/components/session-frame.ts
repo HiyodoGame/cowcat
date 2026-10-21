@@ -1,8 +1,9 @@
 import { COMMANDS } from '../app/commands.js';
 import { copyFor, type Copy } from '../app/copy.js';
-import type { TuiView } from '../app/view.js';
+import { runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
 import { line } from '../ui/line.js';
+import { agentPanelLines } from './agent-panel.js';
 import { paletteLines } from './palette.js';
 import { statusLine } from './status-bar.js';
 import { todoPanelLines } from './todo-panel.js';
@@ -38,6 +39,10 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
 
   if (view.todosVisible && view.todos.length > 0) {
     body.push(line('', 'text'), ...todoPanelLines(view.todos, options.width));
+  }
+  const agents = runningAgents(view);
+  if (agents.length > 0) {
+    body.push(line('', 'text'), ...agentPanelLines(agents, options.width, options.now));
   }
   if (view.palette !== null) {
     body.push(line('', 'text'), ...paletteLines(COMMANDS, view.palette.index, options.width));

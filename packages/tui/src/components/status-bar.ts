@@ -1,5 +1,5 @@
 import { copyFor, type Copy } from '../app/copy.js';
-import type { TuiView } from '../app/view.js';
+import { runningAgents, type TuiView } from '../app/view.js';
 import { line, type Line } from '../ui/line.js';
 import { truncate, stringWidth } from '../text/width.js';
 import type { TokenName } from '../theme/tokens.js';
@@ -9,7 +9,12 @@ import type { TokenName } from '../theme/tokens.js';
  *
  * The brand guide's rule for it is "any terminal, including 80 columns and no ANSI, stays
  * readable" (brand-guide §4.3) — so it is one line of text built from words that come out of
- * the copy table, never emoji or a spinner.
+ * the copy table, never emoji.
+ *
+ * **A spinner is the one exception, decided 2026-10-21 from real use**: with a long tool call
+ * the screen was indistinguishable from a hung process. It is one braille cell, drawn from
+ * `now`, and `run.ts` stops the tick entirely when animations are off (`COWCAT_ANIMATIONS=off`)
+ * or the turn is not running.
  *
  * What it can NOT show today, and why: the model. The session log does not record which model
  * ran a turn (`turn.opened` carries the input, and `model.message` the answer), so the
@@ -59,11 +64,32 @@ function stateOf(view: TuiView, copy: Copy, now: number): { readonly text: strin
       };
     case 'cancelled':
       return { text: copy.cancelled, token: 'textDim' };
-    default:
-      // opened / requesting / streaming / awaiting_tools / awaiting_approval / finishing all
-      // mean the same thing to a reader: it is working on it.
-      return { text: copy.waiting, token: 'act' };
+    default: {
+      // The animation is a fact about TIME, not a decoration: a still screen on a long tool
+      // call is indistinguishable from a hung process. `now` is injected, so a snapshot with
+      // a fixed clock is still deterministic.
+      const frame = SPINNER[Math.floor(now / 120) % SPINNER.length] ?? '·';
+      return { text: `${frame} ${activityOf(view)}`, token: 'act' };
+    }
   }
+}
+
+/** The braille cycle; one cell wide, so a narrow status bar loses nothing to it. */
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
+
+/** What the turn is doing right now, in as few words as the status bar can afford. */
+function activityOf(view: TuiView): string {
+  const agents = runningAgents(view).length;
+  const suffix = agents === 0 ? '' : ` · 子 agent ${String(agents)} 个运行中`;
+  const state = view.turn?.state;
+  if (state === 'awaiting_tools') {
+    const names = view.pendingTools.map((tool) => tool.name);
+    if (names.length > 0) return `执行 ${[...new Set(names)].join('/')}${suffix}`;
+    return `准备执行工具${suffix}`;
+  }
+  if (state === 'streaming') return `模型输出中${suffix}`;
+  if (state === 'finishing') return `收尾中${suffix}`;
+  return `等模型响应${suffix}`;
 }
 
 /** Exported for the tests that only care about the width of a token, not its colour. */
