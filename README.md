@@ -11,7 +11,37 @@ CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回�
 - Node.js **>= 22**（`cowcat tui` / `sessions resume` 需要 **>= 26.4**，因为 opentui）
 - 一个 Anthropic 或 OpenAI 兼容的模型端点与 API key（CowCat 不附带 key）
 
-## 快速开始（从源码）
+## 快速开始（npm）
+
+beta 版本发布在 `@beta` 标签上（`latest` 仍是 v1 的 `0.15.0`）：
+
+```bash
+npm i -g @corescense/cowcat@beta
+
+cowcat doctor
+cowcat setup --migrate      # 从 v1 升级：备份并迁移 ~/.cowcat/config.json，不复制密钥
+cowcat run "解释一下这个仓库的入口"
+cowcat                      # TUI（需要 Node >= 26.4）
+```
+
+配置用户层 `~/.cowcat/config.json`：
+
+```json
+{
+  "model": {
+    "preset": "anthropic/claude-sonnet-5-5",
+    "providers": { "anthropic": { "apiKeyEnv": "ANTHROPIC_API_KEY" } }
+  }
+}
+```
+
+然后设置 key：
+
+```bash
+export ANTHROPIC_API_KEY=...
+```
+
+## 从源码
 
 ```bash
 # 四个包按依赖顺序构建（file: 依赖是链接，不会自动构建）
@@ -21,26 +51,6 @@ CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回�
 (cd packages/cli && npm ci && npm run build)
 
 node packages/cli/dist/src/cli/main.js doctor
-
-# 从 v1 升级：迁移 ~/.cowcat/config.json（备份原文件，不复制密钥）
-node packages/cli/dist/src/cli/main.js setup --migrate
-```
-
-配置用户层 `~/.cowcat/config.json`：
-
-```json
-{
-  "model": { "preset": "anthropic/claude-sonnet-5-5" },
-  "providers": { "anthropic": { "apiKeyEnv": "ANTHROPIC_API_KEY" } }
-}
-```
-
-然后：
-
-```bash
-export ANTHROPIC_API_KEY=...
-node packages/cli/dist/src/cli/main.js run "解释一下这个仓库的入口"
-node packages/cli/dist/src/cli/main.js          # TUI（需要 Node >= 26.4）
 ```
 
 发布到 npm 后（人工 2FA）可直接 `npm i -g @corescense/cowcat`。

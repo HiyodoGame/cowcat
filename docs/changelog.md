@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 1.0.0-beta.1（未发布）—— v2 切换（P8）
+## 1.0.0-beta.1（2026-10-21）—— v2 切换（P8）
 
 v1（`agent/`）删除，仓库只剩四个 v2 包；npm 包名 `@corescense/cowcat` 由 `packages/cli` 接管。
 

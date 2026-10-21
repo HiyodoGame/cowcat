@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-21（删除 v1 合入；`cowcat setup` 接线与 v1 配置迁移写出）**。
-> 交接时仓库状态：**`main` = `dbdc7b8`**（#85 合入）；当前分支 **`feat/p8-setup`**（未提交/未推送）。
+> 最近一次更新：**2026-10-21（发布 `1.0.0-beta.1`；setup 接线合入）**。
+> 交接时仓库状态：**`main` = `ff3afe4`**（#86 合入）；当前分支 **`docs/release-beta1`**（发布记录，未提交）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`doctor`、探针脚本）；**【CI 远端】**GitHub Actions（**本次没有推送，未观察**）；**【上游】**厂商文档或实现；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更。**
@@ -120,6 +120,22 @@
 - 写文件：先写临时文件再 rename，权限 `0600`。
 - 5 项 CLI 测试：迁移不复制密钥、`--print` 不落盘、无 `--force` 拒绝覆盖、未知 preset、缺失 v1 文件。
 
+### 发布 `1.0.0-beta.1`（2026-10-21）
+
+【registry】四包都已发布并核对：
+
+| 包 | 版本 | dist-tags |
+|---|---|---|
+| `@corescense/cowcat` | `1.0.0-beta.1` | `latest: 0.15.0`、`beta: 1.0.0-beta.1` |
+| `@corescense/cowcat-core` | `1.0.0-beta.1` | `latest` / `beta` 都是它（首发） |
+| `@corescense/cowcat-protocol` | `1.0.0-beta.1` | 同上 |
+| `@corescense/cowcat-tui` | `1.0.0-beta.1` | 同上 |
+
+- 【本机命令】四个 tarball 的 SHA-1 与 registry `dist.shasum` **逐一相同**。
+- 【本机命令】`npx --yes @corescense/cowcat@beta --version` → `1.0.0-beta.1`；`doctor` 在空 `COWCAT_HOME` 下通过。
+- **发布顺序踩过一次坑**：只发了 CLI，三个依赖未发 → 安装 E404。补发 protocol → core → tui 后恢复；CLI 不需要重发。
+- CLI 的 `latest` 仍是 v1 `0.15.0`：beta 用 `@beta` 安装，避免把现有用户被动推上 beta。
+
 ---
 
 ## 2. 当前状态
@@ -155,7 +171,7 @@
 ### 项目状态
 
 - **P6 完成**；**P7 完成**（压缩、指令、子 agent、MCP）；**P8 进行中**：v1 配置兼容（089）、包切换（090）、删除 `agent/` 已完成；发布、CHANGELOG、`setup` 未完成。
-- 四个包版本 `1.0.0-beta.1`，`private` 已去掉，但**尚未发布**（registry 仍是 v1 `0.15.0`）。
+- 四个包版本 `1.0.0-beta.1`，`private` 已去掉，**已发布**；CLI 的 `latest` 仍是 v1 `0.15.0`，beta 走 `@beta` 标签。
 - 运行时依赖不变（3 / 6）。
 - `cowcat` 六个动词：`tui` / `serve` / `run` / `sessions list|resume` / `doctor` 可用；`setup` 未接线。
 
@@ -163,14 +179,14 @@
 
 ## 3. 项目唯一下一步
 
-**先提交并推送删除 `agent/` 的 PR；然后是发布批次。**
+**先提交发布记录（changelog 摘标记 + HANDOFF）；然后是 beta 反馈期。**
 
 P8 还没做的：
 
-1. **发布批次**：四个 `package.json` 与 `tools/pack-release.mjs` 的 `VERSION` 已是 `1.0.0-beta.1`；需要人工 2FA 从暂存目录按 protocol → core → tui → cli 发布（`docs/PUBLISH.md`）。
-2. **分支保护 contexts**：旧 `scope` / `test · node 22` 等 required checks 已从 CI 删除，仓库设置里要同步移除，否则 PR 会等一个永不上报的检查（仓库设置，不由代码完成）。
-3. **v1 残留迁移**：项目 `.cowcat/config.json`、`state.json` 未自动读；`~/.cowcat/mcp.json` 已由 `setup --migrate` 迁移（env 除外）。
-4. **CHANGELOG 发布标记**：`docs/changelog.md` 的 `1.0.0-beta.1` 段落仍带「未发布」，发布时摘掉。
+1. **`latest` 仍是 v1 `0.15.0`**：beta 期用 `@beta`；什么时候把 `latest` 切到 1.0.0 需要单独决定（等 beta 反馈与真实端点覆盖）。
+2. **v1 残留迁移**：项目 `.cowcat/config.json`、`state.json` 未自动读；`~/.cowcat/mcp.json` 已由 `setup --migrate` 迁移（env 除外）。
+3. **setup 向导**：目前是非交互 flags；交互式问答仍未做。
+4. **发布后监控**：beta 安装反馈、`cowcat doctor` 在真实用户配置上的表现。
 
 MCP 剩余项（`.cmd`/`npx` 入口、真实 `list_changed`、macOS `light` 档）排在发布之后。
 
@@ -227,7 +243,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 8. **前序遗留随 `agent/` 一起删除**：两个 macOS flake、`distill-providers.mjs` 缺失、v1 套件都不再适用。
 9. **分支保护 contexts**：删除 legacy jobs 后，仓库设置里的旧 required checks 仍存在；需要人工移除，并把新的包腿加进去。
 10. **`cowcat setup` 已接线（ADR-091）**，但仍是**非交互**的：向导式问答没有做；滚动回看、预览模态、Plan/Act 双模式仍未做。
-11. **本次改动未推送**：分支只在本地，CI 未跑；四个包**尚未发布**。
+11. **发布已执行**：四包 `1.0.0-beta.1` 已在 registry；CI 在 #86 上全绿。
 
 ---
 
