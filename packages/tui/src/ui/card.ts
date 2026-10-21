@@ -17,6 +17,8 @@ import { padTo, stringWidth, truncate } from '../text/width.js';
 export interface CardBodyLine {
   readonly text: string;
   readonly token: TokenName;
+  /** A click id for this row; the loop decides what it means. */
+  readonly hit?: string;
 }
 
 export interface CardSpec {
@@ -52,7 +54,7 @@ export function card(spec: CardSpec): readonly Line[] {
   // The body rows are `│ ` + content + ` │`: four cells of frame, so `width - 4` of room.
   const inner = width - 4;
   for (const body of spec.body ?? []) {
-    lines.push(line(`${CORNER.vertical} ${padTo(body.text, inner)} ${CORNER.vertical}`, body.token));
+    lines.push(line(`${CORNER.vertical} ${padTo(body.text, inner)} ${CORNER.vertical}`, body.token, false, body.hit));
   }
 
   lines.push(line(`${CORNER.bottomLeft}${CORNER.horizontal.repeat(Math.max(0, width - 2))}${CORNER.bottomRight}`, border));

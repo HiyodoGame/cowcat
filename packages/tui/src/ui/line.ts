@@ -15,10 +15,17 @@ export interface Line {
   readonly text: string;
   readonly token: TokenName;
   readonly bold: boolean;
+  /**
+   * What a click on this row means, as an opaque id the loop decodes.
+   *
+   * The UI layer must not know about tool cards or approvals, so it carries a string and
+   * the composition root (`run.ts`) decides what `tool:<id>` or `approval:<n>` does.
+   */
+  readonly hit?: string;
 }
 
-export function line(text: string, token: TokenName = 'text', bold = false): Line {
-  return { text, token, bold };
+export function line(text: string, token: TokenName = 'text', bold = false, hit?: string): Line {
+  return hit === undefined ? { text, token, bold } : { text, token, bold, hit };
 }
 
 /** One `Line` per source line, with a marker on the first and padding afterwards. */

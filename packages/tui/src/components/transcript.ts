@@ -64,8 +64,12 @@ function entryLines(entry: Entry, view: TuiView, options: TranscriptOptions): Tr
       return { lines: userMessageLines(entry, options.width), images: [] };
     case 'assistant':
       return { lines: assistantMessageLines(entry, options.width, view.thinkingExpanded), images: [] };
-    case 'tool':
-      return toolCardLines(entry, view, options.width);
+    case 'tool': {
+      // The whole card is the click target: a title-only target would be a smaller hit area
+      // for the same action, and the rows already carry the id for the loop to decode.
+      const part = toolCardLines(entry, view, options.width);
+      return { lines: part.lines.map((row) => ({ ...row, hit: `tool:${entry.callId}` })), images: part.images };
+    }
     case 'notice':
       return { lines: noticeLines(entry.level, entry.text, options.width), images: [] };
   }

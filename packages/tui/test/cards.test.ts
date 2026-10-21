@@ -463,6 +463,44 @@ test('a pending tool is named until its result arrives', () => {
   assert.deepEqual(finished.pendingTools, []);
 });
 
+test('clickable rows carry a hit id for the loop to decode', () => {
+  const approvalView = viewOf([
+    event('turn.opened', { input: '清一下构建目录' }),
+    event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null }),
+  ]);
+  const approvalFrame = frameOf(approvalView, { width: WIDTH, now: 1_000 });
+  const option = approvalFrame.body.find((row) => row.text.includes('允许一次'));
+  assert.equal(option?.hit, 'approval:0');
+  const session = approvalFrame.body.find((row) => row.text.includes('本会话内 Bash'));
+  assert.equal(session?.hit, 'approval:1');
+
+  const toolView = viewOf([
+    event('turn.opened', { input: '看一眼' }),
+    event('model.message', {
+      text: '',
+      toolCalls: [{ callId: 'call_1', name: 'Read', input: { file_path: '/a.txt' } }],
+      reasoning: [],
+      stopReason: null,
+    }),
+    event('tool.finished', {
+      callId: 'call_1',
+      name: 'Read',
+      ok: true,
+      output: 'hello',
+      facts: null,
+      truncation: null,
+      path: '/a.txt',
+      attachments: null,
+    }),
+  ]);
+  const toolFrame = frameOf(toolView, { width: WIDTH, now: 1_000 });
+  const toolRow = toolFrame.body.find((row) => row.text.includes('Read'));
+  assert.equal(toolRow?.hit, 'tool:call_1');
+
+  // The scroll offset is part of the frame spec, so a snapshot can pin it.
+  assert.equal(frameOf({ ...approvalView, scrollOffset: 7 }, { width: WIDTH, now: 0 }).scroll, 7);
+});
+
 test('the status bar says where the session is, and truncates rather than wrapping', () => {
   seq = 0;
   const idle = viewOf([event('session.opened', { schemaVersion: 1, cowcatVersion: 'x', shell: { kind: 'posix', executable: '/bin/sh' } })]);

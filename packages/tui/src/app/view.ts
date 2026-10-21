@@ -197,6 +197,8 @@ export interface TuiView {
   readonly unsupported: readonly string[];
   /** The highest `seq` seen, which is what a reconnect has to resume after. */
   readonly lastSeq: number;
+  /** Lines scrolled up from the newest row; 0 follows the tail. */
+  readonly scrollOffset: number;
   /** The transport closed; the view stays readable. */
   readonly closed: boolean;
 }
@@ -224,6 +226,7 @@ export function initialView(): TuiView {
     usage: null,
     unsupported: [],
     lastSeq: 0,
+    scrollOffset: 0,
     closed: false,
   };
 }
@@ -247,6 +250,16 @@ export function toggleThinking(view: TuiView): TuiView {
 
 export function withInput(view: TuiView, input: string): TuiView {
   return view.input === input ? view : { ...view, input };
+}
+
+/** Positive `delta` scrolls up (older lines). The screen clamps to what exists. */
+export function withScroll(view: TuiView, delta: number): TuiView {
+  const next = Math.max(0, view.scrollOffset + delta);
+  return next === view.scrollOffset ? view : { ...view, scrollOffset: next };
+}
+
+export function resetScroll(view: TuiView): TuiView {
+  return view.scrollOffset === 0 ? view : { ...view, scrollOffset: 0 };
 }
 
 /** The answer the highlighted row stands for. */

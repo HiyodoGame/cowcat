@@ -34,7 +34,7 @@ export function assistantMessageLines(
     const label = thinkingExpanded
       ? `  ▾ 思考 · ${String(blocks)} 段（Ctrl-T 折叠）`
       : `  ▸ 思考 · ${String(blocks)} 段（Ctrl-T 展开）`;
-    lines.push(...wrap(label, width).map((row) => line(row, 'textDim')));
+    lines.push(...wrap(label, width).map((row) => line(row, 'textDim', false, 'thinking')));
     if (thinkingExpanded) {
       for (const block of entry.reasoning) {
         lines.push(...wrap(block, width - 4).map((row) => line(`  │ ${row}`, 'textDim')));
