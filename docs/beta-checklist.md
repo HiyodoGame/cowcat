@@ -92,15 +92,34 @@ COWCAT_HOME="$TEST_HOME" cowcat doctor
 
 这一组是当前验证最薄、但对 `latest` 决策最重要的部分。
 
-- [ ] 连续 10+ 轮，触发一次上下文压缩
-- [ ] 压缩后 `AGENTS.md` 指令仍然生效（问一个只有项目规则能答的问题）
-- [ ] 压缩后最近修改的文件仍在上下文里，能继续编辑
-- [ ] `Task` + `explore`：只读、报告可用
-- [ ] `Task` + `general`：能完成一个隔离子任务
-- [ ] 取消父回合后，子会话有 `cancelled` 终结事实，且没有残留锁
-- [ ] `sessions list` 默认折叠子会话；`--all` 能列出
+- [x] 连续 10+ 轮，触发一次上下文压缩
+- [x] 压缩后 `AGENTS.md` 指令仍然生效（问一个只有项目规则能答的问题）
+- [x] 压缩后最近修改的文件仍在上下文里，能继续编辑
+- [x] `Task` + `explore`：只读、报告可用
+- [x] `Task` + `general`：能完成一个隔离子任务
+- [x] 取消父回合后，子会话有 `cancelled` 终结事实，且没有残留锁
+- [x] `sessions list` 默认折叠子会话；`--all` 能列出
 
 看日志里的 `context.compacted`、`subagent.started` / `subagent.finished`、`turn.transitioned`。
+
+### 3.1 本轮记录（2026-10-21，已发布 `1.0.0-beta.2`）
+
+环境：临时 git 仓库（`src/a.js`、`src/b.js`、`src/config.js`、`src/notes.md` + 一个测试 + `AGENTS.md`），临时 `COWCAT_HOME`。`AGENTS.md` 里埋了一个只有它能回答的暗号 `CONVENTION-OK`。
+
+**怎么在 12k 内触发压缩**：内置 preset 的 `context` 是 1,000,000，真推满不现实。用配置里的自定义 preset 把 `limits.context` 设成 12000（后降到 5000），协议、内核、压缩代码路径都不变——只有触发阈值变了。这是测试配置，不代表产品默认值。
+
+- 【会话 `sess_7e93b192-f463-4d08-8c98-6b03a4341bbe`，14 轮】第 1–10 轮每轮「读两个源文件 + 在 notes.md 追加一行」，上下文涨到约 7.4k tokens；第 11 轮仍低于阈值；第 12 轮开始触发压缩：
+  - `context.compaction.started` → `context.compacted`（`trigger=auto`、`throughSeq=85`、`dropped=24`、`shadowed=24`、摘要 1543 字符）→ `context.compaction.finished ok=true`
+  - 紧接着 `instructions.loaded` 第二次出现，`trigger=refresh`——压缩把指令影子化后，同一回合把它放回去了（ADR-078 ①）
+- 【压缩后指令】第 13 轮问「提到约定必须带什么暗号」，回答 `CONVENTION-OK`
+- 【压缩后最近文件】第 14 轮禁止 `Read`、直接 `Edit` 往 `src/notes.md` 追加，成功（模型记得最后一行是「第12轮完成。」）
+- 【explore 子 agent】3 轮、只读，报告覆盖 `src/` 四个文件与依赖关系，子会话 `sess_6d432bef-1405-4429-b9c4-522cb8403baf`，父级 `subagent.finished ok=true state=completed`
+- 【general 子 agent】子会话 `sess_2172bcdc-d77a-4cb4-93dd-368a1eb48ccc`，3 轮；它尝试用 `node -e` 实证被拒（子 agent 无人可问，ADR-081 ③），如实说明后改为静态分析，并给出边界问题清单
+- 【取消父回合】`serve` 探针在 `subagent.started` 后 1.5s 发 `turn.cancel`：父级 `cancelled`（reason `aborted while a sub agent was running`）、父日志 `subagent.finished ok=false state=cancelled`、子日志终止于 `cancelled`；`serve` 正常退出后 `sessions/` 下**无 `.lock` 文件**
+- 【列表折叠】`sessions list` 只显示父会话；`--all` 显示两个子会话并标注父会话 id
+
+注意：探针第一次查锁是在 `serve` 还活着时，看到 `.lock` 属正常持有；改成进程退出后再查才是这条验收点的正确测法。
+
 
 ## 4. TUI 与 MCP
 
@@ -200,6 +219,7 @@ COWCAT_HOME：临时目录 / 真实 home
 | 2026-10-21 | 安装/迁移 | 通过（§1.1–§1.3，已发布 beta.2 + 源码） | §1.4（临时 home 的迁移与回滚；真实 home 已是 v2，未重复迁移） | — |
 | 2026-10-21 | 编码任务 | 通过（4 轮同一会话 + 1 次拒绝路径；§2.1） | 测试 5/5、无重复读、`instructions.loaded` 1 次 | — |
 | 2026-10-21 | MCP | 通过（list 命名 + call + 崩溃不重启 + cancel 杀进程；§4.3） | `mcp__everything__echo` → `Echo: mcp-ok`；`die` 后第二次调用报 no restart；cancel 前后进程 1→0 | — |
+| 2026-10-21 | 长会话/子 agent | 通过（14 轮，第 12 轮压缩；§3.1） | `context.compacted` + `instructions.loaded(refresh)`；压缩后暗号与最近文件仍可用；父子取消后无锁 | — |
 | | 编码任务 | | | |
 | | 长会话/子 agent | | | |
 | | TUI | | | |
