@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireEvent } from '@corescense/cowcat-protocol';
-import { advanceReasoning, initialView, revealedReasoning, type TuiView } from '../src/app/view.js';
+import { advanceReasoning, initialView, revealedReasoning, withScroll, type TuiView } from '../src/app/view.js';
 import { closeView, project, streamReasoning, streamText } from '../src/app/project.js';
 
 /**
@@ -319,6 +319,20 @@ test('turn.noted is a notice, not assistant text, and a replay says the same thi
   assert.equal(once.entries.filter((item) => item.kind === 'assistant').length, 0);
   assert.deepEqual(twice.entries, once.entries);
   assert.equal(once.unsupported.includes('turn.noted'), false);
+});
+
+test('output arriving while scrolled up is counted, and returning to the tail clears it', () => {
+  const scrolled = withScroll(initialView(), 5);
+  const view = project(
+    scrolled,
+    event('model.message', { text: '新内容', toolCalls: [], reasoning: [], stopReason: null }),
+  );
+  assert.equal(view.scrollOffset, 5, 'following does not resume on its own');
+  assert.equal(view.newSinceScroll, 1);
+
+  const back = withScroll(view, -5);
+  assert.equal(back.scrollOffset, 0);
+  assert.equal(back.newSinceScroll, 0);
 });
 
 test('reasoning is live while it streams, then collapses into the answer', () => {

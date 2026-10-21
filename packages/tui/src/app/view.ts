@@ -214,6 +214,13 @@ export interface TuiView {
   readonly lastSeq: number;
   /** Lines scrolled up from the newest row; 0 follows the tail. */
   readonly scrollOffset: number;
+  /**
+   * Output that arrived while the reader was scrolled up (ADR-103).
+   *
+   * Counting events rather than lines: "3 new results" is what a person needs to decide
+   * whether to jump back; the exact row count changes with wrapping.
+   */
+  readonly newSinceScroll: number;
   /** The transport closed; the view stays readable. */
   readonly closed: boolean;
 }
@@ -247,6 +254,7 @@ export function initialView(): TuiView {
     unsupported: [],
     lastSeq: 0,
     scrollOffset: 0,
+    newSinceScroll: 0,
     closed: false,
   };
 }
@@ -281,10 +289,16 @@ export function moveSlash(view: TuiView, delta: number, count: number): TuiView 
   return next === view.slashIndex ? view : { ...view, slashIndex: next };
 }
 
-/** Positive `delta` scrolls up (older lines). The screen clamps to what exists. */
+/** Positive `delta` scrolls up (older lines). Reaching 0 resumes following new output. */
 export function withScroll(view: TuiView, delta: number): TuiView {
   const next = Math.max(0, view.scrollOffset + delta);
-  return next === view.scrollOffset ? view : { ...view, scrollOffset: next };
+  if (next === view.scrollOffset) return view;
+  return { ...view, scrollOffset: next, ...(next === 0 ? { newSinceScroll: 0 } : {}) };
+}
+
+/** One more piece of output arrived while the reader was scrolled up. */
+export function noteBelow(view: TuiView): TuiView {
+  return view.scrollOffset === 0 ? view : { ...view, newSinceScroll: view.newSinceScroll + 1 };
 }
 
 /**
@@ -306,7 +320,9 @@ export function revealedReasoning(view: TuiView): string {
 }
 
 export function resetScroll(view: TuiView): TuiView {
-  return view.scrollOffset === 0 ? view : { ...view, scrollOffset: 0 };
+  return view.scrollOffset === 0 && view.newSinceScroll === 0
+    ? view
+    : { ...view, scrollOffset: 0, newSinceScroll: 0 };
 }
 
 /** The answer the highlighted row stands for. */

@@ -45,6 +45,10 @@ test('the / menu owns arrows, Tab and Escape while it is open', () => {
   assert.equal(intentFor({ name: 'up', ctrl: false }, { ...view, input: '/help me' }), null);
 });
 
+test('Ctrl+End jumps back to the tail', () => {
+  assert.deepEqual(intentFor({ name: 'end', ctrl: true }, initialView()), { kind: 'scrollBottom' });
+});
+
 test('paging scrolls the transcript', () => {
   assert.deepEqual(intentFor({ name: 'pageup', ctrl: false }, initialView()), { kind: 'scroll', delta: 10 });
   assert.deepEqual(intentFor({ name: 'pagedown', ctrl: false }, initialView()), { kind: 'scroll', delta: -10 });

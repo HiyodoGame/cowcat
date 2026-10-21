@@ -2,6 +2,7 @@ import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
 import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
+import { noteBelow } from './view.js';
 
 /**
  * The pure function the whole frontend is built on (ADR-059 ②, ADR-066 ②).
@@ -68,7 +69,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // assistant's answer, and putting it in the transcript's message half would make a
       // replay look like the model said it.
       const message = text(event, 'message') ?? '';
-      return message === '' ? base : add(base, notice(base, seq, 'warn', message));
+      return message === '' ? base : noteBelow(add(base, notice(base, seq, 'warn', message)));
     }
 
     case 'model.message': {
@@ -101,14 +102,16 @@ export function project(view: TuiView, event: WireEvent): TuiView {
           .filter((tool) => tool.callId !== ''),
       };
       if (content !== '') {
-        return add(next, {
-          kind: 'assistant',
-          seq,
-          text: content,
-          calls: toolCalls.length,
-          reasoning: thinking,
-          redactedThinking: redacted,
-        });
+        return noteBelow(
+          add(next, {
+            kind: 'assistant',
+            seq,
+            text: content,
+            calls: toolCalls.length,
+            reasoning: thinking,
+            redactedThinking: redacted,
+          }),
+        );
       }
       // An empty answer with calls is normal — the calls ARE the answer. An empty answer
       // with nothing at all is worth a line, or the turn looks like it did nothing.
@@ -134,10 +137,11 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         ...withImages,
         pendingTools: withImages.pendingTools.filter((tool) => tool.callId !== callId),
       };
-      return add(cleared, {
-        kind: 'tool',
-        seq,
-        callId,
+      return noteBelow(
+        add(cleared, {
+          kind: 'tool',
+          seq,
+          callId,
         name: text(event, 'name') ?? '(unnamed)',
         ok: flag(event, 'ok') === true,
         output: text(event, 'output') ?? '',
@@ -148,7 +152,8 @@ export function project(view: TuiView, event: WireEvent): TuiView {
           .map((attachment) => text(attachment, 'path'))
           .filter((path): path is string => path !== null && path !== ''),
         path: text(event, 'path'),
-      });
+        }),
+      );
     }
 
     case 'approval.requested': {

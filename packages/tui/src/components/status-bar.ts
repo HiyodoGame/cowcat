@@ -35,6 +35,8 @@ export function statusLine(view: TuiView, options: StatusOptions = { now: 0 }): 
   if (view.model !== null) parts.push(shortModel(view.model));
   const elapsed = elapsedOf(view, options.now);
   if (elapsed !== null) parts.push(elapsed);
+  const runtime = view.scrollOffset > 0 ? `↑ 已暂停跟随 · ${String(view.newSinceScroll)} 条新输出` : null;
+  if (runtime !== null) parts.push(runtime);
   if (view.todos.length > 0) {
     const done = view.todos.filter((todo) => todo.status === 'completed').length;
     parts.push(`待办 ${String(done)}/${String(view.todos.length)}`);
