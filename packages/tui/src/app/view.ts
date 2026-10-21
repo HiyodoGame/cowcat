@@ -190,6 +190,20 @@ export interface TuiView {
    * touches it.
    */
   readonly input: string;
+  /**
+   * Inputs sent this session, oldest first (ADR-106). Memory only: every prompt is already
+   * in the log, and a second store is a second thing that can disagree with it.
+   */
+  readonly history: readonly string[];
+  /**
+   * Which history entry the composer is showing; `null` means "editing the draft".
+   *
+   * Kept in the view rather than in `run.ts` so recalling an entry is a pure transition and
+   * the arrow-key rules can be tested without a terminal.
+   */
+  readonly historyIndex: number | null;
+  /** The draft saved when browsing started, restored by ↓ past the newest entry. */
+  readonly historyDraft: string;
   /** The model `turn.opened` reported, for the status bar (ADR-102). */
   readonly model: string | null;
   /**
@@ -262,6 +276,9 @@ export function initialView(): TuiView {
     expanded: [],
     thinkingExpanded: false,
     input: '',
+    history: [],
+    historyIndex: null,
+    historyDraft: '',
     model: null,
     contextWindow: null,
     turnStartedAt: null,
@@ -343,6 +360,49 @@ export function resetScroll(view: TuiView): TuiView {
   return view.scrollOffset === 0 && view.newSinceScroll === 0
     ? view
     : { ...view, scrollOffset: 0, newSinceScroll: 0 };
+}
+
+/** How many prompts the history keeps; the log is the unbounded record (ADR-106). */
+const HISTORY_LIMIT = 100;
+
+/**
+ * Record what was just sent (ADR-106).
+ *
+ * Consecutive duplicates are dropped: pressing ↑ twice after two identical prompts should be
+ * one prompt, not two. Sending also ends the browsing session, so the next ↑ starts from the
+ * newest entry instead of resurrecting the old position.
+ */
+export function rememberInput(view: TuiView, text: string): TuiView {
+  const idle: TuiView = { ...view, historyIndex: null, historyDraft: '' };
+  if (text === '' || view.history.at(-1) === text) return idle;
+  return { ...idle, history: [...view.history, text].slice(-HISTORY_LIMIT) };
+}
+
+/**
+ * Move through the input history (ADR-106).
+ *
+ * `older` saves the draft on the way in and clamps at the oldest entry; `newer` walks back
+ * and, past the newest entry, restores the draft. Returning the same view means "there is
+ * nothing to recall", which the caller reads as "this arrow still belongs to the cursor".
+ */
+export function withHistory(view: TuiView, direction: 'older' | 'newer'): TuiView {
+  const { history } = view;
+  if (history.length === 0) return view;
+  if (direction === 'older') {
+    if (view.historyIndex === null) {
+      const index = history.length - 1;
+      return { ...view, historyIndex: index, historyDraft: view.input, input: history[index] ?? view.input };
+    }
+    if (view.historyIndex === 0) return view;
+    const index = view.historyIndex - 1;
+    return { ...view, historyIndex: index, input: history[index] ?? view.input };
+  }
+  if (view.historyIndex === null) return view;
+  if (view.historyIndex < history.length - 1) {
+    const index = view.historyIndex + 1;
+    return { ...view, historyIndex: index, input: history[index] ?? view.input };
+  }
+  return { ...view, historyIndex: null, input: view.historyDraft, historyDraft: '' };
 }
 
 /** The answer the highlighted row stands for. */

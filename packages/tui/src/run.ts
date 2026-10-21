@@ -15,10 +15,12 @@ import {
   moveSlash,
   openPalette,
   pendingAttachments,
+  rememberInput,
   resetScroll,
   toggleExpanded,
   toggleThinking,
   withAttachment,
+  withHistory,
   withInput,
   withLangFrom,
   withScroll,
@@ -183,7 +185,34 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         queueMicrotask(syncInput);
       }),
       screen.onKey((key) => {
-        handle(intentFor({ name: key.name, ctrl: key.ctrl }, view.current));
+        const intent = intentFor({ name: key.name, ctrl: key.ctrl }, view.current);
+        // ↑/↓ belong to the composer's cursor until there is nowhere left to move (ADR-106).
+        // `intent` is checked first so an open menu or question keeps the keys, and Shift is
+        // excluded because it extends a selection (`select-up`/`select-down`) — taking it would
+        // swap the selection for a recalled line. Consuming a plain arrow means `preventDefault`:
+        // global keypress listeners run before the focused renderable, and opentui skips the
+        // renderable when the event is already handled — without it the textarea would move
+        // anyway and the recalled line would be edited in the wrong place.
+        if (
+          intent === null &&
+          !key.ctrl &&
+          !key.meta &&
+          !key.shift &&
+          (key.name === 'up' || key.name === 'down')
+        ) {
+          const older = key.name === 'up';
+          const atEdge = older ? screen.cursorRow() === 0 : screen.cursorRow() >= screen.inputLineCount() - 1;
+          if (atEdge) {
+            const next = withHistory(view.current, older ? 'older' : 'newer');
+            if (next !== view.current) {
+              key.preventDefault();
+              view.current = next;
+              screen.setInput(next.input);
+              draw();
+            }
+          }
+        }
+        handle(intent);
         // The input widget swallows the printable keys, so its value is read back rather
         // than reconstructed: one source of truth for both hinting and what is sent.
         queueMicrotask(syncInput);
@@ -470,7 +499,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
       if (trimmed === '') return;
       screen.clearInput();
-      view.current = resetScroll(withLangFrom(view.current, trimmed));
+      view.current = rememberInput(resetScroll(withLangFrom(view.current, trimmed)), trimmed);
       draw();
       options.client.sendTurn(sessionId, trimmed).catch((error: unknown) => {
         // The host refuses with a sentence a user can act on ("no model is configured …",
