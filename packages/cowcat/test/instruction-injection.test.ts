@@ -104,7 +104,19 @@ test('an untrusted workspace injects nothing and says why', async () => {
   assert.match(note.kind === 'instructions-skipped' ? note.reason : '', /not trusted/);
   assert.equal(note.kind, 'instructions-skipped');
 
-  assert.equal(types(await store.readAll('sess_instr')).includes('instructions.loaded'), false);
+  const events = await store.readAll('sess_instr');
+  assert.equal(types(events).includes('instructions.loaded'), false);
+
+  // ADR-093: the skip is a durable fact, not only a return value. A frontend that sees
+  // nothing but the log has to be able to learn why the repository's rules are missing.
+  const noted = events.filter((event) => event.type === 'turn.noted');
+  assert.equal(noted.length, 1);
+  const first = noted[0];
+  assert.ok(first !== undefined);
+  assert.equal(first.type, 'turn.noted');
+  assert.equal(first.note, 'instructions-skipped');
+  assert.match(first.message, /工作区指令未注入/u);
+  assert.match(first.message, /not trusted/u);
 });
 
 test('a broken reader is reported, never fatal', async () => {

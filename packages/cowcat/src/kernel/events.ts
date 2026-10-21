@@ -43,6 +43,22 @@ export type KernelEvent = EventBase &
     | { readonly type: 'turn.opened'; readonly input: string }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
     | {
+        /**
+         * A static fact the turn ran under, recorded rather than only returned.
+         *
+         * These used to live only on `TurnOutcome.notes`, which every frontend dropped:
+         * "we skipped your AGENTS.md" reached `doctor` and nothing else, which is the
+         * silent failure ADR-030 exists to prevent. They are events now because a fact a
+         * user has to be able to learn belongs in the log, not in a return value.
+         *
+         * `note` is the machine kind; `message` is the rendered line, kept here so a
+         * replay needs no second renderer.
+         */
+        readonly type: 'turn.noted';
+        readonly note: TurnNoteKind;
+        readonly message: string;
+      }
+    | {
         readonly type: 'model.message';
         readonly text: string;
         readonly toolCalls: readonly ToolCall[];
@@ -253,6 +269,20 @@ export type KernelEvent = EventBase &
   );
 
 export type KernelEventType = KernelEvent['type'];
+
+/**
+ * The kinds a turn can report about itself (ADR-046, ADR-072, ADR-082).
+ *
+ * Declared beside the event rather than derived from `TurnNote` so the log's vocabulary
+ * is one list: a new note kind that is not added here cannot be recorded, which is the
+ * check we want (an unrecordable note is the bug this event exists to fix).
+ */
+export type TurnNoteKind =
+  | 'tools-unsupported'
+  | 'effort-not-declared'
+  | 'compaction-failed'
+  | 'instructions-skipped'
+  | 'rounds-exhausted';
 
 // Ephemeral updates exist for live rendering only. They are never persisted:
 // a streamed token is not a fact about the session, the final model.message is.

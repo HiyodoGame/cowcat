@@ -38,4 +38,13 @@ export interface TrustStore {
    * a directory and was not told the write failed believes something untrue.
    */
   add(path: string): Promise<void>;
+
+  /**
+   * Drops a canonical path. Returns whether an entry was actually removed.
+   *
+   * Reversible on purpose: trust is granted to run a repository's own rules, and a
+   * grant that cannot be withdrawn without hand-editing a JSON file is a grant people
+   * leave in place.
+   */
+  remove(path: string): Promise<boolean>;
 }

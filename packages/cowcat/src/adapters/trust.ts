@@ -96,6 +96,24 @@ export class FileTrustStore implements TrustStore {
   }
 
   /**
+   * Drops one directory, by identity. Returns whether anything changed.
+   *
+   * Claims about what is trusted have to be reversible: a `deny`-shaped mistake in a
+   * repository is why someone trusts a directory in the first place, and the same
+   * someone has to be able to take it back without editing JSON by hand.
+   */
+  async remove(path: string): Promise<boolean> {
+    const canonical = this.#fs.canonical(path);
+    const existing = await this.#readRaw();
+    const current = extractTrusted(existing) ?? [];
+    const kept = current.filter((entry) => !this.#fs.samePath(entry, canonical));
+    if (kept.length === current.length) return false;
+    await mkdir(dirname(this.#file), { recursive: true });
+    await writeFile(this.#file, `${JSON.stringify({ ...existing, trusted: kept }, null, 2)}\n`);
+    return true;
+  }
+
+  /**
    * The file as an object, for read-modify-write. An unreadable or malformed file
    * comes back as `{}` — `add` then rewrites it with just this entry, which loses
    * nothing that could be read anyway.

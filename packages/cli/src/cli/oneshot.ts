@@ -88,6 +88,12 @@ export async function runOneShot(context: CommandContext): Promise<number> {
             });
             return;
           }
+          case 'turn.noted': {
+            // A note is about the run, not about the answer: stderr keeps it out of a pipe.
+            const message = field(update, 'message');
+            if (typeof message === 'string' && message !== '') context.stderr(`cowcat run: ${message}`);
+            return;
+          }
           case 'turn.transitioned': {
             const to = field(update, 'to');
             if (to !== 'completed' && to !== 'failed' && to !== 'cancelled') return;

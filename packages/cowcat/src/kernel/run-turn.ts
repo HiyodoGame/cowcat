@@ -101,9 +101,10 @@ export interface TurnDeps {
 
 /**
  * A static fact the run worked under, not something the run observed (ADR-046
- * decisions ③/④): a model the preset says cannot take tools, or a reasoning level the
- * preset never described. The log has no place for these — an event records what
- * happened, and configuration is not an event — so they ride the outcome instead.
+ * decisions ③/④), plus the run-time outcomes that have to be reported rather than
+ * thrown (ADR-072, ADR-082). They ride the outcome for callers that reason about the
+ * run, and `runTurn` also records each one as a `turn.noted` event (ADR-093) so a
+ * frontend that only sees the log still learns about it.
  */
 export type TurnNote =
   | { readonly kind: 'tools-unsupported'; readonly model: string }
@@ -149,11 +150,61 @@ export interface TurnOutcome {
 class TurnAborted extends Error {}
 
 export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal): Promise<TurnOutcome> {
+  const notes: TurnNote[] = [];
+  const outcome = await runTurnBody(deps, input, signal, notes);
+  await recordNotes(deps, outcome.turnId, notes);
+  return { ...outcome, notes };
+}
+
+/**
+ * The notes a turn carried, as events (ADR-093).
+ *
+ * Written after the turn settles because a note describes the whole run ("the cap
+ * stopped it at round 9"), not a moment inside it. Failure to write one is swallowed:
+ * a log that cannot take the notice must not turn a finished turn into a failed one —
+ * the same rule compaction follows for its own failure (ADR-072 ④).
+ */
+async function recordNotes(deps: TurnDeps, turnId: string, notes: readonly TurnNote[]): Promise<void> {
+  for (const note of notes) {
+    try {
+      await deps.session.emit({
+        type: 'turn.noted',
+        turnId,
+        note: note.kind,
+        message: describeTurnNote(note),
+      });
+    } catch {
+      return;
+    }
+  }
+}
+
+/** The one-line rendering. Kernel-side so every frontend shows the same words. */
+export function describeTurnNote(note: TurnNote): string {
+  switch (note.kind) {
+    case 'tools-unsupported':
+      return `模型 ${note.model} 不支持工具调用，本回合没有工具可用`;
+    case 'effort-not-declared':
+      return `preset 没有声明 effort「${note.effort}」，已按默认发送`;
+    case 'compaction-failed':
+      return `上下文压缩失败：${note.reason}（回合继续，历史未被替换）`;
+    case 'instructions-skipped':
+      return `工作区指令未注入：${note.reason}`;
+    case 'rounds-exhausted':
+      return `达到回合上限（${String(note.rounds)} 轮），结果不完整`;
+  }
+}
+
+async function runTurnBody(
+  deps: TurnDeps,
+  input: string,
+  signal: AbortSignal,
+  notes: TurnNote[],
+): Promise<Omit<TurnOutcome, 'notes'>> {
   const { session } = deps;
   const effort = wireEffort(deps.preset, deps.effort);
   // Computed once, before anything can fail: they describe the configuration the run
   // works under, so every exit carries them (ADR-046).
-  const notes: TurnNote[] = [];
   if (!deps.preset.toolCalls) notes.push({ kind: 'tools-unsupported', model: deps.preset.model });
   if (effort.note !== null) notes.push(effort.note);
 
@@ -197,14 +248,14 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
         notes.push({ kind: 'rounds-exhausted', rounds });
         await session.transition('finishing');
         await session.transition('completed');
-        return { turnId, state: 'completed', reason: null, partial: true, notes };
+        return { turnId, state: 'completed', reason: null, partial: true };
       }
       const calls = await streamModel(deps, effort.providerOptions, signal);
       rounds += 1;
       if (calls.length === 0) {
         await session.transition('finishing');
         await session.transition('completed');
-        return { turnId, state: 'completed', reason: null, partial: false, notes };
+        return { turnId, state: 'completed', reason: null, partial: false };
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
@@ -241,7 +292,7 @@ export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal
     const reason = error instanceof Error ? error.message : String(error);
     const turn = session.state.turn;
     if (turn !== null && !isTerminal(turn.state)) await session.transition(outcome, reason);
-    return { turnId, state: outcome, reason, partial: false, notes };
+    return { turnId, state: outcome, reason, partial: false };
   }
 }
 

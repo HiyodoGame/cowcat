@@ -138,6 +138,11 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       }
       return { ...base, turn: { id: state.turn.id, state: event.to } };
     }
+    case 'turn.noted':
+      // A fact about the turn, not a change to it: it is in the log so a replay can show
+      // it, and folding it into state would make it something the kernel has to reason
+      // about (which is exactly what a note is not).
+      return base;
     case 'model.message':
       return {
         ...base,

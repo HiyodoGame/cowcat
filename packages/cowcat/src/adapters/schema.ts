@@ -169,6 +169,14 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     ...base,
+    type: z.literal('turn.noted'),
+    // The list is duplicated from `TurnNoteKind` on purpose: this is the wire contract,
+    // and the kernel's union is what it is checked against (the `Equals` assertion below).
+    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'rounds-exhausted']),
+    message: z.string(),
+  }),
+  z.object({
+    ...base,
     type: z.literal('model.message'),
     text: z.string(),
     toolCalls: z.readonly(z.array(toolCallSchema)),
