@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 1.0.0-beta.2（未发布）—— TUI 门槛提示与文档修正
+## 1.0.0-beta.2（2026-10-21）—— TUI 门槛提示与文档修正
 
 - `cowcat tui` / `sessions resume` 在 Node < 26.4 时，除说明 opentui 门槛外，再打印一条可直接粘贴的 `npx --yes node@26.12.0 "<CLI 入口>" tui`（`sessions resume` 保留 id）。
 - README 的配置示例修正为正确的 `model.providers` 形状；增加 `@beta` 安装方式。
