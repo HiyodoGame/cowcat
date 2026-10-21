@@ -101,6 +101,10 @@ export interface Screen {
   setInput(text: string): void;
   /** The input's text right now — used to hint at `/` commands while typing. */
   inputValue(): string;
+  /** The composer's cursor row in **visual** rows, 0-based (ADR-106): wrapped text counts. */
+  cursorRow(): number;
+  /** How many visual rows the composer's text occupies, wrapping included (ADR-106). */
+  inputLineCount(): number;
   /** Grow or shrink the composer to fit the draft (1–6 content rows). */
   syncInputSize(): void;
   focus(): void;
@@ -422,10 +426,24 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     setInput(text) {
       input.setText(text);
       inputBox.height = Math.min(6, Math.max(1, text.split('\n').length)) + 2;
+      // A recalled draft or a completed command is there to be appended to, not typed in
+      // front of: `setText` leaves the cursor at the start (ADR-106).
+      input.gotoBufferEnd();
       input.focus();
     },
     inputValue() {
       return input.plainText;
+    },
+    cursorRow() {
+      // Visual, not logical rows: the textarea's own ↑↓ move by *wrapped* row
+      // (`moveUpVisual`), and the composer wraps at word boundaries by default. A long
+      // single-line draft is therefore several rows tall, and its first row is not row 0 of
+      // the buffer — using the logical row would recall history while the person is just
+      // moving the caret up.
+      return input.visualCursor.visualRow;
+    },
+    inputLineCount() {
+      return Math.max(1, input.virtualLineCount);
     },
     syncInputSize() {
       const lines = Math.min(6, Math.max(1, input.plainText.split('\n').length));
