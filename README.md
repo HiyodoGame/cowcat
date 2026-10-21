@@ -21,6 +21,9 @@ CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回�
 (cd packages/cli && npm ci && npm run build)
 
 node packages/cli/dist/src/cli/main.js doctor
+
+# 从 v1 升级：迁移 ~/.cowcat/config.json（备份原文件，不复制密钥）
+node packages/cli/dist/src/cli/main.js setup --migrate
 ```
 
 配置用户层 `~/.cowcat/config.json`：
@@ -51,7 +54,8 @@ node packages/cli/dist/src/cli/main.js          # TUI（需要 Node >= 26.4）
 | `cowcat serve` | headless JSON-RPC over stdio |
 | `cowcat sessions list\|resume <id>` | 会话列表 / 恢复 |
 | `cowcat doctor` | 环境、配置、信任、指令链、沙箱、模型与 key 逐项检查 |
-| `cowcat setup` | **尚未接线** |
+| `cowcat setup --migrate` | 把现有 v1 配置翻译成 v2（备份原文件，不写密钥） |
+| `cowcat setup --preset <provider/model>` | 新建 v2 配置（`--api-key-env` / `--base-url` / `--force` / `--print`） |
 
 ## 配置
 

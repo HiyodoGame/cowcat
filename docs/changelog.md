@@ -22,7 +22,8 @@ v1（`agent/`）删除，仓库只剩四个 v2 包；npm 包名 `@corescense/cow
 
 ### 已知限制
 
-- `cowcat setup` 未接线；真实端点只验证了单轮单工具路径。
+- `cowcat setup` 是非交互的（`--migrate` / `--preset`），没有向导式问答。
+- 真实端点只验证了单轮单工具路径。
 - 真实 MCP 服务器只验证了 `@modelcontextprotocol/server-everything@2.0.0`。
 - v1 的 `permissions`、`~/.cowcat/mcp.json`、项目 `.cowcat/config.json`、`state.json` 不自动迁移。
 
