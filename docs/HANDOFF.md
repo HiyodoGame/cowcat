@@ -3,7 +3,7 @@
 > **本文件是快照，不是活文档。** 每次阶段收尾（或用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
 > 最近一次更新：**2026-10-21（会话收尾；`1.0.0-beta.2` 已发布）**。
-> 交接时仓库状态：**`main` = `d220cf5`**（#90 合入），工作区干净；没有进行中的分支。
+> 交接时仓库状态：**`main` = `d220cf5`**（`docs/beta-checklist` PR 合入前），工作区干净；本会话没有进行中的分支。
 >
 > **证据分级**（逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（系统 Node **24.18.0**；v2 测试跑 `dist/` 产物）；**【本机命令】**本机其他命令（`git`、`doctor`、探针、`npx`）；**【CI 远端】**GitHub Actions 的运行结果（只观察状态）；**【registry】**npm registry 查询；**【上游】**厂商文档；**【推断】**未实测的推论，不得作为决策依据。
 >
@@ -29,6 +29,8 @@
 | **#88** | TUI Node 门槛提示给出可复制命令 | squash 合入 `7ba1b99` |
 | **#89** | `1.0.0-beta.2` 版本批次 | squash 合入 `6e5090e` |
 | **#90** | beta.2 发布记录 | squash 合入 `d220cf5` |
+| **#91** | 本次会话交接重写 | squash 合入 `4e9ee89` |
+| 本 PR | beta 反馈期验收清单（`docs/beta-checklist.md`） | 随本次收尾合入 |
 
 ### MCP 补读与 T1/T2
 
@@ -102,6 +104,8 @@ T2 增加了 `nextCursor` 分页（上限 100 页 / 5,000 工具）、现代 `su
 ## 3. 项目唯一下一步
 
 **进入 beta 反馈期；先做真实用户路径验证，再决定 `latest` 是否切到 1.0.0。**
+
+验收项、反馈格式与切换门槛见 [`beta-checklist.md`](beta-checklist.md)。
 
 具体建议顺序：
 
@@ -194,6 +198,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 | [`architecture/README.md`](architecture/README.md) | **ADR-001~091**（070~074 压缩；075~078 指令；079~082 子 agent；083~088 MCP；089 配置兼容；090 包切换；091 setup） |
 | [`architecture/03-policy-and-execution.md`](architecture/03-policy-and-execution.md) | 进程网关：`run()` 与 `open()` 两种形状、脱敏、终止 |
 | [`research/p7-mcp.md`](research/p7-mcp.md) | MCP 上游对照（含补读修正）、决定、ADR 清单、待验证 |
+| [`beta-checklist.md`](beta-checklist.md) | beta 反馈期验收清单、反馈格式、切换 `latest` 的门槛 |
 | `packages/cowcat/src/ports/process.ts` | `ProcessSpec` / `ProcessResult` / `ProcessHandle` / `open()` 契约 |
 | `packages/cowcat/src/adapters/process.ts` | `NodeProcess.open()`：按行切分、stderr 尾部、一次终止 |
 | `packages/cowcat/src/adapters/mcp/` | `client.ts`（双时代 + JSON-RPC + 分页/订阅）、`tools.ts`（命名/risk）、`servers.ts`（启动/冲突/活表/关闭） |

@@ -1,0 +1,172 @@
+# `1.0.0-beta.2` 反馈期验收清单
+
+> 目标：判断 `1.0.0-beta.2` 是否稳定到可以把 npm `latest` 从 v1 `0.15.0` 切到 1.0.0。
+> 范围：**已发布的 beta 产物**，不是源码单元测试的替代品。
+> 记录日期用绝对日期；没实际跑过的项不要勾。
+
+## 0. 基本规则
+
+- 安装/验证一律指定官方 registry：`--registry=https://registry.npmjs.org`。本机默认的 npmmirror 有同步延迟，`npx @beta` 可能仍解析到上一版。
+- 任何会改配置或写仓库的测试，优先用临时 `COWCAT_HOME` 或临时目录。
+- **不要贴 key**：反馈里只写环境变量名，不写值。
+- 每个问题记录：版本、平台、Node、`COWCAT_HOME` 类型、复现命令、预期/实际、证据（doctor 输出、会话 id、错误行）。
+- 优先级：**P0** 数据丢失/密钥泄漏/锁不释放/沙箱绕过；**P1** 主要路径不可用；**P2** 体验、文案、性能。
+
+## 1. 安装与配置迁移
+
+### 1.1 安装
+
+```bash
+R=https://registry.npmjs.org
+npm i -g @corescense/cowcat@beta --registry=$R
+cowcat --version
+cowcat doctor
+```
+
+- [ ] `cowcat --version` = `1.0.0-beta.2`
+- [ ] `doctor` 没有因缺配置崩溃；未配置模型时是 `not-configured` 而不是 FAIL
+- [ ] `cowcat setup --preset anthropic/claude-sonnet-5-5 --print` 能输出 v2 配置且不落盘
+
+### 1.2 v1 配置迁移（先在临时 home）
+
+```bash
+TEST_HOME=$(mktemp -d)
+cp ~/.cowcat/config.json "$TEST_HOME/"
+COWCAT_HOME="$TEST_HOME" cowcat setup --migrate
+COWCAT_HOME="$TEST_HOME" cowcat doctor
+```
+
+- [ ] 生成 `config.json.bak`
+- [ ] 新配置不含 `apiKey` 值，只含 `apiKeyEnv`
+- [ ] `model.preset` / `model.providers` 形状正确
+- [ ] `mcp.json` 的 `mcpServers` 进入 `mcp.servers`；含 `env` 的条目有明确警告
+- [ ] `permissions` 未静默丢弃，有警告
+- [ ] `doctor` 的模型、endpoint、key 行正确
+- [ ] 把 `.bak` 还原后，v1 原文件仍可用（回滚演练）
+
+确认后再对真实 home 执行一次，并保留备份。
+
+### 1.3 从源码
+
+- [ ] protocol → cowcat → tui → cli 依次构建成功
+- [ ] `node packages/cli/dist/src/cli/main.js --version` 正确
+- [ ] `none` 配置下 `doctor` 通过
+
+## 2. 真实编码任务
+
+准备 2–3 个平时真的会做的任务，不要用 hello world。
+
+- [ ] 读 3–5 个文件后改一处代码：Read → Edit 正常；未读文件时 Edit/Write 被闸门挡住
+- [ ] Grep/Glob 找到符号后再改
+- [ ] 需要审批的 Bash：
+  - [ ] 不加 `--yes`：被拒绝，模型看到拒绝原因
+  - [ ] 加 `--yes`：执行并返回输出
+- [ ] 同一会话继续追问 3 轮以上，上下文不丢
+- [ ] `Ctrl-C` 取消后 `sessions resume` 能继续，锁已释放
+- [ ] 没有重复读同一文件、工具调用死循环或上下文爆掉
+
+每个任务记录：会话 id、用到的工具、失败点、模型是否理解工具错误。
+
+## 3. 长会话、压缩与子 agent
+
+这一组是当前验证最薄、但对 `latest` 决策最重要的部分。
+
+- [ ] 连续 10+ 轮，触发一次上下文压缩
+- [ ] 压缩后 `AGENTS.md` 指令仍然生效（问一个只有项目规则能答的问题）
+- [ ] 压缩后最近修改的文件仍在上下文里，能继续编辑
+- [ ] `Task` + `explore`：只读、报告可用
+- [ ] `Task` + `general`：能完成一个隔离子任务
+- [ ] 取消父回合后，子会话有 `cancelled` 终结事实，且没有残留锁
+- [ ] `sessions list` 默认折叠子会话；`--all` 能列出
+
+看日志里的 `context.compacted`、`subagent.started` / `subagent.finished`、`turn.transitioned`。
+
+## 4. TUI 与 MCP
+
+### 4.1 TUI（Node ≥ 26.4）
+
+```bash
+npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" tui
+```
+
+- [ ] 对话流、工具卡、审批卡、待办、命令面板可用
+- [ ] 工具卡折叠/展开；大段输出不卡死
+- [ ] 中文/宽字符对齐正常
+- [ ] 调整窗口大小后布局正常
+- [ ] `Ctrl-C` 退出后会话锁释放
+- [ ] 真实终端连续使用 30 分钟，无崩溃、无残留进程
+
+### 4.2 MCP
+
+用一个真实 stdio 服务器（例如 `@modelcontextprotocol/server-everything`）：
+
+- [ ] `tools/list` 出现在模型工具表中，命名是 `mcp__<server>__<tool>`
+- [ ] 一次 `tools/call` 成功，结果进入对话
+- [ ] 未受信工作区的项目层 `mcp.servers` 被跳过，并说明原因
+- [ ] 服务器中途退出：调用失败、**不自动重启**
+- [ ] `turn.cancel` 后服务器进程被终止
+- [ ] 已知不阻塞项：`list_changed` / 分页在真实服务器上很难自然触发，记录即可
+
+## 5. 平台差异（有条件才做）
+
+- [ ] macOS：`light` 与 `system`（Seatbelt）各跑一次 Bash
+- [ ] Linux：`light` 与 `system`（bubblewrap）各跑一次 Bash
+- [ ] Windows：Git Bash 与 `cmd` 下各跑一次只读命令
+- [ ] Windows `.cmd` / `npx` 形式的 MCP 入口（已知缺口，记录，不作为 beta 门槛）
+- [ ] 不同 Node：22 跑 `run/serve/doctor`；26.4+ 跑 `tui`
+
+## 6. 反馈记录格式
+
+```text
+版本：cowcat --version
+平台 / Node：
+COWCAT_HOME：临时目录 / 真实 home
+复现命令：
+预期：
+实际：
+证据：doctor 输出 / 会话 id / 关键日志（不要贴 key）
+优先级：P0 / P1 / P2
+```
+
+建议开 GitHub issue，标签 `beta` + `p0`/`p1`/`p2`；没有标签权限时先记到 `docs/beta-feedback.md`。
+
+## 7. 切换 `latest` 的门槛
+
+满足以下全部条件再改 `latest`：
+
+1. 真实 home 的 `setup --migrate` 成功，且 `.bak` 回滚演练通过。
+2. 3 个真实编码任务无 P0/P1。
+3. 一次长会话压缩后，指令与最近文件仍生效。
+4. 一次真实 MCP 服务器调用成功（list + call）。
+5. TUI 在真实终端连续用 30 分钟无崩溃、无锁残留。
+
+结果记录：
+
+| 门槛 | 日期 | 结果 | 证据 / issue |
+|---|---|---|---|
+| 配置迁移 + 回滚 | | | |
+| 3 个真实编码任务 | | | |
+| 长会话压缩 + 指令 | | | |
+| 真实 MCP 调用 | | | |
+| TUI 30 分钟 | | | |
+
+## 8. 已知缺口（不作为 beta 门槛）
+
+- CLI 的 `latest` 仍是 v1 `0.15.0`；beta 用 `@beta`。
+- v1 项目 `.cowcat/config.json`、`state.json` 不自动迁移。
+- `setup` 是非交互 flags，没有向导式问答。
+- Windows `.cmd` / `npx` 形式的 MCP 入口未支持。
+- 真实 MCP 服务器的 `list_changed` / 分页未触发。
+- 三个 support 包的 `latest` 仍停在 beta.1（CLI 用精确版本依赖，不影响安装）。
+- `system` 沙箱在 Windows 上被显式拒绝（设计如此）。
+
+## 9. 结果汇总
+
+| 日期 | 轨道 | 结果 | 证据 | issue |
+|---|---|---|---|---|
+| | 安装/迁移 | | | |
+| | 编码任务 | | | |
+| | 长会话/子 agent | | | |
+| | TUI | | | |
+| | MCP | | | |
+| | 平台 | | | |
