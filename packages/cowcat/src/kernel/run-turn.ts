@@ -153,30 +153,40 @@ class TurnAborted extends Error {}
 export async function runTurn(deps: TurnDeps, input: string, signal: AbortSignal): Promise<TurnOutcome> {
   const notes: TurnNote[] = [];
   const outcome = await runTurnBody(deps, input, signal, notes);
-  await recordNotes(deps, outcome.turnId, notes);
   return { ...outcome, notes };
 }
 
 /**
- * The notes a turn carried, as events (ADR-093).
+ * Records a note as an event at the moment it happens (ADR-093).
  *
- * Written after the turn settles because a note describes the whole run ("the cap
- * stopped it at round 9"), not a moment inside it. Failure to write one is swallowed:
- * a log that cannot take the notice must not turn a finished turn into a failed one —
- * the same rule compaction follows for its own failure (ADR-072 ④).
+ * Eagerly, not at the end: a frontend that stops reading when the turn completes
+ * (`run` unsubscribes on the terminal transition) would otherwise miss a notice written
+ * after it — which is exactly what the first end-to-end check found. Writing it now also
+ * keeps the log's order honest: the skip is a fact about the turn that is about to run,
+ * not an epilogue to it.
+ *
+ * Failure to write is swallowed: a log that cannot take the notice must not turn a
+ * finished turn into a failed one — the same rule compaction follows for its own failure
+ * (ADR-072 ④).
  */
-async function recordNotes(deps: TurnDeps, turnId: string, notes: readonly TurnNote[]): Promise<void> {
-  for (const note of notes) {
-    try {
-      await deps.session.emit({
-        type: 'turn.noted',
-        turnId,
-        note: note.kind,
-        message: describeTurnNote(note),
-      });
-    } catch {
-      return;
-    }
+async function recordNote(
+  deps: TurnDeps,
+  notes: TurnNote[],
+  note: TurnNote,
+  turnId: string | null,
+): Promise<void> {
+  notes.push(note);
+  try {
+    await deps.session.emit({
+      type: 'turn.noted',
+      // Null before `turn.opened`: a note about the configuration the turn will run
+      // under has no turn yet, and the union says so rather than inventing one.
+      turnId,
+      note: note.kind,
+      message: describeTurnNote(note),
+    });
+  } catch {
+    // A closed session is the ordinary way this fails; the turn's outcome is unaffected.
   }
 }
 
@@ -204,14 +214,17 @@ async function runTurnBody(
 ): Promise<Omit<TurnOutcome, 'notes'>> {
   const { session } = deps;
   const effort = wireEffort(deps.preset, deps.effort);
+  const note = async (item: TurnNote, turnId: string | null): Promise<void> => {
+    await recordNote(deps, notes, item, turnId);
+  };
   // Computed once, before anything can fail: they describe the configuration the run
   // works under, so every exit carries them (ADR-046).
-  if (!deps.preset.toolCalls) notes.push({ kind: 'tools-unsupported', model: deps.preset.model });
-  if (effort.note !== null) notes.push(effort.note);
+  if (!deps.preset.toolCalls) await note({ kind: 'tools-unsupported', model: deps.preset.model }, null);
+  if (effort.note !== null) await note(effort.note, null);
 
   // Instructions go in **before** the turn opens, so the model reads the repository's
   // rules ahead of the request rather than after it (ADR-078 ①).
-  await ensureInstructions(deps, notes);
+  await ensureInstructions(deps, (item) => note(item, null));
   await session.openTurn(input);
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
@@ -237,16 +250,16 @@ async function runTurnBody(
             'auto',
             signal,
           );
-          if (!outcome.ok && outcome.reason !== null) notes.push({ kind: 'compaction-failed', reason: outcome.reason });
+          if (!outcome.ok && outcome.reason !== null) await note({ kind: 'compaction-failed', reason: outcome.reason }, turnId);
           // A compaction shadows the instruction message, so the fix is to put it back
           // (ADR-078 ①) — in the same turn, before the next request goes out.
-          await ensureInstructions(deps, notes);
+          await ensureInstructions(deps, (item) => note(item, turnId));
         }
       }
       if (deps.maxRounds !== undefined && rounds >= deps.maxRounds) {
         // The cap is a normal ending: finishing → completed, with the caller told the
         // answer is partial rather than being handed a silent truncation.
-        notes.push({ kind: 'rounds-exhausted', rounds });
+        await note({ kind: 'rounds-exhausted', rounds }, turnId);
         await session.transition('finishing');
         await session.transition('completed');
         return { turnId, state: 'completed', reason: null, partial: true };
@@ -324,7 +337,10 @@ function wireEffort(preset: ModelPreset, effort: string | undefined): EffortWiri
  * when `instructionsSeq` is set **is** the dedupe — the fold decides, not a counter in
  * memory, so a reopened session does not inject a second copy either.
  */
-async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<void> {
+async function ensureInstructions(
+  deps: TurnDeps,
+  note: (item: TurnNote) => Promise<void>,
+): Promise<void> {
   const needs = deps.instructions;
   if (needs === undefined) return;
   if (deps.session.state.instructionsSeq !== null) return;
@@ -335,7 +351,7 @@ async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<vo
     if (decision.kind === 'none') return;
     if (decision.kind === 'skipped-untrusted') {
       const reason = describeInstructionSkip(decision);
-      if (reason !== null) notes.push({ kind: 'instructions-skipped', reason });
+      if (reason !== null) await note({ kind: 'instructions-skipped', reason });
       return;
     }
     const encoder = new TextEncoder();
@@ -351,7 +367,7 @@ async function ensureInstructions(deps: TurnDeps, notes: TurnNote[]): Promise<vo
   } catch (error) {
     // Instructions are guidance. A broken read is reported, never fatal — the same rule
     // compaction follows (ADR-072 ④).
-    notes.push({ kind: 'instructions-skipped', reason: error instanceof Error ? error.message : String(error) });
+    await note({ kind: 'instructions-skipped', reason: error instanceof Error ? error.message : String(error) });
   }
 }
 

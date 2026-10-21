@@ -117,6 +117,13 @@ test('an untrusted workspace injects nothing and says why', async () => {
   assert.equal(first.note, 'instructions-skipped');
   assert.match(first.message, /工作区指令未注入/u);
   assert.match(first.message, /not trusted/u);
+
+  // Emitted at the moment it happens, not after the turn settles (ADR-093): `run`
+  // unsubscribes on the terminal transition, so a note written afterwards is invisible
+  // to it — found by the end-to-end check that motivated this test.
+  const opened = events.find((event) => event.type === 'turn.opened');
+  assert.ok(opened !== undefined);
+  assert.ok(first.seq < opened.seq, 'the skip is recorded before the turn opens');
 });
 
 test('a broken reader is reported, never fatal', async () => {
