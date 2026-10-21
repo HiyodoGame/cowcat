@@ -3,7 +3,7 @@
 > **本文件是快照，不是活文档。** 每次阶段收尾（或用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
 > 最近一次更新：**2026-10-21（TUI 反馈会话收尾）**。
-> 交接时仓库状态：**`main` = `2180478`**（本文件所在的 docs PR 合入前），工作区干净；本会话没有进行中的分支。
+> 交接时仓库状态：**工作区干净，`main` 无未合入改动**；本会话没有进行中的分支。
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
@@ -41,10 +41,10 @@
 
 ## 2. TUI 现在的能力
 
-- **思考**：`reasoning.delta` 流式到达 → 逐字揭示（50ms tick）→ 回答到达后自动折叠；`Ctrl-T` / `/thinking` 展开
+- **思考**：`reasoning.delta` 流式到达 → 逐字揭示（50ms tick）→ 回答到达后自动折叠；`Ctrl-T` / `/thinking` 展开或折叠
 - **运行态**：状态条有 spinner、当前动作、模型短名、用时、子 agent 数；Bash 运行期间有 `[运行中]` 卡与命令行
 - **固定区（dock）**：审批、运行中的子 agent、待办、`/` 菜单都在 transcript 与状态栏之间，滚动不移动
-- **审批**：四行可选项（一次 / 本会话该工具 / 只对这一个动作 / 拒绝），`↑↓` + 回车，字母快捷与数字/鼠标点击也可
+- **审批**：四行可选项（一次 / 本会话该工具 / 只对这一个动作 / 拒绝），`↑↓` + 回车，`y/n/always/s` 字母快捷与鼠标点击也可
 - **`/` 菜单**：过滤、`↑↓`、`Tab` 补全、`Enter` 执行、`Esc` 关闭；输入含空格即关闭
 - **滚动**：滚轮 3 行（`COWCAT_SCROLL_SPEED` 1–20）、60fps；上滚暂停跟随并计数，`Ctrl+End` 回底
 - **布局**：阅读宽度 `min(终端-2, 100)` 居中；每行固定一行高（不二次换行、不被 flex 压缩）
@@ -95,6 +95,13 @@ cd packages/cowcat && npm test        # pretest = tsc build + ESLint
 cd packages/protocol && npm test
 cd packages/tui && npm test           # Node >= 26.4；本机用 npx --yes node@26.12.0 --test "dist/test/**/*.test.js"
 cd packages/cli && npm test           # 依赖前三个已构建
+```
+
+探针（不进 lint 门禁，但改分层或发布清单时要跑）：
+
+```bash
+node tools/lint-probe.mjs             # 分层禁令逐条验证
+node tools/check-tarball.mjs          # 发布白名单；--install 会装 tarball 并跑 --version
 ```
 
 `file:` 依赖是 junction，必须按 protocol → cowcat → tui → cli 顺序构建。`main` 不可直推，走分支 + PR；提交信息 `type(scope): 中文摘要`，Windows 上用 `git commit -F <文件>`。
