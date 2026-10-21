@@ -37,7 +37,9 @@ function viewOf(events: readonly WireEvent[]): TuiView {
 }
 
 function bodyLines(view: TuiView): readonly Line[] {
-  return frameOf(view, { width: WIDTH, now: 1_000 }).body;
+  const frame = frameOf(view, { width: WIDTH, now: 1_000 });
+  // Fixed panels live in the dock now; tests that talk about what is on screen want both.
+  return [...frame.body, ...(frame.dock ?? [])];
 }
 
 /** The box invariant, for every scene in this file. Blank rows are the frame's separators. */
@@ -226,7 +228,8 @@ test('a pending approval is a card with the quip, the rule and the keys; ten sec
   ]);
 
   const fresh = frameOf(asked, { width: WIDTH, now: 1_000 });
-  const freshText = fresh.body.map((row) => row.text).join('\n');
+  const freshDock = fresh.dock ?? [];
+  const freshText = freshDock.map((row) => row.text).join('\n');
   assert.match(freshText, /^╭─ ⚠ Bash/m);
   assert.match(freshText, /\[待回答\]/);
   assert.match(freshText, /我要跑这个了/);
@@ -235,16 +238,16 @@ test('a pending approval is a card with the quip, the rule and the keys; ten sec
   assert.match(freshText, /本会话内 Bash 都不再问/u);
   assert.match(freshText, /▸ 允许一次/);
   assert.doesNotMatch(freshText, /你还在吗/);
-  assertCardWidths(fresh.body, 'approval fresh');
+  assertCardWidths(freshDock, 'approval fresh');
   // The keys are on the input line, so the card needs no room for them twice.
   assert.match(fresh.placeholder, /Bash：↑↓ 选择/u);
 
   // The highlight is a view field, so the frame is a pure function of it too.
   const moved = frameOf({ ...asked, approvalCursor: 2 }, { width: WIDTH, now: 1_000 });
-  assert.match(moved.body.map((row) => row.text).join('\n'), /▸ 只对这一个动作/u);
+  assert.match((moved.dock ?? []).map((row) => row.text).join('\n'), /▸ 只对这一个动作/u);
 
   const nudged = frameOf(asked, { width: WIDTH, now: 1_000 + 10_001 });
-  assert.match(nudged.body.map((row) => row.text).join('\n'), /你还在吗/);
+  assert.match((nudged.dock ?? []).map((row) => row.text).join('\n'), /你还在吗/);
   // Without a width the status line is not truncated — 48 cells is where the nudge falls off.
   assert.match(statusLine(asked, { now: 11_001 }).text, /你还在吗/);
 });
@@ -263,12 +266,13 @@ test('a destructive command gets its own line, in the alert token', () => {
   ]);
 
   const frame = frameOf(asked, { width: WIDTH, now: 1_000 });
-  assert.match(frame.body.map((row) => row.text).join('\n'), /注意：删除远端项目/);
+  const dock = frame.dock ?? [];
+  assert.match(dock.map((row) => row.text).join('\n'), /注意：删除远端项目/);
   // The one line meant to interrupt a habitual "y" must not be dim like the rule row.
-  const warning = frame.body.find((row) => row.text.includes('注意：'));
+  const warning = dock.find((row) => row.text.includes('注意：'));
   assert.ok(warning !== undefined);
   assert.equal(warning.token, 'alert');
-  assertCardWidths(frame.body, 'approval warning');
+  assertCardWidths(dock, 'approval warning');
 });
 
 test('thinking is one collapsed line until it is expanded', () => {
@@ -438,7 +442,7 @@ test('a running sub-agent is a panel; a finished one collapses to its notice', (
     }),
   ]);
   const frame = frameOf(view, { width: WIDTH, now: 5_000 });
-  const text = frame.body.map((row) => row.text).join('\n');
+  const text = (frame.dock ?? []).map((row) => row.text).join('\n');
   assert.match(text, /子 agent 1 个运行中/u);
   assert.match(text, /explore/u);
   assert.match(text, / · \d+s/u);
@@ -459,7 +463,7 @@ test('a running sub-agent is a panel; a finished one collapses to its notice', (
   );
   assert.equal(done.agents[0]?.state, 'completed');
   assert.doesNotMatch(
-    frameOf(done, { width: WIDTH, now: 5_000 }).body.map((row) => row.text).join('\n'),
+    (frameOf(done, { width: WIDTH, now: 5_000 }).dock ?? []).map((row) => row.text).join('\n'),
     /个运行中/u,
     'the panel is for running agents only',
   );
@@ -499,9 +503,9 @@ test('clickable rows carry a hit id for the loop to decode', () => {
     event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null }),
   ]);
   const approvalFrame = frameOf(approvalView, { width: WIDTH, now: 1_000 });
-  const option = approvalFrame.body.find((row) => row.text.includes('允许一次'));
+  const option = (approvalFrame.dock ?? []).find((row) => row.text.includes('允许一次'));
   assert.equal(option?.hit, 'approval:0');
-  const session = approvalFrame.body.find((row) => row.text.includes('本会话内 Bash'));
+  const session = (approvalFrame.dock ?? []).find((row) => row.text.includes('本会话内 Bash'));
   assert.equal(session?.hit, 'approval:1');
 
   const toolView = viewOf([

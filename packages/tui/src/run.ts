@@ -71,7 +71,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     // The width is the renderer's to know (and it changes on resize); the clock is injected
     // because a component that read it would not be a pure function.
     if (disposed) return;
-    screen.update(frameOf(view.current, { width: screen.contentWidth(), now: Date.now() }));
+    screen.update(
+      frameOf(view.current, { width: screen.contentWidth(), height: screen.contentHeight(), now: Date.now() }),
+    );
     syncActivity();
   };
 

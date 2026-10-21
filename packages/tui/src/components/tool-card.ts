@@ -130,7 +130,7 @@ function outputLines(output: string, inner: number, expanded: boolean): readonly
   const budget = expanded ? OUTPUT_EXPANDED_LINES : TOOL_OUTPUT_TAIL;
   const kept = wrapped.slice(-budget);
   const hidden = wrapped.length - kept.length;
-  const lines: CardBodyLine[] = kept.map((row) => ({ text: row, token: 'tool' as const }));
+  const lines: CardBodyLine[] = kept.map((row) => ({ text: `  ${row}`, token: 'tool' as const }));
   if (hidden > 0) lines.unshift({ text: `… 上面还有 ${String(hidden)} 行（Ctrl-O 展开）`, token: 'textDim' });
   return lines;
 }
