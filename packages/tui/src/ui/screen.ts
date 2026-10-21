@@ -208,7 +208,14 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
           content: spec.text,
           fg: resolve(theme, spec.token),
           attributes: spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE,
-          wrapMode: 'word',
+          // Each `Line` is already wrapped by our own width table, so the renderer must not
+          // wrap it again: a second wrap makes one logical row two visual rows, the column
+          // overflows, flex shrinks the rows, and scrolling looks like the picture being
+          // squeezed instead of moved (measured from the beta screenshot).
+          wrapMode: 'none',
+          width: '100%',
+          height: 1,
+          flexShrink: 0,
         });
         attachHit(created, spec);
         mounted[index] = created;

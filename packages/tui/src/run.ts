@@ -194,6 +194,17 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
     draw();
     render.start();
+    // The frame is laid out from `renderer.width/height`, so a resize has to produce a new
+    // frame: without this the old frame is reused until the next unrelated event, and the
+    // first redraw after a resize reflows everything at once — which reads as the picture
+    // being squeezed rather than scrolled.
+    const onResize = (): void => {
+      draw();
+    };
+    render.on('resize', onResize);
+    detach.push(() => {
+      render.off('resize', onResize);
+    });
     screen.focus();
 
     await options.client.initialize();
