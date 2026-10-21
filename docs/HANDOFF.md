@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾（或按用户要求做会话收尾）重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-21（发布 `1.0.0-beta.1`；setup 接线合入）**。
-> 交接时仓库状态：**`main` = `ff3afe4`**（#86 合入）；当前分支 **`docs/release-beta1`**（发布记录，未提交）。
+> 最近一次更新：**2026-10-21（发布 `1.0.0-beta.1`；开始 `1.0.0-beta.2` 版本批次）**。
+> 交接时仓库状态：**`main` = `7ba1b99`**（#88 合入）；当前分支 **`chore/release-beta2`**（未提交/未推送）。
 >
 > **证据分级**（沿用前几轮，逐条标注）：**【源码】**读代码/读装机类型；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（cowcat/cli 用系统 Node **24.18.0**；v2 的测试跑在 `dist/` 编译产物上）；**【本机命令】**本机跑的其他命令（`git`、`doctor`、探针脚本）；**【CI 远端】**GitHub Actions（**本次没有推送，未观察**）；**【上游】**厂商文档或实现；**【推断】**未实测的推论，不得作为决策依据。
 > **本会话没有真实终端、没有模型端点、没有发布动作、没有平台设置变更。**
@@ -122,6 +122,8 @@
 
 ### 发布 `1.0.0-beta.1`（2026-10-21）
 
+`1.0.0-beta.2` 正在本分支准备（版本号 + changelog），尚未发布。beta.1 的发布记录如下：
+
 【registry】四包都已发布并核对：
 
 | 包 | 版本 | dist-tags |
@@ -171,7 +173,7 @@
 ### 项目状态
 
 - **P6 完成**；**P7 完成**（压缩、指令、子 agent、MCP）；**P8 进行中**：v1 配置兼容（089）、包切换（090）、删除 `agent/` 已完成；发布、CHANGELOG、`setup` 未完成。
-- 四个包版本 `1.0.0-beta.1`，`private` 已去掉，**已发布**；CLI 的 `latest` 仍是 v1 `0.15.0`，beta 走 `@beta` 标签。
+- 四个包版本 `1.0.0-beta.2`（本分支，未发布），`private` 已去掉；registry 上是 `1.0.0-beta.1`，CLI 的 `latest` 仍是 v1 `0.15.0`，beta 走 `@beta` 标签。
 - 运行时依赖不变（3 / 6）。
 - `cowcat` 六个动词：`tui` / `serve` / `run` / `sessions list|resume` / `doctor` 可用；`setup` 未接线。
 
@@ -179,7 +181,7 @@
 
 ## 3. 项目唯一下一步
 
-**先提交发布记录（changelog 摘标记 + HANDOFF）；然后是 beta 反馈期。**
+**先合并并发布 `1.0.0-beta.2`；然后进入 beta 反馈期。**
 
 P8 还没做的：
 
@@ -243,7 +245,7 @@ P7 已落地的 ADR 见 [`architecture/README.md`](architecture/README.md)（**A
 8. **前序遗留随 `agent/` 一起删除**：两个 macOS flake、`distill-providers.mjs` 缺失、v1 套件都不再适用。
 9. **分支保护 contexts**：删除 legacy jobs 后，仓库设置里的旧 required checks 仍存在；需要人工移除，并把新的包腿加进去。
 10. **`cowcat setup` 已接线（ADR-091）**，但仍是**非交互**的：向导式问答没有做；滚动回看、预览模态、Plan/Act 双模式仍未做。
-11. **发布已执行**：四包 `1.0.0-beta.1` 已在 registry；CI 在 #86 上全绿。
+11. **beta.1 已发布**：四包 `1.0.0-beta.1` 在 registry；`1.0.0-beta.2` 只 bump 了版本与文档，**尚未发布**。
 
 ---
 

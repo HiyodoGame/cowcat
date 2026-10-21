@@ -1,6 +1,6 @@
 {
   "name": "@corescense/cowcat-tui",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "description": "CowCat's terminal renderer: TUI over the headless protocol. The only package on the Node 26 floor.",
   "type": "module",
   "license": "MIT",
