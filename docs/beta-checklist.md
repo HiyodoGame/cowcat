@@ -66,16 +66,27 @@ COWCAT_HOME="$TEST_HOME" cowcat doctor
 
 准备 2–3 个平时真的会做的任务，不要用 hello world。
 
-- [ ] 读 3–5 个文件后改一处代码：Read → Edit 正常；未读文件时 Edit/Write 被闸门挡住
-- [ ] Grep/Glob 找到符号后再改
-- [ ] 需要审批的 Bash：
-  - [ ] 不加 `--yes`：被拒绝，模型看到拒绝原因
-  - [ ] 加 `--yes`：执行并返回输出
-- [ ] 同一会话继续追问 3 轮以上，上下文不丢
+- [x] 读 3–5 个文件后改一处代码：Read → Edit 正常
+- [ ] 未读文件时 Edit/Write 被闸门挡住（本轮模型总是先读，未自然触发；由 `packages/cowcat/test/*` 的写前读用例覆盖）
+- [x] Grep/Glob 找到符号后再改
+- [x] 需要审批的 Bash：
+  - [x] 不加 `--yes`：被拒绝，模型看到拒绝原因
+  - [x] 加 `--yes`：执行并返回输出
+- [x] 同一会话继续追问 3 轮以上，上下文不丢
 - [ ] `Ctrl-C` 取消后 `sessions resume` 能继续，锁已释放
-- [ ] 没有重复读同一文件、工具调用死循环或上下文爆掉
+- [x] 没有重复读同一文件、工具调用死循环或上下文爆掉
 
 每个任务记录：会话 id、用到的工具、失败点、模型是否理解工具错误。
+
+### 2.1 本轮记录（2026-10-21，已发布 `1.0.0-beta.2`）
+
+环境：Windows / Node 24.18 / `npx --registry=https://registry.npmjs.org @corescense/cowcat@beta` / 临时 `COWCAT_HOME` / 临时 git 仓库（4 个源文件、2 个测试、`AGENTS.md`，预置一个 `add` 写成减法的 bug）。
+
+- 【会话 `sess_71fd4692-b866-4374-87f9-c192022785ab`，4 轮，`--yes`】17 次工具调用：Glob 1 / Grep 1 / Read 4 / Edit 7 / Bash 4。4 次读取对应 4 个不同文件，**无重复读**；`instructions.loaded` 1 次（`AGENTS.md`，`trigger=start`）；最终 `npm test` 5/5 通过，`git diff --stat` 与模型自述一致（4 个文件、+19/−3）
+  - 任务：① 跑测试定位并修 `add` ② 加 `multiply` 与测试 ③ 总结会话改动（未调用工具）④ Grep 找 `slugify` 后加 `reverseWords` 与测试
+- 【会话 `sess_393fba16-a412-4d90-a15e-448e5190f7b9`，新会话，不加 `--yes`】Bash 被拒，工具返回 `rejected by user`，模型据此说明「命令被拒绝、没有测试结果可报告」——拒绝原因确实到达了模型
+- 未验证：`Ctrl-C` 取消后 `sessions resume`；未读写入闸门（模型每一步都先读，未自然触发）
+
 
 ## 3. 长会话、压缩与子 agent
 
@@ -110,12 +121,21 @@ npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" 
 
 用一个真实 stdio 服务器（例如 `@modelcontextprotocol/server-everything`）：
 
-- [ ] `tools/list` 出现在模型工具表中，命名是 `mcp__<server>__<tool>`
-- [ ] 一次 `tools/call` 成功，结果进入对话
-- [ ] 未受信工作区的项目层 `mcp.servers` 被跳过，并说明原因
+- [x] `tools/list` 出现在模型工具表中，命名是 `mcp__<server>__<tool>`
+- [x] 一次 `tools/call` 成功，结果进入对话
+- [x] 未受信工作区的项目层 `mcp.servers` 被跳过，并说明原因
 - [ ] 服务器中途退出：调用失败、**不自动重启**
 - [ ] `turn.cancel` 后服务器进程被终止
-- [ ] 已知不阻塞项：`list_changed` / 分页在真实服务器上很难自然触发，记录即可
+- [x] 已知不阻塞项：`list_changed` / 分页在真实服务器上很难自然触发，记录即可
+
+### 4.3 本轮记录（2026-10-21，已发布 `1.0.0-beta.2`）
+
+- 服务器：`@modelcontextprotocol/server-everything`（本地安装，入口 `command: "node"` + `dist/index.js`；刻意避开 Windows 的 `npx` / `.cmd` 入口缺口）
+- 【会话 `sess_e0180077-5a3b-4fa8-95c4-0601bb144d7b`】模型调用 `mcp__everything__echo`，返回 `Echo: mcp-ok`，结果进入对话——命名与 `tools/call` 两条都成立
+- 【未受信项目层】在仓库里写 `cowcat.json` 增加 `projonly` 服务器、用没有 `trust.json` 的临时 home 跑 `doctor`：`mcp 1 个：everything（未受信跳过 1 个）`，跳过与原因都可见
+- 【进程】`run` 结束后按命令行匹配 `server-everything` 的 `node` 进程数为 0
+- 未验证：服务器中途退出的「失败且不重启」；`turn.cancel` 后进程被终止（两条都需要可控的会崩溃服务器或协议级取消）
+
 
 ## 5. 平台差异（有条件才做）
 
@@ -175,6 +195,8 @@ COWCAT_HOME：临时目录 / 真实 home
 | 日期 | 轨道 | 结果 | 证据 | issue |
 |---|---|---|---|---|
 | 2026-10-21 | 安装/迁移 | 通过（§1.1–§1.3，已发布 beta.2 + 源码） | §1.4（临时 home 的迁移与回滚；真实 home 已是 v2，未重复迁移） | — |
+| 2026-10-21 | 编码任务 | 通过（4 轮同一会话 + 1 次拒绝路径；§2.1） | 测试 5/5、无重复读、`instructions.loaded` 1 次 | — |
+| 2026-10-21 | MCP | 通过（list 命名 + 一次 call；§4.3） | `mcp__everything__echo` → `Echo: mcp-ok`；未受信项目层跳过 1 个 | — |
 | | 编码任务 | | | |
 | | 长会话/子 agent | | | |
 | | TUI | | | |
