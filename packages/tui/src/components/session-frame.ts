@@ -1,4 +1,4 @@
-import { COMMANDS } from '../app/commands.js';
+import { COMMANDS, slashMatches } from '../app/commands.js';
 import { copyFor, type Copy } from '../app/copy.js';
 import { runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
@@ -6,6 +6,7 @@ import type { Line } from '../ui/line.js';
 import { agentPanelLines } from './agent-panel.js';
 import { approvalCardLines } from './approval-card.js';
 import { paletteLines } from './palette.js';
+import { slashMenuLines } from './slash-menu.js';
 import { statusLine } from './status-bar.js';
 import { todoPanelLines } from './todo-panel.js';
 import { transcriptLines } from './transcript.js';
@@ -45,6 +46,10 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   const dock: Line[] = [];
   if (view.approval !== null) {
     dock.push(...approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }));
+  }
+  const matches = view.approval === null ? slashMatches(view.input) : [];
+  if (matches.length > 0) {
+    dock.push(...slashMenuLines(matches, view.slashIndex, options.width));
   }
   const agents = runningAgents(view);
   if (agents.length > 0) {

@@ -99,6 +99,8 @@ export interface Screen {
   /** Wheel movement: positive is up (older content). */
   onScroll(handler: (delta: number) => void): () => void;
   clearInput(): void;
+  /** Replace the input's text (used by Tab-completion of a `/` command). */
+  setInput(text: string): void;
   /** The input's text right now — used to hint at `/` commands while typing. */
   inputValue(): string;
   focus(): void;
@@ -401,6 +403,10 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     },
     clearInput() {
       input.value = '';
+    },
+    setInput(text) {
+      input.value = text;
+      input.focus();
     },
     inputValue() {
       return input.value;

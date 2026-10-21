@@ -1,4 +1,5 @@
 import type { TuiView } from './view.js';
+import { slashMatches } from './commands.js';
 
 /**
  * Keys → intents, as a pure function.
@@ -29,7 +30,13 @@ export type Intent =
   /** Move the approval card's highlight; only meaningful while a question is open. */
   | { readonly kind: 'approvalMove'; readonly delta: number }
   /** Move the transcript viewport; positive is older content. */
-  | { readonly kind: 'scroll'; readonly delta: number };
+  | { readonly kind: 'scroll'; readonly delta: number }
+  /** Move the `/` menu highlight. */
+  | { readonly kind: 'slashMove'; readonly delta: number }
+  /** Complete the highlighted `/` command into the input. */
+  | { readonly kind: 'slashAccept' }
+  /** Close the `/` menu (Escape while it is open). */
+  | { readonly kind: 'slashClose' };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -54,6 +61,15 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
     if (key.name === 'down' || key.name === 'j') return { kind: 'paletteMove', delta: 1 };
     if (key.name === 'escape') return { kind: 'palette' };
     return null;
+  }
+
+  // The `/` menu owns arrows, Tab and Escape while it is open; the input still owns the
+  // letters. A space in the input closes the menu (slashMatches returns []).
+  if (view.approval === null && slashMatches(view.input).length > 0) {
+    if (key.name === 'up') return { kind: 'slashMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'slashMove', delta: 1 };
+    if (key.name === 'tab') return { kind: 'slashAccept' };
+    if (key.name === 'escape') return { kind: 'slashClose' };
   }
 
   if (key.name === 'escape') return { kind: 'cancel' };

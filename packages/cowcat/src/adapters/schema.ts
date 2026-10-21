@@ -159,7 +159,7 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // every log written before this field existed says.
     parent: z.object({ sessionId: z.string(), role: z.enum(['explore', 'general']) }).optional(),
   }),
-  z.object({ ...base, type: z.literal('turn.opened'), input: z.string() }),
+  z.object({ ...base, type: z.literal('turn.opened'), input: z.string(), model: z.string().optional() }),
   z.object({
     ...base,
     type: z.literal('turn.transitioned'),

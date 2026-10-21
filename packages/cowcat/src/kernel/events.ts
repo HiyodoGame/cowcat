@@ -40,7 +40,16 @@ export interface SessionParent {
 export type KernelEvent = EventBase &
   (
     | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell; readonly parent?: SessionParent | undefined }
-    | { readonly type: 'turn.opened'; readonly input: string }
+    | {
+        readonly type: 'turn.opened';
+        readonly input: string;
+        /**
+         * The model this turn runs on (ADR-102). Optional because logs written before the
+         * field existed are still valid, and a status bar that cannot say which model ran a
+         * turn is guessing.
+         */
+        readonly model?: string | undefined;
+      }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
     | {
         /**

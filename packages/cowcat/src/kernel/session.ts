@@ -154,11 +154,16 @@ export class Session {
     for (const listener of this.#listeners) listener({ type: 'reasoning.delta', turnId, text });
   }
 
-  async openTurn(input: string): Promise<string> {
+  async openTurn(input: string, model?: string): Promise<string> {
     const current = this.#state.turn?.state;
     if (current !== undefined && !isTerminal(current)) throw new Error('a turn is already open');
     const turnId = this.#deps.ids.next('turn');
-    await this.emit({ type: 'turn.opened', turnId, input });
+    await this.emit({
+      type: 'turn.opened',
+      turnId,
+      input,
+      ...(model === undefined || model === '' ? {} : { model }),
+    });
     await this.transition('requesting');
     return turnId;
   }
