@@ -324,6 +324,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     /** Mirror the input widget's value into the view; the frame hints at `/` from it. */
     function syncInput(): void {
       if (disposed) return;
+      screen.syncInputSize();
       const value = screen.inputValue();
       if (value === view.current.input) return;
       view.current = withInput(view.current, value);

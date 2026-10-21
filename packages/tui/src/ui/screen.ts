@@ -1,8 +1,8 @@
 import {
   BoxRenderable,
   ImageRenderable,
-  InputRenderable,
   RGBA,
+  TextareaRenderable,
   TextAttributes,
   TextRenderable,
   createTextAttributes,
@@ -35,8 +35,6 @@ import type { Line } from './line.js';
  * Rows the screen spends on something other than the transcript: the root box's two borders,
  * the status line, and the composer's three rows.
  */
-const BODY_CHROME_ROWS = 6;
-
 /**
  * The reading width, in columns (ADR-101).
  *
@@ -103,6 +101,8 @@ export interface Screen {
   setInput(text: string): void;
   /** The input's text right now — used to hint at `/` commands while typing. */
   inputValue(): string;
+  /** Grow or shrink the composer to fit the draft (1–6 content rows). */
+  syncInputSize(): void;
   focus(): void;
   destroy(): void;
 }
@@ -155,10 +155,21 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     width: '100%',
     height: 1,
   });
-  const input = new InputRenderable(renderer, {
+  /**
+   * The composer is a textarea, not a single-line input: Enter sends, Shift+Enter and
+   * Ctrl+J insert a newline, and the box grows with the draft up to six rows (ADR-104).
+   */
+  const input = new TextareaRenderable(renderer, {
     id: 'cowcat-input',
     flexGrow: 1,
     placeholder: options.title,
+    keyBindings: [
+      // opentui names the key `return`; the default is `return → newline`, so `enter`
+      // here would silently leave the composer unable to submit.
+      { name: 'return', action: 'submit' },
+      { name: 'return', shift: true, action: 'newline' },
+      { name: 'j', ctrl: true, action: 'newline' },
+    ],
   });
   // A bordered composer instead of a bare line: the input is where a person spends the
   // session, and an unstyled last row read as part of the transcript. Three rows total
@@ -353,7 +364,8 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       // The dock takes its rows out of the transcript's budget; capping it at half the body
       // keeps a three-card dock from erasing the conversation on a 24-row terminal.
       const dockLines = spec.dock ?? [];
-      const bodyBudget = Math.max(1, renderer.height - BODY_CHROME_ROWS);
+      // Root border (2) + status (1) + the composer's current height.
+      const bodyBudget = Math.max(1, renderer.height - 3 - inputBox.height);
       const dockRoom = Math.min(dockLines.length, Math.max(1, Math.floor(bodyBudget / 2)));
       mountLines(dock, dockMounted, dockSpecs, dockLines.slice(0, dockRoom), 0, dockRoom, 'cowcat-dock');
       const viewStart = mountLines(
@@ -374,13 +386,15 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       renderer.requestRender();
     },
     onSubmit(handler) {
-      const listener = (value: string): void => {
-        handler(value);
+      // `TextareaRenderable` keeps a single submit listener rather than an emitter: the
+      // action bound to `return` above calls `submit()`, which calls this.
+      const listener = (): void => {
+        handler(input.plainText);
       };
-      // NOT `onSubmit`: `InputRenderable` overrides `submit()` and only emits `'enter'`
-      // (`node_modules/@opentui/core/index.node.js:8673-8684`), so the option is dead code.
-      input.on('enter', listener);
-      return () => input.off('enter', listener);
+      input.onSubmit = listener;
+      return () => {
+        input.onSubmit = undefined;
+      };
     },
     onKey(handler) {
       const listener = (key: KeyEvent): void => {
@@ -402,14 +416,21 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       };
     },
     clearInput() {
-      input.value = '';
+      input.setText('');
+      inputBox.height = 3;
     },
     setInput(text) {
-      input.value = text;
+      input.setText(text);
+      inputBox.height = Math.min(6, Math.max(1, text.split('\n').length)) + 2;
       input.focus();
     },
     inputValue() {
-      return input.value;
+      return input.plainText;
+    },
+    syncInputSize() {
+      const lines = Math.min(6, Math.max(1, input.plainText.split('\n').length));
+      const next = lines + 2;
+      if (inputBox.height !== next) inputBox.height = next;
     },
     focus() {
       input.focus();
