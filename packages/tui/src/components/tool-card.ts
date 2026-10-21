@@ -134,3 +134,35 @@ function outputLines(output: string, inner: number, expanded: boolean): readonly
   if (hidden > 0) lines.unshift({ text: `… 上面还有 ${String(hidden)} 行（Ctrl-O 展开）`, token: 'textDim' });
   return lines;
 }
+
+const RUNNING = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
+
+/**
+ * The one line that identifies a call before its result exists.
+ *
+ * A Bash call can run for a minute; before this, nothing appeared until it finished, so a
+ * long command looked like a hang. The frame is a function of `now`, which keeps snapshots
+ * deterministic.
+ */
+export function callSummary(input: unknown): string {
+  if (typeof input === 'object' && input !== null) {
+    const record = input as Record<string, unknown>;
+    const command = record['command'];
+    if (typeof command === 'string' && command !== '') return command;
+    const path = record['file_path'] ?? record['path'] ?? record['pattern'];
+    if (typeof path === 'string' && path !== '') return path;
+  }
+  const text = JSON.stringify(input ?? {});
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+}
+
+export function runningToolLines(name: string, summary: string, width: number, now: number): readonly Line[] {
+  const frame = RUNNING[Math.floor(now / 100) % RUNNING.length] ?? '·';
+  return card({
+    title: `${frame} ${name}`,
+    titleToken: 'plan',
+    suffix: '[运行中]',
+    body: [{ text: truncate(summary, Math.max(8, width - 6)), token: 'textDim' }],
+    width,
+  });
+}

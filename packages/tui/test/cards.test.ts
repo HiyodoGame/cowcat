@@ -296,12 +296,32 @@ test('thinking is one collapsed line until it is expanded', () => {
 
 test('live thinking is visible before the answer arrives', () => {
   const frame = frameOf(
-    { ...initialView(), reasoningStream: '先看调用点，再改实现。' },
+    { ...initialView(), reasoningStream: '先看调用点，再改实现。', reasoningShown: 999 },
     { width: WIDTH, now: 1_000 },
   );
   const text = frame.body.map((row) => row.text).join('\n');
   assert.match(text, /思考中/u);
   assert.match(text, /先看调用点/u);
+});
+
+test('a running tool is a card with an animated marker and its command', () => {
+  const view = viewOf([
+    event('turn.opened', { input: '跑测试' }),
+    event('model.message', {
+      text: '',
+      toolCalls: [{ callId: 'c1', name: 'Bash', input: { command: 'npm test --watch' } }],
+      reasoning: [],
+      stopReason: null,
+    }),
+  ]);
+
+  const at0 = frameOf(view, { width: WIDTH, now: 0 }).body.map((row) => row.text).join('\n');
+  assert.match(at0, /Bash/u);
+  assert.match(at0, /运行中/u);
+  assert.match(at0, /npm test --watch/u);
+
+  const at150 = frameOf(view, { width: WIDTH, now: 150 }).body.map((row) => row.text).join('\n');
+  assert.notEqual(at150, at0, 'the marker is a function of the clock');
 });
 
 test('the input line hints at / commands as they are typed', () => {

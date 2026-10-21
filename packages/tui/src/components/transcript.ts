@@ -1,7 +1,8 @@
 import type { Entry, TuiView } from '../app/view.js';
+import { revealedReasoning } from '../app/view.js';
 import { approvalCardLines, noticeLines } from './approval-card.js';
 import { assistantMessageLines, userMessageLines } from './message.js';
-import { toolCardLines } from './tool-card.js';
+import { callSummary, runningToolLines, toolCardLines } from './tool-card.js';
 import { line, type Line } from '../ui/line.js';
 import type { ImageSlot } from '../ui/screen.js';
 import { wrap } from '../text/wrap.js';
@@ -31,6 +32,9 @@ export interface TranscriptLines {
   readonly images: readonly ImageSlot[];
 }
 
+/** Four frames is enough for a 120ms cycle to read as motion, not as a flashing glyph. */
+const THINKING = ['✻', '✳', '✢', '✶'] as const;
+
 export function transcriptLines(view: TuiView, options: TranscriptOptions): TranscriptLines {
   const lines: Line[] = [];
   const images: ImageSlot[] = [];
@@ -46,12 +50,22 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
     lines.push(line('', 'text'));
   }
 
-  if (view.reasoningStream.trim() !== '') {
+  const thinking = revealedReasoning(view).trim();
+  if (thinking !== '') {
     // Live thinking, tail only: the point is "it is working", not a full transcript of the
     // reasoning that is about to be replaced by the recorded blocks anyway.
-    const rows = wrap(view.reasoningStream.trim(), Math.max(8, options.width - 4));
-    lines.push(line('✻ 思考中…', 'textDim'));
+    const rows = wrap(thinking, Math.max(8, options.width - 4));
+    const glyph = THINKING[Math.floor(options.now / 120) % THINKING.length] ?? '✻';
+    lines.push(line(`${glyph} 思考中…`, 'textDim'));
     for (const row of rows.slice(-6)) lines.push(line(`  │ ${row}`, 'textDim'));
+  }
+
+  for (const tool of view.pendingTools) {
+    // A long command used to be invisible until it finished. The running card is the
+    // same shape as its result, so the transcript does not jump when the result lands.
+    const summary = callSummary(view.calls[tool.callId]?.input);
+    push({ lines: runningToolLines(tool.name, summary, options.width, options.now), images: [] });
+    lines.push(line('', 'text'));
   }
 
   if (view.streaming !== '') {

@@ -2,9 +2,10 @@ import { createCliRenderer, type CliRenderer } from '@opentui/core';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { COMMANDS, lastToolCallId, parseCommand, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
-import { animationsEnabled, mouseEnabled } from './app/preferences.js';
+import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
 import { addNotice, closeView, project, streamReasoning, streamText } from './app/project.js';
 import {
+  advanceReasoning,
   APPROVAL_CHOICES,
   approvalChoiceAt,
   closePalette,
@@ -83,12 +84,23 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
    */
   const activity: { timer: ReturnType<typeof setInterval> | null } = { timer: null };
   const animationsOff = !animationsEnabled(process.env);
+  const wheelStep = scrollStep(process.env);
   const syncActivity = (): void => {
     const state = view.current.turn?.state;
     const running = state !== undefined && !TERMINAL.has(state);
     const want = running && !animationsOff && !disposed;
     if (want && activity.timer === null) {
-      activity.timer = setInterval(draw, 250);
+      // 20fps: fast enough that a spinner reads as motion and a chunk of reasoning can be
+      // revealed a few characters at a time, slow enough that a long transcript is not
+      // rebuilt 60 times a second.
+      activity.timer = setInterval(() => {
+        const total = Array.from(view.current.reasoningStream).length;
+        const remaining = total - view.current.reasoningShown;
+        if (remaining > 0) {
+          view.current = advanceReasoning(view.current, Math.max(2, Math.ceil(remaining / 6)));
+        }
+        draw();
+      }, 50);
     } else if (!want && activity.timer !== null) {
       clearInterval(activity.timer);
       activity.timer = null;
@@ -175,7 +187,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       }),
       screen.onHit(handleHit),
       screen.onScroll((delta) => {
-        view.current = withScroll(view.current, delta);
+        view.current = withScroll(view.current, delta * wheelStep);
         draw();
       }),
     );
@@ -428,7 +440,8 @@ async function defaultRenderer(): Promise<CliRenderer> {
     // `onMouseDown`/`onMouseScroll` handler in `ui/screen.ts` is dead code. It also takes
     // over native selection; `COWCAT_MOUSE=off` is the documented way back.
     useMouse: mouseEnabled(process.env),
-    targetFps: 30,
+    targetFps: 60,
+    maxFps: 60,
   });
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireEvent } from '@corescense/cowcat-protocol';
-import { initialView, type TuiView } from '../src/app/view.js';
+import { advanceReasoning, initialView, revealedReasoning, type TuiView } from '../src/app/view.js';
 import { closeView, project, streamReasoning, streamText } from '../src/app/project.js';
 
 /**
@@ -328,6 +328,10 @@ test('reasoning is live while it streams, then collapses into the answer', () =>
     text: '先看',
   }), { type: 'reasoning.delta', turnId: 'turn_1', text: '调用点' });
   assert.equal(live.reasoningStream, '先看调用点');
+
+  // Received in one chunk, revealed a few characters at a time (ADR-099).
+  assert.equal(revealedReasoning(live), '');
+  assert.equal(revealedReasoning(advanceReasoning(live, 2)), '先看');
 
   const done = project(
     { ...live, thinkingExpanded: true },
