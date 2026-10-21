@@ -6,7 +6,7 @@ import { project } from '../src/app/project.js';
 import { frameOf } from '../src/components/session-frame.js';
 import { statusLine } from '../src/components/status-bar.js';
 import { paletteLines } from '../src/components/palette.js';
-import { COMMANDS } from '../src/app/commands.js';
+import { COMMANDS, slashMatches } from '../src/app/commands.js';
 import { stringWidth } from '../src/text/width.js';
 import { imageBox } from '../src/image/layout.js';
 import { line } from '../src/ui/line.js';
@@ -533,6 +533,38 @@ test('clickable rows carry a hit id for the loop to decode', () => {
 
   // The scroll offset is part of the frame spec, so a snapshot can pin it.
   assert.equal(frameOf({ ...approvalView, scrollOffset: 7 }, { width: WIDTH, now: 0 }).scroll, 7);
+});
+
+test('the / menu is a selectable list in the dock, not a placeholder', () => {
+  const view = { ...initialView(), input: '/' };
+  const frame = frameOf(view, { width: WIDTH, now: 1_000 });
+  const dock = frame.dock ?? [];
+  const text = dock.map((row) => row.text).join('\n');
+  assert.match(text, /命令/u);
+  assert.match(text, /\/todos/u);
+  assert.match(text, /▸ \/todos/u);
+  // A row click runs that command, so the id is on the card row.
+  assert.equal(dock.find((row) => row.text.includes('/help'))?.hit, 'slash:5');
+
+  const moved = frameOf({ ...view, slashIndex: 2 }, { width: WIDTH, now: 1_000 });
+  assert.match((moved.dock ?? []).map((row) => row.text).join('\n'), /▸ \/cancel/u);
+
+  // A space closes the menu: Enter means "send this prompt" again.
+  assert.deepEqual(slashMatches('/help me'), []);
+});
+
+test('the status line names the model and counts seconds', () => {
+  const view: TuiView = {
+    ...initialView(),
+    sessionId: 'sess_status',
+    model: 'zai-coding-plan/glm-5.3-flash',
+    turn: { id: 'turn_1', state: 'streaming', reason: null },
+    turnStartedAt: 0,
+  };
+  const line = statusLine(view, { now: 12_000 });
+  assert.match(line.text, /glm-5\.3-flash/u);
+  assert.match(line.text, /12s/u);
+  assert.doesNotMatch(line.text, /zai-coding-plan\//u);
 });
 
 test('the status bar says where the session is, and truncates rather than wrapping', () => {

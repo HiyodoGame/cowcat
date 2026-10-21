@@ -32,6 +32,9 @@ export function statusLine(view: TuiView, options: StatusOptions = { now: 0 }): 
   const copy = copyFor(view.lang);
   const state = stateOf(view, copy, options.now);
   const parts: string[] = [view.sessionId ?? '（还没有会话）', state.text];
+  if (view.model !== null) parts.push(shortModel(view.model));
+  const elapsed = elapsedOf(view, options.now);
+  if (elapsed !== null) parts.push(elapsed);
   if (view.todos.length > 0) {
     const done = view.todos.filter((todo) => todo.status === 'completed').length;
     parts.push(`待办 ${String(done)}/${String(view.todos.length)}`);
@@ -91,6 +94,22 @@ function activityOf(view: TuiView): string {
   if (state === 'finishing') return `收尾中${suffix}`;
   return `等模型响应${suffix}`;
 }
+
+/** `zai-coding-plan/glm-5.3-flash` → `glm-5.3-flash`: the provider is not what a session shows. */
+function shortModel(model: string): string {
+  const parts = model.split('/');
+  return parts.at(-1) ?? model;
+}
+
+/** Seconds since the turn opened, only while it is still running. */
+function elapsedOf(view: TuiView, now: number): string | null {
+  const state = view.turn?.state;
+  if (view.turnStartedAt === null || state === undefined || TERMINAL.has(state)) return null;
+  const seconds = Math.max(0, Math.round((now - view.turnStartedAt) / 1000));
+  return seconds >= 60 ? `${String(Math.floor(seconds / 60))}m${String(seconds % 60)}s` : `${String(seconds)}s`;
+}
+
+const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 /** Exported for the tests that only care about the width of a token, not its colour. */
 export function statusWidth(text: string): number {

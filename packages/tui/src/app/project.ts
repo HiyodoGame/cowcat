@@ -38,6 +38,9 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         ...opened,
         streaming: '',
         turn: { id: text(event, 'turnId') ?? '', state: 'opened', reason: null },
+        model: text(event, 'model') ?? base.model,
+        turnStartedAt: number(event, 'ts') ?? base.turnStartedAt,
+        slashIndex: 0,
       };
     }
 

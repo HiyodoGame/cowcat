@@ -35,8 +35,7 @@ export const KEYS_HELP = [
   '恢复会话：退出后用 cowcat sessions list 看 id，再 cowcat sessions resume <id>',
 ].join('　');
 
-export const COMMANDS: readonly TuiCommand[] = [
-  {
+export const COMMANDS: readonly TuiCommand[] = [  {
     name: 'todos',
     summary: '显示 / 隐藏待办面板',
     run: (view) => ({ kind: 'view', view: toggleTodos(closePalette(view)) }),
@@ -63,6 +62,19 @@ export const COMMANDS: readonly TuiCommand[] = [
 
 export function findCommand(name: string): TuiCommand | undefined {
   return COMMANDS.find((command) => command.name === name);
+}
+
+/**
+ * Commands matching what has been typed so far.
+ *
+ * Only a bare `/query` counts: once a space is in the input the person is writing a prompt
+ * that happens to start with a slash, and stealing Enter for a menu would be wrong.
+ */
+export function slashMatches(input: string): readonly TuiCommand[] {
+  const text = input.trim();
+  if (!text.startsWith('/') || /\s/.test(text)) return [];
+  const query = text.slice(1).toLowerCase();
+  return COMMANDS.filter((command) => command.name.toLowerCase().startsWith(query));
 }
 
 /** `/name rest` → the command and whatever followed it, or `null` when nothing matches. */

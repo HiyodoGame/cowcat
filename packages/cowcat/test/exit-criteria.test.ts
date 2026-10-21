@@ -220,7 +220,7 @@ const GOLDEN: readonly unknown[] = [
     cowcatVersion: '0.0.0-test',
     shell: { kind: 'posix', executable: '/bin/sh' },
   },
-  { type: 'turn.opened', input: 'read a.txt' },
+  { type: 'turn.opened', input: 'read a.txt', model: 'fixture-model' },
   { type: 'turn.transitioned', from: 'idle', to: 'requesting', reason: null },
   { type: 'turn.transitioned', from: 'requesting', to: 'streaming', reason: null },
   {

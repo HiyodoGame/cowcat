@@ -190,6 +190,12 @@ export interface TuiView {
    * touches it.
    */
   readonly input: string;
+  /** The model `turn.opened` reported, for the status bar (ADR-102). */
+  readonly model: string | null;
+  /** When the current turn opened, so the status bar can show elapsed time. */
+  readonly turnStartedAt: number | null;
+  /** Which `/` menu row is highlighted. */
+  readonly slashIndex: number;
   /** Attachment bytes, by path: the log has the reference, this is where the pixels land. */
   readonly attachments: Readonly<Record<string, AttachmentView>>;
   readonly todosVisible: boolean;
@@ -230,6 +236,9 @@ export function initialView(): TuiView {
     expanded: [],
     thinkingExpanded: false,
     input: '',
+    model: null,
+    turnStartedAt: null,
+    slashIndex: 0,
     attachments: {},
     todosVisible: true,
     palette: null,
@@ -260,7 +269,16 @@ export function toggleThinking(view: TuiView): TuiView {
 }
 
 export function withInput(view: TuiView, input: string): TuiView {
-  return view.input === input ? view : { ...view, input };
+  if (view.input === input) return view;
+  // A different query means a different list; keeping the old highlight would point at a
+  // row that may no longer exist.
+  return { ...view, input, slashIndex: 0 };
+}
+
+export function moveSlash(view: TuiView, delta: number, count: number): TuiView {
+  if (count === 0) return view;
+  const next = (view.slashIndex + delta + count) % count;
+  return next === view.slashIndex ? view : { ...view, slashIndex: next };
 }
 
 /** Positive `delta` scrolls up (older lines). The screen clamps to what exists. */

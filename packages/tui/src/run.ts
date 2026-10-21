@@ -1,6 +1,6 @@
 import { createCliRenderer, type CliRenderer } from '@opentui/core';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
-import { COMMANDS, lastToolCallId, parseCommand, type CommandEffect } from './app/commands.js';
+import { COMMANDS, lastToolCallId, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
 import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
 import { addNotice, closeView, project, streamReasoning, streamText } from './app/project.js';
@@ -12,6 +12,7 @@ import {
   initialView,
   moveApprovalCursor,
   movePalette,
+  moveSlash,
   openPalette,
   pendingAttachments,
   resetScroll,
@@ -248,6 +249,27 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = withScroll(view.current, intent.delta);
           draw();
           return;
+        case 'slashMove': {
+          const count = slashMatches(view.current.input).length;
+          view.current = moveSlash(view.current, intent.delta, count);
+          draw();
+          return;
+        }
+        case 'slashAccept': {
+          const matches = slashMatches(view.current.input);
+          const command = matches[view.current.slashIndex % Math.max(1, matches.length)];
+          if (command !== undefined) {
+            screen.setInput(`/${command.name} `);
+            view.current = withInput(view.current, `/${command.name} `);
+          }
+          draw();
+          return;
+        }
+        case 'slashClose':
+          screen.clearInput();
+          view.current = withInput(view.current, '');
+          draw();
+          return;
       }
     }
 
@@ -264,6 +286,17 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       if (id === 'thinking') {
         view.current = toggleThinking(view.current);
         draw();
+        return;
+      }
+      if (id.startsWith('slash:')) {
+        const row = Number(id.slice('slash:'.length));
+        const matches = slashMatches(view.current.input);
+        const command = matches[row];
+        if (command !== undefined) {
+          screen.clearInput();
+          view.current = withInput(view.current, '');
+          apply(command.run(view.current));
+        }
         return;
       }
       if (id.startsWith('approval:')) {
@@ -369,6 +402,17 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           screen.clearInput();
           apply(command.run(view.current));
         }
+        return;
+      }
+
+      // The `/` menu owns Enter while it is open: the highlighted row is what runs. A space
+      // in the input closes the menu (slashMatches returns []), so Enter then sends text.
+      const slash = slashMatches(trimmed);
+      const slashCommand = slash[view.current.slashIndex % Math.max(1, slash.length)];
+      if (slashCommand !== undefined) {
+        screen.clearInput();
+        view.current = withInput(view.current, '');
+        apply(slashCommand.run(view.current));
         return;
       }
 
