@@ -88,6 +88,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         // The live reasoning is replaced by the blocks on the entry, and a finished turn
         // starts collapsed: "watch it think" is the streaming state, not the result.
         reasoningStream: '',
+        reasoningShown: 0,
         thinkingExpanded: false,
         calls: withCalls(base.calls, toolCalls),
         // The calls this message asked for are now in flight; the status line names them
@@ -263,7 +264,6 @@ export function streamReasoning(view: TuiView, delta: WireDelta): TuiView {
   if (delta.type !== 'reasoning.delta') return view;
   return { ...view, reasoningStream: view.reasoningStream + delta.text };
 }
-
 /**
  * A line the interface itself wants to say — a server diagnostic, a refusal the host
  * reported, a hint about which keys answer an approval.

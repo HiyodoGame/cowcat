@@ -13,3 +13,10 @@ export function mouseEnabled(env: Readonly<Record<string, string | undefined>>):
 export function animationsEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
   return env['COWCAT_ANIMATIONS'] !== 'off';
 }
+
+/** Lines per wheel notch. Three matches vim and opencode's default (ADR-099). */
+export function scrollStep(env: Readonly<Record<string, string | undefined>>): number {
+  const raw = Number(env['COWCAT_SCROLL_SPEED'] ?? '3');
+  if (!Number.isFinite(raw)) return 3;
+  return Math.min(20, Math.max(1, Math.round(raw)));
+}

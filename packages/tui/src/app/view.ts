@@ -160,6 +160,8 @@ export interface TuiView {
    * blocks on the entry are the durable version, this is the live one.
    */
   readonly reasoningStream: string;
+  /** How many code points of `reasoningStream` have been revealed on screen (ADR-099). */
+  readonly reasoningShown: number;
   readonly turn: TurnView | null;
   readonly approval: ApprovalView | null;
   /** Which of `APPROVAL_CHOICES` is highlighted while the question is open. */
@@ -218,6 +220,7 @@ export function initialView(): TuiView {
     entries: [],
     streaming: '',
     reasoningStream: '',
+    reasoningShown: 0,
     turn: null,
     approval: null,
     approvalCursor: 0,
@@ -264,6 +267,24 @@ export function withInput(view: TuiView, input: string): TuiView {
 export function withScroll(view: TuiView, delta: number): TuiView {
   const next = Math.max(0, view.scrollOffset + delta);
   return next === view.scrollOffset ? view : { ...view, scrollOffset: next };
+}
+
+/**
+ * Reveal more of the buffered reasoning (ADR-099).
+ *
+ * Providers hand over reasoning in chunks of arbitrary size, so "as it arrives" is
+ * chunky by nature. Revealing a few code points per tick is presentation only: the
+ * buffer is what was received, this is how much of it has been drawn.
+ */
+export function advanceReasoning(view: TuiView, step: number): TuiView {
+  const total = Array.from(view.reasoningStream).length;
+  if (view.reasoningShown >= total) return view;
+  return { ...view, reasoningShown: Math.min(total, view.reasoningShown + Math.max(1, step)) };
+}
+
+/** The part of the reasoning that is currently visible. */
+export function revealedReasoning(view: TuiView): string {
+  return Array.from(view.reasoningStream).slice(0, view.reasoningShown).join('');
 }
 
 export function resetScroll(view: TuiView): TuiView {
