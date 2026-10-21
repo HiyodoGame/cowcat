@@ -72,7 +72,24 @@ function placeholderFor(view: TuiView, copy: Copy): string {
   const state = view.turn?.state;
   if (state !== undefined && !TERMINAL.has(state)) return copy.busy;
   if (view.closed) return '连接已断开';
-  return copy.inputPlaceholder;
+  return slashHint(view.input) ?? copy.inputPlaceholder;
+}
+
+/**
+ * What to type after `/`, inline.
+ *
+ * The palette (Ctrl-P) has always listed the commands, but nothing told a person that `/`
+ * was a way in — the measured complaint was "there is no / command hint". Only the input line
+ * has room for this without pushing the transcript, so the hint goes there.
+ */
+function slashHint(input: string): string | null {
+  if (!input.startsWith('/')) return null;
+  const typed = input.trim();
+  if (typed.includes(' ')) return null;
+  const matches = COMMANDS.filter((command) => `/${command.name}`.startsWith(typed));
+  if (matches.length === 0) return '没有这个命令 · Ctrl-P 看全部';
+  const shown = matches.slice(0, 3).map((command) => `/${command.name} ${command.summary}`).join(' · ');
+  return matches.length > 3 ? `${shown} · 共 ${String(matches.length)} 个（Ctrl-P 看全部）` : shown;
 }
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);

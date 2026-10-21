@@ -10,7 +10,9 @@ import {
   openPalette,
   pendingAttachments,
   toggleExpanded,
+  toggleThinking,
   withAttachment,
+  withInput,
   withLangFrom,
 } from './app/view.js';
 import { frameOf, titleOf } from './components/session-frame.js';
@@ -135,9 +137,13 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     detach.push(
       screen.onSubmit((value) => {
         submit(value);
+        queueMicrotask(syncInput);
       }),
       screen.onKey((key) => {
         handle(intentFor({ name: key.name, ctrl: key.ctrl }, view.current));
+        // The input widget swallows the printable keys, so its value is read back rather
+        // than reconstructed: one source of truth for both hinting and what is sent.
+        queueMicrotask(syncInput);
       }),
     );
 
@@ -172,7 +178,20 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
           return;
         }
+        case 'toggleThinking':
+          view.current = toggleThinking(view.current);
+          draw();
+          return;
       }
+    }
+
+    /** Mirror the input widget's value into the view; the frame hints at `/` from it. */
+    function syncInput(): void {
+      if (disposed) return;
+      const value = screen.inputValue();
+      if (value === view.current.input) return;
+      view.current = withInput(view.current, value);
+      draw();
     }
 
     function apply(effect: CommandEffect): void {
@@ -188,9 +207,44 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         case 'cancel':
           cancel();
           return;
+        case 'sessions':
+          void showSessions();
+          return;
         case 'quit':
           quit(0);
           return;
+      }
+    }
+
+    /**
+     * `/sessions`: the ids and the command that reopens one.
+     *
+     * Listing only. Switching in place would need the event stream filtered by session id
+     * (every replay event currently lands in one view), and a half-done switch is worse than
+     * a command the user can copy.
+     */
+    async function showSessions(): Promise<void> {
+      try {
+        const sessions = await options.client.listSessions();
+        if (disposed) return;
+        if (sessions.length === 0) {
+          view.current = addNotice(view.current, 'info', '还没有会话。');
+          draw();
+          return;
+        }
+        for (const session of sessions.slice(0, 10)) {
+          const current = session.sessionId === sessionId ? '（当前）' : '';
+          view.current = addNotice(
+            view.current,
+            'info',
+            `${session.sessionId}${current} · ${String(session.lastSeq)} 条事件 · cowcat sessions resume ${session.sessionId}`,
+          );
+        }
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
       }
     }
 

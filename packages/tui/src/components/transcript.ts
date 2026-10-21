@@ -63,7 +63,7 @@ function entryLines(entry: Entry, view: TuiView, options: TranscriptOptions): Tr
     case 'user':
       return { lines: userMessageLines(entry, options.width), images: [] };
     case 'assistant':
-      return { lines: assistantMessageLines(entry, options.width), images: [] };
+      return { lines: assistantMessageLines(entry, options.width, view.thinkingExpanded), images: [] };
     case 'tool':
       return toolCardLines(entry, view, options.width);
     case 'notice':

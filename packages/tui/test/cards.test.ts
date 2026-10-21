@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireEvent } from '@corescense/cowcat-protocol';
-import { initialView, toggleExpanded, withAttachment, type TuiView } from '../src/app/view.js';
+import { initialView, toggleExpanded, toggleThinking, withAttachment, type TuiView } from '../src/app/view.js';
 import { project } from '../src/app/project.js';
 import { frameOf } from '../src/components/session-frame.js';
 import { statusLine } from '../src/components/status-bar.js';
@@ -263,6 +263,42 @@ test('a destructive command gets its own line, in the alert token', () => {
   assert.ok(warning !== undefined);
   assert.equal(warning.token, 'alert');
   assertCardWidths(frame.body, 'approval warning');
+});
+
+test('thinking is one collapsed line until it is expanded', () => {
+  seq = 0;
+  const base = viewOf([
+    event('turn.opened', { input: '解释一下这个函数' }),
+    event('model.message', {
+      text: '它是把数组拼成路径。',
+      toolCalls: [],
+      reasoning: [{ type: 'thinking', text: '先看 joinPath 的实现，再看调用点。', signature: 's' }],
+      stopReason: null,
+    }),
+  ]);
+
+  const collapsed = frameOf(base, { width: WIDTH, now: 1_000 });
+  const collapsedText = collapsed.body.map((row) => row.text).join('\n');
+  assert.match(collapsedText, /思考 · 1 段（Ctrl-T 展开）/u);
+  assert.doesNotMatch(collapsedText, /先看 joinPath 的实现/u);
+
+  const expanded = frameOf(toggleThinking(base), { width: WIDTH, now: 1_000 });
+  const expandedText = expanded.body.map((row) => row.text).join('\n');
+  assert.match(expandedText, /思考 · 1 段（Ctrl-T 折叠）/u);
+  assert.match(expandedText, /先看 joinPath 的实现/u);
+});
+
+test('the input line hints at / commands as they are typed', () => {
+  const empty = frameOf({ ...initialView(), input: '/' }, { width: WIDTH, now: 1_000 });
+  assert.match(empty.placeholder, /\/todos/u);
+  assert.match(empty.placeholder, /共 7 个/u);
+
+  const narrowed = frameOf({ ...initialView(), input: '/th' }, { width: WIDTH, now: 1_000 });
+  assert.match(narrowed.placeholder, /\/thinking/u);
+  assert.doesNotMatch(narrowed.placeholder, /\/todos/u);
+
+  const nothing = frameOf({ ...initialView(), input: '/nope' }, { width: WIDTH, now: 1_000 });
+  assert.match(nothing.placeholder, /没有这个命令/u);
 });
 
 test('an answered approval says what happened', () => {

@@ -21,8 +21,32 @@ export function userMessageLines(entry: UserEntry, width: number): readonly Line
   });
 }
 
-export function assistantMessageLines(entry: AssistantEntry, width: number): readonly Line[] {
-  const lines: Line[] = wrap(entry.text, width).map((row) => line(row, 'assistant'));
+export function assistantMessageLines(
+  entry: AssistantEntry,
+  width: number,
+  thinkingExpanded: boolean,
+): readonly Line[] {
+  const lines: Line[] = [];
+  const blocks = entry.reasoning.length + entry.redactedThinking;
+  if (blocks > 0) {
+    // Collapsed by default: thinking is how the answer was reached, not the answer. The
+    // count is the only thing that tells the reader whether expanding is worth a screen.
+    const label = thinkingExpanded
+      ? `  ▾ 思考 · ${String(blocks)} 段（Ctrl-T 折叠）`
+      : `  ▸ 思考 · ${String(blocks)} 段（Ctrl-T 展开）`;
+    lines.push(...wrap(label, width).map((row) => line(row, 'textDim')));
+    if (thinkingExpanded) {
+      for (const block of entry.reasoning) {
+        lines.push(...wrap(block, width - 4).map((row) => line(`  │ ${row}`, 'textDim')));
+      }
+      if (entry.redactedThinking > 0) {
+        lines.push(
+          ...wrap(`  │ （${String(entry.redactedThinking)} 段已隐藏的思考）`, width).map((row) => line(row, 'textDim')),
+        );
+      }
+    }
+  }
+  lines.push(...wrap(entry.text, width).map((row) => line(row, 'assistant')));
   if (entry.calls > 0) {
     // A fact the log has and the screen would otherwise lose: the calls below are drawn as
     // their own cards, and the answer itself arrived with them.

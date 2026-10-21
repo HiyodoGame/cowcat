@@ -29,6 +29,14 @@ export interface AssistantEntry {
   readonly text: string;
   /** How many tool calls came with the text; 0 when the answer was just words. */
   readonly calls: number;
+  /**
+   * The thinking blocks the model produced on the way to this answer (ADR-045), as plain
+   * text. Kept on the entry rather than in a side table so a replay rebuilds them with the
+   * answer they belong to.
+   */
+  readonly reasoning: readonly string[];
+  /** Blocks the provider redacted: counted, never shown, because the bytes are not ours. */
+  readonly redactedThinking: number;
 }
 
 export interface TranscriptToolEntry {
@@ -136,6 +144,15 @@ export interface TuiView {
   readonly calls: Readonly<Record<string, ToolCallView>>;
   /** Call ids whose output is expanded. Interface state, not from the log. */
   readonly expanded: readonly string[];
+  /** Thinking blocks are shown expanded; off by default, toggled by Ctrl-T or `/thinking`. */
+  readonly thinkingExpanded: boolean;
+  /**
+   * The input line's current text, mirrored here so the frame can hint at `/` commands.
+   *
+   * It is interface state, not a log fact: `project()` spreads the view and therefore never
+   * touches it.
+   */
+  readonly input: string;
   /** Attachment bytes, by path: the log has the reference, this is where the pixels land. */
   readonly attachments: Readonly<Record<string, AttachmentView>>;
   readonly todosVisible: boolean;
@@ -167,6 +184,8 @@ export function initialView(): TuiView {
     approval: null,
     calls: {},
     expanded: [],
+    thinkingExpanded: false,
+    input: '',
     attachments: {},
     todosVisible: true,
     palette: null,
@@ -189,6 +208,14 @@ export function toggleExpanded(view: TuiView, callId: string): TuiView {
     ? view.expanded.filter((id) => id !== callId)
     : [...view.expanded, callId];
   return { ...view, expanded };
+}
+
+export function toggleThinking(view: TuiView): TuiView {
+  return { ...view, thinkingExpanded: !view.thinkingExpanded };
+}
+
+export function withInput(view: TuiView, input: string): TuiView {
+  return view.input === input ? view : { ...view, input };
 }
 
 export function toggleTodos(view: TuiView): TuiView {

@@ -320,3 +320,28 @@ test('turn.noted is a notice, not assistant text, and a replay says the same thi
   assert.deepEqual(twice.entries, once.entries);
   assert.equal(once.unsupported.includes('turn.noted'), false);
 });
+
+test('reasoning rides along with the answer, and redacted blocks are counted', () => {
+  const log: readonly WireEvent[] = [
+    event('turn.opened', { input: '改一下这个函数' }),
+    event('model.message', {
+      text: '改好了。',
+      toolCalls: [],
+      reasoning: [
+        { type: 'thinking', text: '先看调用点，再改实现。', signature: 'sig' },
+        { type: 'redacted', data: 'opaque' },
+      ],
+      stopReason: null,
+    }),
+  ];
+
+  const view = log.reduce(project, fresh());
+  const entry = view.entries.at(-1);
+  assert.ok(entry !== undefined);
+  assert.equal(entry.kind, 'assistant');
+  assert.deepEqual(entry.reasoning, ['先看调用点，再改实现。']);
+  assert.equal(entry.redactedThinking, 1);
+
+  // Same log, same view: the thinking is part of the projection, not a side channel.
+  assert.deepEqual(log.reduce(project, fresh()).entries, view.entries);
+});
