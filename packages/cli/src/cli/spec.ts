@@ -5,6 +5,7 @@ import type { FlagSpec } from './flags.js';
 import { runOneShot } from './oneshot.js';
 import { runServe } from './serve.js';
 import { runSessions } from './sessions.js';
+import { runSetup } from './setup.js';
 import { runTui } from './tui.js';
 
 export interface CommandContext {
@@ -68,6 +69,33 @@ const allFlag: FlagSpec = {
   name: '--all',
   summary: '连子会话一起列出（默认只列顶层会话）',
 };
+const migrateFlag: FlagSpec = {
+  name: '--migrate',
+  summary: '把现有 v1 用户配置翻译成 v2（备份原文件，不写密钥）',
+};
+const presetFlag: FlagSpec = {
+  name: '--preset',
+  value: '<provider/model>',
+  summary: '新建配置时使用的模型 preset（内置 id 见 cowcat setup 的提示）',
+};
+const apiKeyEnvFlag: FlagSpec = {
+  name: '--api-key-env',
+  value: '<NAME>',
+  summary: '新建配置时写入的密钥环境变量名（只写名字，不读值）',
+};
+const baseUrlFlag: FlagSpec = {
+  name: '--base-url',
+  value: '<url>',
+  summary: '覆盖 provider 的端点',
+};
+const forceFlag: FlagSpec = {
+  name: '--force',
+  summary: '覆盖已有配置（覆盖前会备份）',
+};
+const printFlag: FlagSpec = {
+  name: '--print',
+  summary: '只把结果打到 stdout，不写文件',
+};
 
 /**
  * The subcommand table is data (ADR-060), for the same reason the protocol's method
@@ -75,8 +103,8 @@ const allFlag: FlagSpec = {
  * cannot be added to one and forgotten in another. Six verbs, one level, no nesting.
  *
  * Since T4a 3/3 this table lives in `packages/cli` and the wired verbs reach the kernel
- * through `createHost` (ADR-062 ③, ADR-064). `setup` is the one verb still blocked: the
- * configuration KEYS are decided (ADR-063), the writing path is not.
+ * through `createHost` (ADR-062 ③, ADR-064). `setup` writes the user config directly and
+ * never needs a host (ADR-089/090).
  */
 export const COMMANDS: readonly CommandSpec[] = [
   {
@@ -128,11 +156,12 @@ export const COMMANDS: readonly CommandSpec[] = [
   },
   {
     name: 'setup',
-    summary: '交互式配置向导',
+    summary: '写入 v2 用户配置（--migrate 迁移 v1）',
     args: noArgs,
-    usage: 'cowcat setup',
-    status: 'blocked',
-    blockedBy: '写入路径（配置键已定，见 ADR-063；现在请直接编辑 ~/.cowcat/config.json）',
+    flags: [migrateFlag, presetFlag, apiKeyEnvFlag, baseUrlFlag, forceFlag, printFlag],
+    usage: 'cowcat setup --migrate | --preset <provider/model> [--api-key-env NAME] [--base-url URL] [--force] [--print]',
+    status: 'ready',
+    run: runSetup,
   },
 ];
 

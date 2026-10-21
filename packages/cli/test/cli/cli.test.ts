@@ -43,19 +43,17 @@ function isolatedHome(t: TestContext): string {
   return dir;
 }
 
-test('--help lists every command in the table and marks the ones that cannot work yet', async () => {
+test('--help lists every command in the table', async () => {
   const run = await cli(['--help']);
   assert.equal(run.code, EXIT.ok);
   const text = run.out.join('\n');
   for (const command of COMMANDS) {
     assert.ok(text.includes(command.usage), `${command.name} is missing from the help text`);
   }
-  // A help screen that lists an unwired verb as if it worked is the same lie as a host
-  // that answers an empty success.
-  assert.match(text, /尚未可用/);
   // The options come from the same declaration the parser uses.
   assert.match(text, /--config <path>/);
   assert.match(text, /--yes/);
+  assert.match(text, /--migrate/);
   assert.match(text, /COWCAT_HOME/);
 });
 
@@ -132,11 +130,12 @@ test('no arguments means the default verb, and on an old Node it says why', { sk
   assert.match(run.err.join('\n'), /Node 22 上就能用/);
 });
 
-test('the one verb still unwired refuses with its own reason', async () => {
+test('setup without a mode explains the two ways to use it', async (t) => {
+  isolatedHome(t);
   const run = await cli(['setup']);
-  assert.equal(run.code, EXIT.failed);
-  assert.match(run.err.join('\n'), /写入路径/);
-  assert.match(run.err.join('\n'), /config\.json/);
+  assert.equal(run.code, EXIT.usage);
+  assert.match(run.err.join('\n'), /--migrate/);
+  assert.match(run.err.join('\n'), /--preset/);
 });
 
 test('sessions resume is the TUI with an id, and checks the renderer floor first', { skip: SKIP_ON_RENDERER }, async () => {
