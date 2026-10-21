@@ -85,6 +85,10 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       const next: TuiView = {
         ...base,
         streaming: '',
+        // The live reasoning is replaced by the blocks on the entry, and a finished turn
+        // starts collapsed: "watch it think" is the streaming state, not the result.
+        reasoningStream: '',
+        thinkingExpanded: false,
         calls: withCalls(base.calls, toolCalls),
         // The calls this message asked for are now in flight; the status line names them
         // until each result arrives. Without this, "Bash is running" had nothing to show.
@@ -250,7 +254,14 @@ export function project(view: TuiView, event: WireEvent): TuiView {
 
 /** A streamed token, applied to the ephemeral half of the view. */
 export function streamText(view: TuiView, delta: WireDelta): TuiView {
+  if (delta.type !== 'model.delta') return view;
   return { ...view, streaming: view.streaming + delta.text };
+}
+
+/** A streamed reasoning fragment: shown while it happens, replaced by the final blocks. */
+export function streamReasoning(view: TuiView, delta: WireDelta): TuiView {
+  if (delta.type !== 'reasoning.delta') return view;
+  return { ...view, reasoningStream: view.reasoningStream + delta.text };
 }
 
 /**

@@ -218,6 +218,8 @@ test('reasoning arrives as one whole block, in front of the text it precedes', a
   const parts = await collect(openAIModel({ apiKey: 'k', fetch: r.fetch }), request());
 
   assert.deepEqual(parts, [
+    { type: 'reasoning.delta', text: 'let me ' },
+    { type: 'reasoning.delta', text: 'think' },
     { type: 'reasoning', block: { type: 'thinking', text: 'let me think', signature: '' } },
     { type: 'text', text: 'answer' },
     { type: 'stop', reason: { kind: 'end', raw: 'stop' } },

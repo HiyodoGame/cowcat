@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireEvent } from '@corescense/cowcat-protocol';
 import { initialView, type TuiView } from '../src/app/view.js';
-import { closeView, project, streamText } from '../src/app/project.js';
+import { closeView, project, streamReasoning, streamText } from '../src/app/project.js';
 
 /**
  * `project()` is a pure function of the log (ADR-059 ②), so every assertion here is about
@@ -319,6 +319,32 @@ test('turn.noted is a notice, not assistant text, and a replay says the same thi
   assert.equal(once.entries.filter((item) => item.kind === 'assistant').length, 0);
   assert.deepEqual(twice.entries, once.entries);
   assert.equal(once.unsupported.includes('turn.noted'), false);
+});
+
+test('reasoning is live while it streams, then collapses into the answer', () => {
+  const live = streamReasoning(streamReasoning(initialView(), {
+    type: 'reasoning.delta',
+    turnId: 'turn_1',
+    text: '先看',
+  }), { type: 'reasoning.delta', turnId: 'turn_1', text: '调用点' });
+  assert.equal(live.reasoningStream, '先看调用点');
+
+  const done = project(
+    { ...live, thinkingExpanded: true },
+    event('model.message', {
+      text: '改好了。',
+      toolCalls: [],
+      reasoning: [{ type: 'thinking', text: '先看调用点', signature: 's' }],
+      stopReason: null,
+    }),
+  );
+
+  assert.equal(done.reasoningStream, '');
+  assert.equal(done.thinkingExpanded, false, 'a finished turn starts collapsed');
+  const entry = done.entries.at(-1);
+  assert.ok(entry !== undefined);
+  assert.equal(entry.kind, 'assistant');
+  assert.deepEqual(entry.reasoning, ['先看调用点']);
 });
 
 test('reasoning rides along with the answer, and redacted blocks are counted', () => {

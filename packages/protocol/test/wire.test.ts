@@ -95,6 +95,9 @@ test('a delta keeps its own shape and tolerates later fields', async () => {
   assert.equal(deltaParamsSchema.safeParse({ type: 'model.delta', turnId: 't1' }).success, false, 'text is required');
   assert.equal(deltaParamsSchema.safeParse({ type: 'model.delta', turnId: 't1', text: 'x', tokens: 3 }).success, true);
   assert.equal(deltaParamsSchema.safeParse({ type: 'other.delta', turnId: 't1', text: 'x' }).success, false);
+  // Reasoning streams over the same notification, so a renderer can show "thinking" live
+  // without a second channel (ADR-098).
+  assert.equal(deltaParamsSchema.safeParse({ type: 'reasoning.delta', turnId: 't1', text: '想' }).success, true);
 
   const host = new ScriptedHost([newScriptedSession('s1')]);
   const { client } = wire(host);

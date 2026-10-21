@@ -113,6 +113,8 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
               block.json += event.delta.partial_json;
             } else if (event.delta.type === 'thinking_delta' && block?.kind === 'thinking') {
               block.text += event.delta.thinking;
+              // Display-only; the recorded fact is still the whole block at stop.
+              yield { type: 'reasoning.delta', text: event.delta.thinking };
             } else if (event.delta.type === 'signature_delta' && block?.kind === 'thinking') {
               // The signature arrives just before the block stops (messages.d.ts:3787-3794).
               // Appended rather than assigned: the contract records the signature whole,

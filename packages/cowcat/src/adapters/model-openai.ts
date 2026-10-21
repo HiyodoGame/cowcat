@@ -99,6 +99,8 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
           if (reasoningDelta !== '') {
             reasoning += reasoningDelta;
             reasoningOpen = true;
+            // Live display; the recorded block is still flushed at the end of the run.
+            yield { type: 'reasoning.delta', text: reasoningDelta };
           }
           const text = typeof delta.content === 'string' ? delta.content : '';
           if (reasoningOpen && (text !== '' || (delta.tool_calls ?? []).length > 0)) {

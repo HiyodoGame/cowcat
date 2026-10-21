@@ -46,6 +46,14 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
     lines.push(line('', 'text'));
   }
 
+  if (view.reasoningStream.trim() !== '') {
+    // Live thinking, tail only: the point is "it is working", not a full transcript of the
+    // reasoning that is about to be replaced by the recorded blocks anyway.
+    const rows = wrap(view.reasoningStream.trim(), Math.max(8, options.width - 4));
+    lines.push(line('✻ 思考中…', 'textDim'));
+    for (const row of rows.slice(-6)) lines.push(line(`  │ ${row}`, 'textDim'));
+  }
+
   if (view.streaming !== '') {
     lines.push(...wrap(view.streaming, options.width).map((row) => line(row, 'assistant')));
   }

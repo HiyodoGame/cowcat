@@ -148,6 +148,12 @@ export class Session {
     for (const listener of this.#listeners) listener({ type: 'model.delta', turnId, text });
   }
 
+  reasoningDelta(text: string): void {
+    const turnId = this.turnId;
+    if (turnId === null) throw new Error('reasoningDelta outside a turn');
+    for (const listener of this.#listeners) listener({ type: 'reasoning.delta', turnId, text });
+  }
+
   async openTurn(input: string): Promise<string> {
     const current = this.#state.turn?.state;
     if (current !== undefined && !isTerminal(current)) throw new Error('a turn is already open');

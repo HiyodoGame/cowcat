@@ -179,7 +179,7 @@ test('pinned: a thinking block arrives ahead of the text and tool call it preced
   assert.equal(block?.type === 'thinking' ? block.signature : null, 'sig_fix_opaque');
   // The block is whole by the time it is emitted, and it is first: both are the shape
   // the replay depends on.
-  assert.deepEqual(parts.map((p) => p.type), ['usage', 'reasoning', 'text', 'tool_call', 'usage', 'stop']);
+  assert.deepEqual(parts.map((p) => p.type), ['usage', 'reasoning.delta', 'reasoning', 'text', 'tool_call', 'usage', 'stop']);
   assert.equal(textOf(parts), fixture.expectation.logical.text);
   assert.deepEqual(callsOf(parts), fixture.expectation.logical.toolCalls);
 });
