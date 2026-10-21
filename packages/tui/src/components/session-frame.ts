@@ -2,7 +2,7 @@ import { COMMANDS, slashMatches } from '../app/commands.js';
 import { copyFor, type Copy } from '../app/copy.js';
 import { runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
-import type { Line } from '../ui/line.js';
+import { line, type Line } from '../ui/line.js';
 import { agentPanelLines } from './agent-panel.js';
 import { approvalCardLines } from './approval-card.js';
 import { paletteLines } from './palette.js';
@@ -41,9 +41,27 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   const body = [...transcript.lines];
   const images = [...transcript.images];
 
-  // Fixed panels, in priority order: a question first, then what is running, then the plan.
-  // They live in the dock so scrolling the transcript cannot move them (ADR-101).
+  // Fixed panels, in priority order: a question first, then the way back to the tail, then
+  // what is running, then the plan. They live in the dock so scrolling the transcript cannot
+  // move them (ADR-101).
   const dock: Line[] = [];
+  // ADR-105: the one affordance for "there is newer output below you". It goes first, which
+  // puts it directly under the transcript, and exists only while the reader is scrolled up —
+  // an always-present button would be chrome on a screen that already follows the tail.
+  // A pending question outranks it: the answer is what that screen is about.
+  if (view.scrollOffset > 0 && view.approval === null) {
+    const paused = copyFor(view.lang);
+    dock.push(
+      line(
+        view.newSinceScroll === 0
+          ? paused.backToBottom
+          : paused.backToBottomNew.replace('{n}', String(view.newSinceScroll)),
+        'act',
+        true,
+        'scroll:bottom',
+      ),
+    );
+  }
   if (view.approval !== null) {
     dock.push(...approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }));
   }

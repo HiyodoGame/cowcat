@@ -37,6 +37,10 @@ export interface Copy {
   readonly approvalWaiting: string;
   /** The input line's hint while a turn is running (the status bar already says the state). */
   readonly busy: string;
+  /** The dock's clickable return to the newest row (ADR-105). */
+  readonly backToBottom: string;
+  /** The same line with how much arrived while paused: `{n}` is the count. */
+  readonly backToBottomNew: string;
 }
 
 export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
@@ -61,6 +65,8 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     approveKeys: '↑↓ 选择 · 回车确认（y / n / always / s 也可）',
     approvalWaiting: '......你还在吗。',
     busy: '（这一回合还在跑）',
+    backToBottom: '↓ 回到底部',
+    backToBottomNew: '↓ 回到底部 · {n} 条新输出',
   },
   en: {
     ready: 'here. say the real thing.',
@@ -83,6 +89,8 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     approveKeys: '↑↓ choose · Enter confirms (y / n / always / s also work)',
     approvalWaiting: '......you still there.',
     busy: '(a turn is still running)',
+    backToBottom: '↓ back to bottom',
+    backToBottomNew: '↓ back to bottom · {n} new',
   },
 };
 

@@ -40,6 +40,10 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         streaming: '',
         turn: { id: text(event, 'turnId') ?? '', state: 'opened', reason: null },
         model: text(event, 'model') ?? base.model,
+        // The fallback is for a log that says nothing (an older kernel, or a preset with no
+        // window). A live host builds its preset once, so a session cannot change windows
+        // mid-flight; if that ever changes, this line has to stop inheriting.
+        contextWindow: number(event, 'contextWindow') ?? base.contextWindow,
         turnStartedAt: number(event, 'ts') ?? base.turnStartedAt,
         slashIndex: 0,
       };
@@ -124,7 +128,14 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       if (usage === null) return base;
       return {
         ...base,
-        usage: { input: number(usage, 'input') ?? 0, output: number(usage, 'output') ?? 0 },
+        usage: {
+          input: number(usage, 'input') ?? 0,
+          output: number(usage, 'output') ?? 0,
+          // Cache reads are prompt the provider billed at a discount, not prompt that left
+          // the context: the status bar counts them (ADR-105 ②).
+          cacheRead: number(usage, 'cacheRead') ?? 0,
+          cacheCreation: number(usage, 'cacheCreation') ?? 0,
+        },
       };
     }
 
@@ -194,7 +205,11 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // already in the history. Collapsed by default matches §4.2 of the brand guide
       // (ADR-074); there is no "open it" affordance yet.
       const dropped = number(event, 'dropped') ?? 0;
-      return add(base, notice(base, seq, 'info', copyFor(base.lang).compacted.replace('{n}', String(dropped))));
+      const shown = add(base, notice(base, seq, 'info', copyFor(base.lang).compacted.replace('{n}', String(dropped))));
+      // The old count described the history that was just replaced: keeping it would say
+      // "94%" about a context that is now much smaller. Nothing is known again until the
+      // next `model.usage` reports on the new prompt (ADR-105 ②).
+      return { ...shown, usage: null };
     }
 
     case 'context.compaction.started':

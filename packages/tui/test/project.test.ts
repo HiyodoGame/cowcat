@@ -99,7 +99,7 @@ test('one turn, in the order a user reads it', () => {
   assert.equal(view.turn?.state, 'completed');
   assert.equal(view.streaming, '');
   assert.equal(view.approval, null);
-  assert.deepEqual(view.usage, { input: 100, output: 20 });
+  assert.deepEqual(view.usage, { input: 100, output: 20, cacheRead: 0, cacheCreation: 0 });
   // Every event advanced the sequence, including the ones with nothing to show.
   assert.equal(view.lastSeq, oneTurn().length);
 });
@@ -263,6 +263,39 @@ test('the language is decided by the first user message, once', () => {
   const empty = project(initialView(), event('turn.opened', { input: '   ' }));
   assert.equal(empty.langDecided, false);
   assert.equal(project(empty, event('turn.opened', { input: 'hello there' })).lang, 'en');
+});
+
+test('turn.opened carries the context window into the view, and an older log leaves it null', () => {
+  const opened = project(initialView(), event('turn.opened', { input: 'hi', contextWindow: 200_000 }));
+  assert.equal(opened.contextWindow, 200_000);
+
+  // No window in the log — an older kernel, or a preset that declares none. The status bar
+  // has no denominator and must not invent one (ADR-105).
+  const older = project(initialView(), event('turn.opened', { input: 'hi' }));
+  assert.equal(older.contextWindow, null);
+});
+
+test('a compaction drops the old measurement instead of showing it against the new history', () => {
+  const view: TuiView = {
+    ...initialView(),
+    contextWindow: 200_000,
+    usage: { input: 180_000, output: 500, cacheRead: 0, cacheCreation: 0 },
+  };
+  const compacted = project(
+    view,
+    event('context.compacted', {
+      trigger: 'auto',
+      summary: 'earlier work',
+      throughSeq: 3,
+      shadowed: [1, 2],
+      dropped: 2,
+      model: 'test-model',
+      usage: null,
+    }),
+  );
+  // 180k was about the history that just got replaced; the bar says nothing until the next
+  // `model.usage` measures the new prompt (ADR-105 ②).
+  assert.equal(compacted.usage, null);
 });
 
 test('a closed transport is a fact about the view, not a wipe', () => {
