@@ -124,8 +124,8 @@ npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" 
 - [x] `tools/list` 出现在模型工具表中，命名是 `mcp__<server>__<tool>`
 - [x] 一次 `tools/call` 成功，结果进入对话
 - [x] 未受信工作区的项目层 `mcp.servers` 被跳过，并说明原因
-- [ ] 服务器中途退出：调用失败、**不自动重启**
-- [ ] `turn.cancel` 后服务器进程被终止
+- [x] 服务器中途退出：调用失败、**不自动重启**
+- [x] `turn.cancel` 后服务器进程被终止
 - [x] 已知不阻塞项：`list_changed` / 分页在真实服务器上很难自然触发，记录即可
 
 ### 4.3 本轮记录（2026-10-21，已发布 `1.0.0-beta.2`）
@@ -134,6 +134,9 @@ npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" 
 - 【会话 `sess_e0180077-5a3b-4fa8-95c4-0601bb144d7b`】模型调用 `mcp__everything__echo`，返回 `Echo: mcp-ok`，结果进入对话——命名与 `tools/call` 两条都成立
 - 【未受信项目层】在仓库里写 `cowcat.json` 增加 `projonly` 服务器、用没有 `trust.json` 的临时 home 跑 `doctor`：`mcp 1 个：everything（未受信跳过 1 个）`，跳过与原因都可见
 - 【进程】`run` 结束后按命令行匹配 `server-everything` 的 `node` 进程数为 0
+- 【服务器中途退出，会话 `sess_7c5b61e9-1675-4d56-9726-13dc80260c60`】用自写的 mini server（`die` 不回答直接退出）：第一次 `mcp__mini__die` → `ok=false`，输出 `MCP server exited (exit code 0)`；紧接着 `mcp__mini__echo` → 输出 `MCP server exited (exit code 0); no restart is attempted (ADR-087 ②)`
+- 【`turn.cancel`，会话 `sess_2b47fd80-fd8f-4018-947e-31096ff587d9`】用 `cowcat serve` + 协议脚本驱动：`approval.respond once` 后工具进入 60s 的 `sleep`，4 秒后发 `turn.cancel`。结果：`tool.finished ok=false`、输出 `MCP request tools/call was cancelled`；终端 `cancelled`；按命令行匹配的 mini server 进程数 **1 → 0**（取消前 1，取消后 0）
+- 协议提醒（这次踩到的）：`session.create` **不订阅事件**，必须再调 `session.open` 才会收到 `event` 通知（`packages/protocol/src/server.ts:203`）
 - 未验证：服务器中途退出的「失败且不重启」；`turn.cancel` 后进程被终止（两条都需要可控的会崩溃服务器或协议级取消）
 
 
@@ -196,7 +199,7 @@ COWCAT_HOME：临时目录 / 真实 home
 |---|---|---|---|---|
 | 2026-10-21 | 安装/迁移 | 通过（§1.1–§1.3，已发布 beta.2 + 源码） | §1.4（临时 home 的迁移与回滚；真实 home 已是 v2，未重复迁移） | — |
 | 2026-10-21 | 编码任务 | 通过（4 轮同一会话 + 1 次拒绝路径；§2.1） | 测试 5/5、无重复读、`instructions.loaded` 1 次 | — |
-| 2026-10-21 | MCP | 通过（list 命名 + 一次 call；§4.3） | `mcp__everything__echo` → `Echo: mcp-ok`；未受信项目层跳过 1 个 | — |
+| 2026-10-21 | MCP | 通过（list 命名 + call + 崩溃不重启 + cancel 杀进程；§4.3） | `mcp__everything__echo` → `Echo: mcp-ok`；`die` 后第二次调用报 no restart；cancel 前后进程 1→0 | — |
 | | 编码任务 | | | |
 | | 长会话/子 agent | | | |
 | | TUI | | | |
