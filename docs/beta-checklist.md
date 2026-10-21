@@ -23,9 +23,9 @@ cowcat --version
 cowcat doctor
 ```
 
-- [ ] `cowcat --version` = `1.0.0-beta.2`
-- [ ] `doctor` 没有因缺配置崩溃；未配置模型时是 `not-configured` 而不是 FAIL
-- [ ] `cowcat setup --preset anthropic/claude-sonnet-5-5 --print` 能输出 v2 配置且不落盘
+- [x] `cowcat --version` = `1.0.0-beta.2`
+- [x] `doctor` 没有因缺配置崩溃；未配置模型时是 `not-configured` 而不是 FAIL
+- [x] `cowcat setup --preset anthropic/claude-sonnet-5-5 --print` 能输出 v2 配置且不落盘
 
 ### 1.2 v1 配置迁移（先在临时 home）
 
@@ -36,21 +36,31 @@ COWCAT_HOME="$TEST_HOME" cowcat setup --migrate
 COWCAT_HOME="$TEST_HOME" cowcat doctor
 ```
 
-- [ ] 生成 `config.json.bak`
-- [ ] 新配置不含 `apiKey` 值，只含 `apiKeyEnv`
-- [ ] `model.preset` / `model.providers` 形状正确
-- [ ] `mcp.json` 的 `mcpServers` 进入 `mcp.servers`；含 `env` 的条目有明确警告
-- [ ] `permissions` 未静默丢弃，有警告
-- [ ] `doctor` 的模型、endpoint、key 行正确
-- [ ] 把 `.bak` 还原后，v1 原文件仍可用（回滚演练）
+- [x] 生成 `config.json.bak`
+- [x] 新配置不含 `apiKey` 值，只含 `apiKeyEnv`
+- [x] `model.preset` / `model.providers` 形状正确
+- [x] `mcp.json` 的 `mcpServers` 进入 `mcp.servers`；含 `env` 的条目有明确警告
+- [x] `permissions` 未静默丢弃，有警告
+- [x] `doctor` 的模型、endpoint、key 行正确
+- [x] 把 `.bak` 还原后，v1 原文件仍可用（回滚演练）
 
 确认后再对真实 home 执行一次，并保留备份。
 
 ### 1.3 从源码
 
-- [ ] protocol → cowcat → tui → cli 依次构建成功
-- [ ] `node packages/cli/dist/src/cli/main.js --version` 正确
-- [ ] `none` 配置下 `doctor` 通过
+- [x] protocol → cowcat → tui → cli 依次构建成功
+- [x] `node packages/cli/dist/src/cli/main.js --version` 正确
+- [x] `none` 配置下 `doctor` 通过
+
+### 1.4 本轮记录（2026-10-21，`1.0.0-beta.2`）
+
+- 【已发布产物】`npx --yes --registry=https://registry.npmjs.org @corescense/cowcat@beta --version` → `1.0.0-beta.2`。Node 24 下会出现 `@opentui/core` 的 `EBADENGINE` 警告，那是 TUI 的 Node ≥ 26.4 门槛，不影响 `run` / `serve` / `doctor`
+- 【已发布产物】空 `COWCAT_HOME` 的 `doctor` → 通过；模型行是 `未配置（not-configured）`，不是 FAIL
+- 【已发布产物】迁移演练：临时 home + 合成的 v1 配置（内联 `apiKey`、`permissions`、未知键）与含 `env` 的 `mcp.json`
+  - 生成 `config.json.bak`；新配置只有 `apiKeyEnv`，`sk-…` 与 `SECRET` 均不在文件里
+  - 警告逐条给出：内联 key、`permissions` 不迁移、未知键、mcp `env` 不迁移
+  - 回滚：`.bak` 还原后 `doctor` 仍通过（v1 兼容读取，内联 key 只在内存）
+- 【源码】protocol → cowcat → tui → cli 依次构建通过；`--version` = `1.0.0-beta.2`；空配置 `doctor` 通过
 
 ## 2. 真实编码任务
 
@@ -164,7 +174,7 @@ COWCAT_HOME：临时目录 / 真实 home
 
 | 日期 | 轨道 | 结果 | 证据 | issue |
 |---|---|---|---|---|
-| | 安装/迁移 | | | |
+| 2026-10-21 | 安装/迁移 | 通过（§1.1–§1.3，已发布 beta.2 + 源码） | §1.4（临时 home 的迁移与回滚；真实 home 已是 v2，未重复迁移） | — |
 | | 编码任务 | | | |
 | | 长会话/子 agent | | | |
 | | TUI | | | |

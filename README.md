@@ -4,7 +4,7 @@
 
 CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回合状态可重放、策略与审批在内核里，前端（TUI / headless）只读协议。它支持 Anthropic 与 OpenAI 兼容的模型端点，也支持通过 stdio 接入 MCP 服务器。
 
-**状态：`1.0.0-beta.1`（P8 发布切换）。** v1（`agent/`）已在 P8 删除；v1 的用户配置以兼容模式读取（ADR-089），不会重写文件。
+**状态：`1.0.0-beta.2`（P8 发布切换）。** v1（`agent/`）已在 P8 删除；v1 的用户配置以兼容模式读取（ADR-089），不会重写文件。`latest` 仍是 v1 的 `0.15.0`，beta 用 `@beta`。
 
 ## 要求
 
@@ -20,9 +20,12 @@ npm i -g @corescense/cowcat@beta
 
 cowcat doctor
 cowcat setup --migrate      # 从 v1 升级：备份并迁移 ~/.cowcat/config.json，不复制密钥
+cowcat trust                # 信任当前目录：项目层 cowcat.json 的 allow 与 AGENTS.md 才会生效
 cowcat run "解释一下这个仓库的入口"
 cowcat                      # TUI（需要 Node >= 26.4）
 ```
+
+`cowcat trust` 记录的是**目录本身**（精确匹配、不继承子目录，ADR-028）；`--list` 查看、`--remove` 撤销。未信任时 `AGENTS.md` 不会注入，`run` 会打印一行说明（ADR-092/093）。
 
 配置用户层 `~/.cowcat/config.json`：
 
