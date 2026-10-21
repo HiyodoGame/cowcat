@@ -4,8 +4,8 @@ import type { ModelPreset, ModelProtocol } from '../kernel/preset.js';
  * The built-in model table (ADR-063 D1).
  *
  * Deliberately small, and every number is sourced rather than typed from memory: the
- * entries come from v1's distilled catalog (`agent/assets/providers.json`, itself
- * distilled from models.dev), because a wrong output ceiling is not a cosmetic error — it
+ * entries come from v1's distilled catalog (removed with `agent/` in P8; the values are
+ * kept here), because a wrong output ceiling is not a cosmetic error — it
  * is a request the vendor refuses (ADR-044), and a wrong endpoint sends a key to the
  * wrong host.
  *

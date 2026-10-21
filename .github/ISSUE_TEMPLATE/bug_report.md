@@ -23,7 +23,7 @@ assignees: ''
 ## 环境
 
 - CowCat 版本（`cowcat --version`）：
-- 形态：`agent/` v1 还是本地构建的 v2？
+- 安装形态：npm 全局安装 / 本地构建（`packages/`）
 - 平台：<!-- Windows 11 / macOS 15 / Ubuntu 24.04 / WSL2 -->
 - Node 版本（`node -v`）：
 - 模型与端点：<!-- 厂商与模型名；不要贴 API key -->

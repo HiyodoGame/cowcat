@@ -4,8 +4,8 @@ node_modules/
 packages/*/dist/
 *.tgz
 .keys.env
-# 顶部锚定：这是仓库根目录下的本地沙箱/试验目录。不锚定会连
-# agent/src/sandbox/（真正的源码目录）一起忽略掉——2026-10-16 踩过。
+# 顶部锚定：这是仓库根目录下的本地沙箱/试验目录。
+# 不锚定会把 packages/ 里任何叫 sandbox 的源码目录一起忽略（2026-10-16 踩过）。
 /sandbox/
 
 # 逆向 / 打包产物：只保留在本地，不进仓库（发布 tarball 亦不含）

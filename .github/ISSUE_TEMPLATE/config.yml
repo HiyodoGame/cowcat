@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/HiyodoGame/cowcat/security/advisories/new
     about: 通过私密通道报告，细节不会被公开。
   - name: 用法与配置问题
-    url: https://github.com/HiyodoGame/cowcat/blob/main/docs/USAGE.md
-    about: 先看用法文档与 FAQ 式的常见问题，多数「怎么用」类问题在那里有答案。
+    url: https://github.com/HiyodoGame/cowcat/blob/main/README.md
+    about: 先看 README 的命令、配置与包结构，再开 issue。

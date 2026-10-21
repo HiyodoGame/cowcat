@@ -1,17 +1,17 @@
 ## 这个 PR 做了什么
 
-<!-- 一到两句：改了什么、为什么（对齐 docs/ROADMAP.md 的批次，或 docs/dev-plan-v2.md 的阶段）。 -->
+<!-- 一到两句：改了什么、为什么（对齐 docs/dev-plan-v2.md 的阶段或 ADR）。 -->
 
 ## 自检清单
 
-- [ ] `cd agent && npm test` 全绿（`pretest` 会先跑 ESLint）
 - [ ] `cd packages/cowcat && npm test` 全绿（`pretest` = tsc build + ESLint）
-- [ ] CI 全绿（必过三项：`packages/cowcat · node 22`、`test · node 22`、`package whitelist`）
-- [ ] 有用户可见变化时，`docs/changelog.md` 的版本段落已更新（新版本段落先带「未发布」标记）
-- [ ] 有行为/用法变化时，`docs/USAGE.md` 已同步
-- [ ] 批次性改动已在 `docs/fix-plan-*.md` 记录（做什么、为什么、验证证据、未做项）
+- [ ] `cd packages/cli && npm test` 全绿
+- [ ] 改动触及协议/TUI 时，对应包也跑过测试
+- [ ] CI 全绿（四个包 + `package whitelist`）
+- [ ] 有用户可见变化时，`docs/changelog.md` 已更新（新版本段落先带「未发布」标记）
+- [ ] 契约性变更先更新 `docs/architecture/README.md` 的 ADR 表，再改代码
 - [ ] 没有把密钥、内部会话日志、抓包/提示词素材、他人代码的逐字提取物提交进仓库
-- [ ] 版本号仅在**发布批次**里变更（`agent/package.json`）
+- [ ] 版本号仅在**发布批次**里变更（四个 `package.json` + `tools/pack-release.mjs` 的 `VERSION`）
 
 ## 验证证据
 

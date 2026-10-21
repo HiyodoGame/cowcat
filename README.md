@@ -2,82 +2,101 @@
 
 > 跑在你自己终端里的开源 CLI 编程 Agent。代码、密钥、终端都在你手里。
 
-CowCat is an interactive CLI coding agent that talks to any Anthropic-compatible or
-OpenAI-compatible model endpoint — including Kimi for Coding — and keeps your code, your
-keys and your terminal under your own control. Zero runtime dependencies, Node.js >= 20.
+CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回合状态可重放、策略与审批在内核里，前端（TUI / headless）只读协议。它支持 Anthropic 与 OpenAI 兼容的模型端点，也支持通过 stdio 接入 MCP 服务器。
 
-完整功能清单见 [`agent/README.md`](agent/README.md)。
+**状态：`1.0.0-beta.1`（P8 发布切换）。** v1（`agent/`）已在 P8 删除；v1 的用户配置以兼容模式读取（ADR-089），不会重写文件。
 
-## 状态
+## 要求
 
-| 形态 | 位置 | 状态 |
-|---|---|---|
-| **v1 CLI**（当前唯一可发布版本） | [`agent/`](agent/) | 已发布 `0.15.0`（npm `@corescense/cowcat`），MIT，零运行时依赖 |
-| **v2 内核**（事件溯源会话运行时） | [`packages/cowcat/`](packages/cowcat/) | P0–P5 完成（内核、端口、执行网关、模型适配器、七个核心工具）；P6 的组合根与宿主已落地（ADR-063/064） |
-| **v2 前端与可执行文件** | [`packages/protocol/`](packages/protocol/) · [`packages/tui/`](packages/tui/) · [`packages/cli/`](packages/cli/) | headless 协议 + `cowcat` 可执行文件（六个动词里五个可用，`setup` 未接线）；**TUI 已到卡片层**（对话流 / 工具卡 / 审批卡 / 待办 / 命令面板 + 帧快照），图片渲染见 T9 |
+- Node.js **>= 22**（`cowcat tui` / `sessions resume` 需要 **>= 26.4**，因为 opentui）
+- 一个 Anthropic 或 OpenAI 兼容的模型端点与 API key（CowCat 不附带 key）
 
-v1 与 v2 长期并存，v2 达到功能对等后才切换（计划中的 P8），在那之前 `agent/` 只接受安全修复。
-
-## 快速开始
+## 快速开始（从源码）
 
 ```bash
-npm i -g @corescense/cowcat
+# 四个包按依赖顺序构建（file: 依赖是链接，不会自动构建）
+(cd packages/protocol && npm ci && npm run build)
+(cd packages/cowcat && npm ci && npm run build)
+(cd packages/tui && npm ci && npm run build)
+(cd packages/cli && npm ci && npm run build)
 
-cowcat setup     # 交互向导：provider / base URL / API key（不回显）/ 模型
-cowcat doctor    # 逐项检查配置与 API 连通性
-cowcat           # 进入 REPL
+node packages/cli/dist/src/cli/main.js doctor
 ```
 
-也可以全部走环境变量：
+配置用户层 `~/.cowcat/config.json`：
+
+```json
+{
+  "model": { "preset": "anthropic/claude-sonnet-5-5" },
+  "providers": { "anthropic": { "apiKeyEnv": "ANTHROPIC_API_KEY" } }
+}
+```
+
+然后：
 
 ```bash
-export COWCAT_PROVIDER=anthropic
-export COWCAT_BASE_URL=https://api.kimi.com/coding
-export COWCAT_API_KEY=sk-...
-export COWCAT_MODEL=kimi-for-coding
-
-cowcat "读一下 src/index.js，说清楚它做了什么"     # 一次性，写操作前会询问
-cowcat -p "..."                                    # 非交互 print 模式：写操作自动拒绝（退出码 != 0）
-cowcat -p --output-format stream-json "..."         # CI 用：纯 NDJSON 事件流
+export ANTHROPIC_API_KEY=...
+node packages/cli/dist/src/cli/main.js run "解释一下这个仓库的入口"
+node packages/cli/dist/src/cli/main.js          # TUI（需要 Node >= 26.4）
 ```
 
-任何 Anthropic 兼容（`/v1/messages`）或 OpenAI 兼容（`/chat/completions`）端点都能接。
+发布到 npm 后（人工 2FA）可直接 `npm i -g @corescense/cowcat`。
 
-**CowCat 不附带任何 API key，也不内置任何模型端点。** 你自己带 key、自己带端点、自己带模型。
+## 命令
 
-## 仓库结构
+| 动词 | 作用 |
+|---|---|
+| `cowcat` / `cowcat tui` | 交互式 TUI（Node ≥ 26.4） |
+| `cowcat run "<prompt>"` | 一次性回合；默认拒绝所有审批，`--yes` 放行 |
+| `cowcat serve` | headless JSON-RPC over stdio |
+| `cowcat sessions list\|resume <id>` | 会话列表 / 恢复 |
+| `cowcat doctor` | 环境、配置、信任、指令链、沙箱、模型与 key 逐项检查 |
+| `cowcat setup` | **尚未接线** |
 
+## 配置
+
+- 用户层：`~/.cowcat/config.json`
+- 项目层：`<cwd>/cowcat.json`（`rules`、`mcp.servers` 受工作区信任约束）
+- 会话层：`--config <path>`
+- 密钥只从环境变量读取（`apiKeyEnv`）；v1 的内联 `apiKey` 仅在兼容模式下于内存中使用，不写回、不记录
+
+MCP 服务器（stdio）：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "everything": { "command": "node", "args": ["/path/to/server-everything/dist/index.js", "stdio"] }
+    }
+  }
+}
 ```
-agent/            v1 CLI（可发布版本，零运行时依赖，Node >= 20）
-packages/cowcat/     v2 内核 + 组合根（TypeScript strict，Node >= 22）
-packages/protocol/   v2 headless 协议（JSON-RPC over stdio，无渲染器、无内核，Node >= 22）
-packages/tui/        v2 渲染器（opentui，Node >= 26.4；协议客户端与组件见 T7）
-packages/cli/        v2 可执行文件（bin + 子命令表 + doctor，Node >= 22）
-docs/
-  architecture/   v2 架构契约与 ADR 表（01 分层 / 02 内核 / 03 策略与执行 / 04 依赖 / 05 平台）
-  research/       阶段调研记录（P1 内核、P2 端口）
-  dev-plan-v2.md  v2 开发计划（阶段、调研问题、出口标准）
-  sandbox-system-plan-2026-10-16.md  沙箱威胁模型与验收判据（G1–G8）
-  USAGE.md        用法；CONTRIBUTING.md 见仓库根目录；PUBLISH.md 发布流程
-tools/            打包白名单守卫、Seatbelt 冒烟工具、logging proxy（e2e 用）
-bin/              全局启动 shim
-```
 
-## 沙箱
+## 包结构
 
-Bash 工具有三档隔离，策略与实测结论见 [`docs/sandbox-system-plan-2026-10-16.md`](docs/sandbox-system-plan-2026-10-16.md)：
+| 包 | 内容 |
+|---|---|
+| `@corescense/cowcat` | 可执行文件（`packages/cli`） |
+| `@corescense/cowcat-core` | 内核、策略、端口、工具与组合根（`packages/cowcat`） |
+| `@corescense/cowcat-protocol` | headless JSON-RPC 协议（`packages/protocol`） |
+| `@corescense/cowcat-tui` | 终端渲染器，动态加载（`packages/tui`） |
 
-| 档 | 平台 | 说明 |
-|---|---|---|
-| `light`（默认） | 全平台 | 环境变量脱敏 + 静态命令分级 + 审计。**护栏，不是安全边界** |
-| `system` | Linux / WSL2（`bubblewrap`）、macOS（`sandbox-exec`） | OS 级隔离：读限项目与系统目录、写限项目、网络默认关、每次调用独立私有临时目录 |
-| `system` | Windows 原生 | **不支持**，显式拒绝并引导 WSL2 / Docker Sandboxes |
+本地开发继续使用 `file:` 依赖（ADR-062）；发布由 `tools/pack-release.mjs` 改写为精确版本（ADR-090）。
 
-## 参与开发
+## 文档
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)：分支与 PR 流程、提交信息约定、CI 门禁、发布批次、本地 git 钩子。
-安全问题请按 [SECURITY.md](SECURITY.md) 报告，**不要**开公开 issue。
+- [`docs/dev-plan-v2.md`](docs/dev-plan-v2.md)：阶段计划与出口标准
+- [`docs/architecture/`](docs/architecture/)：ADR 表（001~090）与分层、内核、策略、平台契约
+- [`docs/HANDOFF.md`](docs/HANDOFF.md)：最近一次交接快照
+- [`docs/research/`](docs/research/)：各阶段调研（含 MCP 2026-07-28 对照与真实端点实测）
+- [`docs/archive/`](docs/archive/)：v1 与旧架构的历史档案，不是现行规范
+
+## 安全
+
+- 所有子进程只经 `ProcessPort` 启动；env 脱敏、输出截断与进程树终止都在网关里（ADR-014/015）。
+- `light` 档**不是** OS 级沙箱，只做脱敏与审计。
+- 密钥不写日志、不进配置模板；`doctor` 只报告「是否设置」。
 
 ## 许可
 
-MIT — © 2026 心感科技（深圳）有限公司 (CoreScense)，见 [LICENSE](LICENSE)。
+MIT。见 [`LICENSE`](LICENSE)。
