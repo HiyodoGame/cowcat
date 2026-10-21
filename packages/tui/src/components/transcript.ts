@@ -1,6 +1,6 @@
 import type { Entry, TuiView } from '../app/view.js';
 import { revealedReasoning } from '../app/view.js';
-import { approvalCardLines, noticeLines } from './approval-card.js';
+import { noticeLines } from './approval-card.js';
 import { assistantMessageLines, userMessageLines } from './message.js';
 import { callSummary, runningToolLines, toolCardLines } from './tool-card.js';
 import { line, type Line } from '../ui/line.js';
@@ -70,11 +70,6 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
 
   if (view.streaming !== '') {
     lines.push(...wrap(view.streaming, options.width).map((row) => line(row, 'assistant')));
-  }
-
-  if (view.approval !== null) {
-    if (view.streaming !== '') lines.push(line('', 'text'));
-    push({ lines: approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }), images: [] });
   }
 
   return { lines, images };

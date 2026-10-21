@@ -2,8 +2,9 @@ import { COMMANDS } from '../app/commands.js';
 import { copyFor, type Copy } from '../app/copy.js';
 import { runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
-import { line } from '../ui/line.js';
+import type { Line } from '../ui/line.js';
 import { agentPanelLines } from './agent-panel.js';
+import { approvalCardLines } from './approval-card.js';
 import { paletteLines } from './palette.js';
 import { statusLine } from './status-bar.js';
 import { todoPanelLines } from './todo-panel.js';
@@ -30,6 +31,8 @@ import { transcriptLines } from './transcript.js';
 export interface FrameOptions {
   readonly width: number;
   readonly now: number;
+  /** The terminal's rows, so the dock can be capped. Omitted by tests that only pin width. */
+  readonly height?: number;
 }
 
 export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
@@ -37,19 +40,27 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   const body = [...transcript.lines];
   const images = [...transcript.images];
 
-  if (view.todosVisible && view.todos.length > 0) {
-    body.push(line('', 'text'), ...todoPanelLines(view.todos, options.width));
+  // Fixed panels, in priority order: a question first, then what is running, then the plan.
+  // They live in the dock so scrolling the transcript cannot move them (ADR-101).
+  const dock: Line[] = [];
+  if (view.approval !== null) {
+    dock.push(...approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }));
   }
   const agents = runningAgents(view);
   if (agents.length > 0) {
-    body.push(line('', 'text'), ...agentPanelLines(agents, options.width, options.now));
+    dock.push(...agentPanelLines(agents, options.width, options.now));
+  }
+  if (view.todosVisible && view.todos.length > 0) {
+    dock.push(...todoPanelLines(view.todos, options.width));
   }
   if (view.palette !== null) {
-    body.push(line('', 'text'), ...paletteLines(COMMANDS, view.palette.index, options.width));
+    dock.push(...paletteLines(COMMANDS, view.palette.index, options.width));
   }
+  const maxDock = options.height === undefined ? dock.length : Math.max(3, Math.floor(options.height * 0.4));
 
   return {
     body,
+    dock: dock.slice(0, maxDock),
     images,
     status: statusLine(view, options),
     placeholder: placeholderFor(view, copyFor(view.lang)),

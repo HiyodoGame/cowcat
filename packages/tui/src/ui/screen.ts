@@ -38,6 +38,16 @@ import type { Line } from './line.js';
 const BODY_CHROME_ROWS = 6;
 
 /**
+ * The reading width, in columns (ADR-101).
+ *
+ * A 200-column terminal made every card 198 columns wide with one line of content and a
+ * border at the far right — the screenshot that prompted this. Claude Code and Codex both
+ * keep a readable column; 100 is the width this interface was designed and snapshot-tested
+ * against.
+ */
+const READING_WIDTH = 100;
+
+/**
  * An image, as a rectangle of the frame rather than a line of it.
  *
  * Images are a separate channel on purpose: a `Line` is text with a theme token, and a pixel
@@ -59,6 +69,8 @@ export interface ImageSlot {
 
 export interface ScreenSpec {
   readonly body: readonly Line[];
+  /** Fixed panels above the status line: approval, running agents, todos (ADR-101). */
+  readonly dock?: readonly Line[];
   readonly status: Line;
   readonly placeholder: string;
   readonly images?: readonly ImageSlot[];
@@ -76,6 +88,8 @@ export interface Screen {
    * up two cells too wide and wraps itself out of its own box (measured: they did).
    */
   contentWidth(): number;
+  /** The terminal's rows; the frame uses it to cap the dock. */
+  contentHeight(): number;
   /** Called with the input's value when the user presses Enter. */
   onSubmit(handler: (value: string) => void): () => void;
   /** Every keypress, including the ones the input swallowed. */
@@ -105,11 +119,28 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   renderer.root.add(root);
 
+  const page = new BoxRenderable(renderer, {
+    id: 'cowcat-page',
+    width: '100%',
+    maxWidth: READING_WIDTH,
+    alignSelf: 'center',
+    flexGrow: 1,
+    flexDirection: 'column',
+  });
   const body = new BoxRenderable(renderer, {
     id: 'cowcat-body',
     flexGrow: 1,
     width: '100%',
     flexDirection: 'column',
+    overflow: 'hidden',
+  });
+  // The dock: approvals, running agents and todos live here, above the status line, and
+  // never scroll with the transcript (ADR-101).
+  const dock = new BoxRenderable(renderer, {
+    id: 'cowcat-dock',
+    width: '100%',
+    flexDirection: 'column',
+    flexShrink: 0,
   });
   const status = new TextRenderable(renderer, {
     id: 'cowcat-status',
@@ -149,13 +180,17 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   inputBox.add(prompt);
   inputBox.add(input);
-  root.add(body);
-  root.add(status);
-  root.add(inputBox);
+  page.add(body);
+  page.add(dock);
+  page.add(status);
+  page.add(inputBox);
+  root.add(page);
 
   // One renderable per line, updated in place when only the text or the colour changed.
   const mounted: TextRenderable[] = [];
   const specs: (Line | undefined)[] = [];
+  const dockMounted: TextRenderable[] = [];
+  const dockSpecs: (Line | undefined)[] = [];
   const images: ImageRenderable[] = [];
 
   let hitHandler: (id: string) => void = () => undefined;
@@ -182,7 +217,15 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     scrollHandler(scroll.direction === 'up' ? step : -step);
   };
 
-  function updateBody(lines: readonly Line[], scroll: number): number {
+  function mountLines(
+    container: BoxRenderable,
+    target: TextRenderable[],
+    specArray: (Line | undefined)[],
+    lines: readonly Line[],
+    scroll: number,
+    room: number,
+    idPrefix: string,
+  ): number {
     // The tail, cut here rather than by a scroll box. Two measured reasons: a `ScrollBox` draws
     // a vertical scrollbar in the last column — a column the cards then do not have, so they
     // wrap and lose their right border — and its `stickyStart: 'bottom'` did not hold, so the
@@ -192,7 +235,6 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     //
     // `scroll` is how many lines the reader has moved up from that tail: 0 follows new output,
     // which is the default and what a snapshot sees.
-    const room = Math.max(1, renderer.height - BODY_CHROME_ROWS);
     const maxScroll = Math.max(0, lines.length - room);
     const offset = Math.max(0, Math.min(maxScroll, scroll));
     const start = Math.max(0, lines.length - room - offset);
@@ -200,11 +242,11 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     for (let index = 0; index < visible.length; index += 1) {
       const spec = visible[index];
       if (spec === undefined) continue;
-      const previous = specs[index];
-      const existing = mounted[index];
+      const previous = specArray[index];
+      const existing = target[index];
       if (existing === undefined) {
         const created = new TextRenderable(renderer, {
-          id: `cowcat-line-${String(index)}`,
+          id: `${idPrefix}-${String(index)}`,
           content: spec.text,
           fg: resolve(theme, spec.token),
           attributes: spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE,
@@ -218,9 +260,9 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
           flexShrink: 0,
         });
         attachHit(created, spec);
-        mounted[index] = created;
-        specs[index] = spec;
-        body.add(created);
+        target[index] = created;
+        specArray[index] = spec;
+        container.add(created);
         continue;
       }
       if (
@@ -236,16 +278,16 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       existing.fg = resolve(theme, spec.token);
       existing.attributes = spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE;
       attachHit(existing, spec);
-      specs[index] = spec;
+      specArray[index] = spec;
     }
     // Shorter than before: unmount the tail. `remove` takes the id, and the array stays
     // aligned with the on-screen order.
-    for (let index = visible.length; index < mounted.length; index += 1) {
-      const extra = mounted[index];
-      if (extra !== undefined) body.remove(extra);
+    for (let index = visible.length; index < target.length; index += 1) {
+      const extra = target[index];
+      if (extra !== undefined) container.remove(extra);
     }
-    mounted.length = visible.length;
-    specs.length = visible.length;
+    target.length = visible.length;
+    specArray.length = visible.length;
     // Where the visible window starts, so an image's row can be mapped onto it.
     return start;
   }
@@ -298,12 +340,29 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
 
   return {
     contentWidth() {
-      // Two cells for the root box's own border. Everything inside is laid out by width alone,
-      // so this is the one place that has to know about it.
-      return Math.max(8, renderer.width - 2);
+      // Two cells for the root box's own border, then the reading-width cap (ADR-101): a
+      // 200-column terminal gets a 100-column page, not a 198-column card.
+      return Math.min(Math.max(8, renderer.width - 2), READING_WIDTH);
+    },
+    contentHeight() {
+      return renderer.height;
     },
     update(spec) {
-      const viewStart = updateBody(spec.body, spec.scroll ?? 0);
+      // The dock takes its rows out of the transcript's budget; capping it at half the body
+      // keeps a three-card dock from erasing the conversation on a 24-row terminal.
+      const dockLines = spec.dock ?? [];
+      const bodyBudget = Math.max(1, renderer.height - BODY_CHROME_ROWS);
+      const dockRoom = Math.min(dockLines.length, Math.max(1, Math.floor(bodyBudget / 2)));
+      mountLines(dock, dockMounted, dockSpecs, dockLines.slice(0, dockRoom), 0, dockRoom, 'cowcat-dock');
+      const viewStart = mountLines(
+        body,
+        mounted,
+        specs,
+        spec.body,
+        spec.scroll ?? 0,
+        Math.max(1, bodyBudget - dockRoom),
+        'cowcat-line',
+      );
       updateImages(spec.images ?? [], viewStart);
       status.content = spec.status.text;
       status.fg = resolve(theme, spec.status.token);

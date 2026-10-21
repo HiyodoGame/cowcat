@@ -117,7 +117,11 @@ test('a turn with a tool and an approval, over the protocol, as the frontend ren
     view = project(view, event);
   });
 
-  const frame = (): string => frameOf(view, { width: 60, now: 0 }).body.map((row) => row.text).join('\n');
+  const frame = (): string => {
+    const rendered = frameOf(view, { width: 60, now: 0 });
+    // Fixed panels (the approval card among them) live in the dock, not the transcript.
+    return [...rendered.body, ...(rendered.dock ?? [])].map((row) => row.text).join('\n');
+  };
 
   try {
     await client.initialize();
