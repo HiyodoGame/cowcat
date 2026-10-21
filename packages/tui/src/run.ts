@@ -279,7 +279,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
     /**
      * A click, decoded. The UI layer only carries the id (`tool:<callId>`,
-     * `thinking`, `approval:<n>`); what each means is a decision for this loop.
+     * `thinking`, `approval:<n>`, `scroll:bottom`); what each means is a decision for this loop.
      */
     function handleHit(id: string): void {
       if (id.startsWith('tool:')) {
@@ -301,6 +301,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = withInput(view.current, '');
           apply(command.run(view.current));
         }
+        return;
+      }
+      if (id === 'scroll:bottom') {
+        view.current = resetScroll(view.current);
+        draw();
         return;
       }
       if (id.startsWith('approval:')) {

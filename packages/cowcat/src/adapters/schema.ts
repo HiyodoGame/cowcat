@@ -159,7 +159,15 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // every log written before this field existed says.
     parent: z.object({ sessionId: z.string(), role: z.enum(['explore', 'general']) }).optional(),
   }),
-  z.object({ ...base, type: z.literal('turn.opened'), input: z.string(), model: z.string().optional() }),
+  z.object({
+    ...base,
+    type: z.literal('turn.opened'),
+    input: z.string(),
+    model: z.string().optional(),
+    // ADR-105: the window the turn ran under, when the preset declares one. Absent is the
+    // shape of every log written before this field existed.
+    contextWindow: z.number().int().positive().optional(),
+  }),
   z.object({
     ...base,
     type: z.literal('turn.transitioned'),

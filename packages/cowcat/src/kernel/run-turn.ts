@@ -225,7 +225,10 @@ async function runTurnBody(
   // Instructions go in **before** the turn opens, so the model reads the repository's
   // rules ahead of the request rather than after it (ADR-078 ①).
   await ensureInstructions(deps, (item) => note(item, null));
-  await session.openTurn(input, deps.preset.model);
+  await session.openTurn(input, {
+    model: deps.preset.model,
+    ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
+  });
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
   // One automatic compaction check per turn (ADR-073): the history only grows while the

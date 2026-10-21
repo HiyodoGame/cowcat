@@ -59,6 +59,34 @@ test('a plain answer completes the turn in one model call', async () => {
   ]);
 });
 
+test('turn.opened records the model and the context window the preset declared (ADR-105)', async () => {
+  const model = new ScriptedModel([[{ type: 'text', text: 'hello' }]]);
+  const store = new MemoryEventStore();
+  const session = await Session.create(sessionDeps(store), 'sess_window');
+  const deps = turnDeps(session, model, {
+    preset: { model: 'fixture-model', limits: { output: 1024, context: 200_000 } },
+  });
+  await runTurn(deps, 'hi', new AbortController().signal);
+
+  const opened = store.events.find((event) => event.type === 'turn.opened');
+  if (opened?.type !== 'turn.opened') assert.fail('expected a turn.opened event');
+  assert.equal(opened.model, 'fixture-model');
+  assert.equal(opened.contextWindow, 200_000);
+});
+
+test('turn.opened omits the window when the preset declares none', async () => {
+  const model = new ScriptedModel([[{ type: 'text', text: 'hello' }]]);
+  const store = new MemoryEventStore();
+  const session = await Session.create(sessionDeps(store), 'sess_no_window');
+  await runTurn(turnDeps(session, model), 'hi', new AbortController().signal);
+
+  const opened = store.events.find((event) => event.type === 'turn.opened');
+  if (opened === undefined) assert.fail('expected a turn.opened event');
+  // "The preset declares no window" and "the log never said" are the same shape on purpose:
+  // an absent key is what every log written before ADR-105 carries.
+  assert.equal(Object.hasOwn(opened, 'contextWindow'), false);
+});
+
 test('streamed text is shown live but never written to the log', async () => {
   const model = new ScriptedModel([[{ type: 'text', text: 'he' }, { type: 'text', text: 'llo' }]]);
   const { store, session, deps } = await setup(model, []);

@@ -126,6 +126,32 @@ test('truncation and path survive a JSON round trip', () => {
   assert.equal(result.data.path, '/repo/a.txt');
 });
 
+test('turn.opened carries the window when it has one, and stays readable without it', () => {
+  const withWindow: KernelEvent = {
+    seq: 2,
+    ts: 2,
+    sessionId: 'sess',
+    turnId: 'turn_1',
+    type: 'turn.opened',
+    input: 'hi',
+    contextWindow: 200_000,
+  };
+  const parsed = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(withWindow)) as unknown);
+  if (!parsed.success) assert.fail(describeIssues(parsed.error));
+  if (parsed.data.type !== 'turn.opened') assert.fail('expected a turn.opened event');
+  assert.equal(parsed.data.contextWindow, 200_000);
+
+  // Absent is the shape of every log written before ADR-105.
+  const older = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(turnOpened)) as unknown);
+  if (!older.success) assert.fail(describeIssues(older.error));
+  if (older.data.type !== 'turn.opened') assert.fail('expected a turn.opened event');
+  assert.equal(older.data.contextWindow, undefined);
+
+  // Zero and negatives are not windows; a status bar dividing by them prints nonsense.
+  assert.equal(kernelEventSchema.safeParse({ ...turnOpened, type: 'turn.opened', contextWindow: 0 }).success, false);
+  assert.equal(kernelEventSchema.safeParse({ ...turnOpened, type: 'turn.opened', contextWindow: -1 }).success, false);
+});
+
 test('a tool.finished logged before those fields existed decodes with null', () => {
   // Local logs predate the fields (schemaVersion 1 was never published, ADR-019). "The
   // key is absent" and "the tool reported nothing" have to mean the same thing here, or

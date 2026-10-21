@@ -154,7 +154,10 @@ export class Session {
     for (const listener of this.#listeners) listener({ type: 'reasoning.delta', turnId, text });
   }
 
-  async openTurn(input: string, model?: string): Promise<string> {
+  async openTurn(
+    input: string,
+    opening: { readonly model?: string; readonly contextWindow?: number } = {},
+  ): Promise<string> {
     const current = this.#state.turn?.state;
     if (current !== undefined && !isTerminal(current)) throw new Error('a turn is already open');
     const turnId = this.#deps.ids.next('turn');
@@ -162,7 +165,12 @@ export class Session {
       type: 'turn.opened',
       turnId,
       input,
-      ...(model === undefined || model === '' ? {} : { model }),
+      ...(opening.model === undefined || opening.model === '' ? {} : { model: opening.model }),
+      // A non-positive window is not a window: the schema says positive, and a status bar
+      // that divided by it would print a number nobody can act on.
+      ...(opening.contextWindow === undefined || opening.contextWindow <= 0
+        ? {}
+        : { contextWindow: opening.contextWindow }),
     });
     await this.transition('requesting');
     return turnId;

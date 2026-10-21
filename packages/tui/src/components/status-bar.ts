@@ -16,11 +16,11 @@ import type { TokenName } from '../theme/tokens.js';
  * `now`, and `run.ts` stops the tick entirely when animations are off (`COWCAT_ANIMATIONS=off`)
  * or the turn is not running.
  *
- * What it can NOT show today, and why: the model. The session log does not record which model
- * ran a turn (`turn.opened` carries the input, and `model.message` the answer), so the
- * protocol has nothing to hand over. Reproducibility says that fact belongs in the log — the
- * same argument ADR-012 makes for the shell — and it is a kernel contract change with its own
- * ADR, not something a status bar should invent. Recorded in HANDOFF §6.
+ * Where each part comes from: the session id and the turn state are the log's; the model
+ * short name and the context window arrive on `turn.opened` (ADR-102, ADR-105); the token
+ * counts on `model.usage`. That is the whole rule — the bar renders facts the log already
+ * recorded (the same argument ADR-012 makes for the shell) and shows nothing for a field an
+ * older log does not carry.
  */
 export interface StatusOptions {
   readonly now: number;
@@ -41,7 +41,22 @@ export function statusLine(view: TuiView, options: StatusOptions = { now: 0 }): 
     const done = view.todos.filter((todo) => todo.status === 'completed').length;
     parts.push(`待办 ${String(done)}/${String(view.todos.length)}`);
   }
-  if (view.usage !== null) parts.push(`↑${String(view.usage.input)} ↓${String(view.usage.output)}`);
+  if (view.usage !== null) {
+    // A share of the window the turn declared (ADR-105). `input` is the last prompt the
+    // provider billed, which is the closest thing to "how full is it" that a client can know;
+    // with no window, printing a percentage would be inventing the denominator.
+    const window = view.contextWindow;
+    if (window !== null && window > 0) {
+      // Same sum the kernel anchors on (`input + cacheRead + cacheCreation + output`):
+      // `input` alone excludes the cached part of a prompt, which on a cached request is
+      // most of it — the bar would read "5%" while compaction is about to fire. The
+      // denominator is the whole window, so >100% is possible and means the request already
+      // overflowed; the compaction threshold itself is lower (`contextCeiling`).
+      const used = view.usage.input + view.usage.cacheRead + view.usage.cacheCreation + view.usage.output;
+      parts.push(`ctx ${String(Math.round((used / window) * 100))}%`);
+    }
+    parts.push(`↑${String(view.usage.input)} ↓${String(view.usage.output)}`);
+  }
   if (view.closed) parts.push('连接已断开');
   const text = parts.join(' · ');
   return line(options.width === undefined ? text : truncate(text, options.width), state.token);

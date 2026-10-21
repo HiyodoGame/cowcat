@@ -12,7 +12,8 @@ export interface ModelLimits {
    * The model's own ceiling for one response. This is where `maxTokens` comes from
    * (ADR-046 decision ②) — the kernel invents no number when it is absent, and a
    * protocol that requires the field refuses a request without it (ADR-044). `context`
-   * is carried so the catalogue's shape maps over; nothing consults it yet.
+   * is the window: compaction compares its estimate against it (ADR-070), and the TUI
+   * shows how full it is from the copy `turn.opened` records (ADR-105).
    */
   readonly output?: number;
   readonly context?: number;

@@ -192,6 +192,13 @@ export interface TuiView {
   readonly input: string;
   /** The model `turn.opened` reported, for the status bar (ADR-102). */
   readonly model: string | null;
+  /**
+   * The context window `turn.opened` reported, for the status bar's `ctx N%` (ADR-105).
+   *
+   * Null when the log does not say — an older kernel, or a preset that declares no window.
+   * The bar then shows nothing rather than a made-up denominator.
+   */
+  readonly contextWindow: number | null;
   /** When the current turn opened, so the status bar can show elapsed time. */
   readonly turnStartedAt: number | null;
   /** Which `/` menu row is highlighted. */
@@ -202,7 +209,19 @@ export interface TuiView {
   /** The command palette when it is open: which row is selected. */
   readonly palette: { readonly index: number } | null;
   readonly todos: readonly TodoView[];
-  readonly usage: { readonly input: number; readonly output: number } | null;
+  /**
+   * The last `model.usage` the log reported (ADR-041), cache fields included.
+   *
+   * The status bar's `ctx` needs the same sum the kernel anchors on (`input + cacheRead +
+   * cacheCreation + output`): `input` alone excludes the cached part of a prompt, which on
+   * a cached request is most of it (ADR-105 ②).
+   */
+  readonly usage: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheCreation: number;
+  } | null;
   /**
    * Event types this build does not know, first sighting only.
    *
@@ -244,6 +263,7 @@ export function initialView(): TuiView {
     thinkingExpanded: false,
     input: '',
     model: null,
+    contextWindow: null,
     turnStartedAt: null,
     slashIndex: 0,
     attachments: {},

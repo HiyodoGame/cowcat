@@ -571,6 +571,49 @@ test('the status line names the model and counts seconds', () => {
   assert.match(paused.text, /3 条新输出/u);
 });
 
+test('the status line shows how full the context is, and stays quiet when the window is unknown', () => {
+  const view: TuiView = {
+    ...initialView(),
+    sessionId: 'sess_ctx',
+    contextWindow: 200_000,
+    // A cached prompt: `input` alone is 4k, the request really carried 84.2k. Summing the
+    // cache fields is the difference between "2%" and the truth (ADR-105 ②).
+    usage: { input: 4_000, output: 200, cacheRead: 80_000, cacheCreation: 0 },
+  };
+  assert.match(statusLine(view, { now: 0 }).text, /ctx 42%/u);
+  assert.doesNotMatch(statusLine(view, { now: 0 }).text, /ctx 2%/u);
+
+  // An older log (or a preset with no window) has no denominator: no claim, not 0%.
+  assert.doesNotMatch(statusLine({ ...view, contextWindow: null }, { now: 0 }).text, /ctx \d+%/u);
+  // Nothing measured yet: nothing to divide.
+  assert.doesNotMatch(statusLine({ ...view, usage: null }, { now: 0 }).text, /ctx \d+%/u);
+});
+
+test('a paused transcript offers a clickable way back to the bottom (ADR-105)', () => {
+  const paused = { ...initialView(), scrollOffset: 4, newSinceScroll: 3 };
+  const dock = frameOf(paused, { width: WIDTH, now: 0 }).dock ?? [];
+  const row = dock.find((line) => line.hit === 'scroll:bottom');
+  assert.match(row?.text ?? '', /回到底部/u);
+  assert.match(row?.text ?? '', /3 条新输出/u);
+
+  // Following the tail: the button would be chrome on a screen that needs nothing from it.
+  const following = frameOf(initialView(), { width: WIDTH, now: 0 }).dock ?? [];
+  assert.equal(following.some((line) => line.hit === 'scroll:bottom'), false);
+
+  // The dock is capped at 40% of the terminal (never below 3 rows). The button is first, so
+  // a menu or a long todo list cannot push it out (ADR-105 ③).
+  const cramped = frameOf({ ...paused, input: '/' }, { width: WIDTH, height: 6, now: 0 }).dock ?? [];
+  assert.equal(cramped[0]?.hit, 'scroll:bottom');
+
+  // A question outranks navigation: one row, and the answer is what the screen is about.
+  const asking = viewOf([
+    event('turn.opened', { input: '清一下构建目录' }),
+    event('approval.requested', { callId: 'c7', name: 'Bash', rule: 'exec-asks', reason: null }),
+  ]);
+  const askingDock = frameOf({ ...asking, scrollOffset: 4, newSinceScroll: 2 }, { width: WIDTH, now: 0 }).dock ?? [];
+  assert.equal(askingDock.some((line) => line.hit === 'scroll:bottom'), false);
+});
+
 test('the status bar says where the session is, and truncates rather than wrapping', () => {
   seq = 0;
   const idle = viewOf([event('session.opened', { schemaVersion: 1, cowcatVersion: 'x', shell: { kind: 'posix', executable: '/bin/sh' } })]);

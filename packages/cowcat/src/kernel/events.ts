@@ -49,6 +49,12 @@ export type KernelEvent = EventBase &
          * turn is guessing.
          */
         readonly model?: string | undefined;
+        /**
+         * The preset's context window for this turn (ADR-105). Optional for the same reason
+         * `model` is, plus one of its own: a preset may declare no window, and then nothing
+         * local can say how full the context is.
+         */
+        readonly contextWindow?: number | undefined;
       }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
     | {
