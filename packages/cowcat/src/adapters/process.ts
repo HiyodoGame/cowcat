@@ -25,8 +25,9 @@
 
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { SandboxUnavailableError, type PlatformPort, type ProcessExit, type ProcessHandle, type ProcessPort, type ProcessResult, type ProcessSpec, type SandboxBackend, type SandboxMode, type TerminationReason, type TerminationRecord } from '../ports/index.js';
+import { SandboxUnavailableError, type OutputSink, type PlatformPort, type ProcessExit, type ProcessHandle, type ProcessPort, type ProcessResult, type ProcessSpec, type SandboxBackend, type SandboxMode, type TerminationReason, type TerminationRecord } from '../ports/index.js';
 import { redactEnv } from '../policy/env.js';
+import { OutputFlow } from './output-flow.js';
 import { OutputTail } from './output-tail.js';
 import { noTermination, nodeTreeKiller, terminateTree, type TreeKiller } from './terminate.js';
 
@@ -80,7 +81,7 @@ export class NodeProcess implements ProcessPort {
     this.#killer = options.treeKiller ?? nodeTreeKiller;
   }
 
-  async run(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessResult> {
+  async run(spec: ProcessSpec, signal: AbortSignal, sink?: OutputSink): Promise<ProcessResult> {
     const prepared = this.#prepare(spec);
     const { argv, redaction, sandboxed } = prepared;
     const command = argv[0];
@@ -89,6 +90,9 @@ export class NodeProcess implements ProcessPort {
 
     const stdout = new OutputTail(spec.outputCap ?? Number.POSITIVE_INFINITY);
     const stderr = new OutputTail(spec.outputCap ?? Number.POSITIVE_INFINITY);
+    // The same decoded characters feed the tail and the live view (ADR-107): one decode,
+    // two readers, so "what the screen showed" cannot drift from "what the result says".
+    const flow = sink === undefined ? null : new OutputFlow(sink);
 
     // Already cancelled: do not start a process in order to kill it. The record says
     // the request was cancelled rather than claiming a termination that never ran.
@@ -146,10 +150,14 @@ export class NodeProcess implements ProcessPort {
     const decodeStdout = new StringDecoder('utf8');
     const decodeStderr = new StringDecoder('utf8');
     child.stdout.on('data', (chunk: Buffer) => {
-      stdout.push(decodeStdout.write(chunk));
+      const text = decodeStdout.write(chunk);
+      stdout.push(text);
+      flow?.push('stdout', text);
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      stderr.push(decodeStderr.write(chunk));
+      const text = decodeStderr.write(chunk);
+      stderr.push(text);
+      flow?.push('stderr', text);
     });
 
     // 'close', not 'exit': close is when the pipes are drained, so the output is
@@ -157,8 +165,15 @@ export class NodeProcess implements ProcessPort {
     const closed = new Promise<{ readonly code: number | null; readonly signal: string | null }>((resolve) => {
       child.once('close', (code, childSignal) => {
         // Flush a decoder that ends mid-character so nothing is silently lost.
-        stdout.push(decodeStdout.end());
-        stderr.push(decodeStderr.end());
+        const outTail = decodeStdout.end();
+        const errTail = decodeStderr.end();
+        stdout.push(outTail);
+        stderr.push(errTail);
+        flow?.push('stdout', outTail);
+        flow?.push('stderr', errTail);
+        // Before resolving: a caller that awaits the result and then reads the sink must
+        // not find the last window still sitting in it (ADR-107).
+        flow?.flush();
         resolve({ code, signal: childSignal });
       });
     });
