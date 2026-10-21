@@ -165,6 +165,17 @@ export type ModelChunk =
   | { readonly type: 'tool_call'; readonly call: ToolCall }
   | {
       /**
+       * A live fragment of the reasoning, for the screen only (ADR-098).
+       *
+       * The complete blocks below are what the kernel records and replays; this channel
+       * exists because "the model is thinking" has to be visible while it happens, and
+       * Anthropic only closes a thinking block at `content_block_stop`.
+       */
+      readonly type: 'reasoning.delta';
+      readonly text: string;
+    }
+  | {
+      /**
        * One complete reasoning block (ADR-045), emitted the way `tool_call` is and for
        * the same reason: a chunk is a fact the kernel records, and a fragment is not.
        *

@@ -2,7 +2,8 @@ import { createCliRenderer, type CliRenderer } from '@opentui/core';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { COMMANDS, lastToolCallId, parseCommand, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
-import { addNotice, closeView, project, streamText } from './app/project.js';
+import { animationsEnabled, mouseEnabled } from './app/preferences.js';
+import { addNotice, closeView, project, streamReasoning, streamText } from './app/project.js';
 import {
   APPROVAL_CHOICES,
   approvalChoiceAt,
@@ -81,7 +82,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
    * status word but freezes the cell, which is the CI- and screenshot-friendly mode.
    */
   const activity: { timer: ReturnType<typeof setInterval> | null } = { timer: null };
-  const animationsOff = process.env['COWCAT_ANIMATIONS'] === 'off';
+  const animationsOff = !animationsEnabled(process.env);
   const syncActivity = (): void => {
     const state = view.current.turn?.state;
     const running = state !== undefined && !TERMINAL.has(state);
@@ -146,7 +147,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         fetchAttachments();
       }),
       options.client.on('delta', (delta) => {
-        view.current = streamText(view.current, delta);
+        view.current = delta.type === 'reasoning.delta' ? streamReasoning(view.current, delta) : streamText(view.current, delta);
         draw();
       }),
       options.client.on('log', (line) => {
@@ -423,6 +424,10 @@ async function defaultRenderer(): Promise<CliRenderer> {
     // The default puts console output in an overlay above the UI; diagnostics arrive as
     // protocol `log` notifications instead, which belong in the frame.
     consoleMode: 'disabled',
+    // Without this the renderer never asks the terminal for mouse events, so every
+    // `onMouseDown`/`onMouseScroll` handler in `ui/screen.ts` is dead code. It also takes
+    // over native selection; `COWCAT_MOUSE=off` is the documented way back.
+    useMouse: mouseEnabled(process.env),
     targetFps: 30,
   });
 }

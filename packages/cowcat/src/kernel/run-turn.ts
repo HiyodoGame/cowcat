@@ -410,6 +410,10 @@ async function streamModel(
         // protocol needs back is the adapter's knowledge, not the kernel's.
         reasoning.push(chunk.block);
         break;
+      case 'reasoning.delta':
+        // Display-only; the block above is what replay uses.
+        session.reasoningDelta(chunk.text);
+        break;
       case 'usage':
         // Written when it arrives rather than held until the turn ends: usage that has
         // already been billed has to survive a cancellation (ADR-041).

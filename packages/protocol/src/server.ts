@@ -269,7 +269,11 @@ export function createServer(options: ServerOptions): ProtocolServer {
 }
 
 function isDelta(update: unknown): boolean {
-  return typeof update === 'object' && update !== null && Reflect.get(update, 'type') === 'model.delta';
+  if (typeof update !== 'object' || update === null) return false;
+  const type: unknown = Reflect.get(update, 'type');
+  // Both are ephemeral stream fragments; neither is a `KernelEvent` and both share the
+  // `delta` notification's shape (ADR-098).
+  return type === 'model.delta' || type === 'reasoning.delta';
 }
 
 function describe(error: unknown): JsonRpcError {

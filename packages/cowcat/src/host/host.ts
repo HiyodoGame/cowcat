@@ -341,16 +341,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   }
 
   function deliver(rec: SessionRecord, update: SessionUpdate): void {
-    if (update.type !== 'model.delta') {
-      rec.lastSeq = update.seq;
-      if (update.type === 'turn.opened' && update.turnId !== null) {
-        const { turnId } = update;
-        const waiters = rec.turnWaiters;
-        rec.turnWaiters = [];
-        for (const waiter of waiters) waiter(turnId);
-      } else if (update.type === 'tool.finished' && update.attachments !== null) {
-        for (const attachment of update.attachments) attachments.set(attachment.path, attachment);
-      }
+    if (update.type === 'model.delta' || update.type === 'reasoning.delta') {
+      for (const listener of rec.listeners) listener(update);
+      return;
+    }
+    rec.lastSeq = update.seq;
+    if (update.type === 'turn.opened' && update.turnId !== null) {
+      const { turnId } = update;
+      const waiters = rec.turnWaiters;
+      rec.turnWaiters = [];
+      for (const waiter of waiters) waiter(turnId);
+    } else if (update.type === 'tool.finished' && update.attachments !== null) {
+      for (const attachment of update.attachments) attachments.set(attachment.path, attachment);
     }
     for (const listener of rec.listeners) listener(update);
   }
@@ -480,7 +482,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         lastSeq,
         replay,
         subscribe: (listener: (update: unknown) => void) => {
-          const queued = buffered.filter((update) => update.type === 'model.delta' || update.seq > lastSeq);
+          const queued = buffered.filter((update) => {
+            if (update.type === 'model.delta' || update.type === 'reasoning.delta') return true;
+            return update.seq > lastSeq;
+          });
           buffered.length = 0;
           live = listener;
           let subscribed = true;

@@ -73,6 +73,29 @@ test('streamed text is shown live but never written to the log', async () => {
   assert.equal(store.events.find((e) => e.type === 'model.message')?.type, 'model.message');
 });
 
+test('streamed reasoning is shown live and never written to the log', async () => {
+  const model = new ScriptedModel([
+    [
+      { type: 'reasoning.delta', text: '先看' },
+      { type: 'reasoning.delta', text: '调用点' },
+      { type: 'reasoning', block: { type: 'thinking', text: '先看调用点', signature: 's' } },
+      { type: 'text', text: '好了' },
+    ],
+  ]);
+  const { store, session, deps } = await setup(model, []);
+  const deltas: string[] = [];
+  session.subscribe((u) => {
+    if (u.type === 'reasoning.delta') deltas.push(u.text);
+  });
+  await runTurn(deps, 'hi', new AbortController().signal);
+
+  assert.deepEqual(deltas, ['先看', '调用点']);
+  assert.equal(store.events.some((e) => (e.type as string) === 'reasoning.delta'), false);
+  const message = store.events.find((e) => e.type === 'model.message');
+  assert.ok(message !== undefined);
+  assert.deepEqual(message.reasoning, [{ type: 'thinking', text: '先看调用点', signature: 's' }]);
+});
+
 test('a read tool runs without asking and its result reaches the next model call', async () => {
   const model = new ScriptedModel([
     [{ type: 'tool_call', call: { callId: 'c1', name: 'read_file', input: { path: 'a' } } }],

@@ -298,7 +298,20 @@ export interface StreamDelta {
   readonly text: string;
 }
 
-export type SessionUpdate = KernelEvent | StreamDelta;
+/**
+ * A live fragment of the model's thinking (ADR-098).
+ *
+ * Ephemeral for the same reason as `model.delta`: a fragment is not a fact — the complete
+ * block in `model.message.reasoning` is. It exists so the screen can show thinking while
+ * it happens instead of after the block closes.
+ */
+export interface ReasoningDelta {
+  readonly type: 'reasoning.delta';
+  readonly turnId: string;
+  readonly text: string;
+}
+
+export type SessionUpdate = KernelEvent | StreamDelta | ReasoningDelta;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 

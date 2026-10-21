@@ -294,6 +294,16 @@ test('thinking is one collapsed line until it is expanded', () => {
   assert.match(expandedText, /先看 joinPath 的实现/u);
 });
 
+test('live thinking is visible before the answer arrives', () => {
+  const frame = frameOf(
+    { ...initialView(), reasoningStream: '先看调用点，再改实现。' },
+    { width: WIDTH, now: 1_000 },
+  );
+  const text = frame.body.map((row) => row.text).join('\n');
+  assert.match(text, /思考中/u);
+  assert.match(text, /先看调用点/u);
+});
+
 test('the input line hints at / commands as they are typed', () => {
   const empty = frameOf({ ...initialView(), input: '/' }, { width: WIDTH, now: 1_000 });
   assert.match(empty.placeholder, /\/todos/u);

@@ -153,6 +153,13 @@ export interface TuiView {
    * replaces it.
    */
   readonly streaming: string;
+  /**
+   * Reasoning text that has streamed in for the turn in progress (ADR-098).
+   *
+   * Cleared by the `model.message` that replaces it, exactly like `streaming`: the final
+   * blocks on the entry are the durable version, this is the live one.
+   */
+  readonly reasoningStream: string;
   readonly turn: TurnView | null;
   readonly approval: ApprovalView | null;
   /** Which of `APPROVAL_CHOICES` is highlighted while the question is open. */
@@ -210,6 +217,7 @@ export function initialView(): TuiView {
     langDecided: false,
     entries: [],
     streaming: '',
+    reasoningStream: '',
     turn: null,
     approval: null,
     approvalCursor: 0,
