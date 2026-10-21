@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { EXIT } from './exit.js';
 import { flagValue } from './flags.js';
 import { buildHost } from './host.js';
@@ -32,6 +33,8 @@ import { readVersion } from './version.js';
  * failure from three frames deep.
  */
 const RENDERER_FLOOR = { major: 26, minor: 4 } as const;
+/** The executable this verb came in through, for a copy-pasteable workaround. */
+const CLI_ENTRY = fileURLToPath(new URL('./main.js', import.meta.url));
 
 export async function runTui(context: CommandContext): Promise<number> {
   return startTui(context, flagValue(context.flags, 'session'));
@@ -46,6 +49,8 @@ export async function startTui(context: CommandContext, sessionId: string | null
       `cowcat tui: 需要 Node >=${String(RENDERER_FLOOR.major)}.${String(RENDERER_FLOOR.minor)}（opentui 的门槛，ADR-056），现在是 v${process.versions.node}`,
     );
     context.stderr('  serve / run / sessions list / doctor 在 Node 22 上就能用');
+    const command = sessionId === null ? 'tui' : `sessions resume ${sessionId}`;
+    context.stderr(`  用 Node 26 运行：npx --yes node@26.12.0 "${CLI_ENTRY}" ${command}`);
     return EXIT.failed;
   }
 

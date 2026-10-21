@@ -128,6 +128,7 @@ test('no arguments means the default verb, and on an old Node it says why', { sk
   assert.equal(run.code, EXIT.failed);
   assert.match(run.err.join('\n'), /cowcat tui: 需要 Node >=26\.4/);
   assert.match(run.err.join('\n'), /Node 22 上就能用/);
+  assert.match(run.err.join('\n'), /npx --yes node@26\.12\.0 ".+main\.js" tui/);
 });
 
 test('setup without a mode explains the two ways to use it', async (t) => {
@@ -142,6 +143,7 @@ test('sessions resume is the TUI with an id, and checks the renderer floor first
   const run = await cli(['sessions', 'resume', 'sess_anything']);
   assert.equal(run.code, EXIT.failed);
   assert.match(run.err.join('\n'), /cowcat tui: 需要 Node >=26\.4/);
+  assert.match(run.err.join('\n'), /sessions resume sess_anything/);
 });
 
 test('sessions list reads the store directly, and says so when there is nothing', async (t) => {
