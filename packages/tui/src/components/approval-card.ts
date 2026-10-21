@@ -46,6 +46,7 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
       body.push({
         text: `${selected ? '▸' : ' '} ${labelFor(choice, approval.name)}`,
         token: selected ? 'act' : 'textDim',
+        hit: `approval:${String(index)}`,
       });
     }
     body.push({ text: copy.approveKeys, token: 'textDim' });

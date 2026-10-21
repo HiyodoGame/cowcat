@@ -33,9 +33,9 @@ import type { Line } from './line.js';
 
 /**
  * Rows the screen spends on something other than the transcript: the root box's two borders,
- * the status line and the input line.
+ * the status line, and the composer's three rows.
  */
-const BODY_CHROME_ROWS = 4;
+const BODY_CHROME_ROWS = 6;
 
 /**
  * An image, as a rectangle of the frame rather than a line of it.
@@ -62,6 +62,8 @@ export interface ScreenSpec {
   readonly status: Line;
   readonly placeholder: string;
   readonly images?: readonly ImageSlot[];
+  /** Lines scrolled up from the newest row; 0 follows the tail. */
+  readonly scroll?: number;
 }
 
 export interface Screen {
@@ -78,6 +80,10 @@ export interface Screen {
   onSubmit(handler: (value: string) => void): () => void;
   /** Every keypress, including the ones the input swallowed. */
   onKey(handler: (key: KeyEvent) => void): () => void;
+  /** A click on a row that carried a `hit` id. */
+  onHit(handler: (id: string) => void): () => void;
+  /** Wheel movement: positive is up (older content). */
+  onScroll(handler: (delta: number) => void): () => void;
   clearInput(): void;
   /** The input's text right now — used to hint at `/` commands while typing. */
   inputValue(): string;
@@ -118,27 +124,78 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   const input = new InputRenderable(renderer, {
     id: 'cowcat-input',
-    width: '100%',
+    flexGrow: 1,
     placeholder: options.title,
   });
+  // A bordered composer instead of a bare line: the input is where a person spends the
+  // session, and an unstyled last row read as part of the transcript. Three rows total
+  // (border, content, border); multiline input is still out of scope — `InputRenderable`
+  // strips newlines and Enter is its submit event.
+  const inputBox = new BoxRenderable(renderer, {
+    id: 'cowcat-input-box',
+    width: '100%',
+    height: 3,
+    border: true,
+    borderStyle: 'rounded',
+    borderColor: resolve(theme, 'border'),
+    flexDirection: 'row',
+  });
+  const prompt = new TextRenderable(renderer, {
+    id: 'cowcat-prompt',
+    content: '› ',
+    fg: resolve(theme, 'brand'),
+    width: 2,
+    height: 1,
+  });
+  inputBox.add(prompt);
+  inputBox.add(input);
   root.add(body);
   root.add(status);
-  root.add(input);
+  root.add(inputBox);
 
   // One renderable per line, updated in place when only the text or the colour changed.
   const mounted: TextRenderable[] = [];
   const specs: (Line | undefined)[] = [];
   const images: ImageRenderable[] = [];
 
-  function updateBody(lines: readonly Line[]): number {
+  let hitHandler: (id: string) => void = () => undefined;
+  let scrollHandler: (delta: number) => void = () => undefined;
+
+  /** Wire a row's click to its id. Re-run on update because a row can be recycled. */
+  function attachHit(target: TextRenderable, spec: Line): void {
+    const hit = spec.hit;
+    if (hit === undefined) {
+      target.onMouseDown = undefined;
+      return;
+    }
+    target.onMouseDown = () => {
+      hitHandler(hit);
+    };
+  }
+
+  // The wheel goes to the body: a row only knows its own click, and the region that scrolls
+  // is the transcript as a whole.
+  body.onMouseScroll = (event) => {
+    const scroll = event.scroll;
+    if (scroll === undefined) return;
+    const step = Math.max(1, Math.abs(scroll.delta));
+    scrollHandler(scroll.direction === 'up' ? step : -step);
+  };
+
+  function updateBody(lines: readonly Line[], scroll: number): number {
     // The tail, cut here rather than by a scroll box. Two measured reasons: a `ScrollBox` draws
     // a vertical scrollbar in the last column — a column the cards then do not have, so they
     // wrap and lose their right border — and its `stickyStart: 'bottom'` did not hold, so the
     // viewport showed the TOP of a long transcript and the newest card was off screen. Slicing
     // the last N lines is the behaviour a chat wants, and it keeps the mounted renderables to
     // what is actually visible.
+    //
+    // `scroll` is how many lines the reader has moved up from that tail: 0 follows new output,
+    // which is the default and what a snapshot sees.
     const room = Math.max(1, renderer.height - BODY_CHROME_ROWS);
-    const start = lines.length > room ? lines.length - room : 0;
+    const maxScroll = Math.max(0, lines.length - room);
+    const offset = Math.max(0, Math.min(maxScroll, scroll));
+    const start = Math.max(0, lines.length - room - offset);
     const visible = start === 0 ? lines : lines.slice(start);
     for (let index = 0; index < visible.length; index += 1) {
       const spec = visible[index];
@@ -153,17 +210,25 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
           attributes: spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE,
           wrapMode: 'word',
         });
+        attachHit(created, spec);
         mounted[index] = created;
         specs[index] = spec;
         body.add(created);
         continue;
       }
-      if (previous !== undefined && previous.text === spec.text && previous.token === spec.token && previous.bold === spec.bold) {
+      if (
+        previous !== undefined &&
+        previous.text === spec.text &&
+        previous.token === spec.token &&
+        previous.bold === spec.bold &&
+        previous.hit === spec.hit
+      ) {
         continue;
       }
       existing.content = spec.text;
       existing.fg = resolve(theme, spec.token);
       existing.attributes = spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE;
+      attachHit(existing, spec);
       specs[index] = spec;
     }
     // Shorter than before: unmount the tail. `remove` takes the id, and the array stays
@@ -231,7 +296,7 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       return Math.max(8, renderer.width - 2);
     },
     update(spec) {
-      const viewStart = updateBody(spec.body);
+      const viewStart = updateBody(spec.body, spec.scroll ?? 0);
       updateImages(spec.images ?? [], viewStart);
       status.content = spec.status.text;
       status.fg = resolve(theme, spec.status.token);
@@ -256,6 +321,18 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       renderer.keyInput.on('keypress', listener);
       return () => renderer.keyInput.off('keypress', listener);
     },
+    onHit(handler) {
+      hitHandler = handler;
+      return () => {
+        hitHandler = () => undefined;
+      };
+    },
+    onScroll(handler) {
+      scrollHandler = handler;
+      return () => {
+        scrollHandler = () => undefined;
+      };
+    },
     clearInput() {
       input.value = '';
     },
@@ -269,8 +346,7 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       for (const image of images) body.remove(image);
       images.length = 0;
       renderer.root.remove(root);
-    },
-  };
+    },  };
 }
 
 /** A token as a colour the renderer understands. */

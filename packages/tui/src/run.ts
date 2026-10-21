@@ -4,6 +4,7 @@ import { COMMANDS, lastToolCallId, parseCommand, type CommandEffect } from './ap
 import { intentFor } from './app/keymap.js';
 import { addNotice, closeView, project, streamText } from './app/project.js';
 import {
+  APPROVAL_CHOICES,
   approvalChoiceAt,
   closePalette,
   initialView,
@@ -11,11 +12,13 @@ import {
   movePalette,
   openPalette,
   pendingAttachments,
+  resetScroll,
   toggleExpanded,
   toggleThinking,
   withAttachment,
   withInput,
   withLangFrom,
+  withScroll,
 } from './app/view.js';
 import { frameOf, titleOf } from './components/session-frame.js';
 import { THEME } from './theme/tokens.js';
@@ -169,6 +172,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         // than reconstructed: one source of truth for both hinting and what is sent.
         queueMicrotask(syncInput);
       }),
+      screen.onHit(handleHit),
+      screen.onScroll((delta) => {
+        view.current = withScroll(view.current, delta);
+        draw();
+      }),
     );
 
     draw();
@@ -210,7 +218,44 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = moveApprovalCursor(view.current, intent.delta);
           draw();
           return;
+        case 'scroll':
+          view.current = withScroll(view.current, intent.delta);
+          draw();
+          return;
       }
+    }
+
+    /**
+     * A click, decoded. The UI layer only carries the id (`tool:<callId>`,
+     * `thinking`, `approval:<n>`); what each means is a decision for this loop.
+     */
+    function handleHit(id: string): void {
+      if (id.startsWith('tool:')) {
+        view.current = toggleExpanded(view.current, id.slice('tool:'.length));
+        draw();
+        return;
+      }
+      if (id === 'thinking') {
+        view.current = toggleThinking(view.current);
+        draw();
+        return;
+      }
+      if (id.startsWith('approval:')) {
+        chooseApproval(Number(id.slice('approval:'.length)));
+      }
+    }
+
+    /** Clicking an approval row answers it; a click is not a mode switch. */
+    function chooseApproval(index: number): void {
+      const approval = view.current.approval;
+      const choice = APPROVAL_CHOICES[index];
+      if (approval === null || approval.verdict !== null || choice === undefined) return;
+      view.current = { ...view.current, approvalCursor: index };
+      draw();
+      options.client.respondApproval(sessionId, approval.callId, choice).catch((error: unknown) => {
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      });
     }
 
     /** Mirror the input widget's value into the view; the frame hints at `/` from it. */
@@ -345,7 +390,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
       if (trimmed === '') return;
       screen.clearInput();
-      view.current = withLangFrom(view.current, trimmed);
+      view.current = resetScroll(withLangFrom(view.current, trimmed));
       draw();
       options.client.sendTurn(sessionId, trimmed).catch((error: unknown) => {
         // The host refuses with a sentence a user can act on ("no model is configured …",

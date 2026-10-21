@@ -53,6 +53,7 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
     images,
     status: statusLine(view, options),
     placeholder: placeholderFor(view, copyFor(view.lang)),
+    scroll: view.scrollOffset,
   };
 }
 

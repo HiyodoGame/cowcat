@@ -27,7 +27,9 @@ export type Intent =
   | { readonly kind: 'toggleLastCard' }
   | { readonly kind: 'toggleThinking' }
   /** Move the approval card's highlight; only meaningful while a question is open. */
-  | { readonly kind: 'approvalMove'; readonly delta: number };
+  | { readonly kind: 'approvalMove'; readonly delta: number }
+  /** Move the transcript viewport; positive is older content. */
+  | { readonly kind: 'scroll'; readonly delta: number };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -62,5 +64,10 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
     if (key.name === 'up') return { kind: 'approvalMove', delta: -1 };
     if (key.name === 'down') return { kind: 'approvalMove', delta: 1 };
   }
+
+  // Paging works while a question is open too: re-reading the transcript to decide is
+  // exactly when a person needs it.
+  if (key.name === 'pageup') return { kind: 'scroll', delta: 10 };
+  if (key.name === 'pagedown') return { kind: 'scroll', delta: -10 };
   return null;
 }

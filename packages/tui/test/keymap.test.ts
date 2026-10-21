@@ -35,6 +35,11 @@ test('arrows move the approval highlight only while a question is open', () => {
   assert.equal(intentFor({ name: 'up', ctrl: false }, initialView()), null);
 });
 
+test('paging scrolls the transcript', () => {
+  assert.deepEqual(intentFor({ name: 'pageup', ctrl: false }, initialView()), { kind: 'scroll', delta: 10 });
+  assert.deepEqual(intentFor({ name: 'pagedown', ctrl: false }, initialView()), { kind: 'scroll', delta: -10 });
+});
+
 test('an answered question hands the arrows back', () => {
   const view = withApproval();
   const approval = view.approval;
