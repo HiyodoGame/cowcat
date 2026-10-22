@@ -111,6 +111,56 @@ test('two identical calls in the same round count too: the second is already a r
   assert.equal(events[0]?.count, 2);
 });
 
+test('a non-final repeat still emits its reminder after every tool result of the round', async () => {
+  // [A(x), A(x), B(y)]: the reminder for c2 must not land between c2's and c3's tool
+  // results — a user message inside the tool run would break the wire pairing both
+  // protocols require. Reminders are batched to the end of the round (ADR-120).
+  const same = { path: '/repo/a.txt' };
+  const { store, session } = await runRoundTrip([
+    [call('c1', same), call('c2', same), call('c3', { path: '/repo/b.txt' })],
+    [{ type: 'text', text: 'done' }],
+  ]);
+
+  assert.equal(reminders(store.events).length, 1);
+  const roles = session.state.messages.map((message) => (message.role === 'tool' ? `tool:${message.callId}` : message.role));
+  assert.deepEqual(roles, [
+    'user',
+    'assistant',
+    'tool:c1',
+    'tool:c2',
+    'tool:c3',
+    'user',
+    'assistant',
+  ]);
+});
+
+test('the reminder names a failed previous call instead of claiming it returned a result', async () => {
+  const same = { path: '/repo/a.txt' };
+  const failing: ToolPort = tool({ name: 'Flaky', description: 'flaky', risk: 'read' }, () => ({
+    ok: false,
+    output: 'denied by rule: nope',
+  }));
+  const store = new MemoryEventStore();
+  const session = await Session.create(sessionDeps(store), SESSION);
+  const deps = turnDeps(
+    session,
+    new ScriptedModel([
+      [call('c1', same)].map((chunk) => ({ ...chunk, call: { ...chunk.call, name: 'Flaky' } })),
+      [call('c2', same)].map((chunk) => ({ ...chunk, call: { ...chunk.call, name: 'Flaky' } })),
+      [{ type: 'text', text: 'done' }],
+    ]),
+    { tools: new Map([[failing.spec.name, failing]]) },
+  );
+  await runTurn(deps, 'go', new AbortController().signal);
+
+  const events = reminders(store.events);
+  assert.equal(events.length, 1);
+  const event = events[0];
+  assert.ok(event !== undefined);
+  assert.match(event.text, /did not succeed/);
+  assert.ok(!event.text.includes('almost certainly return the same thing'));
+});
+
 test('argument order matters: same fields in a different order is not "identical"', async () => {
   const { store } = await runRoundTrip([
     [call('c1', { a: 1, b: 2 })],

@@ -270,9 +270,11 @@ async function runTurnBody(
   let compactionChecked = false;
   // Model calls made so far; the delegation cap counts these, not tool calls (ADR-082 ②).
   let rounds = 0;
-  // Repeat-call guard (ADR-120): key of the previous tool call and its streak, across
-  // rounds of the same turn — a cross-round loop is exactly the failure this catches.
+  // Repeat-call guard (ADR-120): key and outcome of the previous tool call and its
+  // streak, across rounds of the same turn — a cross-round loop is exactly the failure
+  // this catches.
   let lastCallKey: string | null = null;
+  let lastCallOk = false;
   let repeatCount = 0;
   try {
     for (;;) {
@@ -314,12 +316,17 @@ async function runTurnBody(
         return { turnId, state: 'completed', reason: null, partial: false };
       }
       await session.transition('awaiting_tools');
+      // Reminders buffer until every call of this round has its `tool.finished`. A user
+      // message between two tool results would split the tool run and break the wire
+      // pairing both protocols require (every tool_use answered immediately after the
+      // assistant turn) — the cost of one round of delay is nothing against a 400.
+      const pendingReminders: { readonly callId: string; readonly name: string; readonly count: number; readonly previousOk: boolean }[] = [];
       for (const call of calls) {
         // `normalizeCall` has already JSON-round-tripped the input, so equal arguments
         // stringify equal — key order included, which is fine for detecting literal loops.
         const callKey = `${call.name}\n${JSON.stringify(call.input)}`;
-        repeatCount = callKey === lastCallKey ? repeatCount + 1 : 1;
-        lastCallKey = callKey;
+        const matched = callKey === lastCallKey;
+        repeatCount = matched ? repeatCount + 1 : 1;
         const { result, path } = await runCall(deps, call, signal);
         // Before `tool.finished` on purpose (ADR-054): two appends are never atomic, and
         // the two directions are not equal — a crash here leaves the list recorded, while
@@ -345,17 +352,7 @@ async function runTurnBody(
           path,
         });
         if (repeatCount >= 2) {
-          // The reminder is a fact the model was shown, so it goes in the log as a
-          // message and replays without re-deriving anything (ADR-120 ②, same
-          // reasoning as ADR-078 ④). It nags; it never blocks the call above.
-          await session.emit({
-            type: 'tool.repeat-detected',
-            turnId: session.turnId,
-            callId: call.callId,
-            name: call.name,
-            count: repeatCount,
-            text: repeatReminder(call.name, repeatCount),
-          });
+          pendingReminders.push({ callId: call.callId, name: call.name, count: repeatCount, previousOk: matched && lastCallOk });
         }
         // After `tool.finished`: the call succeeded first, then a task exists (ADR-111). The
         // host buffers the task's exit until it sees this event, so the log never says a task
@@ -363,6 +360,21 @@ async function runTurnBody(
         if (result.ok && result.background !== undefined) {
           await session.backgroundStarted(call.callId, result.background.taskId, result.background.command);
         }
+        lastCallKey = callKey;
+        lastCallOk = result.ok;
+      }
+      for (const reminder of pendingReminders) {
+        // The reminder is a fact the model was shown, so it goes in the log as a message
+        // and replays without re-deriving anything (ADR-120 ②, same reasoning as ADR-078
+        // ④). It nags; it never blocks the call that earned it.
+        await session.emit({
+          type: 'tool.repeat-detected',
+          turnId: session.turnId,
+          callId: reminder.callId,
+          name: reminder.name,
+          count: reminder.count,
+          text: repeatReminder(reminder.name, reminder.count, reminder.previousOk),
+        });
       }
       await session.transition('requesting');
     }
@@ -589,13 +601,16 @@ function normalizeCall(call: ToolCall): ToolCall {
   return { ...call, input: typeof text === 'string' ? (JSON.parse(text) as unknown) : null };
 }
 
-// Deterministic by construction: name and count only, so a replay produces the same
-// reminder the live session sent (ADR-120 ②).
-function repeatReminder(name: string, count: number): string {
+// Deterministic by construction: name, count and outcome only, so a replay produces the
+// same reminder the live session sent (ADR-120 ②).
+function repeatReminder(name: string, count: number, previousOk: boolean): string {
+  const outcome = previousOk
+    ? `The previous identical call already returned a result — running it again will almost certainly return the same thing.`
+    : `The previous identical call did not succeed — a literal retry rarely fixes that; change something or the failure will repeat.`;
   return [
     `⚠️ Repeat call detected: this is consecutive identical call #${String(count)} of \`${name}\` (same name, same arguments).`,
-    `The previous identical call already returned a result — running it again will almost certainly return the same thing.`,
-    `If that result did not solve the problem, change the approach or the arguments instead of repeating.`,
+    outcome,
+    `If the goal is still unmet, change the approach or the arguments instead of repeating.`,
   ].join('\n');
 }
 

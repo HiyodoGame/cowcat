@@ -27,6 +27,11 @@ export interface Copy {
   readonly subagentDone: string;
   /** A delegation that did not: same placeholders. */
   readonly subagentFailed: string;
+  /**
+   * A repeat-call warning shown next to the conversation (ADR-120): `{name}` is the
+   * tool, `{n}` the consecutive count.
+   */
+  readonly repeatReminder: string;
   readonly attachment: string;
   /** The label an image line carries: `图片 image/png 320×200`. */
   readonly image: string;
@@ -58,6 +63,7 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     compacted: '上下文已压缩（{n} 条 → 一段摘要）',
     subagentDone: '子会话 {session}（{role}）完成：{n} 轮',
     subagentFailed: '子会话 {session}（{role}）没跑完：{n} 轮',
+    repeatReminder: '⚠️ 模型在重复调用 {name}（第 {n} 次，参数相同）',
     attachment: '附件',
     image: '图片',
     truncated: '（输出被截断）',
@@ -82,6 +88,7 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     compacted: 'context compacted ({n} messages → one summary)',
     subagentDone: 'sub session {session} ({role}) finished: {n} rounds',
     subagentFailed: 'sub session {session} ({role}) did not finish: {n} rounds',
+    repeatReminder: '⚠️ the model is repeating {name} (call #{n}, same arguments)',
     attachment: 'attachment',
     image: 'image',
     truncated: '(output was truncated)',

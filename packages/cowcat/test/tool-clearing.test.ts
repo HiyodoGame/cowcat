@@ -7,6 +7,7 @@ import {
   clearingSummary,
   runTurn,
   Session,
+  type Attachment,
   type Message,
   type ModelChunk,
 } from '../src/index.js';
@@ -98,6 +99,28 @@ test('a compaction-shaped history folds cleanly: the summary is a user message, 
   assert.equal(view[0], summary);
   assert.equal(view[2]?.role === 'tool' && view[2].output, clearedToolPlaceholder('a'.repeat(100)));
   assert.equal(view[4]?.role === 'tool' && view[4].output, 'b'.repeat(100));
+});
+
+test('attachments of a cleared result stop traveling, said out loud in the placeholder', () => {
+  const attachment: Attachment = { type: 'image', mediaType: 'image/png', path: '/tmp/a.png', bytes: 100, width: null, height: null, pages: null };
+  const messages: Message[] = [
+    user('go'),
+    assistant('c1'),
+    { role: 'tool', callId: 'c1', ok: true, output: 'img', attachments: [attachment] },
+    assistant('c2'),
+    toolMessage('c2', 'keep'),
+    assistant('c3'),
+    toolMessage('c3', 'keep too'),
+  ];
+  const view = clearedToolView(messages);
+  const cleared = view[2];
+  assert.ok(cleared?.role === 'tool');
+  assert.equal(cleared.output, '[已清除 3 字节]（另有 1 个附件不再随请求发送）');
+  assert.deepEqual(cleared.attachments, []);
+  // The log still carries everything.
+  const logged = messages[2];
+  assert.ok(logged?.role === 'tool');
+  assert.equal(logged.attachments.length, 1);
 });
 
 test('clearingSummary reports how many results the view dropped', () => {

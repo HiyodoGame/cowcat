@@ -537,6 +537,20 @@ test('a finished delegation is one line that names the child; the start is not a
   assert.equal(view.unsupported.includes('subagent.started'), false);
 });
 
+test('a repeat-call warning is a warn notice naming the tool and the count (ADR-120)', () => {
+  const view = [
+    event('tool.repeat-detected', { callId: 'c2', name: 'Bash', count: 2, text: '⚠️ Repeat call detected' }),
+  ].reduce(project, fresh());
+
+  assert.equal(view.entries.length, 1);
+  const entry = view.entries[0];
+  assert.ok(entry !== undefined);
+  assert.equal(entry.kind, 'notice');
+  assert.match(entry.text, /Bash/);
+  assert.match(entry.text, /2/);
+  assert.equal(view.unsupported.includes('tool.repeat-detected'), false, 'this build knows its own event');
+});
+
 
 test('turn.noted is a notice, not assistant text, and a replay says the same thing', () => {
   const log: readonly WireEvent[] = [

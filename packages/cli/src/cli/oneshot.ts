@@ -103,6 +103,15 @@ export async function runOneShot(context: CommandContext): Promise<number> {
             resolve({ outcome: to, reason: typeof why === 'string' ? why : null });
             return;
           }
+          case 'tool.repeat-detected': {
+            // The model-visible nudge, on stderr so stdout stays the answer (ADR-120).
+            const name = field(update, 'name');
+            const count = field(update, 'count');
+            context.stderr(
+              `cowcat run: ⚠️ 模型在重复调用 ${typeof name === 'string' ? name : '?'}（第 ${typeof count === 'number' ? String(count) : '?'} 次，参数相同）`,
+            );
+            return;
+          }
           default:
             return;
         }
