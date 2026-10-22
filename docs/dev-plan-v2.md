@@ -543,7 +543,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | Cron | 无人值守下的策略收窄 | P3、后台任务 |
 | 文档类工具（Notebook、PDF、图像） | PDF 解析是否引入依赖；图像是否需要模型侧支持。**图像 / PDF 的读取已在 P6 T5–T6 交付**（ADR-057 的附件通路）；本行剩下的部分（`NotebookEdit` 的编辑语义、PDF 文本抽取的取舍）仍是 P7 | P5、P6 |
 | Plan 模式 | 进入/退出契约（ADR-032 已记既有缺口，P5 对照表判归 P7 但此前无对应行）；**多方案预审**：执行前生成 2~N 个方案供用户选择（D5） | P3、P5 |
-| 工具结果治理 | tool clearing（旧工具输出整段清除，与压缩分层）、超限结果外置、重复调用防护；**稳定前缀不被改写**以命中提示缓存（D6）。**已调研**（[research/p7-tool-governance.md](research/p7-tool-governance.md)）：ADR-118~120 草案；待实现 | P5、上下文压缩 |
+| 工具结果治理 | tool clearing（旧工具输出整段清除，与压缩分层）、超限结果外置、重复调用防护；**稳定前缀不被改写**以命中提示缓存（D6）。**调研 + ADR 已落**（[research/p7-tool-governance.md](research/p7-tool-governance.md)、ADR-118~120）；**T1~T3 已实现**（`policy/tool-clearing`、`adapters/spill`、bash/read 接入、`tool.repeat-detected` 事件）；剩余 T5 真机验收（缓存代价量化、触发率观察） | P5、上下文压缩 |
 | 审批与沙箱闭环 | 沙箱/权限拒绝 → 一次性扩权申请与重试；用量仪表（token / 成本进事件与状态条）（D7） | P2、P3 |
 | 会话体验 | 会话头补 cwd 与模型（`resume` 语境，`HANDOFF.md` §6 已登记）；日志推导标题；回退并 fork 的事件语义；`@` 文件引用（D8） | P6、上下文压缩 |
 | 可观测性 | OTel GenAI 语义约定子集；事件日志 → span 适配器边界（D9） | P6 组合根 |

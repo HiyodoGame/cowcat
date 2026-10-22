@@ -109,6 +109,14 @@ export {
   type SkillCatalog,
   type SkillsDecision,
 } from './policy/skills.js';
+export {
+  TOOL_CLEARING_KEEP_LAST,
+  clearedToolPlaceholder,
+  clearedToolView,
+  clearingSummary,
+  type ToolClearingSummary,
+} from './policy/tool-clearing.js';
+export { SPILL_HEAD_BYTES, SPILL_MAX_INLINE_BYTES, spillOutput, type SpillConfig, type SpillOutcome } from './adapters/spill.js';
 export { FileSkills, type FileSkillsOptions } from './adapters/skills.js';
 export {
   loadConfig,

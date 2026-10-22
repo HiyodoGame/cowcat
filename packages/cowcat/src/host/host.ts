@@ -11,6 +11,7 @@ import {
 } from '@corescense/cowcat-protocol';
 import { join } from 'node:path';
 import { createBashTool } from '../adapters/tools/bash.js';
+import type { SpillConfig } from '../adapters/spill.js';
 import { createEditTool } from '../adapters/tools/edit.js';
 import { createGlobTool } from '../adapters/tools/glob.js';
 import { createGrepTool } from '../adapters/tools/grep.js';
@@ -244,6 +245,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     background,
     allowBackground: options.unattended !== true,
     skills: availableSkills,
+    spill: { rootDir: paths.sessionsDir },
   });
 
   // MCP servers (ADR-083~087). Project entries are executable entry points, so the same
@@ -274,7 +276,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const subagentTools = new Map(tools);
   subagentTools.set(
     'Bash',
-    createBashTool({ cwd: options.cwd, platform, process: processes, sandbox: sandbox.profile }),
+    createBashTool({
+      cwd: options.cwd,
+      platform,
+      process: processes,
+      sandbox: sandbox.profile,
+      spill: { rootDir: paths.sessionsDir },
+    }),
   );
   const store = options.store ?? new JsonlEventStore(paths.sessionsDir);
   const sessionDeps: SessionDeps = {
@@ -819,11 +827,13 @@ function createTools(options: {
   readonly sandbox: ResolvedSandboxProfile['profile'];
   readonly background: BackgroundTasksPort;
   readonly allowBackground: boolean;
+  /** Where oversized tool results spill (ADR-119). */
+  readonly spill: SpillConfig;
   /** Trusted, visible skills; empty means no `Skill` tool is offered at all (ADR-117 ①). */
   readonly skills: readonly SkillFile[];
 }): ReadonlyMap<string, ToolPort> {
   const tools: readonly ToolPort[] = [
-    createReadTool({ cwd: options.cwd }),
+    createReadTool({ cwd: options.cwd, spill: options.spill }),
     createWriteTool({ cwd: options.cwd }),
     createEditTool({ cwd: options.cwd }),
     createGlobTool({ cwd: options.cwd }),
@@ -836,6 +846,7 @@ function createTools(options: {
       // Absent rather than a fake that refuses: "this build has no background tasks" is a
       // capability of the host, and the tool's own message already says what to do instead.
       ...(options.allowBackground ? { background: options.background } : {}),
+      spill: options.spill,
     }),
     createTodoWriteTool(),
     // No skills, no tool: an empty `Skill` would only tell the model what is not there.

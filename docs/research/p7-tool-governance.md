@@ -110,7 +110,7 @@ dev-plan P7 行（D6）的「工具结果治理」拆成三件事，加一件复
 | 任务 | 内容 | 出口标准 |
 |---|---|---|
 | T1 | `policy/tool-clearing.ts`（纯函数：保留窗口判定 + 视图过滤）+ `run-turn.ts` `streamModel` 应用 + 单测 | 配对不被拆、占位符确定性、窗口边界、与折叠共存的重放确定性（property 测试补一条） |
-| T2 | `adapters/spill.ts` 统一助手 + bash/mcp 两个最大产出方接入 + `tool.finished` 引用形状 + 单测 | 超限落盘、引用含路径+字节数+头、未超限零行为变化 |
+| T2 | `adapters/spill.ts` 统一助手 + bash/read 两个最大产出方接入 + `tool.finished` 引用形状 + 单测。**2026-10-22 实现前复核修正**：原写「bash/mcp」，但 mcp 的 20K 字符上限（§5.2）在 spill 阈值 50KB 之下、天然不触发，真正的第二产出方是 read（`allow_large` 可整文件返回至 20MB）；ADR-119 ⑤ 已同步修正 | 超限落盘、引用含路径+字节数+头、未超限零行为变化 |
 | T3 | kernel 重复检测（`normalizeCall` 比较）+ 提醒 user 消息进日志 + 单测 | 连续 2 次触发、第 3 次文案计数、不同参数不触发 |
 | T4 | 文档：ADR-118~120 落表、dev-plan 行状态、`doctor` 不新增行（治理无可报告量？待定） | 文档与代码同 PR |
 | T5 | 真机验收：开/关 clearing 各跑长会话，对比 `lastUsage` cache 读数与上下文估算；观察重复提醒真机触发 | 数据写回本文件 §11 |

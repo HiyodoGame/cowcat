@@ -279,6 +279,14 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // `null`, which says "the tool reported nothing" rather than "it produced no image".
     attachments: nullableFromAbsent(z.readonly(z.array(attachmentSchema))),
   }),
+  z.object({
+    ...base,
+    type: z.literal('tool.repeat-detected'),
+    callId: z.string(),
+    name: z.string(),
+    count: z.number().int().min(2),
+    text: z.string(),
+  }),
   // ADR-111: the pair that makes a background task auditable. Both are plain objects with no
   // absent-tolerance needed: no log predates them, and the registry always knows the fields.
   z.object({
