@@ -85,6 +85,23 @@ export interface ApprovalView {
 /** The four answers, in the order the card offers them. */
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'reject';
 
+/** One implementation option from an `ExitPlan` call (ADR-125). */
+export interface PlanCardOption {
+  readonly title: string;
+  readonly summary: string;
+}
+
+/** An open plan review: the options, until `plan.decided` lands. */
+export interface PlanView {
+  readonly callId: string;
+  readonly plans: readonly PlanCardOption[];
+  /** `null` while the question is open; 'none' or the picked plan afterwards. */
+  readonly outcome: string | null;
+}
+
+/** What the highlighted plan row answers: a plan index, or `null` for "none of them". */
+export type PlanAnswer = { readonly kind: 'plan'; readonly index: number } | { readonly kind: 'none' };
+
 export const APPROVAL_CHOICES: readonly ApprovalChoice[] = ['once', 'session', 'always', 'reject'];
 
 /** A delegated run, as the status panel and the status line need it. */
@@ -206,6 +223,12 @@ export interface TuiView {
   readonly approval: ApprovalView | null;
   /** Which of `APPROVAL_CHOICES` is highlighted while the question is open. */
   readonly approvalCursor: number;
+  /** An open plan review (ADR-125), owning the keyboard like an approval question. */
+  readonly plan: PlanView | null;
+  /** Which card row is highlighted: 0..plans.length, the last row being "none". */
+  readonly planCursor: number;
+  /** Whether the session is in plan mode (ADR-124), from `plan.mode-changed`. */
+  readonly planMode: boolean;
   /** Tool calls that are in flight: the status line names them. */
   readonly pendingTools: readonly PendingTool[];
   /** Delegated runs, newest last. Finished ones stay for the session's history. */
@@ -341,6 +364,9 @@ export function initialView(): TuiView {
     turn: null,
     approval: null,
     approvalCursor: 0,
+    plan: null,
+    planCursor: 0,
+    planMode: false,
     pendingTools: [],
     agents: [],
     tasks: [],
@@ -530,6 +556,23 @@ export function approvalChoiceAt(view: TuiView): ApprovalChoice {
 export function moveApprovalCursor(view: TuiView, delta: number): TuiView {
   const next = Math.max(0, Math.min(APPROVAL_CHOICES.length - 1, view.approvalCursor + delta));
   return next === view.approvalCursor ? view : { ...view, approvalCursor: next };
+}
+
+/** The plan card's rows: one per plan, plus the trailing "none of them". */
+export function planRowCount(view: TuiView): number {
+  return (view.plan?.plans.length ?? 0) + 1;
+}
+
+export function movePlanCursor(view: TuiView, delta: number): TuiView {
+  const next = Math.max(0, Math.min(planRowCount(view) - 1, view.planCursor + delta));
+  return next === view.planCursor ? view : { ...view, planCursor: next };
+}
+
+/** What the highlighted plan row answers. */
+export function planAnswerAt(view: TuiView): PlanAnswer {
+  const plan = view.plan;
+  if (plan === null) return { kind: 'none' };
+  return view.planCursor < plan.plans.length ? { kind: 'plan', index: view.planCursor } : { kind: 'none' };
 }
 
 /** The answers that are still running, for the panel. */

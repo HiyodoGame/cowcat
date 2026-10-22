@@ -5,6 +5,7 @@ import type { ScreenSpec } from '../ui/screen.js';
 import { line, type Line } from '../ui/line.js';
 import { agentPanelLines } from './agent-panel.js';
 import { approvalCardLines } from './approval-card.js';
+import { planCardLines } from './plan-card.js';
 import { paletteLines } from './palette.js';
 import { slashMenuLines } from './slash-menu.js';
 import { statusLine } from './status-bar.js';
@@ -66,6 +67,9 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.approval !== null) {
     dock.push(...approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }));
   }
+  if (view.plan !== null) {
+    dock.push(...planCardLines(view.plan, { width: options.width, cursor: view.planCursor }));
+  }
   if (view.taskPanel !== null) {
     dock.push(...taskPanelLines(view.tasks, view.taskPanel.index, options.width, options.now));
   }
@@ -113,6 +117,7 @@ function placeholderFor(view: TuiView, copy: Copy): string {
   if (view.approval !== null && view.approval.verdict === null) {
     return `${view.approval.name}：${copy.approveKeys}`;
   }
+  if (view.plan !== null) return '方案待选：↑↓ + 回车，或输入方案序号';
   const state = view.turn?.state;
   if (state !== undefined && !TERMINAL.has(state)) return copy.busy;
   if (view.closed) return '连接已断开';

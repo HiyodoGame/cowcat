@@ -103,6 +103,16 @@ export async function runOneShot(context: CommandContext): Promise<number> {
             resolve({ outcome: to, reason: typeof why === 'string' ? why : null });
             return;
           }
+          case 'plan.proposed': {
+            // A non-interactive run has nobody to choose between plans (ADR-125 ⑤):
+            // answer "none" right away so the model revises instead of the turn parking.
+            const planCallId = field(update, 'callId');
+            if (typeof planCallId !== 'string') return;
+            host.respondPlan(sessionId, planCallId, null, 'non-interactive run: no plan review').catch((error: unknown) => {
+              context.stderr(`  · 方案回答没能送达：${error instanceof Error ? error.message : String(error)}`);
+            });
+            return;
+          }
           case 'tool.repeat-detected': {
             // The model-visible nudge, on stderr so stdout stays the answer (ADR-120).
             const name = field(update, 'name');

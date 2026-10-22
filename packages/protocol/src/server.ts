@@ -154,6 +154,10 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return cancelTurn(id, params as Params<'turn.cancel'>);
       case 'approval.respond':
         return respondApproval(id, params as Params<'approval.respond'>);
+      case 'plan.setMode':
+        return setPlanMode(id, params as Params<'plan.setMode'>);
+      case 'plan.reply':
+        return respondPlan(id, params as Params<'plan.reply'>);
       case 'attachment.read':
         return readAttachment(id, params as Params<'attachment.read'>);
       case 'task.stop':
@@ -231,6 +235,16 @@ export function createServer(options: ServerOptions): ProtocolServer {
 
   async function respondApproval(id: RequestId, params: Params<'approval.respond'>): Promise<void> {
     await host.respondApproval(params.sessionId, params.callId, params.verdict);
+    reply(id, { accepted: true });
+  }
+
+  async function setPlanMode(id: RequestId, params: Params<'plan.setMode'>): Promise<void> {
+    await host.setPlanMode(params.sessionId, params.enabled);
+    reply(id, { enabled: params.enabled });
+  }
+
+  async function respondPlan(id: RequestId, params: Params<'plan.reply'>): Promise<void> {
+    await host.respondPlan(params.sessionId, params.callId, params.choice, params.reason);
     reply(id, { accepted: true });
   }
 

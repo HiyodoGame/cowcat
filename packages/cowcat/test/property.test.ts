@@ -234,6 +234,7 @@ function stateWithTurnIn(state: TurnState): SessionState {
     messageSeqs: [],
     lastUsage: null,
     compactionOpen: false,
+    planMode: false,
     instructionsSeq: null,
     instructionsCount: 0,
     skillsSeq: null,

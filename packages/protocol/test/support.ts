@@ -85,6 +85,19 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve();
   }
 
+  readonly planModes: { sessionId: string; enabled: boolean }[] = [];
+  readonly planReplies: { sessionId: string; callId: string; choice: number | null; reason: string | null }[] = [];
+
+  setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
+    this.planModes.push({ sessionId, enabled });
+    return Promise.resolve();
+  }
+
+  respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void> {
+    this.planReplies.push({ sessionId, callId, choice, reason });
+    return Promise.resolve();
+  }
+
   readAttachment(id: string, maxBytes: number | null): Promise<AttachmentBytes> {
     if (this.failure !== null) this.failure();
     const attachment = this.attachments.get(id);

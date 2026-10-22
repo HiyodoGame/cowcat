@@ -53,6 +53,13 @@ export interface SessionState {
    */
   readonly compactionOpen: boolean;
   /**
+   * Whether the session is in plan mode (ADR-124): a host-enforced read-only
+   * constraint. Folded from `plan.mode-changed` so a reopened session knows the mode
+   * it was left in; the tool gate reads this field every call, so a mid-turn toggle
+   * takes effect on the very next one.
+   */
+  readonly planMode: boolean;
+  /**
    * The seq of the `instructions.loaded` message currently in `messages`, or null when
    * there is none (ADR-078).
    *
@@ -112,6 +119,7 @@ export function initialState(sessionId: string): SessionState {
     messageSeqs: [],
     lastUsage: null,
     compactionOpen: false,
+    planMode: false,
     instructionsSeq: null,
     instructionsCount: 0,
     skillsSeq: null,
@@ -275,6 +283,14 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         messages: [...state.messages, { role: 'user', text: event.text }],
         messageSeqs: [...state.messageSeqs, event.seq],
       };
+    case 'plan.mode-changed':
+      return { ...base, planMode: event.enabled };
+    case 'plan.proposed':
+    case 'plan.decided':
+      // Facts about the review, not conversation: the model learns the outcome through
+      // the ExitPlan tool result, and frontends render the card from the event itself
+      // (ADR-125 ②) — the same shape `policy.decided` has, for the same reason.
+      return base;
     case 'subagent.started':
     case 'subagent.finished':
       // Delegation is a fact about the parent log, not about its messages: what the model

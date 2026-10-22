@@ -20,7 +20,9 @@ export type CommandEffect =
   /** Ask the loop for the session list; it is the only thing here that needs the client. */
   | { readonly kind: 'sessions' }
   /** Open the background-task panel (ADR-113); the loop owns the stop call. */
-  | { readonly kind: 'tasks' };
+  | { readonly kind: 'tasks' }
+  /** Toggle plan mode (ADR-124 ⑥); the loop calls `plan.setMode` with the new state. */
+  | { readonly kind: 'plan'; readonly enabled: boolean };
 
 export interface TuiCommand {
   /** As typed, without the slash. */
@@ -71,6 +73,11 @@ export const COMMANDS: readonly TuiCommand[] = [  {
           ? '没有可用技能（未发现 SKILL.md，或项目未受信）。'
           : view.skills.map((skill) => `${skill.name}（${skill.layer}/${skill.origin}）`).join('　'),
     }),
+  },
+  {
+    name: 'plan',
+    summary: 'plan 模式开关：开启后只读探索，方案定好请你选',
+    run: (view) => ({ kind: 'plan', enabled: !view.planMode }),
   },
   { name: 'help', summary: '键位与用法', run: (view) => ({ kind: 'notice', level: 'info', text: KEYS_HELP.replace('（/help 看这个列表）', '').trim() + `　【${view.sessionId ?? '无会话'}】` }) },
   { name: 'quit', summary: '退出 cowcat', run: () => ({ kind: 'quit' }) },

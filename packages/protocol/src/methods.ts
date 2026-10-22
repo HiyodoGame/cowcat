@@ -16,6 +16,8 @@ export const METHODS = [
   'turn.send',
   'turn.cancel',
   'approval.respond',
+  'plan.setMode',
+  'plan.reply',
   'attachment.read',
   'task.stop',
   'shutdown',
@@ -42,6 +44,18 @@ export const PARAMS = {
     sessionId: z.string().min(1),
     callId: z.string().min(1),
     verdict: z.enum(['once', 'always', 'session', 'reject']),
+  }),
+  /** Toggling plan mode is a user act (ADR-124 ⑥): the switch never comes from the model. */
+  'plan.setMode': z.strictObject({
+    sessionId: z.string().min(1),
+    enabled: z.boolean(),
+  }),
+  /** The answer to a plan review (ADR-125 ③): the chosen plan's index, or none with a reason. */
+  'plan.reply': z.strictObject({
+    sessionId: z.string().min(1),
+    callId: z.string().min(1),
+    choice: z.number().int().min(0).nullable(),
+    reason: z.string().nullable(),
   }),
   'attachment.read': z.strictObject({
     id: z.string().min(1),
@@ -98,6 +112,8 @@ export interface ResultTable {
   readonly 'turn.send': { readonly turnId: string };
   readonly 'turn.cancel': { readonly cancelled: boolean };
   readonly 'approval.respond': { readonly accepted: boolean };
+  readonly 'plan.setMode': { readonly enabled: boolean };
+  readonly 'plan.reply': { readonly accepted: boolean };
   readonly 'attachment.read': AttachmentBytes;
   /** False when the task is already gone (finished, or never belonged to this session). */
   readonly 'task.stop': { readonly stopped: boolean };
