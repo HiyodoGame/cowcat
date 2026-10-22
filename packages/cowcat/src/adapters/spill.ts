@@ -53,7 +53,13 @@ export function spillOutput(
     writeFileSync(temp, output, 'utf8');
     renameSync(temp, file);
   } catch {
-    rmSync(temp, { force: true });
+    // The cleanup itself can fail the same way the write did (ENOTDIR when a path
+    // component is a file) — it is best effort, never the reason a call fails.
+    try {
+      rmSync(temp, { force: true });
+    } catch {
+      // best effort
+    }
     // Spill is an optimization, never a failure mode: when the disk refuses, the tool
     // result travels whole, exactly as it did before spill existed.
     return { output, spilledTo: null };
