@@ -61,7 +61,7 @@ ADR-092 信任入口 · 093 `turn.noted` · 094 `session` 审批档 · 095 危�
 
 ## 4. 未验证 / 风险（必须先看）
 
-- **真终端里的多行键位**：`Enter` 是否发送、`Shift+Enter`/`Ctrl+J` 是否换行。opentui 的键名是 `return` 而非 `enter`，默认是 `return → newline`；写错不会报错，只会「按回车发不出去」。PR #121 合入后**尚未人眼验证**。
+- **真终端里的多行键位**：`Enter` **发送正常**（2026-10-22 人眼验证）；`Shift+Enter` **在实测终端上不换行而是直接发送**——不支持 kitty 键盘协议时两者字节相同，属于终端能力而非键名写错（见 #140 / ADR-104 ⑥；已补 `Alt+Enter`，`Ctrl+J` 无条件可用）。opentui 的键名仍是 `return` 而非 `enter`，默认是 `return → newline`，写错只会「按回车发不出去」。
 - **鼠标**：`useMouse` 已开启，但终端差异大（Windows Terminal / iTerm2 / VS Code）。滚轮与点击只做过帧与逻辑测试；`↓ 回到底部` 的点击同样只在帧层验证。
 - **100 列上限与 dock 高度**：只在 48 列快照与代码层验证，120/160/200 列实际观感未看。
 - **多行 composer 增高**：逻辑是 1–6 行 + 边框，超出后 textarea 内部滚动未单独处理。
