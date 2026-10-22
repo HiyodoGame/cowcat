@@ -233,6 +233,11 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // (ADR-078), not so the terminal repeats it.
       return base;
 
+    case 'hooks.context-added':
+      // Same silence for the same reason: hook context is what the model was told, not
+      // something it said (ADR-122 ④).
+      return base;
+
     case 'skills.loaded': {
       // Same silence in the transcript, but the list is kept for `/skills`: which skills
       // the model was offered is the one question a user asks when it ignores theirs.

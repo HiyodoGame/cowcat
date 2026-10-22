@@ -1,4 +1,4 @@
-import type { ModelPort, ModelUsage, ToolSpec } from '../ports/index.js';
+import type { HooksPort, ModelPort, ModelUsage, ToolSpec } from '../ports/index.js';
 import { contextCeiling, estimateMessage, RECENT_KEEP_TOKENS } from './context.js';
 import type { Message } from './messages.js';
 import type { ModelPreset } from './preset.js';
@@ -78,6 +78,11 @@ export interface CompactDeps {
   readonly tools: readonly ToolSpec[];
   /** Overrides RECENT_KEEP_TOKENS. */
   readonly keepTokens?: number;
+  /**
+   * Hooks the host wired (ADR-122). Omitted means no PreCompact hook fires. `cwd` is the
+   * session's working directory for the hook input.
+   */
+  readonly hooks?: { readonly port: HooksPort; readonly cwd: string };
 }
 
 export interface CompactOutcome {
@@ -152,6 +157,32 @@ export async function compactContext(
   const shadowedSeqs = messageSeqs.slice(0, start);
   const throughSeq = shadowedSeqs[shadowedSeqs.length - 1];
   if (throughSeq === undefined) return { ok: false, reason: null, dropped: 0 };
+
+  // PreCompact (ADR-122 ①): fires only when a compaction will actually run — announcing
+  // a compaction that the size check then skips would be a lie. v1 is observation-only.
+  if (deps.hooks !== undefined) {
+    const report = await deps.hooks.port.run(
+      {
+        event: 'pre-compact',
+        sessionId: session.state.sessionId,
+        cwd: deps.hooks.cwd,
+        trigger,
+      },
+      signal,
+    );
+    for (const failure of report.failures) {
+      try {
+        await session.emit({
+          type: 'turn.noted',
+          turnId: session.turnId,
+          note: 'hook-failed',
+          message: `hook 失败：${failure}`,
+        });
+      } catch {
+        // Same rule as `recordNote`: a log that cannot take the notice must not fail the compaction.
+      }
+    }
+  }
 
   await session.emit({ type: 'context.compaction.started', turnId: session.turnId, trigger, model: preset.model });
 

@@ -87,7 +87,7 @@ export {
   type InstructionDecision,
   type RenderedInstructions,
 } from './policy/instructions.js';
-export { FileInstructionSource, type FileInstructionSourceOptions } from './adapters/instructions.js';
+export { FileInstructionSource, projectRootOf, type FileInstructionSourceOptions } from './adapters/instructions.js';
 export {
   SKILL_BODY_MAX_BYTES,
   SKILL_CATALOG_BYTES,
@@ -202,6 +202,23 @@ export {
   type SandboxBackendVerdict,
   type TerminationStrategy,
 } from './ports/index.js';
+export {
+  HOOK_DEFAULT_TIMEOUT_MS,
+  HOOK_MAX_TIMEOUT_MS,
+  compileMatcher,
+  createHooksPort,
+  loadHookSources,
+  matcherMatches,
+  parseHookSection,
+  type ConfiguredHook,
+  type HookMatcher,
+  type HookParseResult,
+  type HookRunnerOptions,
+  type HookSourceInput,
+  type LoadedHookSources,
+} from './adapters/hooks.js';
+export type { HookEventInput, HookEventName, HookOutcome, HookRunReport, HooksPort } from './ports/hooks.js';
+export { noHooks } from './ports/hooks.js';
 export { ENV_ALWAYS_KEEP, ENV_SENSITIVE, redactEnv, type RedactionRequest, type RedactionResult } from './policy/env.js';
 export { JsonlEventStore, FileLockPort, FileSnapshotPort, systemClock, randomIds } from './adapters/node.js';
 export { defineTool, type ToolDefinition, type ToolImplementation } from './adapters/tools/define-tool.js';

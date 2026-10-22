@@ -31,8 +31,10 @@ import { startMcpServers } from '../adapters/mcp/servers.js';
 import { FileTrustStore } from '../adapters/trust.js';
 import { FileInstructionSource } from '../adapters/instructions.js';
 import { FileSkills } from '../adapters/skills.js';
+import { createHooksPort, loadHookSources } from '../adapters/hooks.js';
 import { createSkillTool } from '../adapters/tools/skill.js';
 import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
+import { projectRootOf } from '../adapters/instructions.js';
 import { decideSkills } from '../policy/skills.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
 import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
@@ -236,6 +238,28 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     }
   }
   const availableSkills = skillDecision.kind === 'injected' ? skillDecision.skills : [];
+
+  // Hooks (ADR-121/123). User-configured scripts at lifecycle points, Claude Code
+  // settings.json compatible. Project sources are trusted-gated exactly like MCP
+  // servers and skills; the trust snapshot is the host's, taken here at startup.
+  const projectRoot = projectRootOf(fs, options.cwd);
+  const hookSources = await loadHookSources({
+    home: options.home,
+    cowcatDir: paths.dir,
+    projectRoot,
+    trusted: workspaceTrusted,
+  });
+  if (hookSources.skippedUntrusted > 0) {
+    warnings.push(`hooks: skipped ${String(hookSources.skippedUntrusted)} project file(s) from an untrusted workspace (cowcat trust 后再生效)`);
+  }
+  const hooksPort = createHooksPort({
+    parsed: hookSources.parsed,
+    process: processes,
+    platform,
+    sandbox: sandbox.profile,
+    projectDir: projectRoot ?? options.cwd,
+    sessionsDir: paths.sessionsDir,
+  });
 
   const builtinTools = createTools({
     cwd: options.cwd,
@@ -561,6 +585,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       }
       const rec = adopt(session);
       sessions.set(id, rec);
+      // SessionStart (ADR-122 ①): fires once per session creation — resume reopens a
+      // log and fires nothing, matching the log's own shape (session.opened exists,
+      // re-open does not). Failure cannot reject creation: a broken start hook must
+      // not keep a session from existing.
+      hooksPort
+        .run({ event: 'session-start', sessionId: id, cwd: options.cwd }, new AbortController().signal)
+        .then((report) => {
+          for (const failure of report.failures) {
+            warnings.push(`hooks: session-start 失败：${failure}`);
+          }
+        })
+        .catch(() => undefined);
       return { sessionId: id, lastSeq: rec.lastSeq };
     },
 
@@ -664,6 +700,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         // Delegation is available to a top-level session only: the child's deps are built
         // without this field, which is what makes depth 0 the default (ADR-081 ④).
         subagents: { port: { spawn: spawnSubagent } },
+        // Hooks ride top-level turns for the same reason delegation does (ADR-121).
+        hooks: { port: hooksPort, cwd: options.cwd },
       };
 
       let failure: unknown = null;
