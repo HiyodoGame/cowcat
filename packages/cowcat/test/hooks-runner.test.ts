@@ -12,6 +12,7 @@ import {
   parseHookSection,
   defaultSandboxProfile,
   nodePlatform,
+  NodeProcess,
   type HookEventInput,
   type HookParseResult,
   type ProcessPort,
@@ -198,7 +199,7 @@ test('the hook receives the CC input shape on stdin and the session sandbox/cwd'
   assert.equal(spec.timeoutMs, HOOK_DEFAULT_TIMEOUT_MS);
   // Shell form: the command is one argument to the resolved shell (ADR-014).
   const stdin = JSON.parse(spec.stdin ?? '{}') as Record<string, unknown>;
-  assert.equal(stdin.hook_event_name, 'pre-tool-use');
+  assert.equal(stdin.hook_event_name, 'PreToolUse', 'PascalCase，CC 脚本按它分支（#161 审查 P1-1）');
   assert.equal(stdin.session_id, 'sess_h');
   assert.equal(stdin.cwd, '/repo');
   assert.equal(stdin.tool_name, 'Bash');
@@ -273,10 +274,18 @@ test('a deny stops the handler chain: the second handler never spawns', async ()
 test('UserPromptSubmit additionalContext becomes context; observation events ignore it', async () => {
   const port = makePort(
     oneCommand({ UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'ctx' }] }] }),
-    [resultOf({} as ProcessSpec, { stdout: JSON.stringify({ additionalContext: 'remember: no deploys on friday' }) })],
+    [resultOf({} as ProcessSpec, { stdout: JSON.stringify({ hookSpecificOutput: { additionalContext: 'remember: no deploys on friday' } }) })],
   );
   const report = await port.run({ event: 'user-prompt-submit', sessionId: 's', cwd: '/repo', prompt: 'ship it' }, signal);
   assert.deepEqual(report.outcome, { effect: 'context', text: 'remember: no deploys on friday' });
+
+  // The older top-level spelling is still read (fallback, not the documented shape).
+  const legacy = makePort(
+    oneCommand({ UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'ctx' }] }] }),
+    [resultOf({} as ProcessSpec, { stdout: JSON.stringify({ additionalContext: 'legacy spelling' }) })],
+  );
+  const legacyReport = await legacy.run({ event: 'user-prompt-submit', sessionId: 's', cwd: '/repo', prompt: 'ship it' }, signal);
+  assert.deepEqual(legacyReport.outcome, { effect: 'context', text: 'legacy spelling' });
 
   const stopPort = makePort(
     oneCommand({ Stop: [{ hooks: [{ type: 'command', command: 'ctx' }] }] }),
@@ -284,6 +293,49 @@ test('UserPromptSubmit additionalContext becomes context; observation events ign
   );
   const stopped = await stopPort.run({ event: 'stop', sessionId: 's', cwd: '/repo' }, signal);
   assert.equal(stopped.outcome.effect, 'none', 'v1 观察型事件不注入（ADR-122 ①）');
+});
+
+test('CC current-format decisions: top-level decision block denies, on the events CC documents', async () => {
+  // UserPromptSubmit: CC 现行格式是顶层 {decision, reason}——按文档写的拦截 hook
+  // 必须真的拦截（#161 审查 P1-2）。
+  const promptPort = makePort(
+    oneCommand({ UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'guard' }] }] }),
+    [resultOf({} as ProcessSpec, { stdout: JSON.stringify({ decision: 'block', reason: 'prompt looks like a secret' }) })],
+  );
+  const prompt = await promptPort.run({ event: 'user-prompt-submit', sessionId: 's', cwd: '/repo', prompt: 'AKIA...' }, signal);
+  assert.deepEqual(prompt.outcome, { effect: 'deny', reason: 'prompt looks like a secret' });
+
+  // PreToolUse top-level block (CC 标记 deprecated 但仍兑现) maps to deny too.
+  const toolPort = makePort(
+    oneCommand({ PreToolUse: [{ hooks: [{ type: 'command', command: 'guard' }] }] }),
+    [resultOf({} as ProcessSpec, { stdout: JSON.stringify({ decision: 'block', reason: 'top-level deprecated shape' }) })],
+  );
+  const tool = await toolPort.run(preToolInput, signal);
+  assert.deepEqual(tool.outcome, { effect: 'deny', reason: 'top-level deprecated shape' });
+});
+
+test('a cancelled or signal-killed hook (null exit code) is a failure, never a decision', async () => {
+  const port = makePort(
+    oneCommand({ PreToolUse: [{ hooks: [{ type: 'command', command: 'x' }] }] }),
+    [resultOf({} as ProcessSpec, {
+      exitCode: null,
+      signal: 'SIGTERM',
+      stdout: JSON.stringify({ hookSpecificOutput: { permissionDecision: 'deny' } }),
+      termination: { requested: true, reason: 'cancel', strategy: 'single-process', escalated: false, fallbackUsed: false, residuePossible: false },
+    })],
+  );
+  const report = await port.run(preToolInput, signal);
+  assert.equal(report.outcome.effect, 'none', '半截 stdout 里的 JSON 不能变成假 deny（#161 审查 P2-1）');
+  assert.equal(report.failures.length, 1);
+});
+
+test('PostToolUse block without a rewrite carries the note beside the original output', async () => {
+  const port = makePort(
+    oneCommand({ PostToolUse: [{ hooks: [{ type: 'command', command: 'lint' }] }] }),
+    [resultOf({} as ProcessSpec, { stdout: JSON.stringify({ decision: 'block', reason: 'lint failed' }) })],
+  );
+  const report = await port.run({ event: 'post-tool-use', sessionId: 's', cwd: '/repo', toolName: 'Bash' }, signal);
+  assert.deepEqual(report.outcome, { effect: 'note', text: 'lint failed' });
 });
 
 test('PostToolUse updatedToolOutput rewrites and rewrites are last-wins', async () => {
@@ -361,4 +413,44 @@ test('loadHookSources: an unparseable settings file is an inert line, not a refu
   const loaded = await loadHookSources({ home, cowcatDir: join(home, '.cowcat'), projectRoot: null, trusted: true });
   assert.equal(loaded.parsed.hooks.length, 0);
   assert.match(loaded.parsed.inert.join(''), /不是合法 JSON/);
+});
+
+test('loadHookSources: the same handler in user and project files runs once (CC merge rule)', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'cowcat-hooks-dedupe-'));
+  const project = mkdtempSync(join(tmpdir(), 'cowcat-hooks-dedupe-proj-'));
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  mkdirSync(join(project, '.claude'), { recursive: true });
+  const shared = { hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'same.sh' }] }] } };
+  writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(shared));
+  writeFileSync(join(project, '.claude', 'settings.json'), JSON.stringify(shared));
+  writeFileSync(join(project, 'cowcat.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: 'other.sh' }] }] } }));
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  });
+  const loaded = await loadHookSources({ home, cowcatDir: join(home, '.cowcat'), projectRoot: project, trusted: true });
+  assert.deepEqual(loaded.parsed.hooks.map((hook) => hook.command), ['same.sh', 'other.sh']);
+});
+
+test('a real process end to end: exec-form node script reads stdin and returns a decision', async () => {
+  const port = createHooksPort({
+    parsed: oneCommand({
+      PreToolUse: [{
+        hooks: [{
+          type: 'command',
+          command: process.execPath,
+          args: ['-e', 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);console.log(JSON.stringify({hookSpecificOutput:{permissionDecision: j.tool_input.command.includes("rm") ? "deny" : "allow", permissionDecisionReason: "rm is blocked"}}))})'],
+        }],
+      }],
+    }),
+    process: new NodeProcess({ platform }),
+    platform,
+    sandbox,
+    projectDir: '/repo',
+    sessionsDir: '/sessions',
+  });
+  const blocked = await port.run({ ...preToolInput, cwd: process.cwd() }, signal);
+  assert.deepEqual(blocked.outcome, { effect: 'deny', reason: 'rm is blocked' });
+  const allowed = await port.run({ event: 'pre-tool-use', sessionId: 's', cwd: process.cwd(), toolName: 'Bash', toolInput: { command: 'ls' } }, signal);
+  assert.equal(allowed.outcome.effect, 'none');
 });

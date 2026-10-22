@@ -160,16 +160,22 @@ export async function compactContext(
 
   // PreCompact (ADR-122 ①): fires only when a compaction will actually run — announcing
   // a compaction that the size check then skips would be a lie. v1 is observation-only.
+  // A throwing port is a note, never a dead compaction (ADR-121 ③).
   if (deps.hooks !== undefined) {
-    const report = await deps.hooks.port.run(
-      {
-        event: 'pre-compact',
-        sessionId: session.state.sessionId,
-        cwd: deps.hooks.cwd,
-        trigger,
-      },
-      signal,
-    );
+    let report: { readonly failures: readonly string[] };
+    try {
+      report = await deps.hooks.port.run(
+        {
+          event: 'pre-compact',
+          sessionId: session.state.sessionId,
+          cwd: deps.hooks.cwd,
+          trigger,
+        },
+        signal,
+      );
+    } catch (error) {
+      report = { failures: [`hook 抛错：${error instanceof Error ? error.message : String(error)}`] };
+    }
     for (const failure of report.failures) {
       try {
         await session.emit({

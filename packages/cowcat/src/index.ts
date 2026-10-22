@@ -204,7 +204,9 @@ export {
 } from './ports/index.js';
 export {
   HOOK_DEFAULT_TIMEOUT_MS,
+  HOOK_MAX_EFFECT_CHARS,
   HOOK_MAX_TIMEOUT_MS,
+  HOOK_OUTPUT_CAP_CHARS,
   compileMatcher,
   createHooksPort,
   loadHookSources,
