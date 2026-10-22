@@ -126,6 +126,12 @@ export {
 } from './ports/index.js';
 export {
   defaultSandboxProfile,
+  type BackgroundEndState,
+  type BackgroundExit,
+  type BackgroundStart,
+  type BackgroundTask,
+  type BackgroundTaskInfo,
+  type BackgroundTasksPort,
   type ProcessPort,
   type ProcessHandle,
   type ProcessExit,
@@ -199,6 +205,7 @@ export {
 export { resolveSandboxProfile, type ResolvedSandboxProfile, type SandboxProfileContext } from './policy/sandbox-profile.js';
 export { GITIGNORE_LIMITATIONS, walkFiles, type WalkResult } from './adapters/tools/ignore.js';
 export { NodeFs, nodeFs } from './adapters/fs.js';
+export { NodeBackgroundTasks, type NodeBackgroundTasksOptions } from './adapters/background.js';
 export { NodeProcess, type NodeProcessOptions, type SandboxCommand, type SandboxCommandResolver } from './adapters/process.js';
 export { buildSandboxCommand, createSandboxExecutor, shellQuote, type ExecutorDeps } from './adapters/sandbox/executor.js';
 export {
