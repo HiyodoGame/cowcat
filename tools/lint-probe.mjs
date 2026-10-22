@@ -57,11 +57,13 @@ const PROBES = [
   { pkg: 'cowcat', file: 'src/host/host.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'go through ProcessPort' },
   { pkg: 'cowcat', file: 'src/policy/env.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'stay runtime-agnostic' },
   { pkg: 'cowcat', file: 'src/policy/env.ts', add: "import { z } from 'zod';", expect: 'message', match: 'decoding boundary' },
+  { pkg: 'cowcat', file: 'src/policy/env.ts', add: "import { parse } from 'yaml';", expect: 'message', match: 'frontmatter parsing' },
   { pkg: 'cowcat', file: 'src/kernel/state.ts', add: "import { readFileSync } from 'node:fs';", expect: 'message', match: 'stay runtime-agnostic' },
   { pkg: 'cowcat', file: 'src/policy/trust.ts', add: "import OpenAI from 'openai';", expect: 'message', match: 'ModelPort' },
   { pkg: 'cowcat', file: 'src/ports/index.ts', add: "import Anthropic from '@anthropic-ai/sdk';", expect: 'message', match: 'ModelPort' },
   { pkg: 'cowcat', file: 'src/adapters/node.ts', add: "import { spawn } from 'node:child_process';", expect: 'silent' },
   { pkg: 'cowcat', file: 'src/adapters/node.ts', add: "import OpenAI from 'openai';", expect: 'silent' },
+  { pkg: 'cowcat', file: 'src/adapters/skills.ts', add: "import { parse as probeParse } from 'yaml';", expect: 'silent' },
 
   // packages/protocol: the seam knows neither half (ADR-062).
   { pkg: 'protocol', file: 'src/index.ts', add: "import { createHost } from '@corescense/cowcat-core';", expect: 'message', match: 'host port' },

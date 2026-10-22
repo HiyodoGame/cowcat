@@ -84,8 +84,15 @@ export class FileSkills implements SkillPort {
     const roots: readonly Root[] = [
       { dir: join(this.#home, '.cowcat', 'skills'), layer: 'user', origin: 'cowcat' },
       { dir: join(this.#home, '.claude', 'skills'), layer: 'user', origin: 'claude' },
-      { dir: join(projectRoot, '.cowcat', 'skills'), layer: 'project', origin: 'cowcat' },
-      { dir: join(projectRoot, '.claude', 'skills'), layer: 'project', origin: 'claude' },
+      // No project root, no project layer: outside a repository these two entries would
+      // point at the filesystem root and scan directories that have nothing to do with
+      // the session (ADR-114 ②).
+      ...(projectRoot === null
+        ? []
+        : ([
+            { dir: join(projectRoot, '.cowcat', 'skills'), layer: 'project', origin: 'cowcat' },
+            { dir: join(projectRoot, '.claude', 'skills'), layer: 'project', origin: 'claude' },
+          ] as const)),
     ];
 
     const skills: SkillFile[] = [];
@@ -130,7 +137,10 @@ async function readSkill(directory: string, directoryName: string, root: Root): 
   if (entries === null || !entries.includes(SKILL_FILENAME)) return { skill: null, warning: null };
   const path = join(directory, SKILL_FILENAME);
   const text = await readText(path);
-  if (text === null) return { skill: null, warning: null };
+  // The listing named it but the read failed: permission, a lock, a vanishing symlink.
+  // That is "present but unusable", which the port contract says must be reported — a
+  // skill the user can see on disk but that silently never loads is the worst outcome.
+  if (text === null) return { skill: null, warning: `${path}: SKILL.md exists but could not be read` };
   if (text.length > MAX_SKILL_FILE_BYTES) {
     return { skill: null, warning: `${path}: SKILL.md is larger than 1 MB` };
   }

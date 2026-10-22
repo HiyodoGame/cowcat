@@ -24,8 +24,12 @@ import {
   skillNameProblem,
   type SkillFile,
   type SkillsDecision,
+  type ToolPort,
 } from '../src/index.js';
 import { createSkillTool } from '../src/adapters/tools/skill.js';
+import { defineTool } from '../src/adapters/tools/define-tool.js';
+import { toolsForRole } from '../src/host/subagent-roles.js';
+import { z } from 'zod';
 
 const TRUSTED = { trusted: true };
 const UNTRUSTED = { trusted: false };
@@ -170,7 +174,7 @@ test('when even the names do not fit, the catalog says how many were left out', 
   const skills = Array.from({ length: 20 }, (_, index) => skill({ name: `skill-${String(index).padStart(2, '0')}` }));
   const tiny = renderSkillCatalog(skills, 260);
   assert.ok(tiny.omitted > 0);
-  assert.match(tiny.text, /more \(see \/skills\)/);
+  assert.match(tiny.text, /more \(omitted for budget\)/);
   assert.equal(tiny.listed.length + tiny.omitted, 20);
 });
 
@@ -354,3 +358,37 @@ test('nested metadata is accepted: we never read it, and real skills carry it', 
     cleanup();
   }
 });
+
+test('outside a repository there is no project layer at all', async () => {
+  // ADR-114 ②: "project root" is the first directory up from cwd that carries .git.
+  // Without one there is no project layer — the first implementation walked to the
+  // filesystem root and would have scanned /.cowcat/skills (review of #149, P1-3).
+  const base = mkdtempSync(join(tmpdir(), 'cowcat-skills-norepo-'));
+  try {
+    put(join(base, '.cowcat', 'skills'), 'loose', ['---', 'name: loose', 'description: x', '---', 'body'].join('\n'));
+    const discovery = await new FileSkills({ fs: nodeFs(), home: join(base, 'home') }).discover(base);
+    assert.deepEqual(discovery.skills, []);
+    assert.deepEqual(discovery.warnings, []);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('the general subagent role does not inherit Skill: no catalog, no tool', () => {
+  // The review of #149 (P1-1) found the general role shipping Skill while the design
+  // says skills are top-level only — a tool whose description references "the list you
+  // were given" is a lie when the child was given no catalog.
+  const tools = new Map([
+    ['Read', fakeTool('Read')],
+    ['Skill', fakeTool('Skill')],
+    ['TodoWrite', fakeTool('TodoWrite')],
+  ]);
+  const general = toolsForRole(tools, 'general');
+  assert.deepEqual([...general.keys()].sort(), ['Read']);
+  const explore = toolsForRole(tools, 'explore');
+  assert.deepEqual([...explore.keys()], ['Read']);
+});
+
+function fakeTool(name: string): ToolPort {
+  return defineTool({ name, description: name, risk: 'read', input: z.object({}) }, async () => ({ ok: true, output: '' }));
+}

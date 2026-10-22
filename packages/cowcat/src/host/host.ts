@@ -644,9 +644,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         },
         // Skills are top-level only for the same reason delegation is: a child gets a
         // narrowed tool subset, and a catalog naming a tool it cannot call is a lie.
+        // The snapshot comes from the host's own discovery, so the catalog and the
+        // Skill tool always describe the same set (no hot reload, ADR-114 ⑥).
         skills: {
-          port: skillsPort,
-          cwd: options.cwd,
+          skills: skillDiscovery.skills,
           trust: { trusted: workspaceTrusted },
           ...(configured.selection.preset.limits.context === undefined
             ? {}

@@ -183,15 +183,15 @@ export function renderSkillCatalog(skills: readonly SkillFile[], maxBytes: numbe
   for (const [index, line] of names.entries()) {
     const skill = ordered[index];
     if (skill === undefined) break;
-    const notice = `- …and ${String(ordered.length - listed.length - 1)} more (see /skills)`;
+    const notice = `- …and ${String(ordered.length - listed.length - 1)} more (omitted for budget)`;
     const candidate = wrap([...kept, line]);
-    // Leave room for the notice that follows a partial list.
-    if (utf8(candidate) > maxBytes - utf8(notice)) break;
+    // Leave room for the notice and the newline that precedes it.
+    if (utf8(candidate) > maxBytes - utf8(notice) - 1) break;
     kept.push(line);
     listed.push({ skill, bytes: utf8(line) });
   }
   const omitted = ordered.length - listed.length;
-  const lines = omitted === 0 ? kept : [...kept, `- …and ${String(omitted)} more (see /skills)`];
+  const lines = omitted === 0 ? kept : [...kept, `- …and ${String(omitted)} more (omitted for budget)`];
   return { text: wrap(lines), listed, omitted };
 }
 

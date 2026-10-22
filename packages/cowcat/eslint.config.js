@@ -46,6 +46,14 @@ export default tseslint.config(
               message:
                 'model protocol clients belong to src/adapters; the kernel talks to a model only through ModelPort (ADR-036)',
             },
+            {
+              // Same shape, fourth reason: YAML parsing is adapter work (ADR-115 ③).
+              // Without this pattern the ADR's "只在 src/adapters/" is a convention the
+              // lint does not enforce — the review of #149 caught the gap.
+              group: ['yaml', 'yaml/*'],
+              message:
+                'frontmatter parsing belongs to src/adapters; keep the yaml dependency out of the runtime-agnostic layers (ADR-115)',
+            },
           ],
         },
       ],
