@@ -1,6 +1,6 @@
 # P7 Skills 调研
 
-> 状态：**调研草案**（2026-10-22）。本文只出决定草案与 ADR 清单，按工作规则 1，**不在本文里改 ADR 或源码**。
+> 状态：**已评审落定**（2026-10-22）：S1~S10 全部采纳（S4 同名优先级与 S5 `yaml` 依赖经用户确认），ADR-114~117 已进 ADR 表。本文只出决定草案与 ADR 清单，按工作规则 1，**不在本文里改 ADR 或源码**。
 >
 > 上游依据：Agent Skills 规范（`agentskills.io/specification`，2026-10-22 取）与 Claude Code skills 文档（`code.claude.com/docs/en/skills`，2026-10-22 取）。两处都是一手页面；文中【上游】均指这两处。
 
@@ -94,7 +94,7 @@ skill-name/
 | 工具表是**静态 Map**，MCP 会替换成动态表 | `host/host.ts:782-808`、`host:246` | `Skill` 做成静态工具即可，不需要动态表 |
 | 项目层受信门控两件事：项目规则与项目指令 | `host/host.ts:199-205`、`policy/instructions.ts:67-84` | 项目技能必须走同一扇门 |
 | zod 只允许出现在 `src/adapters/`（lint 强制） | `AGENTS.md`、`docs/architecture/04-dependencies.md` | frontmatter 校验（zod）与 YAML 解析都只能落在 adapter |
-| 运行时依赖 **3 / 6**，每引入一个都要 ADR | `04-dependencies.md:14,28` | 新增 `yaml` 必须进 ADR 表并登记 |
+| 运行时依赖 **3 / 6**，每引入一个都要 ADR | `04-dependencies.md:14,28` | 新增 `yaml` 必须进 ADR 表并登记（落定后 **4 / 6**） |
 | 判断标准 2：**几十行的纯工具函数自己写，不引依赖** | `04-dependencies.md:10` | 所以要先论证 frontmatter 解析**不是**几十行（见 §6.3） |
 
 ## 6. 设计
