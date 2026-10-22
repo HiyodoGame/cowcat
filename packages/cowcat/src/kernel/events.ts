@@ -284,6 +284,26 @@ export type KernelEvent = EventBase &
       }
     | {
         /**
+         * A repeat-call reminder the model was shown (ADR-120).
+         *
+         * A message-producing event for the same reason `instructions.loaded` is: the
+         * warning is part of the conversation, and a replay has to show the model the
+         * same text without re-deriving whether the call looked repetitive. `text` is
+         * the rendered reminder (deterministic: name and count only).
+         *
+         * Emitted after the repeated call's `tool.finished`, so the model reads the
+         * fresh result first and the warning second.
+         */
+        readonly type: 'tool.repeat-detected';
+        readonly turnId: string | null;
+        readonly callId: string;
+        readonly name: string;
+        /** How many consecutive identical calls this one is (2 = the second). */
+        readonly count: number;
+        readonly text: string;
+      }
+    | {
+        /**
          * A background task started by this call (ADR-111).
          *
          * Durable, and paired with `tool.background.finished`: an ephemeral start would

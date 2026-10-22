@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   BASH_BACKGROUND_DEFAULT_TIMEOUT_MS,
   BASH_BACKGROUND_MAX_TIMEOUT_MS,
@@ -346,4 +349,41 @@ test('a real non-zero exit is reported with its code and is still not a failure'
 
   assert.equal(result.ok, true);
   assert.match(result.output, /exit code: 3/);
+});
+
+test('an oversized result spills to the session directory as a reference plus head (ADR-119)', async (t) => {
+  const spillRoot = mkdtempSync(join(tmpdir(), 'cowcat-spill-bash-'));
+  t.after(() => {
+    rmSync(spillRoot, { recursive: true, force: true });
+  });
+  const process = new FakeProcess({ stdout: 'x'.repeat(60_000) });
+  const runner = createBashTool({
+    cwd: '/repo',
+    process,
+    platform,
+    sandbox: defaultSandboxProfile({ mode: 'off' }),
+    spill: { rootDir: spillRoot },
+  });
+
+  const result = await runner.run({ command: 'big' }, signal, notApproved, {
+    sessionId: 'sess_bash',
+    callId: 'call_big',
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.output, /^\[spilled: full output of \d+ bytes written to /);
+  assert.ok(result.output.includes('first 4096 bytes below'));
+  // The spilled file holds what render produced; the inline output is reference + head.
+  const spilled = readFileSync(join(spillRoot, 'sess_bash', 'spill', 'call_big.txt'), 'utf8');
+  assert.equal(spilled, 'x'.repeat(60_000));
+});
+
+test('a bash call without a run context travels whole even when oversized', async () => {
+  const process = new FakeProcess({ stdout: 'x'.repeat(60_000) });
+  const runner = tool(process);
+
+  const result = await runner.run({ command: 'big' }, signal, notApproved);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output, 'x'.repeat(60_000));
 });

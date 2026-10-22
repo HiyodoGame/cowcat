@@ -1,10 +1,12 @@
 import { readFileSync, statSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { z } from 'zod';
-import { ATTACHMENT_HARD_LIMIT_BYTES, ATTACHMENT_SOFT_LIMIT_BYTES, makeAttachment, type ToolPort, type ToolResult } from '../../ports/index.js';
+import { ATTACHMENT_HARD_LIMIT_BYTES, ATTACHMENT_SOFT_LIMIT_BYTES, makeAttachment, type ToolPort, type ToolResult, type ToolRunContext } from '../../ports/index.js';
 import { defineTool } from './define-tool.js';
 import { describeDimensions, formatBytes, kindFromExtension, sniffBuffer } from '../imageinfo.js';
 import { DEFAULT_MAX_OUTPUT_CHARS, parseNotebook, renderNotebook } from '../notebook.js';
+import type { SpillConfig } from '../spill.js';
+import { spillOutput } from '../spill.js';
 
 /** The v1 caps, kept (ADR-050): the numbers are not new, their reporting is. */
 export const READ_MAX_LINES = 2000;
@@ -14,6 +16,11 @@ export const READ_ABSOLUTE_LIMIT = 20 * 1024 * 1024;
 export interface ReadToolOptions {
   /** The working directory a relative `file_path` is resolved against. */
   readonly cwd: string;
+  /**
+   * Where oversized text results spill (ADR-119) — `allow_large` reads can reach 20MB.
+   * Absent means results always travel whole, which is what probes and tests want.
+   */
+  readonly spill?: SpillConfig;
 }
 
 const DESCRIPTION = [
@@ -46,7 +53,7 @@ export function createReadTool(options: ReadToolOptions): ToolPort {
           .describe('Read files larger than 5MB whole, without line paging (still refused above 20MB)'),
       }),
     },
-    (input) => {
+    (input, _signal, _grant, context) => {
       const filePath = resolve(options.cwd, input.file_path);
       let size: number;
       let isDirectory: boolean;
@@ -118,9 +125,10 @@ export function createReadTool(options: ReadToolOptions): ToolPort {
 
       if (input.allow_large === true) {
         const body = lines.map((line, index) => `${String(index + 1)}\t${line}`).join('\n');
+        const output = [body, ...endings].filter((part) => part !== '').join('\n');
         return {
           ok: true,
-          output: [body, ...endings].filter((part) => part !== '').join('\n'),
+          output: spill(options.spill, context, output),
           truncation: { truncated: false, dropped: 0, reason: null },
         };
       }
@@ -137,7 +145,7 @@ export function createReadTool(options: ReadToolOptions): ToolPort {
 
       return {
         ok: true,
-        output: [body, footer, ...endings].filter((part) => part !== '').join('\n'),
+        output: spill(options.spill, context, [body, footer, ...endings].filter((part) => part !== '').join('\n')),
         truncation: {
           truncated: shown.length < total,
           dropped: total - shown.length,
@@ -146,6 +154,19 @@ export function createReadTool(options: ReadToolOptions): ToolPort {
       };
     },
   );
+}
+
+/**
+ * Oversized text spills (ADR-119). A call without a context (probes, unit tests) has no
+ * session directory for its bytes and simply travels whole — the same rule as Bash.
+ */
+function spill(
+  spillConfig: SpillConfig | undefined,
+  context: ToolRunContext | undefined,
+  output: string,
+): string {
+  if (spillConfig === undefined || context === undefined) return output;
+  return spillOutput(spillConfig, context.sessionId, context.callId, output).output;
 }
 
 /**

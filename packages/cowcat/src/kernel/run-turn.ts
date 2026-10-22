@@ -5,6 +5,7 @@ import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOut
 import type { InstructionPort, SkillFile } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
 import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/skills.js';
+import { clearedToolView } from '../policy/tool-clearing.js';
 import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput, type TaskInput } from './subagent.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
@@ -269,6 +270,10 @@ async function runTurnBody(
   let compactionChecked = false;
   // Model calls made so far; the delegation cap counts these, not tool calls (ADR-082 ②).
   let rounds = 0;
+  // Repeat-call guard (ADR-120): key of the previous tool call and its streak, across
+  // rounds of the same turn — a cross-round loop is exactly the failure this catches.
+  let lastCallKey: string | null = null;
+  let repeatCount = 0;
   try {
     for (;;) {
       if (signal.aborted) throw new TurnAborted('aborted before the model was called');
@@ -310,6 +315,11 @@ async function runTurnBody(
       }
       await session.transition('awaiting_tools');
       for (const call of calls) {
+        // `normalizeCall` has already JSON-round-tripped the input, so equal arguments
+        // stringify equal — key order included, which is fine for detecting literal loops.
+        const callKey = `${call.name}\n${JSON.stringify(call.input)}`;
+        repeatCount = callKey === lastCallKey ? repeatCount + 1 : 1;
+        lastCallKey = callKey;
         const { result, path } = await runCall(deps, call, signal);
         // Before `tool.finished` on purpose (ADR-054): two appends are never atomic, and
         // the two directions are not equal — a crash here leaves the list recorded, while
@@ -334,6 +344,19 @@ async function runTurnBody(
           // The canonical path from the request that was decided on (ADR-049).
           path,
         });
+        if (repeatCount >= 2) {
+          // The reminder is a fact the model was shown, so it goes in the log as a
+          // message and replays without re-deriving anything (ADR-120 ②, same
+          // reasoning as ADR-078 ④). It nags; it never blocks the call above.
+          await session.emit({
+            type: 'tool.repeat-detected',
+            turnId: session.turnId,
+            callId: call.callId,
+            name: call.name,
+            count: repeatCount,
+            text: repeatReminder(call.name, repeatCount),
+          });
+        }
         // After `tool.finished`: the call succeeded first, then a task exists (ADR-111). The
         // host buffers the task's exit until it sees this event, so the log never says a task
         // ended before it started.
@@ -471,7 +494,10 @@ async function streamModel(
   if (turnId === null) throw new Error('streamModel outside a turn');
 
   const request: ModelRequest = {
-    messages: session.state.messages,
+    // The sent view, not the log: old tool results travel as deterministic
+    // placeholders so the model keeps the calls but not the bytes (ADR-118). The
+    // log itself is untouched — this filter exists only on the way to the wire.
+    messages: clearedToolView(session.state.messages),
     // The preset's `toolCalls` gates the one place tools are put on the wire; a model
     // that cannot take them runs the same turn without (ADR-046 decision ③).
     tools: preset.toolCalls ? wireTools(deps) : [],
@@ -561,6 +587,16 @@ function normalizeCall(call: ToolCall): ToolCall {
   // JSON.stringify(undefined) is undefined rather than a string — but its lib type
   // says `string`, so keep the result as unknown and check it at runtime.
   return { ...call, input: typeof text === 'string' ? (JSON.parse(text) as unknown) : null };
+}
+
+// Deterministic by construction: name and count only, so a replay produces the same
+// reminder the live session sent (ADR-120 ②).
+function repeatReminder(name: string, count: number): string {
+  return [
+    `⚠️ Repeat call detected: this is consecutive identical call #${String(count)} of \`${name}\` (same name, same arguments).`,
+    `The previous identical call already returned a result — running it again will almost certainly return the same thing.`,
+    `If that result did not solve the problem, change the approach or the arguments instead of repeating.`,
+  ].join('\n');
 }
 
 // The two facts a rule can narrow on beyond the tool's own name and risk (ADR-027).

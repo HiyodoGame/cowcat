@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -222,4 +222,42 @@ test('the tool narrows on file_path', () => {
 
   assert.equal(tool.spec.pathInput, 'file_path');
   assert.deepEqual((tool.spec.inputSchema as Record<string, unknown>).required, ['file_path']);
+});
+
+test('an oversized text result spills to the session directory as a reference plus head (ADR-119)', async (t) => {
+  const root = tree({ 'big.txt': `${'x'.repeat(60_000)}\n` });
+  const spillRoot = realpathSync(mkdtempSync(join(tmpdir(), 'cowcat-spill-read-')));
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(spillRoot, { recursive: true, force: true });
+  });
+
+  const reader = createReadTool({ cwd: root, spill: { rootDir: spillRoot } });
+  const result = await reader.run({ file_path: 'big.txt' }, signal, noGrant, {
+    sessionId: 'sess_read',
+    callId: 'call_big',
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.output, /^\[spilled: full output of \d+ bytes written to /);
+  assert.ok(result.output.includes('first 4096 bytes below'));
+  // Spill is not truncation (ADR-119 ④): nothing was dropped, the bytes moved.
+  assert.deepEqual(result.truncation, { truncated: false, dropped: 0, reason: null });
+
+  const spilled = readFileSync(join(spillRoot, 'sess_read', 'spill', 'call_big.txt'), 'utf8');
+  assert.equal(spilled, `1\t${'x'.repeat(60_000)}`);
+});
+
+test('a read call without a run context travels whole even when oversized', async (t) => {
+  const root = tree({ 'big.txt': `${'x'.repeat(60_000)}\n` });
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const reader = createReadTool({ cwd: root, spill: { rootDir: join(root, 'nowhere') } });
+  const result = await reader.run({ file_path: 'big.txt' }, signal, noGrant);
+
+  assert.equal(result.ok, true);
+  assert.ok(!result.output.includes('[spilled:'));
+  assert.ok(result.output.length > 60_000);
 });

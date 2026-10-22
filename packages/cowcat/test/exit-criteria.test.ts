@@ -166,6 +166,7 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
       }
       case 'policy.decided':
       case 'tool.finished':
+      case 'tool.repeat-detected':
       case 'approval.requested':
       case 'approval.answered':
         out.push({ ...withoutVolatile(event), callId: projectedId(event.callId) });

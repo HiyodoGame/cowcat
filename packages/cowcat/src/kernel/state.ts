@@ -259,6 +259,14 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         ...(readFiles === state.readFiles ? {} : { readFiles }),
       };
     }
+    case 'tool.repeat-detected':
+      // A message-producing event like `instructions.loaded` (ADR-120): the reminder is
+      // part of the conversation, so replay reproduces it from the log alone.
+      return {
+        ...base,
+        messages: [...state.messages, { role: 'user', text: event.text }],
+        messageSeqs: [...state.messageSeqs, event.seq],
+      };
     case 'subagent.started':
     case 'subagent.finished':
       // Delegation is a fact about the parent log, not about its messages: what the model

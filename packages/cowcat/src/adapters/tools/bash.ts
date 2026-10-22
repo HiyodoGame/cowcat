@@ -9,6 +9,8 @@ import type {
   ToolPort,
 } from '../../ports/index.js';
 import { defineTool } from './define-tool.js';
+import type { SpillConfig } from '../spill.js';
+import { spillOutput } from '../spill.js';
 
 /** The v1 window, kept: 60s by default, 600s at most (agent/src/tools/bash.js:16-17). */
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
@@ -44,6 +46,11 @@ export interface BashToolOptions {
    * background tasks — the tool refuses rather than silently running in the foreground.
    */
   readonly background?: BackgroundTasksPort;
+  /**
+   * Where oversized outputs spill (ADR-119). Absent means results always travel whole,
+   * which is what probes and tests want.
+   */
+  readonly spill?: SpillConfig;
 }
 
 const DESCRIPTION = [
@@ -151,12 +158,19 @@ export function createBashTool(options: BashToolOptions): ToolPort {
 
       const terminated =
         result.termination.reason === 'timeout' || result.termination.reason === 'cancel';
+      const rendered = render(result, timeoutMs, outputCap);
+      // Spill needs the session's own directory; a call without a context (probes, unit
+      // tests) has no home for its bytes and simply travels whole.
+      const spilled =
+        options.spill === undefined || context === undefined
+          ? { output: rendered, spilledTo: null }
+          : spillOutput(options.spill, context.sessionId, context.callId, rendered);
       return {
         // A non-zero exit is a result the model interprets; a timeout or a cancel means
         // the command did not finish, which is a failure of the call (v1 drew the line
         // in the same place).
         ok: !terminated,
-        output: render(result, timeoutMs, outputCap),
+        output: spilled.output,
         facts: {
           sandbox: result.sandbox,
           termination: result.termination,
