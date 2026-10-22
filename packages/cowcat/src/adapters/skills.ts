@@ -39,7 +39,10 @@ const frontmatterSchema = z.looseObject({
   description: z.string().optional(),
   license: z.string().optional(),
   compatibility: z.string().optional(),
-  metadata: z.record(z.string(), z.string()).optional(),
+  // A map, but its values are not constrained: we never read them, and rejecting a nested
+  // `requires` object would refuse real skills that Claude Code accepts (2026-10-22: the
+  // 24 `lark-*` skills in the author's `~/.claude/skills` all carry one).
+  metadata: z.record(z.string(), z.unknown()).optional(),
   'allowed-tools': z.union([z.string(), z.array(z.string())]).optional(),
   'disable-model-invocation': z.union([z.boolean(), z.string()]).optional(),
 });

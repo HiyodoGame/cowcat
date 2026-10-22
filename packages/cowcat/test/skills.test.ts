@@ -139,17 +139,31 @@ test('a description cannot close the frame we own', () => {
   assert.match(catalog.text, /<\\\/system-reminder>/);
 });
 
-test('over budget, descriptions go first and names stay', () => {
+test('over budget, every description is clipped to its share instead of dropped', () => {
   const skills = [skill({ name: 'alpha', description: 'x'.repeat(500) }), skill({ name: 'beta', description: 'y'.repeat(500) })];
   const full = renderSkillCatalog(skills, SKILL_CATALOG_BYTES);
   assert.match(full.text, /alpha: x/);
 
-  // Enough for both names, not for their descriptions.
-  const namesOnly = renderSkillCatalog(skills, 400);
-  assert.match(namesOnly.text, /- alpha/);
-  assert.match(namesOnly.text, /- beta/);
-  assert.equal(namesOnly.omitted, 0);
-  assert.ok(!namesOnly.text.includes('xxxx'), 'the description was the thing dropped');
+  // Enough for both names and a share of each description, not for either whole.
+  const clipped = renderSkillCatalog(skills, 400);
+  assert.match(clipped.text, /- alpha: x/);
+  assert.match(clipped.text, /- beta: y/);
+  assert.ok(!clipped.text.includes('x'.repeat(200)), 'the description was clipped, not kept whole');
+  assert.ok(Buffer.byteLength(clipped.text, 'utf8') <= 400);
+  assert.equal(clipped.omitted, 0);
+});
+
+test('33 verbose skills still get a description each at the default budget', () => {
+  // The real distribution that forced the 2026-10-22 amendment: the author's
+  // ~/.claude/skills has 33 skills, most with several hundred characters of description.
+  const skills = Array.from({ length: 33 }, (_, index) =>
+    skill({ name: `skill-${String(index).padStart(2, '0')}`, description: `Use when task ${String(index)}. ${'d'.repeat(600)}` }),
+  );
+  const catalog = renderSkillCatalog(skills);
+  assert.equal(catalog.listed.length, 33);
+  assert.match(catalog.text, /skill-00: Use when task 0/);
+  assert.match(catalog.text, /skill-32: Use when task 32/);
+  assert.ok(Buffer.byteLength(catalog.text, 'utf8') <= SKILL_CATALOG_BYTES);
 });
 
 test('when even the names do not fit, the catalog says how many were left out', () => {
@@ -320,4 +334,23 @@ test('a body over the cap is truncated with a fact, not refused', async () => {
   assert.ok((truncation.dropped ?? 0) > 0);
   assert.match(result.output, /truncated to 1000 bytes/);
   assert.ok(Buffer.byteLength(result.output, 'utf8') < 1_400, 'the marker is small; the body is what was cut');
+});
+
+test('nested metadata is accepted: we never read it, and real skills carry it', async () => {
+  // 2026-10-22: every skill in the author's ~/.claude/skills/lark-* carries
+  // `metadata.requires` as a nested object. A strict string-to-string map refused 24
+  // skills that Claude Code loads, which is the migration cost ADR-114 ① exists to avoid.
+  const { root, home, cleanup } = tree();
+  try {
+    put(
+      join(root, '.cowcat', 'skills'),
+      'nested',
+      ['---', 'name: nested', 'description: Has nested metadata.', 'metadata:', '  requires:', '    bins: [git]', '---', 'body'].join('\n'),
+    );
+    const discovery = await new FileSkills({ fs: nodeFs(), home }).discover(root);
+    assert.deepEqual(discovery.skills.map((entry) => entry.name), ['nested']);
+    assert.deepEqual(discovery.warnings, []);
+  } finally {
+    cleanup();
+  }
 });
