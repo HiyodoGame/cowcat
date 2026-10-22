@@ -60,6 +60,17 @@ function tempDir(t: { after(fn: () => void): void }, prefix: string): string {
   return dir;
 }
 
+/** Poll a store/async predicate with a deadline; never asserts how long something took. */
+async function poll(check: () => Promise<boolean>, what: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
+}
+
 /** A user-layer config, in the place ADR-064 puts it. */
 function writeUserConfig(home: string, body: unknown): void {
   const dir = join(home, '.cowcat');
@@ -119,17 +130,56 @@ class FakeProcess implements ProcessPort {
   }
 }
 
+/** A process that stays alive until its signal aborts, then resolves as cancelled. */
+class HangingProcess implements ProcessPort {
+  run(spec: ProcessSpec, signal: AbortSignal): Promise<ProcessResult> {
+    return new Promise<ProcessResult>((resolve) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          resolve({
+            exitCode: null,
+            signal: null,
+            stdout: '',
+            stderr: '',
+            truncated: false,
+            dropped: { stdout: 0, stderr: 0 },
+            removedEnv: [],
+            ignoredDeny: [],
+            sandbox: { mode: spec.sandbox.mode, backend: null, limitations: [] },
+            termination: {
+              requested: true,
+              reason: 'cancel',
+              strategy: 'single-process',
+              escalated: false,
+              fallbackUsed: false,
+              residuePossible: false,
+            },
+          });
+        },
+        { once: true },
+      );
+    });
+  }
+
+  open(): Promise<never> {
+    return Promise.reject(new Error('HangingProcess.open() is not used in this test'));
+  }
+}
+
 /** A model whose stream never produces anything until it is cancelled. */
 class HangingModel implements ModelPort {
   stream(_request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelChunk> {
     return {
       [Symbol.asyncIterator]: () => ({
         next: () =>
-          new Promise<IteratorResult<ModelChunk>>((_resolve, reject) => {
-            signal.addEventListener('abort', () => {
-              reject(new Error('aborted by the client'));
-            }, { once: true });
-          }),
+          signal.aborted
+            ? Promise.reject(new Error('aborted by the client'))
+            : new Promise<IteratorResult<ModelChunk>>((_resolve, reject) => {
+                signal.addEventListener('abort', () => {
+                  reject(new Error('aborted by the client'));
+                }, { once: true });
+              }),
       }),
     };
   }
@@ -163,11 +213,13 @@ class DelegatingHangingModel implements ModelPort {
     return {
       [Symbol.asyncIterator]: () => ({
         next: () =>
-          new Promise<IteratorResult<ModelChunk>>((_resolve, reject) => {
-            signal.addEventListener('abort', () => {
-              reject(new Error('aborted by the client'));
-            }, { once: true });
-          }),
+          signal.aborted
+            ? Promise.reject(new Error('aborted by the client'))
+            : new Promise<IteratorResult<ModelChunk>>((_resolve, reject) => {
+                signal.addEventListener('abort', () => {
+                  reject(new Error('aborted by the client'));
+                }, { once: true });
+              }),
       }),
     };
   }
@@ -503,6 +555,125 @@ test('a repository cannot grant itself permissions until the workspace is truste
   );
   assert.equal(trusted.host.rules.some((rule) => rule.name === 'bash-is-fine'), true);
   assert.equal(first(trusted.events(), 'approval.requested'), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Background tasks (ADR-111/112)
+// ---------------------------------------------------------------------------
+
+test('a background task is announced, and its end never lands before the start', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, {
+    model: { preset: PRESET },
+    rules: [{ name: 'bash-is-fine', verdict: 'allow', when: { risk: 'exec' } }],
+  });
+
+  const store = new MemoryEventStore();
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_1', name: 'Bash', input: { command: 'pnpm dev', run_in_background: true } } }],
+    [{ type: 'text', text: 'started' }],
+  ]);
+  const host = await createHost({
+    cwd,
+    home,
+    env: {},
+    version: '0.0.0-test',
+    model,
+    store,
+    platform: fakePlatform(),
+    // Instant exit is the hard case: the task is over before the turn records that it began.
+    process: new FakeProcess(),
+  });
+  t.after(() => host.close());
+
+  await host.createSession('sess_bg');
+  await host.sendTurn('sess_bg', 'start the dev server');
+
+  await poll(async () => (await store.readAll('sess_bg')).some((event) => event.type === 'tool.background.finished'), 'the finished event');
+  const events = await store.readAll('sess_bg');
+  const startedAt = events.findIndex((event) => event.type === 'tool.background.started');
+  const finishedAt = events.findIndex((event) => event.type === 'tool.background.finished');
+  assert.ok(startedAt >= 0, 'the start is in the log');
+  assert.ok(finishedAt > startedAt, 'the end waits for the start, even when the process is already gone');
+});
+
+test('an unattended host refuses run_in_background instead of starting a process nobody can stop', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, {
+    model: { preset: PRESET },
+    rules: [{ name: 'bash-is-fine', verdict: 'allow', when: { risk: 'exec' } }],
+  });
+
+  const store = new MemoryEventStore();
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_1', name: 'Bash', input: { command: 'pnpm dev', run_in_background: true } } }],
+    [{ type: 'text', text: 'ok' }],
+  ]);
+  const host = await createHost({
+    cwd,
+    home,
+    env: {},
+    version: '0.0.0-test',
+    model,
+    store,
+    unattended: true,
+    platform: fakePlatform(),
+    process: new FakeProcess(),
+  });
+  t.after(() => host.close());
+
+  await host.createSession('sess_bg');
+  await host.sendTurn('sess_bg', 'start the dev server');
+
+  await poll(async () => (await store.readAll('sess_bg')).some((event) => event.type === 'tool.finished'), 'the tool result');
+  const events = await store.readAll('sess_bg');
+  const finished = events.find((event) => event.type === 'tool.finished');
+  if (finished?.type !== 'tool.finished') assert.fail('expected a tool.finished event');
+  assert.match(finished.output, /not available in this build/u);
+  assert.equal(events.some((event) => event.type === 'tool.background.started'), false);
+});
+
+test('closing the host stops a running background task and records its end', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, {
+    model: { preset: PRESET },
+    rules: [{ name: 'bash-is-fine', verdict: 'allow', when: { risk: 'exec' } }],
+  });
+
+  const store = new MemoryEventStore();
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_1', name: 'Bash', input: { command: 'pnpm dev', run_in_background: true } } }],
+    [{ type: 'text', text: 'started' }],
+  ]);
+  const host = await createHost({
+    cwd,
+    home,
+    env: {},
+    version: '0.0.0-test',
+    model,
+    store,
+    platform: fakePlatform(),
+    process: new HangingProcess(),
+  });
+
+  await host.createSession('sess_bg');
+  await host.sendTurn('sess_bg', 'start the dev server');
+  await poll(
+    async () => (await store.readAll('sess_bg')).some((event) => event.type === 'tool.background.started'),
+    'the started event',
+  );
+
+  // No t.after: this test is about close() itself, and a second close would race it.
+  await host.close();
+
+  const events = await store.readAll('sess_bg');
+  const finished = events.find((event) => event.type === 'tool.background.finished');
+  if (finished?.type !== 'tool.background.finished') assert.fail('expected the shutdown to be recorded');
+  assert.equal(finished.state, 'stopped');
+  assert.equal(finished.reason, 'cancel');
 });
 
 // ---------------------------------------------------------------------------

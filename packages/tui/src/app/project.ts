@@ -279,6 +279,13 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       return add({ ...base, agents }, notice(base, seq, done ? 'info' : 'warn', line));
     }
 
+    case 'tool.background.started':
+    case 'tool.background.finished':
+      // Durable and ignored for now: the panel that shows background tasks is the next
+      // step (T6c). They must not read as "an event this build does not know" in the
+      // meantime, because both events are expected in every session that uses the feature.
+      return base;
+
     default:
       return unsupported(base, updateType(event) ?? 'unknown');
   }

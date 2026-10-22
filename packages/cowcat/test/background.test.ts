@@ -64,6 +64,11 @@ test('a task runs to completion and reports its exit with the tail', async () =>
   assert.equal(exit.reason, 'none');
   assert.equal(exit.tail, 'hello\n');
   assert.equal(exit.truncated, false);
+  // Execution facts travel with the exit, not only with the foreground result (ADR-033).
+  const facts = exit.facts;
+  assert.ok(facts !== null);
+  assert.equal(facts.sandbox.mode, 'light');
+  assert.equal(facts.termination.reason, 'none');
   assert.deepEqual(tasks.list(), []);
 });
 

@@ -239,6 +239,11 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       // sees is the `tool.finished` that follows. Nothing is derived, so replay ignores
       // these two — the same shape `policy.decided` has, for the same reason.
       return base;
+    case 'tool.background.started':
+    case 'tool.background.finished':
+      // The registry owns the task; the log only records that it existed and how it ended.
+      // A frontend derives its panel from these events, never from kernel state.
+      return base;
     case 'policy.decided':
       return base;
     case 'todo.updated':

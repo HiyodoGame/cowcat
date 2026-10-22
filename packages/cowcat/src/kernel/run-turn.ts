@@ -300,6 +300,12 @@ async function runTurnBody(
           // The canonical path from the request that was decided on (ADR-049).
           path,
         });
+        // After `tool.finished`: the call succeeded first, then a task exists (ADR-111). The
+        // host buffers the task's exit until it sees this event, so the log never says a task
+        // ended before it started.
+        if (result.ok && result.background !== undefined) {
+          await session.backgroundStarted(call.callId, result.background.taskId, result.background.command);
+        }
       }
       await session.transition('requesting');
     }
@@ -392,7 +398,14 @@ async function streamModel(
     ...(preset.limits.output === undefined ? {} : { maxTokens: preset.limits.output }),
     ...(providerOptions === undefined ? {} : { providerOptions }),
   };
+  // `aborted()` rather than `signal.aborted`: a getter read twice would be narrowed by the
+  // type checker ("always false") even though an abort can land during the loop.
+  const aborted = (): boolean => signal.aborted;
   await session.transition('streaming');
+  // The transition awaits the store and then the listeners; a cancel can land in that
+  // window. Calling the model after that would be work nobody is waiting for — and a model
+  // whose iterator only watches the signal from inside `next()` would never see the abort.
+  if (aborted()) throw new TurnAborted('aborted after the streaming transition');
 
   let text = '';
   let stopReason: StopReason | null = null;
@@ -435,7 +448,7 @@ async function streamModel(
       }
     }
   }
-  if (signal.aborted) throw new TurnAborted('aborted while streaming');
+  if (aborted()) throw new TurnAborted('aborted while streaming');
 
   await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, reasoning, stopReason });
   return calls;
@@ -730,8 +743,12 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
     // The call id is closed over here so the tool never sees a session (ADR-108). A tool
     // with nothing to stream ignores the fourth parameter.
     return {
-      result: await tool.run(call.input, signal, grant, (stream, text) => {
-        session.toolOutput(call.callId, stream, text);
+      result: await tool.run(call.input, signal, grant, {
+        sessionId: session.state.sessionId,
+        callId: call.callId,
+        onOutput: (stream, text) => {
+          session.toolOutput(call.callId, stream, text);
+        },
       }),
       path,
     };

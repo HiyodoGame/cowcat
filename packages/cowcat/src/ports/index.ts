@@ -2,6 +2,7 @@ import type { KernelEvent } from '../kernel/events.js';
 import type { Message, ReasoningBlock, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
 import type { Attachment } from './attachments.js';
+import type { BackgroundTaskRef } from './background.js';
 import type { ModelUsage, StopReason } from './model.js';
 import type { ExecutionFacts } from './process.js';
 
@@ -119,6 +120,11 @@ export interface ToolResult {
   readonly ok: boolean;
   readonly output: string;
   /**
+   * Set when this call started a task that outlives it (ADR-111). The kernel turns it into
+   * `tool.background.started`; the task itself lives in the host's registry, not here.
+   */
+  readonly background?: BackgroundTaskRef;
+  /**
    * What the execution gateway actually did, when this tool ran a process
    * (ADR-033). Absent means the tool reported NOTHING — which an audit has to record
    * as "not known", never as "no sandbox". The difference between those two is the
@@ -151,6 +157,15 @@ export interface ToolResult {
   readonly attachments?: readonly Attachment[];
 }
 
+export interface ToolRunContext {
+  /** Which session owns this call. Only tools that outlive the call need it (ADR-111). */
+  readonly sessionId: string;
+  /** Which call this is: the id the log and the frontend key on. */
+  readonly callId: string;
+  /** Where live output goes while the call runs (ADR-108). Absent means nobody is watching. */
+  readonly onOutput?: ToolOutputListener;
+}
+
 export interface ToolPort {
   readonly spec: ToolSpec;
   /**
@@ -158,16 +173,11 @@ export interface ToolPort {
    * rather than optional so an implementation has to decide what it does with an `ask`
    * profile instead of silently ignoring it.
    *
-   * `onOutput` is where a long-running tool's live output goes (ADR-108). The kernel
-   * closes over the call id, so a tool never learns about sessions; a tool with nothing
-   * to stream simply ignores it. The durable record is still `ToolResult.output`.
+   * `context` is what the call is allowed to know about its surroundings (ADR-108/111):
+   * the live-output listener, and the ids a tool needs to start work that outlives the
+   * call. The kernel closes over them, so no tool ever reaches into a session.
    */
-  run(
-    input: unknown,
-    signal: AbortSignal,
-    grant: ToolGrant,
-    onOutput?: ToolOutputListener,
-  ): Promise<ToolResult>;
+  run(input: unknown, signal: AbortSignal, grant: ToolGrant, context?: ToolRunContext): Promise<ToolResult>;
 }
 
 export type ToolOutputStream = 'stdout' | 'stderr';

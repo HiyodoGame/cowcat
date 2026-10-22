@@ -190,6 +190,8 @@ export { createWriteTool, type WriteToolOptions } from './adapters/tools/write.j
 export { createEditTool, type EditToolOptions } from './adapters/tools/edit.js';
 export { createTodoWriteTool, TODO_MAX_ITEMS, TODO_MIN_ITEMS } from './adapters/tools/todo.js';
 export {
+  BASH_BACKGROUND_DEFAULT_TIMEOUT_MS,
+  BASH_BACKGROUND_MAX_TIMEOUT_MS,
   BASH_DEFAULT_OUTPUT_CAP,
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_TIMEOUT_MS,

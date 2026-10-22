@@ -263,6 +263,31 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // `null`, which says "the tool reported nothing" rather than "it produced no image".
     attachments: nullableFromAbsent(z.readonly(z.array(attachmentSchema))),
   }),
+  // ADR-111: the pair that makes a background task auditable. Both are plain objects with no
+  // absent-tolerance needed: no log predates them, and the registry always knows the fields.
+  z.object({
+    ...base,
+    type: z.literal('tool.background.started'),
+    callId: z.string(),
+    taskId: z.string(),
+    command: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('tool.background.finished'),
+    callId: z.string(),
+    taskId: z.string(),
+    exitCode: z.number().int().nullable(),
+    signal: z.string().nullable(),
+    state: z.enum(['exited', 'stopped', 'lost']),
+    reason: z.enum(['timeout', 'cancel', 'shutdown', 'none']),
+    // `facts` is always present but may be null (a lost exit never produced a result), the
+    // same statement `tool.finished.facts` makes.
+    facts: executionFactsSchema.nullable(),
+    tail: z.string(),
+    truncated: z.boolean(),
+    dropped: z.number().int().nonnegative(),
+  }),
   z.object({
     ...base,
     type: z.literal('subagent.started'),
