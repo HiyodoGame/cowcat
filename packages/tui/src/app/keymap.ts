@@ -29,6 +29,7 @@ export type Intent =
   | { readonly kind: 'toggleThinking' }
   /** Move the approval card's highlight; only meaningful while a question is open. */
   | { readonly kind: 'approvalMove'; readonly delta: number }
+  | { readonly kind: 'planMove'; readonly delta: number }
   /** Move the transcript viewport; positive is older content. */
   | { readonly kind: 'scroll'; readonly delta: number }
   /** Move the `/` menu highlight. */
@@ -98,6 +99,10 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (view.approval !== null && view.approval.verdict === null) {
     if (key.name === 'up') return { kind: 'approvalMove', delta: -1 };
     if (key.name === 'down') return { kind: 'approvalMove', delta: 1 };
+  }
+  if (view.plan !== null) {
+    if (key.name === 'up') return { kind: 'planMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'planMove', delta: 1 };
   }
 
   // Paging works while a question is open too: re-reading the transcript to decide is

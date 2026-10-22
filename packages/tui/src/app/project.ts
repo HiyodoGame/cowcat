@@ -2,7 +2,7 @@ import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { graphemes } from '../text/width.js';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
-import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
+import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type Entry, type PlanCardOption, type PlanView, type TodoView, type ToolCallView, type TuiView } from './view.js';
 import { noteBelow } from './view.js';
 
 /**
@@ -65,6 +65,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         // A question cannot outlive the turn that asked it, and neither can a half-sent
         // answer: both are cleared by the terminal transition that makes them stale.
         approval: done ? null : base.approval,
+        plan: done ? null : base.plan,
         streaming: done ? '' : base.streaming,
         // No tool of a finished turn is still running, whatever the log's last word was.
         pendingTools: done ? [] : base.pendingTools,
@@ -237,6 +238,37 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // Same silence for the same reason: hook context is what the model was told, not
       // something it said (ADR-122 ④).
       return base;
+
+    case 'plan.mode-changed': {
+      const on = flag(event, 'enabled') === true;
+      const line = on ? copyFor(base.lang).planModeOn : copyFor(base.lang).planModeOff;
+      return add({ ...base, planMode: on }, notice(base, seq, 'info', line));
+    }
+
+    case 'plan.proposed': {
+      const plans: PlanCardOption[] = records(event, 'plans').map((raw) => ({
+        title: text(raw, 'title') ?? '?',
+        summary: text(raw, 'summary') ?? '',
+      }));
+      const plan: PlanView = {
+        callId: text(event, 'callId') ?? '',
+        plans,
+        outcome: null,
+      };
+      // A review owns the keyboard exactly like an approval question (ADR-125 ③).
+      return { ...base, plan, planCursor: 0, approval: null, taskPanel: null };
+    }
+
+    case 'plan.decided': {
+      const callId = text(event, 'callId') ?? '';
+      if (base.plan === null || base.plan.callId !== callId) return base;
+      const choice = number(event, 'choice');
+      const line =
+        choice === null
+          ? copyFor(base.lang).planRejected
+          : copyFor(base.lang).planChosen.replace('{n}', String(choice + 1));
+      return add({ ...base, plan: null }, notice(base, seq, 'info', line));
+    }
 
     case 'skills.loaded': {
       // Same silence in the transcript, but the list is kept for `/skills`: which skills

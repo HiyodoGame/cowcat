@@ -37,6 +37,7 @@ import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
 import { projectRootOf } from '../adapters/instructions.js';
 import { decideSkills } from '../policy/skills.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
+import type { PlanChoice } from '../kernel/plan.js';
 import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
 import type { KernelEvent, SessionUpdate } from '../kernel/events.js';
 import { trustedRules, isTrusted } from '../policy/trust.js';
@@ -169,6 +170,12 @@ interface PendingApproval {
   readonly resolve: (verdict: ApprovalVerdict) => void;
 }
 
+/** The plan-review twin of {@link PendingApproval} (ADR-125 ③). */
+interface PendingPlan {
+  readonly callId: string;
+  readonly resolve: (choice: PlanChoice) => void;
+}
+
 interface SessionRecord {
   readonly session: Session;
   readonly listeners: Set<(update: unknown) => void>;
@@ -183,6 +190,9 @@ interface SessionRecord {
    * keeps a fast `run --yes` from losing its own answer to the event/subscribe seam.
    */
   readonly earlyApprovals: Map<string, ApprovalVerdict>;
+  pendingPlan: PendingPlan | null;
+  /** The plan-review twin of `earlyApprovals`: a fast answer must not be lost to the seam. */
+  readonly earlyPlanReplies: Map<string, PlanChoice>;
   running: { readonly controller: AbortController; readonly done: Promise<void> } | null;
 }
 
@@ -510,6 +520,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       turnWaiters: [],
       pendingApproval: null,
       earlyApprovals: new Map(),
+      pendingPlan: null,
+      earlyPlanReplies: new Map(),
       running: null,
     };
     rec.unsubscribe = session.subscribe((update) => {
@@ -712,6 +724,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         subagents: { port: { spawn: spawnSubagent } },
         // Hooks ride top-level turns for the same reason delegation does (ADR-121).
         hooks: { port: hooksPort, cwd: options.cwd },
+        // Plan review is top-level only: a child session's deps omit this, which keeps
+        // ExitPlan off its wire and its calls reading as unknown tools (ADR-124 ⑥).
+        planReview: (callId) => askPlanReview(rec, callId),
       };
 
       let failure: unknown = null;
@@ -726,8 +741,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       void settled.then(() => {
         rec.running = null;
         rec.pendingApproval = null;
+        rec.pendingPlan = null;
         // An answer for a call that never reached the bridge must not outlive the turn.
         rec.earlyApprovals.clear();
+        rec.earlyPlanReplies.clear();
         rec.turnWaiters = [];
       });
       // RACE, not all: the reply has to go out while the turn is still running, and the
@@ -784,6 +801,35 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         );
       }
       rec.earlyApprovals.set(callId, verdict);
+      return Promise.resolve();
+    },
+
+    async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
+      const rec = open(sessionId);
+      await rec.session.emit({ type: 'plan.mode-changed', turnId: rec.session.turnId, enabled, by: 'user' });
+    },
+
+    respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void> {
+      const rec = open(sessionId);
+      const answer: PlanChoice =
+        choice === null ? { kind: 'none', reason: reason ?? '' } : { kind: 'chosen', index: choice };
+      const pending = rec.pendingPlan;
+      if (pending !== null && pending.callId === callId) {
+        rec.pendingPlan = null;
+        pending.resolve(answer);
+        return Promise.resolve();
+      }
+      // Same seam as `earlyApprovals`: the event lands before the bridge is consulted,
+      // so an answer that arrives first is held, not refused.
+      if (rec.earlyPlanReplies.size >= MAX_EARLY_APPROVALS) {
+        return Promise.reject(
+          new ProtocolHostError(`too many plan replies arrived before the kernel asked for call ${callId}`, ERROR_CODES.hostRefused, {
+            sessionId,
+            callId,
+          }),
+        );
+      }
+      rec.earlyPlanReplies.set(callId, answer);
       return Promise.resolve();
     },
 
@@ -865,6 +911,28 @@ function askApproval(rec: SessionRecord, request: ActionRequest): Promise<Approv
       return;
     }
     rec.pendingApproval = { callId: request.callId, resolve };
+  });
+}
+
+/**
+ * The plan-review twin of {@link askApproval} (ADR-125 ③): same pairing rule, same
+ * one-question-at-a-time invariant, same early-answer seam. The plans themselves travel
+ * in the `plan.proposed` event the frontend already saw — the bridge only pairs the
+ * answer back to the waiting call.
+ */
+function askPlanReview(rec: SessionRecord, callId: string): Promise<PlanChoice> {
+  return new Promise<PlanChoice>((resolve, reject) => {
+    if (rec.pendingPlan !== null) {
+      reject(new ProtocolHostError('a plan review is already pending in this session', ERROR_CODES.hostRefused));
+      return;
+    }
+    const early = rec.earlyPlanReplies.get(callId);
+    if (early !== undefined) {
+      rec.earlyPlanReplies.delete(callId);
+      resolve(early);
+      return;
+    }
+    rec.pendingPlan = { callId, resolve };
   });
 }
 

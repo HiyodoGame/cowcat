@@ -32,6 +32,14 @@ export interface Copy {
    * tool, `{n}` the consecutive count.
    */
   readonly repeatReminder: string;
+  /** Plan mode toggled on (ADR-124). */
+  readonly planModeOn: string;
+  /** Plan mode toggled off. */
+  readonly planModeOff: string;
+  /** A plan review outcome: `{n}` is the 1-based plan number the user picked. */
+  readonly planChosen: string;
+  /** Every plan was rejected; the model revises (ADR-125 ④). */
+  readonly planRejected: string;
   readonly attachment: string;
   /** The label an image line carries: `图片 image/png 320×200`. */
   readonly image: string;
@@ -64,6 +72,10 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     subagentDone: '子会话 {session}（{role}）完成：{n} 轮',
     subagentFailed: '子会话 {session}（{role}）没跑完：{n} 轮',
     repeatReminder: '⚠️ 模型在重复调用 {name}（第 {n} 次，参数相同）',
+    planModeOn: 'plan 模式已开启：只读探索，写操作会被拒；方案成熟后模型会请你选（/plan 退出）',
+    planModeOff: 'plan 模式已关闭，照常执行',
+    planChosen: '已选方案 {n}，开始执行',
+    planRejected: '方案都被拒了，模型会改一改再问你',
     attachment: '附件',
     image: '图片',
     truncated: '（输出被截断）',
@@ -89,6 +101,10 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     subagentDone: 'sub session {session} ({role}) finished: {n} rounds',
     subagentFailed: 'sub session {session} ({role}) did not finish: {n} rounds',
     repeatReminder: '⚠️ the model is repeating {name} (call #{n}, same arguments)',
+    planModeOn: 'plan mode on: read-only exploration, writes refused; the model will ask you to pick a plan (/plan to exit)',
+    planModeOff: 'plan mode off, executing as usual',
+    planChosen: 'plan {n} chosen, executing',
+    planRejected: 'every plan was rejected; the model will revise and ask again',
     attachment: 'attachment',
     image: 'image',
     truncated: '(output was truncated)',

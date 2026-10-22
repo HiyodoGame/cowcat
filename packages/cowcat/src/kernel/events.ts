@@ -318,6 +318,39 @@ export type KernelEvent = EventBase &
       }
     | {
         /**
+         * Plan mode toggled (ADR-124). `by: 'user'` is a person flipping the switch
+         * (TUI `/plan`, protocol `plan.setMode`); `'plan-approved'` is the automatic
+         * exit after the person picks a plan. Folded into `SessionState.planMode`.
+         */
+        readonly type: 'plan.mode-changed';
+        readonly turnId: string | null;
+        readonly enabled: boolean;
+        readonly by: 'user' | 'plan-approved';
+      }
+    | {
+        /**
+         * An `ExitPlan` call presented its plans to the person (ADR-125). A fact, not a
+         * message: the frontends render the card from this event, and replay reproduces
+         * what was offered without re-running anything.
+         */
+        readonly type: 'plan.proposed';
+        readonly turnId: string | null;
+        readonly callId: string;
+        readonly plans: readonly { readonly title: string; readonly summary: string }[];
+      }
+    | {
+        /**
+         * The person's answer to a plan review (ADR-125). `choice` is the picked plan's
+         * index, or `null` when none of them qualified (`reason` says why).
+         */
+        readonly type: 'plan.decided';
+        readonly turnId: string | null;
+        readonly callId: string;
+        readonly choice: number | null;
+        readonly reason: string | null;
+      }
+    | {
+        /**
          * A background task started by this call (ADR-111).
          *
          * Durable, and paired with `tool.background.finished`: an ephemeral start would

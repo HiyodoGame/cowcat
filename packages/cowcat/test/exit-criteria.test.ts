@@ -201,6 +201,15 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // Same as instructions: hook context is what the model was told, not something
         // it said (ADR-122 ④).
         break;
+      case 'plan.mode-changed':
+        out.push(withoutVolatile(event));
+        break;
+      case 'plan.proposed':
+      case 'plan.decided':
+        // Review facts, compared the way the log wrote them; the call id is projected
+        // like every other call-scoped fact (ADR-125 ②).
+        out.push({ ...withoutVolatile(event), callId: projectedId(event.callId) });
+        break;
       case 'skills.loaded':
         // Same as instructions: the catalog is what the model was told, not something it
         // said (ADR-116 ⑥).

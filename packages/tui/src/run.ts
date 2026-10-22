@@ -14,6 +14,8 @@ import {
   markReplayedTasks,
   moveApprovalCursor,
   movePalette,
+  movePlanCursor,
+  planAnswerAt,
   moveSlash,
   moveTaskPanel,
   openPalette,
@@ -296,6 +298,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = moveApprovalCursor(view.current, intent.delta);
           draw();
           return;
+        case 'planMove':
+          view.current = movePlanCursor(view.current, intent.delta);
+          draw();
+          return;
         case 'scroll':
           view.current = withScroll(view.current, intent.delta);
           draw();
@@ -373,6 +379,40 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       if (id.startsWith('approval:')) {
         chooseApproval(Number(id.slice('approval:'.length)));
       }
+      if (id.startsWith('plan:')) {
+        const raw = id.slice('plan:'.length);
+        choosePlan(raw === 'none' ? 'none' : Number(raw));
+      }
+    }
+
+    /** Clicking a plan row answers the review, like clicking an approval row. */
+    function choosePlan(index: number | 'none'): void {
+      const plan = view.current.plan;
+      if (plan === null) return;
+      const cursor = index === 'none' ? plan.plans.length : index;
+      if (cursor < 0 || cursor > plan.plans.length) return;
+      view.current = { ...view.current, planCursor: cursor };
+      draw();
+      answerPlan();
+    }
+
+    /** Answer the open review with the highlighted row (Enter, click, or submit text). */
+    function answerPlan(): void {
+      const plan = view.current.plan;
+      if (plan === null) return;
+      const answer = planAnswerAt(view.current);
+      screen.clearInput();
+      options.client
+        .respondPlan(
+          sessionId,
+          plan.callId,
+          answer.kind === 'plan' ? answer.index : null,
+          answer.kind === 'none' ? 'none of the plans' : null,
+        )
+        .catch((error: unknown) => {
+          view.current = addNotice(view.current, 'error', message(error));
+          draw();
+        });
     }
 
     /** Clicking an approval row answers it; a click is not a mode switch. */
@@ -464,6 +504,19 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           }
           draw();
           return;
+        case 'plan':
+          if (view.current.plan !== null) {
+            view.current = addNotice(view.current, 'info', '先回答方案选择，再切 plan 模式');
+            draw();
+            return;
+          }
+          view.current = withInput(closePalette(view.current), '');
+          screen.clearInput();
+          options.client.setPlanMode(sessionId, effect.enabled).catch((error: unknown) => {
+            view.current = addNotice(view.current, 'error', message(error));
+            draw();
+          });
+          return;
         case 'quit':
           quit(0);
           return;
@@ -548,6 +601,31 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       if (trimmed.startsWith('/')) {
         screen.clearInput();
         view.current = addNotice(view.current, 'warn', `没有这个命令：${trimmed.split(/\s+/)[0] ?? trimmed}（Ctrl-P 看全部）`);
+        draw();
+        return;
+      }
+
+      if (view.current.plan !== null) {
+        const plan = view.current.plan;
+        if (trimmed === '') {
+          // Empty input + Enter is the highlighted row, like an approval answer.
+          answerPlan();
+          return;
+        }
+        const byNumber = /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+        if (byNumber !== null && byNumber >= 1 && byNumber <= plan.plans.length) {
+          view.current = { ...view.current, planCursor: byNumber - 1 };
+          draw();
+          answerPlan();
+          return;
+        }
+        if (trimmed === 'n' || trimmed === '0') {
+          view.current = { ...view.current, planCursor: plan.plans.length };
+          draw();
+          answerPlan();
+          return;
+        }
+        view.current = addNotice(view.current, 'info', '↑↓ 选择 + 回车，或输入方案序号 / n（都不选）');
         draw();
         return;
       }

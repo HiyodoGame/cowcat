@@ -7,6 +7,7 @@ import { decideInstruction, describeInstructionSkip } from '../policy/instructio
 import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/skills.js';
 import { clearedToolView } from '../policy/tool-clearing.js';
 import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput, type TaskInput } from './subagent.js';
+import { EXIT_PLAN_SPEC, EXIT_PLAN_TOOL_NAME, formatPlanResult, parseExitPlanInput, type PlanChoice, type PlanOption } from './plan.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
 import { contextCeiling, contextUsage } from './context.js';
@@ -121,6 +122,13 @@ export interface TurnDeps {
    * `TurnDeps` simply has no port (ADR-081 ④).
    */
   readonly subagents?: { readonly port: SubagentPort };
+  /**
+   * Answers plan reviews (ADR-125). Omitted means the session has no plan reviewer:
+   * `ExitPlan` stays off the wire, and a stray call reads as an unknown tool. Like
+   * `approve`, this is one question at a time — the turn awaits it inside
+   * `awaiting_approval`.
+   */
+  readonly planReview?: (callId: string, plans: readonly PlanOption[]) => Promise<PlanChoice>;
   /**
    * Why nobody can answer an approval in this session (ADR-081 ③).
    *
@@ -631,7 +639,11 @@ async function streamModel(
 // passes `deps.tools` directly — cannot accidentally offer `Task` to a summarizer.
 function wireTools(deps: TurnDeps): readonly ToolSpec[] {
   const specs = [...deps.tools.values()].map((tool) => tool.spec);
-  return deps.subagents === undefined ? specs : [...specs, TASK_SPEC];
+  // `Task` needs the delegation port; `ExitPlan` needs the review bridge AND an active
+  // plan mode — the tool's contract (present your plans, the user picks) is only true
+  // while the read-only constraint is on (ADR-124 ⑥/ADR-125 ①).
+  const withTask = deps.subagents === undefined ? specs : [...specs, TASK_SPEC];
+  return deps.planReview === undefined || !deps.session.state.planMode ? withTask : [...withTask, EXIT_PLAN_SPEC];
 }
 
 // The log is JSON, and the log is the source of truth: a fact that cannot survive a
@@ -785,6 +797,8 @@ async function askForApproval(
 async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
   const { session } = deps;
   const turnId = session.turnId;
+  const isExitPlan = deps.planReview !== undefined && session.state.planMode && call.name === EXIT_PLAN_TOOL_NAME;
+  if (isExitPlan) return await runExitPlanCall(deps, call, signal);
   const isTask = deps.subagents !== undefined && call.name === TASK_TOOL_NAME;
   // A malformed delegation is refused before policy: there is no action to adjudicate,
   // and asking a person about a call that cannot run is theatre.
@@ -824,6 +838,22 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 
   if (decision.verdict === 'deny') {
     return { result: { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` }, path };
+  }
+
+  // Plan mode (ADR-124): a host-enforced read-only constraint. It downgrades ask/allow
+  // to deny — it never overrides an explicit deny (handled above) — and it never blocks
+  // TodoWrite (a session-local list with no filesystem effect; the NEVER_GIVEN precedent
+  // names it per-tool for the same reason). Bash is refused wholesale: a command-level
+  // read-only classification that redirection and wrappers cannot bypass is its own
+  // project, so plan mode points the model at the file tools instead.
+  if (session.state.planMode && risk !== 'read' && call.name !== 'TodoWrite') {
+    return {
+      result: {
+        ok: false,
+        output: `plan mode: ${call.name} can ${risk === 'network' ? 'touch the network' : 'change state'}, which plan mode refuses. Explore with read-only tools (Read, Glob, Grep) and present your plan with ExitPlan.`,
+      },
+      path,
+    };
   }
 
   // The "read before write" gate (ADR-049). It lives in the kernel because that is
@@ -1010,6 +1040,85 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 async function fireStopHook(deps: TurnDeps, signal: AbortSignal): Promise<void> {
   if (deps.hooks === undefined) return;
   await runHooksSafely(deps, { event: 'stop', sessionId: deps.session.state.sessionId, cwd: deps.hooks.cwd }, signal);
+}
+
+/**
+ * The kernel's half of a plan review (ADR-125). The proposed plans are already in the
+ * log; here the turn parks in `awaiting_approval` — the same state approval uses, so
+ * the state machine needs no plan-specific shape — and waits for the person. A timeout
+ * answers "none" (the model revises) rather than rejecting with prejudice: a plan
+ * nobody clicked is not a refused plan.
+ */
+async function runExitPlanCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
+  const session = deps.session;
+  if (deps.planReview === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
+  const parsed = parseExitPlanInput(call.input);
+  if (!parsed.ok) return { result: { ok: false, output: `invalid ExitPlan input: ${parsed.reason}` }, path: null };
+  const plans = parsed.plans;
+
+  await session.emit({ type: 'plan.proposed', turnId: session.turnId, callId: call.callId, plans });
+  await session.transition('awaiting_approval', 'plan review');
+  let choice: PlanChoice;
+  try {
+    choice = await askPlanReview(deps, call.callId, plans, signal);
+  } finally {
+    // Back to the tool loop whether the answer arrived, timed out, or the turn was
+    // aborted — a parked state must never outlive the wait that parked it.
+    await session.transition('awaiting_tools');
+  }
+  await session.emit({
+    type: 'plan.decided',
+    turnId: session.turnId,
+    callId: call.callId,
+    choice: choice.kind === 'chosen' ? choice.index : null,
+    reason: choice.kind === 'none' ? choice.reason : null,
+  });
+  if (choice.kind === 'chosen') {
+    // The choice IS the approval: the chosen plan is about to be executed, so the
+    // read-only constraint exits with it (ADR-125 ④).
+    await session.emit({ type: 'plan.mode-changed', turnId: session.turnId, enabled: false, by: 'plan-approved' });
+  }
+  return { result: { ok: true, output: formatPlanResult(choice, plans) }, path: null };
+}
+
+async function askPlanReview(
+  deps: TurnDeps,
+  callId: string,
+  plans: readonly PlanOption[],
+  signal: AbortSignal,
+): Promise<PlanChoice> {
+  const review = deps.planReview;
+  if (review === undefined) throw new Error('askPlanReview without a review bridge');
+  const limit = deps.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<PlanChoice>((resolve, reject) => {
+      const abort = (): void => {
+        reject(new TurnAborted('aborted while waiting for plan review'));
+      };
+      timer = setTimeout(() => {
+        resolve({ kind: 'none', reason: 'no answer within the plan review timeout' });
+      }, limit);
+      if (signal.aborted) {
+        abort();
+        return;
+      }
+      onAbort = abort;
+      signal.addEventListener('abort', onAbort, { once: true });
+      review(callId, plans).then(
+        (answer) => {
+          resolve(answer);
+        },
+        (error: unknown) => {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
+      );
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onAbort !== undefined) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 /**

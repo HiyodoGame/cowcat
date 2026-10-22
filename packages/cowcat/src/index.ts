@@ -117,6 +117,18 @@ export {
   type ToolClearingSummary,
 } from './policy/tool-clearing.js';
 export { SPILL_HEAD_BYTES, SPILL_MAX_INLINE_BYTES, spillOutput, type SpillConfig, type SpillOutcome } from './adapters/spill.js';
+export {
+  EXIT_PLAN_SPEC,
+  EXIT_PLAN_TOOL_NAME,
+  PLAN_OPTION_MAX,
+  PLAN_SUMMARY_MAX_CHARS,
+  PLAN_TITLE_MAX_CHARS,
+  formatPlanResult,
+  parseExitPlanInput,
+  type ExitPlanParse,
+  type PlanChoice,
+  type PlanOption,
+} from './kernel/plan.js';
 export { FileSkills, type FileSkillsOptions } from './adapters/skills.js';
 export {
   loadConfig,

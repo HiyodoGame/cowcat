@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
+import { findCommand } from '../src/app/commands.js';
 import { advanceReasoning, initialView, markReplayedTasks, moveTaskPanel, openTaskPanel, revealedReasoning, selectedTask, withScroll, type TuiView } from '../src/app/view.js';
 import { closeView, project, streamReasoning, streamText, streamToolOutput } from '../src/app/project.js';
-import { findCommand } from '../src/app/commands.js';
 
 /**
  * `project()` is a pure function of the log (ADR-059 ②), so every assertion here is about
@@ -549,6 +549,50 @@ test('a repeat-call warning is a warn notice naming the tool and the count (ADR-
   assert.match(entry.text, /Bash/);
   assert.match(entry.text, /2/);
   assert.equal(view.unsupported.includes('tool.repeat-detected'), false, 'this build knows its own event');
+});
+
+test('a plan review opens a card, the answer closes it, and mode changes are notices (ADR-124/125)', () => {
+  const proposed = [
+    event('plan.mode-changed', { enabled: true, by: 'user' }),
+    event('plan.proposed', {
+      callId: 'c1',
+      plans: [
+        { title: 'small patch', summary: 'one file, minimal blast radius' },
+        { title: 'full rewrite', summary: 'more work now, less debt later' },
+      ],
+    }),
+  ].reduce(project, fresh());
+
+  assert.equal(proposed.planMode, true);
+  assert.ok(proposed.plan !== null && proposed.plan.plans.length === 2);
+  assert.equal(proposed.plan.plans[0]?.title, 'small patch');
+  const modeNotice = proposed.entries.find((entry) => entry.kind === 'notice');
+  assert.ok(modeNotice !== undefined && modeNotice.text.includes('plan 模式已开启'));
+
+  const decided = [
+    event('plan.mode-changed', { enabled: true, by: 'user' }),
+    event('plan.proposed', {
+      callId: 'c1',
+      plans: [
+        { title: 'small patch', summary: 'one file' },
+        { title: 'full rewrite', summary: 'more work' },
+      ],
+    }),
+    event('plan.decided', { callId: 'c1', choice: 1, reason: null }),
+    event('plan.mode-changed', { enabled: false, by: 'plan-approved' }),
+  ].reduce(project, fresh());
+  assert.equal(decided.plan, null, 'the answer closes the card');
+  assert.equal(decided.planMode, false);
+  assert.ok(decided.entries.some((entry) => entry.kind === 'notice' && entry.text.includes('方案 2')));
+});
+
+test('the /plan command toggles plan mode from the view state (ADR-124 ⑥)', () => {
+  const command = findCommand('plan');
+  assert.ok(command !== undefined);
+  const off = command.run(fresh());
+  assert.deepEqual(off, { kind: 'plan', enabled: true });
+  const on = command.run({ ...fresh(), planMode: true });
+  assert.deepEqual(on, { kind: 'plan', enabled: false });
 });
 
 

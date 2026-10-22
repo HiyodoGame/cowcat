@@ -148,6 +148,8 @@ export interface TurnDepsOptions {
   readonly subagents?: { readonly port: SubagentPort };
   /** Hooks (ADR-121). Omitted means the turn runs without hooks. */
   readonly hooks?: { readonly port: HooksPort; readonly cwd: string };
+  /** Plan review bridge (ADR-125). Omitted means no ExitPlan tool and no review. */
+  readonly planReview?: TurnDeps['planReview'];
   /** Why approvals cannot be answered here (ADR-081 ③). */
   readonly unattended?: string;
   /** Model-round cap (ADR-082 ②). */
@@ -179,6 +181,7 @@ export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOp
     ...(options.skills === undefined ? {} : { skills: options.skills }),
     ...(options.subagents === undefined ? {} : { subagents: options.subagents }),
     ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+    ...(options.planReview === undefined ? {} : { planReview: options.planReview }),
     ...(options.unattended === undefined ? {} : { unattended: options.unattended }),
     ...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
     tools: options.tools ?? new Map(),

@@ -292,6 +292,25 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     type: z.literal('hooks.context-added'),
     text: z.string(),
   }),
+  z.object({
+    ...base,
+    type: z.literal('plan.mode-changed'),
+    enabled: z.boolean(),
+    by: z.enum(['user', 'plan-approved']),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('plan.proposed'),
+    callId: z.string(),
+    plans: z.readonly(z.array(z.readonly(z.object({ title: z.string(), summary: z.string() })))),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('plan.decided'),
+    callId: z.string(),
+    choice: z.number().int().nullable(),
+    reason: z.string().nullable(),
+  }),
   // ADR-111: the pair that makes a background task auditable. Both are plain objects with no
   // absent-tolerance needed: no log predates them, and the registry always knows the fields.
   z.object({
@@ -382,6 +401,9 @@ const sessionStateSchema = z.object({
   // The compaction lock (ADR-072). A snapshot written mid-compaction keeps it open, which
   // is exactly what the log says too.
   compactionOpen: z.boolean(),
+  // Plan mode (ADR-124). Same lifecycle as the fields below: a snapshot written before
+  // the field existed fails validation and the caller replays instead (ADR-013).
+  planMode: z.boolean(),
   // The instruction message currently in `messages` (ADR-078), and how many were injected.
   instructionsSeq: z.number().int().positive().nullable(),
   instructionsCount: z.number().int().nonnegative(),

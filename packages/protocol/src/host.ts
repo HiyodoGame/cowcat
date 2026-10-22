@@ -43,6 +43,13 @@ export interface ProtocolHost {
   sendTurn(sessionId: string, input: string): Promise<{ turnId: string }>;
   cancelTurn(sessionId: string): Promise<void>;
   respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void>;
+  /**
+   * Toggle plan mode (ADR-124 ⑥). A user act, never model-initiated; the change lands
+   * in the session log as `plan.mode-changed`.
+   */
+  setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
+  /** Answer a plan review (ADR-125 ③). `choice: null` means "none of them" (reason tells why). */
+  respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void>;
   /** `null` means the host's own limit only; the caller's cap is applied by the host. */
   readAttachment(id: string, maxBytes: number | null): Promise<AttachmentBytes>;
   /**

@@ -41,6 +41,8 @@ export interface ProtocolClient {
   sendTurn(sessionId: string, input: string): Promise<string>;
   cancelTurn(sessionId: string): Promise<void>;
   respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']): Promise<void>;
+  setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
+  respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void>;
   readAttachment(id: string, maxBytes?: number): Promise<AttachmentBytes>;
   /** Stop a background task this session started; false when it is already gone. */
   stopTask(sessionId: string, taskId: string): Promise<boolean>;
@@ -170,6 +172,14 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']) {
       await request('approval.respond', { sessionId, callId, verdict });
+    },
+
+    async setPlanMode(sessionId: string, enabled: boolean) {
+      await request('plan.setMode', { sessionId, enabled });
+    },
+
+    async respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null) {
+      await request('plan.reply', { sessionId, callId, choice, reason });
     },
 
     async readAttachment(id: string, maxBytes?: number) {
