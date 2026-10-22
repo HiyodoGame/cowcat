@@ -250,6 +250,15 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // allowed read twice.
       return base;
 
+    case 'tool.repeat-detected': {
+      // The model-visible nudge, shown to the user too: a repeat loop is exactly the
+      // moment they want to glance over (ADR-120).
+      const line = copyFor(base.lang)
+        .repeatReminder.replace('{name}', text(event, 'name') ?? '?')
+        .replace('{n}', String(number(event, 'count') ?? 2));
+      return add(base, notice(base, seq, 'warn', line));
+    }
+
     case 'subagent.started': {
       const childSessionId = text(event, 'childSessionId') ?? '';
       if (childSessionId === '') return base;

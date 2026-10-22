@@ -82,7 +82,10 @@ export function createReadTool(options: ReadToolOptions): ToolPort {
 
       // A notebook is JSON, so it sniffs as text — and it is *rendered*, never attached
       // (ADR-057: an image output lives inside the JSON with no file to reference).
-      if (extname(filePath).toLowerCase() === '.ipynb') return readNotebook(filePath, buffer);
+      if (extname(filePath).toLowerCase() === '.ipynb') {
+        const notebook = readNotebook(filePath, buffer);
+        return notebook.ok ? { ...notebook, output: spill(options.spill, context, notebook.output) } : notebook;
+      }
 
       const sniffed = sniffBuffer(buffer);
       if (sniffed.kind === 'png' || sniffed.kind === 'jpeg' || sniffed.kind === 'gif' || sniffed.kind === 'webp') {

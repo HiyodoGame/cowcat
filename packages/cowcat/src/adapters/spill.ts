@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -40,12 +40,20 @@ export function spillOutput(
   maxInlineBytes: number = SPILL_MAX_INLINE_BYTES,
 ): SpillOutcome {
   if (byteLength(output) <= maxInlineBytes) return { output, spilledTo: null };
-  const dir = join(config.rootDir, sessionId, 'spill');
-  const file = join(dir, `${callId}.txt`);
+  const dir = join(config.rootDir, sanitize(sessionId), 'spill');
+  // The call id comes from the provider: sanitized, because nothing about its shape is
+  // ours to trust — `../` must not become a path traversal, and a Windows-hostile name
+  // must not fail the write silently (the catch below would hide it).
+  const file = join(dir, `${sanitize(callId)}.txt`);
+  const temp = join(dir, `.${sanitize(callId)}.tmp`);
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(file, output, 'utf8');
+    // Temp file + rename (ADR-091 ④): a crash mid-write must not leave a truncated
+    // file behind the log's "full output" claim.
+    writeFileSync(temp, output, 'utf8');
+    renameSync(temp, file);
   } catch {
+    rmSync(temp, { force: true });
     // Spill is an optimization, never a failure mode: when the disk refuses, the tool
     // result travels whole, exactly as it did before spill existed.
     return { output, spilledTo: null };
@@ -62,6 +70,11 @@ export function spillOutput(
 
 function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8');
+}
+
+/** Path-safe names for ids we did not mint: anything outside [A-Za-z0-9._-] becomes _. */
+function sanitize(id: string): string {
+  return id.replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
 /** A UTF-8-safe head: never splits a multi-byte sequence. */

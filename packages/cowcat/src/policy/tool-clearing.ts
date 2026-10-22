@@ -25,8 +25,12 @@ export interface ToolClearingSummary {
   readonly cleared: number;
 }
 
-export function clearedToolPlaceholder(originalOutput: string): string {
-  return `[已清除 ${String(utf8Length(originalOutput))} 字节]`;
+export function clearedToolPlaceholder(originalOutput: string, attachmentCount = 0): string {
+  const bytes = `[已清除 ${String(utf8Length(originalOutput))} 字节]`;
+  // Attachments are the priciest thing in the window (an image is ~1.5k estimated
+  // tokens, ADR-069): once a result leaves the window its bytes stop riding every
+  // request. The note keeps the message honest about what it no longer carries.
+  return attachmentCount > 0 ? `${bytes}（另有 ${String(attachmentCount)} 个附件不再随请求发送）` : bytes;
 }
 
 /**
@@ -49,7 +53,13 @@ export function clearedToolView(messages: readonly Message[]): readonly Message[
       view.push(message);
       continue;
     }
-    view.push({ ...message, output: clearedToolPlaceholder(message.output) });
+    view.push({
+      ...message,
+      output: clearedToolPlaceholder(message.output, message.attachments.length),
+      // The placeholder says the attachments stopped traveling; carrying the reference
+      // anyway would keep paying for the bytes on every request (ADR-118 ⑥).
+      attachments: [],
+    });
   }
   return view;
 }

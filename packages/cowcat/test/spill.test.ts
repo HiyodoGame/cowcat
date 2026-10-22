@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { SPILL_HEAD_BYTES, SPILL_MAX_INLINE_BYTES, spillOutput } from '../src/index.js';
 
 /**
@@ -54,6 +54,18 @@ test('the default threshold is the ADR value and is byte-based, not character-ba
   const outcome = spillOutput({ rootDir: root }, 'sess_c', 'call_3', full);
   assert.equal(outcome.spilledTo !== null, true);
   assert.equal(SPILL_MAX_INLINE_BYTES, 50_000);
+});
+
+test('the call id is sanitized: hostile names cannot leave the session directory', (t) => {
+  const root = tempRoot(t);
+  const outcome = spillOutput({ rootDir: root }, 'sess/e:vil', 'call/../x', 'z'.repeat(2_000), 100);
+  assert.ok(outcome.spilledTo !== null);
+  // Nothing escaped: the file landed under a sanitized session dir, with a sanitized name.
+  assert.ok(outcome.spilledTo.startsWith(root + '/') || outcome.spilledTo.startsWith(root + '\\'));
+  const relative = outcome.spilledTo.slice(root.length);
+  assert.match(relative, /^[\\/]sess_e_vil[\\/]spill[\\/]call_.._x\.txt$/);
+  // No temp file left behind after the atomic rename.
+  assert.deepEqual(readdirSync(dirname(outcome.spilledTo)).sort(), ['call_.._x.txt']);
 });
 
 test('a disk failure falls back to the whole output rather than failing the call', (t) => {
