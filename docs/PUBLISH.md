@@ -52,16 +52,28 @@ npm whoami --registry=https://registry.npmjs.org
 3. `@corescense/cowcat-tui`
 4. `@corescense/cowcat`
 
-从 `tools/pack-release.mjs --out` 生成的暂存目录逐个发布（tarball 里已经是精确版本，不再依赖本仓库的 `file:` 链接）。`pack-release` 把四个 tarball **平铺**在 `--out` 目录里，所以按文件发布，不要假设有 `packages-<name>/` 子目录：
+从 `tools/pack-release.mjs --out` 生成的暂存目录逐个发布（tarball 里已经是精确版本，不再依赖本仓库的 `file:` 链接）。`pack-release` 把四个 tarball **平铺**在 `--out` 目录里，所以按文件发布，不要假设有 `packages-<name>/` 子目录。
+
+**prerelease 必须显式 `--tag beta`**：版本号带 `-beta.N` 时 npm 直接拒绝（`You must specify a tag using --tag when publishing a prerelease version`），而且**不带 `--tag` 时默认 tag 是 `latest`** —— 漏了会静默改掉 `latest`，比报错更糟。
 
 ```bash
 TAG=1.0.0-beta.3
 cd "$TEMP/cowcat-stage"
-npm publish "./corescense-cowcat-protocol-$TAG.tgz" --access=public --registry=https://registry.npmjs.org
-npm publish "./corescense-cowcat-core-$TAG.tgz"     --access=public --registry=https://registry.npmjs.org
-npm publish "./corescense-cowcat-tui-$TAG.tgz"      --access=public --registry=https://registry.npmjs.org
-npm publish "./corescense-cowcat-$TAG.tgz"          --access=public --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-protocol-$TAG.tgz" --access=public --tag beta --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-core-$TAG.tgz"     --access=public --tag beta --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-tui-$TAG.tgz"      --access=public --tag beta --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-$TAG.tgz"          --access=public --tag beta --registry=https://registry.npmjs.org
 ```
+
+三个 support 包（protocol / core / tui）上一批的 `latest` 也指向 beta 版本，若要保持一致，发布后补一条 `dist-tag`（CLI 用精确版本依赖，不影响安装）：
+
+```bash
+npm dist-tag add "@corescense/cowcat-protocol@$TAG" latest --registry=https://registry.npmjs.org
+npm dist-tag add "@corescense/cowcat-core@$TAG"     latest --registry=https://registry.npmjs.org
+npm dist-tag add "@corescense/cowcat-tui@$TAG"      latest --registry=https://registry.npmjs.org
+```
+
+> `@corescense/cowcat`（CLI）的 `latest` **不要**动：它仍指 v1 `0.15.0`，切换门槛见 `beta-checklist.md` §7。
 
 > `pack-release.mjs` 的暂存目录默认会清理；发布批次请显式传 `--out`，再手动进入每个暂存目录发布。
 
@@ -88,6 +100,7 @@ node -e "fetch('https://registry.npmjs.org/@corescense/cowcat/<版本>').then(r=
 3. **`npm stage` 不吃 scope 级 registry 配置**：`stage list/view/approve` 一律显式加 `--registry=https://registry.npmjs.org`。
 4. **TUI 的 Node 门槛**：`@corescense/cowcat-tui` 要求 Node ≥ 26.4；在 Node 22 上安装 CLI 会出现 EBADENGINE 警告，但 `run`/`serve`/`doctor` 不受影响。
 5. **版本号只有一处批次操作**：四个 `package.json` + `pack-release.mjs` 的 `VERSION` 必须一起改；不要只改一个。
+6. **prerelease 必须 `--tag beta`**：`npm publish` 对 `-beta.N` 版本直接报 `You must specify a tag using --tag when publishing a prerelease version`（2026-10-22 实测）。这条报错是安全网——不带 `--tag` 时 npm 的默认 tag 是 `latest`，若哪天 npm 放宽了检查，一条 `latest` 就会被 beta 版本占掉。
 
 ## ⑥ 自动发布
 
