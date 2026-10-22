@@ -156,9 +156,28 @@ export interface ToolPort {
    * `grant` describes what the kernel granted for this call (ADR-051). It is required
    * rather than optional so an implementation has to decide what it does with an `ask`
    * profile instead of silently ignoring it.
+   *
+   * `onOutput` is where a long-running tool's live output goes (ADR-108). The kernel
+   * closes over the call id, so a tool never learns about sessions; a tool with nothing
+   * to stream simply ignores it. The durable record is still `ToolResult.output`.
    */
-  run(input: unknown, signal: AbortSignal, grant: ToolGrant): Promise<ToolResult>;
+  run(
+    input: unknown,
+    signal: AbortSignal,
+    grant: ToolGrant,
+    onOutput?: ToolOutputListener,
+  ): Promise<ToolResult>;
 }
+
+export type ToolOutputStream = 'stdout' | 'stderr';
+
+/**
+ * A live fragment of a tool's output, for the screen only (ADR-108).
+ *
+ * Same shape as `ProcessPort`'s sink on purpose: the Bash tool forwards one to the other
+ * without inventing a third vocabulary.
+ */
+export type ToolOutputListener = (stream: ToolOutputStream, text: string) => void;
 
 export type ModelChunk =
   | { readonly type: 'text'; readonly text: string }

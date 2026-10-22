@@ -41,11 +41,12 @@ export const eventParamsSchema = z.looseObject({
   type: z.string().min(1),
 });
 
-/** `StreamDelta`/`ReasoningDelta` as they cross the wire. Fields are the ones a renderer
- *  appends text with; like the event body they are passed through, so a later field (a
- *  reasoning index, a token count) reaches the renderer instead of being rejected here. */
+/** `StreamDelta`/`ReasoningDelta`/`tool.output.delta` as they cross the wire. Fields are the
+ *  ones a renderer appends text with; like the event body they are passed through, so a later
+ *  field (a reasoning index, a token count, a call id) reaches the renderer instead of being
+ *  rejected here. */
 export const deltaParamsSchema = z.looseObject({
-  type: z.enum(['model.delta', 'reasoning.delta']),
+  type: z.enum(['model.delta', 'reasoning.delta', 'tool.output.delta']),
   turnId: z.string().min(1),
   text: z.string(),
 });

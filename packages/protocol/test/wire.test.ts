@@ -98,6 +98,13 @@ test('a delta keeps its own shape and tolerates later fields', async () => {
   // Reasoning streams over the same notification, so a renderer can show "thinking" live
   // without a second channel (ADR-098).
   assert.equal(deltaParamsSchema.safeParse({ type: 'reasoning.delta', turnId: 't1', text: '想' }).success, true);
+  // A tool's live output rides the same channel too (ADR-108); `callId` and `stream`
+  // pass through the loose object without being re-declared here.
+  assert.equal(
+    deltaParamsSchema.safeParse({ type: 'tool.output.delta', turnId: 't1', text: 'compiling', callId: 'c1', stream: 'stdout' })
+      .success,
+    true,
+  );
 
   const host = new ScriptedHost([newScriptedSession('s1')]);
   const { client } = wire(host);
@@ -108,6 +115,18 @@ test('a delta keeps its own shape and tolerates later fields', async () => {
   host.emit('s1', { ...(delta('t1', 'x') as Record<string, unknown>), tokens: 3 });
   await flush();
   assert.equal(deltas.length, 1);
+
+  // The server routes a tool delta through the same notification, so the transport has one
+  // ephemeral channel rather than a second one per feature (ADR-108).
+  host.emit('s1', { type: 'tool.output.delta', turnId: 't1', callId: 'c1', stream: 'stdout', text: 'compiling' });
+  await flush();
+  assert.equal(deltas.length, 2);
+  // The loose body has to survive the whole trip, not just the schema: a renderer needs
+  // `callId` to pick the card and `stream` to style the line.
+  const toolDelta = deltas[1] as { readonly callId?: unknown; readonly stream?: unknown; readonly text?: unknown };
+  assert.equal(toolDelta.callId, 'c1');
+  assert.equal(toolDelta.stream, 'stdout');
+  assert.equal(toolDelta.text, 'compiling');
 });
 
 test('parseIncoming separates requests, notifications and junk', () => {

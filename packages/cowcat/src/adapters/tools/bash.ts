@@ -56,7 +56,7 @@ export function createBashTool(options: BashToolOptions): ToolPort {
           .describe('Not supported in this version (background tasks are P7); passing true is refused'),
       }),
     },
-    async (input, signal, grant) => {
+    async (input, signal, grant, onOutput) => {
       if (input.run_in_background === true) {
         return {
           ok: false,
@@ -84,7 +84,9 @@ export function createBashTool(options: BashToolOptions): ToolPort {
 
       let result: ProcessResult;
       try {
-        result = await options.process.run(spec, signal);
+        // The listener and the port's sink have the same shape (ADR-107/108), so this is
+        // a pass-through rather than a second contract to keep in sync.
+        result = await options.process.run(spec, signal, onOutput === undefined ? undefined : { onOutput });
       } catch (error) {
         return { ok: false, output: `failed to start command: ${error instanceof Error ? error.message : String(error)}` };
       }

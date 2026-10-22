@@ -341,7 +341,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   }
 
   function deliver(rec: SessionRecord, update: SessionUpdate): void {
-    if (update.type === 'model.delta' || update.type === 'reasoning.delta') {
+    // Ephemeral updates have no seq and change no state: they go straight to the listeners
+    // (ADR-108 added the third one).
+    if (update.type === 'model.delta' || update.type === 'reasoning.delta' || update.type === 'tool.output.delta') {
       for (const listener of rec.listeners) listener(update);
       return;
     }
@@ -483,7 +485,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         replay,
         subscribe: (listener: (update: unknown) => void) => {
           const queued = buffered.filter((update) => {
-            if (update.type === 'model.delta' || update.type === 'reasoning.delta') return true;
+            if (update.type === 'model.delta' || update.type === 'reasoning.delta' || update.type === 'tool.output.delta') {
+              return true;
+            }
             return update.seq > lastSeq;
           });
           buffered.length = 0;

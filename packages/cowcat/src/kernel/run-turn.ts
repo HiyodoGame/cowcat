@@ -727,7 +727,14 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 
   const grant: ToolGrant = { networkApproved: approved };
   try {
-    return { result: await tool.run(call.input, signal, grant), path };
+    // The call id is closed over here so the tool never sees a session (ADR-108). A tool
+    // with nothing to stream ignores the fourth parameter.
+    return {
+      result: await tool.run(call.input, signal, grant, (stream, text) => {
+        session.toolOutput(call.callId, stream, text);
+      }),
+      path,
+    };
   } catch (error) {
     if (signal.aborted) throw error;
     const message = error instanceof Error ? error.message : String(error);

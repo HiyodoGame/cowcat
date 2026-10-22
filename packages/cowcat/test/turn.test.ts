@@ -143,6 +143,37 @@ test('a read tool runs without asking and its result reaches the next model call
   assert.equal(session.state.messages.length, 4);
 });
 
+test('a running tool can report live output; subscribers see it and the log does not (ADR-108)', async () => {
+  const streaming: ToolPort = {
+    spec: { name: 'bash_stream', description: 'stream', risk: 'exec' },
+    run: async (_input, _signal, _grant, onOutput) => {
+      onOutput?.('stdout', 'compiling\n');
+      onOutput?.('stderr', 'warning\n');
+      return { ok: true, output: 'compiling\n' };
+    },
+  };
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'bash_stream', input: { command: 'build' } } }],
+    [{ type: 'text', text: 'built' }],
+  ]);
+  const { store, session, deps } = await setup(model, [streaming]);
+  const seen: { callId: string; stream: string; text: string }[] = [];
+  session.subscribe((update) => {
+    if (update.type === 'tool.output.delta') {
+      seen.push({ callId: update.callId, stream: update.stream, text: update.text });
+    }
+  });
+
+  await runTurn(deps, 'build it', new AbortController().signal);
+
+  assert.deepEqual(seen, [
+    { callId: 'c1', stream: 'stdout', text: 'compiling\n' },
+    { callId: 'c1', stream: 'stderr', text: 'warning\n' },
+  ]);
+  // The fragment is a view, not a fact: the complete output is in `tool.finished`.
+  assert.equal(store.events.some((event) => (event.type as string) === 'tool.output.delta'), false);
+});
+
 test('a write tool is asked about, and a rejection is reported to the model instead of executed', async () => {
   const asked: string[] = [];
   const model = new ScriptedModel([
