@@ -33,6 +33,15 @@ export const SKILL_CATALOG_SHARE = 0.02;
  * hundred bytes, at which point it lists nothing and the feature silently disappears.
  */
 export const SKILL_CATALOG_FLOOR = 1024;
+/**
+ * Below this many bytes per skill, a description says nothing useful and the catalog falls
+ * back to names only (ADR-116 ②, amended 2026-10-22).
+ *
+ * The first implementation dropped every description the moment the total went over
+ * budget. With 33 real skills that produced a 674-byte list of bare names — the model could
+ * not tell which one applied, which is the entire point of the catalog.
+ */
+export const SKILL_DESCRIPTION_MIN_BYTES = 40;
 
 /** How much of one skill body a single `Skill` call may return (ADR-117 ②). */
 export const SKILL_BODY_MAX_BYTES = 32 * 1024;
@@ -150,7 +159,22 @@ export function renderSkillCatalog(skills: readonly SkillFile[], maxBytes: numbe
   // Names first, descriptions gone: the model can still call every one of them.
   const names = ordered.map((skill) => `- ${skill.name}`);
   const namesText = wrap(names);
-  if (utf8(namesText) <= maxBytes) return { text: namesText, listed: entries(names), omitted: 0 };
+  if (utf8(namesText) <= maxBytes) {
+    // The budget is left over after every name. Share it evenly and clip each description
+    // to its share rather than dropping all of them: a catalog of bare names cannot tell
+    // the model when a skill applies (ADR-116 ②, amended 2026-10-22).
+    const overhead = utf8(open) + utf8(close) + Math.max(0, ordered.length - 1);
+    const namesBytes = names.reduce((sum, line) => sum + utf8(line), 0);
+    const share = Math.floor((maxBytes - overhead - namesBytes) / ordered.length) - 2; // ': '
+    if (share >= SKILL_DESCRIPTION_MIN_BYTES) {
+      for (let per = share; per >= SKILL_DESCRIPTION_MIN_BYTES; per -= 4) {
+        const lines = ordered.map((skill) => `- ${skill.name}: ${clipBytes(skill.description, per)}`);
+        const text = wrap(lines);
+        if (utf8(text) <= maxBytes) return { text, listed: entries(lines), omitted: 0 };
+      }
+    }
+    return { text: namesText, listed: entries(names), omitted: 0 };
+  }
 
   // Last resort: the names themselves do not fit. Keep the ones that do and say how many
   // were left out — silently dropping a name would make the catalog look complete.
@@ -228,6 +252,28 @@ export function describeSkillSkip(skills: readonly SkillFile[]): string | null {
 /** Repository-provided text must not close the frame we own (ADR-116 ③). */
 function escapeFrame(text: string): string {
   return text.split('</system-reminder>').join('<\\/system-reminder>');
+}
+
+/** A description cut to `limit` bytes, with an ellipsis when something was dropped. */
+function clipBytes(text: string, limit: number): string {
+  const trimmed = text.trim();
+  if (utf8(trimmed) <= limit) return escapeFrame(trimmed);
+  const room = Math.max(0, limit - utf8('…'));
+  return `${escapeFrame(clipUtf8(trimmed, room))}…`;
+}
+
+/** Longest prefix that fits `limit` bytes, never splitting a code point. */
+function clipUtf8(text: string, limit: number): string {
+  if (limit <= 0) return '';
+  let used = 0;
+  let end = 0;
+  for (const char of text) {
+    const size = utf8(char);
+    if (used + size > limit) break;
+    used += size;
+    end += char.length;
+  }
+  return text.slice(0, end);
 }
 
 /** Longest prefix that fits `limit` characters, never splitting a surrogate pair. */
