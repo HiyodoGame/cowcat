@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BASH_BACKGROUND_DEFAULT_TIMEOUT_MS,
+  BASH_BACKGROUND_MAX_TIMEOUT_MS,
   BASH_DEFAULT_OUTPUT_CAP,
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_TIMEOUT_MS,
@@ -9,6 +11,10 @@ import {
   createBashTool,
   defaultSandboxProfile,
   nodePlatform,
+  type BackgroundStart,
+  type BackgroundTask,
+  type BackgroundTaskInfo,
+  type BackgroundTasksPort,
   type OutputSink,
   type PlatformPort,
   type ProcessPort,
@@ -62,8 +68,47 @@ class FakeProcess implements ProcessPort {
   }
 }
 
-const tool = (process: ProcessPort, sandbox = defaultSandboxProfile(), env: Readonly<Record<string, string>> = { PATH: '/usr/bin' }) =>
-  createBashTool({ cwd: '/repo', process, platform, sandbox, env });
+class FakeBackground implements BackgroundTasksPort {
+  readonly starts: BackgroundStart[] = [];
+  constructor(private readonly failure?: Error) {}
+
+  async start(spec: BackgroundStart): Promise<BackgroundTask> {
+    if (this.failure !== undefined) throw this.failure;
+    this.starts.push(spec);
+    return { taskId: `bg_${String(this.starts.length)}` };
+  }
+
+  async stop(): Promise<boolean> {
+    return false;
+  }
+
+  list(): readonly BackgroundTaskInfo[] {
+    return [];
+  }
+
+  onExit(): () => void {
+    return () => undefined;
+  }
+
+  async stopAll(): Promise<void> {
+    // Nothing is running in this double.
+  }
+}
+
+const tool = (
+  process: ProcessPort,
+  sandbox = defaultSandboxProfile(),
+  env: Readonly<Record<string, string>> = { PATH: '/usr/bin' },
+  background?: BackgroundTasksPort,
+) =>
+  createBashTool({
+    cwd: '/repo',
+    process,
+    platform,
+    sandbox,
+    env,
+    ...(background === undefined ? {} : { background }),
+  });
 
 test('the command is one argument to the resolved shell, not a shell string', async () => {
   const process = new FakeProcess();
@@ -80,8 +125,12 @@ test('the command is one argument to the resolved shell, not a shell string', as
 test('a live listener is forwarded to the process sink, and absent when nobody listens (ADR-108)', async () => {
   const process = new FakeProcess();
   const seen: string[] = [];
-  await tool(process).run({ command: 'build' }, signal, notApproved, (stream, text) => {
-    seen.push(`${stream}:${text}`);
+  await tool(process).run({ command: 'build' }, signal, notApproved, {
+    sessionId: 'sess_test',
+    callId: 'call_1',
+    onOutput: (stream, text) => {
+      seen.push(`${stream}:${text}`);
+    },
   });
 
   const sink = process.sinks[0];
@@ -92,6 +141,65 @@ test('a live listener is forwarded to the process sink, and absent when nobody l
   const quiet = new FakeProcess();
   await tool(quiet).run({ command: 'build' }, signal, notApproved);
   assert.equal(quiet.sinks[0], undefined, 'no listener, no sink — nothing is fabricated downstream');
+});
+
+test('run_in_background hands the command to the registry and does not wait for it (ADR-111)', async () => {
+  const process = new FakeProcess();
+  const background = new FakeBackground();
+  const result = await tool(process, defaultSandboxProfile(), { PATH: '/usr/bin' }, background).run(
+    { command: 'pnpm dev', run_in_background: true },
+    signal,
+    notApproved,
+    { sessionId: 'sess_1', callId: 'call_9' },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.background, { taskId: 'bg_1', command: 'pnpm dev' });
+  assert.equal(process.specs.length, 0, 'the foreground gateway is not called at all');
+
+  const start = background.starts[0];
+  assert.ok(start !== undefined);
+  assert.equal(start.sessionId, 'sess_1');
+  assert.equal(start.callId, 'call_9');
+  assert.equal(start.timeoutMs, BASH_BACKGROUND_DEFAULT_TIMEOUT_MS);
+  assert.deepEqual(start.argv, ['/bin/sh', '-c', 'pnpm dev']);
+});
+
+test('background timeouts default to 30 minutes and cap at two hours (ADR-112)', async () => {
+  const background = new FakeBackground();
+  const runner = tool(new FakeProcess(), defaultSandboxProfile(), { PATH: '/usr/bin' }, background);
+  const context = { sessionId: 's', callId: 'c' };
+
+  await runner.run({ command: 'a', run_in_background: true }, signal, notApproved, context);
+  await runner.run({ command: 'b', run_in_background: true, timeout: 10 }, signal, notApproved, context);
+  await runner.run({ command: 'c', run_in_background: true, timeout: 100_000_000 }, signal, notApproved, context);
+
+  assert.deepEqual(
+    background.starts.map((start) => start.timeoutMs),
+    [BASH_BACKGROUND_DEFAULT_TIMEOUT_MS, BASH_MIN_TIMEOUT_MS, BASH_BACKGROUND_MAX_TIMEOUT_MS],
+  );
+});
+
+test('run_in_background is refused when the host has no registry, instead of silently running in front', async () => {
+  const process = new FakeProcess();
+  const result = await tool(process).run({ command: 'x', run_in_background: true }, signal, notApproved);
+
+  assert.equal(result.ok, false);
+  assert.match(result.output, /not available in this build/u);
+  assert.equal(process.specs.length, 0);
+});
+
+test('a background start that fails is reported, not claimed as running', async () => {
+  const result = await tool(
+    new FakeProcess(),
+    defaultSandboxProfile(),
+    { PATH: '/usr/bin' },
+    new FakeBackground(new Error('spawn failed')),
+  ).run({ command: 'x', run_in_background: true }, signal, notApproved, { sessionId: 's', callId: 'c1' });
+
+  assert.equal(result.ok, false);
+  assert.match(result.output, /failed to start background command: spawn failed/u);
+  assert.equal(result.background, undefined);
 });
 
 test('the timeout defaults, clamps low, and caps high', async () => {
@@ -189,8 +297,7 @@ test('run_in_background is refused by name instead of ignored', async () => {
 
   assert.equal(result.ok, false);
   assert.equal(process.specs.length, 0);
-  assert.match(result.output, /run_in_background is not supported/);
-  assert.match(result.output, /P7/);
+  assert.match(result.output, /not available in this build/);
 });
 
 test('a gateway refusal (a sandbox that cannot run here) is a result, not a throw', async () => {

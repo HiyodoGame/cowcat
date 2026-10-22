@@ -168,6 +168,50 @@ test('a tool.finished logged before those fields existed decodes with null', () 
   assert.equal(result.data.path, null);
 });
 
+test('background events survive a JSON round trip, and an invented state is refused (ADR-111)', () => {
+  const started: KernelEvent = {
+    seq: 20,
+    ts: 20,
+    sessionId: 'sess',
+    turnId: 'turn_1',
+    type: 'tool.background.started',
+    callId: 'c1',
+    taskId: 'bg_1',
+    command: 'pnpm dev',
+  };
+  const parsedStarted = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(started)) as unknown);
+  if (!parsedStarted.success) assert.fail(describeIssues(parsedStarted.error));
+  if (parsedStarted.data.type !== 'tool.background.started') assert.fail('expected a started event');
+  assert.equal(parsedStarted.data.taskId, 'bg_1');
+
+  const finished: KernelEvent = {
+    seq: 21,
+    ts: 21,
+    sessionId: 'sess',
+    turnId: null,
+    type: 'tool.background.finished',
+    callId: 'c1',
+    taskId: 'bg_1',
+    exitCode: null,
+    signal: 'SIGTERM',
+    state: 'lost',
+    reason: 'none',
+    facts: null,
+    tail: 'boom\n',
+    truncated: true,
+    dropped: 12,
+  };
+  const parsedFinished = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(finished)) as unknown);
+  if (!parsedFinished.success) assert.fail(describeIssues(parsedFinished.error));
+  if (parsedFinished.data.type !== 'tool.background.finished') assert.fail('expected a finished event');
+  assert.equal(parsedFinished.data.state, 'lost');
+  assert.equal(parsedFinished.data.dropped, 12);
+
+  // The three states are the registry's whole vocabulary; anything else is a decode error,
+  // not a value a frontend has to guess about.
+  assert.equal(kernelEventSchema.safeParse({ ...finished, state: 'zombie' }).success, false);
+});
+
 test('a todo.updated event survives a JSON round trip with its statuses', () => {
   const event: KernelEvent = {
     seq: 10,

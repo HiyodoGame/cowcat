@@ -201,6 +201,11 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // projection of a turn is what was said, and a skip notice is not something the
         // model said. The TUI renders it through `project`, which has its own switch.
         break;
+      case 'tool.background.started':
+      case 'tool.background.finished':
+        // Background tasks are the host registry's business; their events are for the
+        // panel and the audit, not for the messages the model sees (ADR-111).
+        break;
       default: {
         const unhandled: never = event;
         throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);

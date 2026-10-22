@@ -17,6 +17,7 @@ import { createGrepTool } from '../adapters/tools/grep.js';
 import { createReadTool } from '../adapters/tools/read.js';
 import { createTodoWriteTool } from '../adapters/tools/todo.js';
 import { createWriteTool } from '../adapters/tools/write.js';
+import { NodeBackgroundTasks } from '../adapters/background.js';
 import { AttachmentUnavailableError, materializeAttachment } from '../adapters/attachments.js';
 import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
 import { NodeFs } from '../adapters/fs.js';
@@ -41,6 +42,8 @@ import {
   LockHeldError,
   type Attachment,
   type Clock,
+  type BackgroundExit,
+  type BackgroundTasksPort,
   type EventStore,
   type FsPort,
   type IdSource,
@@ -122,6 +125,12 @@ export interface CreateHostOptions {
   readonly model?: ModelPort;
   /** Injected so a test can assert the endpoint without a network (ADR-042). */
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * True for a verb with nobody watching (`cowcat run`). Background tasks are refused there:
+   * a process that outlives the command and has no interface to stop it is how v1 hung CI
+   * (ADR-112).
+   */
+  readonly unattended?: boolean;
   readonly approvalTimeoutMs?: number;
 }
 
@@ -205,7 +214,15 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     });
 
   const warnings: string[] = loaded.warnings.map((warning) => `${warning.source}: ${warning.problem}`);
-  const builtinTools = createTools({ cwd: options.cwd, platform, process: processes, sandbox: sandbox.profile });
+  const background = new NodeBackgroundTasks({ process: processes });
+  const builtinTools = createTools({
+    cwd: options.cwd,
+    platform,
+    process: processes,
+    sandbox: sandbox.profile,
+    background,
+    allowBackground: options.unattended !== true,
+  });
 
   // MCP servers (ADR-083~087). Project entries are executable entry points, so the same
   // trust gate that guards their rules guards them; every skip is reported.
@@ -227,6 +244,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     signal: mcpLifetime.signal,
   });
   const tools: ReadonlyMap<string, ToolPort> = mcp.table;
+  /**
+   * Child sessions are not in `sessions`, so their background exits could not be routed
+   * back to the child log (ADR-111 ⑤). Rather than leave a task nobody can account for,
+   * children get a Bash without the registry and the tool's own refusal.
+   */
+  const subagentTools = new Map(tools);
+  subagentTools.set(
+    'Bash',
+    createBashTool({ cwd: options.cwd, platform, process: processes, sandbox: sandbox.profile }),
+  );
   const store = options.store ?? new JsonlEventStore(paths.sessionsDir);
   const sessionDeps: SessionDeps = {
     store,
@@ -239,6 +266,14 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   };
   const index = createSessionIndex(paths.sessionsDir);
   const sessions = new Map<string, SessionRecord>();
+  /**
+   * Background tasks that ended before their `started` event was written (ADR-111). A task
+   * can finish while the turn is still recording that it began; the exit waits here until
+   * the log says the task existed, so replay never sees an end without a beginning.
+   */
+  const pendingBackgroundExits = new Map<string, BackgroundExit>();
+  const startedBackground = new Set<string>();
+  const backgroundWrites = new Set<Promise<void>>();
   /** Every attachment this host has seen in a log, by path (ADR-057: `id` is the path). */
   const attachments = new Map<string, Attachment>();
 
@@ -284,8 +319,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         model: configured.port,
         preset: configured.selection.preset,
         ...(configured.selection.effort === null ? {} : { effort: configured.selection.effort }),
-        tools: toolsForRole(tools, request.role),
-        rules: rulesForRole(rules, tools, request.role),
+        tools: toolsForRole(subagentTools, request.role),
+        rules: rulesForRole(rules, subagentTools, request.role),
         fs,
         // Never consulted: `unattended` refuses every ask before the bridge is reached.
         approve: () => Promise.resolve('reject'),
@@ -355,9 +390,54 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       for (const waiter of waiters) waiter(turnId);
     } else if (update.type === 'tool.finished' && update.attachments !== null) {
       for (const attachment of update.attachments) attachments.set(attachment.path, attachment);
+    } else if (update.type === 'tool.background.started') {
+      startedBackground.add(update.taskId);
+      const buffered = pendingBackgroundExits.get(update.taskId);
+      if (buffered !== undefined) {
+        pendingBackgroundExits.delete(update.taskId);
+        startedBackground.delete(update.taskId);
+        queueBackgroundFinish(rec, buffered);
+      }
     }
     for (const listener of rec.listeners) listener(update);
   }
+
+  /**
+   * The registry's word for how a task ended is the only thing that can make it durable.
+   * Failures are swallowed: a session closed while its task was ending must not take the
+   * host down, and the registry's own record is already gone by then.
+   */
+  function queueBackgroundFinish(rec: SessionRecord, exit: BackgroundExit): void {
+    const write = rec.session
+      .backgroundFinished({
+        callId: exit.callId,
+        taskId: exit.taskId,
+        exitCode: exit.exitCode,
+        signal: exit.signal,
+        state: exit.state,
+        reason: exit.reason,
+        facts: exit.facts,
+        tail: exit.tail,
+        truncated: exit.truncated,
+        dropped: exit.dropped,
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        backgroundWrites.delete(write);
+      });
+    backgroundWrites.add(write);
+  }
+
+  background.onExit((exit) => {
+    const rec = sessions.get(exit.sessionId);
+    if (rec === undefined) return;
+    if (!startedBackground.has(exit.taskId)) {
+      pendingBackgroundExits.set(exit.taskId, exit);
+      return;
+    }
+    startedBackground.delete(exit.taskId);
+    queueBackgroundFinish(rec, exit);
+  });
 
   function observe(events: readonly KernelEvent[]): void {
     for (const event of events) {
@@ -641,13 +721,26 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     async close(): Promise<void> {
       mcpLifetime.abort();
       await mcp.close();
+      // Abort the turns first: a turn stopped between `tool.finished` and
+      // `tool.background.started` still has a start to record, and its task's exit is
+      // waiting for that record. Only then stop the tasks and drain the writes.
       for (const rec of sessions.values()) {
         rec.running?.controller.abort();
         await rec.running?.done;
+      }
+      await background.stopAll();
+      // A loop, not one pass: flushing a buffered exit adds a write, and that write may be
+      // followed by another task's exit. `stopAll` guarantees the writers are finite.
+      while (backgroundWrites.size > 0) {
+        await Promise.allSettled([...backgroundWrites]);
+      }
+      for (const rec of sessions.values()) {
         rec.unsubscribe();
         await rec.session.close();
       }
       sessions.clear();
+      pendingBackgroundExits.clear();
+      startedBackground.clear();
     },
   };
 }
@@ -681,6 +774,8 @@ function createTools(options: {
   readonly platform: PlatformPort;
   readonly process: ProcessPort;
   readonly sandbox: ResolvedSandboxProfile['profile'];
+  readonly background: BackgroundTasksPort;
+  readonly allowBackground: boolean;
 }): ReadonlyMap<string, ToolPort> {
   const tools: readonly ToolPort[] = [
     createReadTool({ cwd: options.cwd }),
@@ -693,6 +788,9 @@ function createTools(options: {
       platform: options.platform,
       process: options.process,
       sandbox: options.sandbox,
+      // Absent rather than a fake that refuses: "this build has no background tasks" is a
+      // capability of the host, and the tool's own message already says what to do instead.
+      ...(options.allowBackground ? { background: options.background } : {}),
     }),
     createTodoWriteTool(),
   ];

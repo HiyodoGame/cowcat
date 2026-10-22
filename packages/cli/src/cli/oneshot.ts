@@ -29,7 +29,7 @@ export async function runOneShot(context: CommandContext): Promise<number> {
   const yes = flagOn(context.flags, 'yes');
   const wanted = flagValue(context.flags, 'session');
 
-  const host = await buildHost(context);
+  const host = await buildHost(context, { unattended: true });
   if (host === null) return EXIT.failed;
 
   let unsubscribe: () => void = () => undefined;

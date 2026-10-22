@@ -1,4 +1,4 @@
-import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort, ToolOutputStream } from '../ports/index.js';
+import type { BackgroundEndState, Clock, EventStore, ExecutionFacts, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort, TerminationReason, ToolOutputStream } from '../ports/index.js';
 import type { EventInput, KernelEvent, SessionParent, SessionUpdate } from './events.js';
 import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
 import { initialState, reduce, replay, type SessionState } from './state.js';
@@ -123,23 +123,39 @@ export class Session {
     return () => this.#listeners.delete(listener);
   }
 
+  /**
+   * Write serialization (ADR-111).
+   *
+   * `seq` is derived from the current state, so two emitters that interleave their awaits
+   * would derive the same number. Everything used to be one async chain inside `runTurn`;
+   * background tasks now end on their own schedule and write from the host, so the guarantee
+   * has to live here instead of in the caller's discipline.
+   */
+  #writeLock: Promise<unknown> = Promise.resolve();
+
   // Persist first, then apply, then notify. A listener never sees a fact the
   // log does not have, so a crash between steps loses at most the live view.
   async emit(input: EventInput): Promise<KernelEvent> {
-    // After close() the lock is gone, so writing would break the invariant the lock
-    // exists to protect. Enforced here rather than left to callers, for the same
-    // reason the lock lives in Session at all (ADR-010).
-    if (this.#closed) throw new Error('session is closed');
-    const event = {
-      ...input,
-      seq: this.#state.lastSeq + 1,
-      ts: this.#deps.clock.now(),
-      sessionId: this.#state.sessionId,
-    } as KernelEvent;
-    await this.#deps.store.append(event);
-    this.#state = reduce(this.#state, event);
-    for (const listener of this.#listeners) listener(event);
-    return event;
+    const write = async (): Promise<KernelEvent> => {
+      // After close() the lock is gone, so writing would break the invariant the lock
+      // exists to protect. Enforced here rather than left to callers, for the same
+      // reason the lock lives in Session at all (ADR-010).
+      if (this.#closed) throw new Error('session is closed');
+      const event = {
+        ...input,
+        seq: this.#state.lastSeq + 1,
+        ts: this.#deps.clock.now(),
+        sessionId: this.#state.sessionId,
+      } as KernelEvent;
+      await this.#deps.store.append(event);
+      this.#state = reduce(this.#state, event);
+      for (const listener of this.#listeners) listener(event);
+      return event;
+    };
+    // `then(write, write)`: a failed write must not poison the queue for everything after it.
+    const result = this.#writeLock.then(write, write);
+    this.#writeLock = result.catch(() => undefined);
+    return result;
   }
 
   streamDelta(text: string): void {
@@ -165,6 +181,34 @@ export class Session {
     const turnId = this.turnId;
     if (turnId === null) throw new Error('toolOutput outside a turn');
     for (const listener of this.#listeners) listener({ type: 'tool.output.delta', turnId, callId, stream, text });
+  }
+
+  /** A background task was started by this turn (ADR-111). */
+  async backgroundStarted(callId: string, taskId: string, command: string): Promise<void> {
+    const turnId = this.turnId;
+    if (turnId === null) throw new Error('backgroundStarted outside a turn');
+    await this.emit({ type: 'tool.background.started', turnId, callId, taskId, command });
+  }
+
+  /**
+   * A background task ended (ADR-111).
+   *
+   * `turnId` is null on purpose: the task outlives the turn that started it, and attaching
+   * its end to whatever turn happens to be open would be a lie a replay would repeat.
+   */
+  async backgroundFinished(input: {
+    readonly callId: string;
+    readonly taskId: string;
+    readonly exitCode: number | null;
+    readonly signal: string | null;
+    readonly state: BackgroundEndState;
+    readonly reason: TerminationReason;
+    readonly facts: ExecutionFacts | null;
+    readonly tail: string;
+    readonly truncated: boolean;
+    readonly dropped: number;
+  }): Promise<void> {
+    await this.emit({ type: 'tool.background.finished', turnId: null, ...input });
   }
 
   async openTurn(

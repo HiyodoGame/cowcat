@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ToolGrant, ToolOutputListener, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../../ports/index.js';
+import type { ToolGrant, ToolPort, ToolResult, ToolRisk, ToolRunContext, ToolSpec } from '../../ports/index.js';
 import { toWireSchema, type WireSchema } from './wire-schema.js';
 
 /**
@@ -30,8 +30,8 @@ export type ToolImplementation<S extends z.ZodType> = (
   input: z.output<S>,
   signal: AbortSignal,
   grant: ToolGrant,
-  /** Where live output goes while the call runs (ADR-108); most tools ignore it. */
-  onOutput?: ToolOutputListener,
+  /** The call's surroundings (ADR-108/111); most tools ignore it. */
+  context?: ToolRunContext,
 ) => ToolResult | Promise<ToolResult>;
 
 /**
@@ -60,12 +60,12 @@ export function defineTool<S extends z.ZodType>(definition: ToolDefinition<S>, r
 
   return {
     spec,
-    run: async (input, signal, grant, onOutput) => {
+    run: async (input, signal, grant, context) => {
       const parsed = definition.input.safeParse(input);
       // Invalid arguments are a result, not an exception (ADR-052): the model is told
       // which field is wrong and can retry, and the turn does not fail.
       if (!parsed.success) return { ok: false, output: describeInputProblems(definition.name, parsed.error.issues) };
-      return run(parsed.data, signal, grant, onOutput);
+      return run(parsed.data, signal, grant, context);
     },
   };
 }

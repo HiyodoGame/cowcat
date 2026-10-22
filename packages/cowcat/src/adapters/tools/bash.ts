@@ -1,11 +1,26 @@
 import { z } from 'zod';
-import type { PlatformPort, ProcessPort, ProcessResult, SandboxProfile, ToolGrant, ToolPort } from '../../ports/index.js';
+import type {
+  BackgroundTasksPort,
+  PlatformPort,
+  ProcessPort,
+  ProcessResult,
+  SandboxProfile,
+  ToolGrant,
+  ToolPort,
+} from '../../ports/index.js';
 import { defineTool } from './define-tool.js';
 
 /** The v1 window, kept: 60s by default, 600s at most (agent/src/tools/bash.js:16-17). */
 export const BASH_DEFAULT_TIMEOUT_MS = 60_000;
 export const BASH_MAX_TIMEOUT_MS = 600_000;
 export const BASH_MIN_TIMEOUT_MS = 1_000;
+/**
+ * Background commands get their own window (ADR-112): 30 minutes by default, two hours at
+ * most. They are explicitly started to outlive a turn, so the foreground cap would be a
+ * trap door rather than a guard.
+ */
+export const BASH_BACKGROUND_DEFAULT_TIMEOUT_MS = 1_800_000;
+export const BASH_BACKGROUND_MAX_TIMEOUT_MS = 7_200_000;
 /** Characters kept per stream by the gateway. The tail is kept and the rest is counted. */
 export const BASH_DEFAULT_OUTPUT_CAP = 100_000;
 
@@ -24,6 +39,11 @@ export interface BashToolOptions {
   /** What the caller wants the child to see. The gateway redacts it (ADR-015). */
   readonly env?: Readonly<Record<string, string>>;
   readonly outputCap?: number;
+  /**
+   * The host's background registry (ADR-110/111). Absent means this build does not offer
+   * background tasks — the tool refuses rather than silently running in the foreground.
+   */
+  readonly background?: BackgroundTasksPort;
 }
 
 const DESCRIPTION = [
@@ -36,7 +56,7 @@ const DESCRIPTION = [
   `- timeout defaults to ${String(BASH_DEFAULT_TIMEOUT_MS)}ms, capped at ${String(BASH_MAX_TIMEOUT_MS)}ms — set it explicitly for long builds or test suites.`,
   '- Exit code non-zero is not a tool failure: the result reports it, and many workflows (grep-style probes, test runs) legitimately return non-zero. Interpret it, and show the user the stderr when it matters.',
   '- Destructive or hard-to-reverse commands (recursive deletes, force pushes, history rewrites) warrant an explicit explanation in your visible text before calling.',
-  'Not supported: run_in_background. Background tasks are a separate module (P7); passing it is refused rather than ignored.',
+  '- Background: set run_in_background: true to start a command that keeps running after this turn (default 30 minutes, at most 2 hours). The user can see and stop it in the interface; its output does not come back to you in this turn.',
   'Failure modes: a timeout means the command was still running — rerun with a longer timeout or a non-interactive form; "command not found" means the toolchain is missing, say so instead of guessing.',
 ].join('\n');
 
@@ -53,16 +73,50 @@ export function createBashTool(options: BashToolOptions): ToolPort {
         run_in_background: z
           .boolean()
           .optional()
-          .describe('Not supported in this version (background tasks are P7); passing true is refused'),
+          .describe('Start the command as a background task that keeps running after this turn. The user stops it from the interface'),
       }),
     },
-    async (input, signal, grant, onOutput) => {
+    async (input, signal, grant, context) => {
       if (input.run_in_background === true) {
-        return {
-          ok: false,
-          output:
-            'run_in_background is not supported yet: background tasks are a separate module (P7). Run the command in the foreground with an explicit timeout instead.',
-        };
+        const background = options.background;
+        if (background === undefined) {
+          return {
+            ok: false,
+            output:
+              'background tasks are not available in this build: the command was not started. Run it in the foreground with an explicit timeout instead.',
+          };
+        }
+        if (context === undefined) {
+          return { ok: false, output: 'background tasks need a host context: the command was not started.' };
+        }
+
+        const network = decideNetwork(options.sandbox, grant);
+        if (typeof network === 'string') return { ok: false, output: network };
+
+        const shell = options.platform.resolveShell();
+        const timeoutMs = clampBackgroundTimeout(input.timeout);
+        try {
+          const task = await background.start({
+            sessionId: context.sessionId,
+            callId: context.callId,
+            command: input.command,
+            argv: [shell.executable, ...shell.baseArgs, shell.commandFlag, input.command],
+            cwd: options.cwd,
+            env: options.env ?? currentEnv(),
+            timeoutMs,
+            sandbox: network,
+          });
+          return {
+            ok: true,
+            output: `started background task ${task.taskId}; it keeps running after this turn. The user can see and stop it in the interface.`,
+            background: { taskId: task.taskId, command: input.command },
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            output: `failed to start background command: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
       }
 
       const network = decideNetwork(options.sandbox, grant);
@@ -86,7 +140,11 @@ export function createBashTool(options: BashToolOptions): ToolPort {
       try {
         // The listener and the port's sink have the same shape (ADR-107/108), so this is
         // a pass-through rather than a second contract to keep in sync.
-        result = await options.process.run(spec, signal, onOutput === undefined ? undefined : { onOutput });
+        result = await options.process.run(
+          spec,
+          signal,
+          context?.onOutput === undefined ? undefined : { onOutput: context.onOutput },
+        );
       } catch (error) {
         return { ok: false, output: `failed to start command: ${error instanceof Error ? error.message : String(error)}` };
       }
@@ -136,6 +194,12 @@ function decideNetwork(sandbox: SandboxProfile, grant: ToolGrant): SandboxProfil
 function clampTimeout(requested: number | undefined): number {
   const value = requested ?? BASH_DEFAULT_TIMEOUT_MS;
   return Math.min(Math.max(value, BASH_MIN_TIMEOUT_MS), BASH_MAX_TIMEOUT_MS);
+}
+
+/** The same shape for background commands, with their own default and ceiling (ADR-112). */
+function clampBackgroundTimeout(requested: number | undefined): number {
+  const value = requested ?? BASH_BACKGROUND_DEFAULT_TIMEOUT_MS;
+  return Math.min(Math.max(value, BASH_MIN_TIMEOUT_MS), BASH_BACKGROUND_MAX_TIMEOUT_MS);
 }
 
 // The caller's environment, filtered to real strings: `process.env` has `undefined`

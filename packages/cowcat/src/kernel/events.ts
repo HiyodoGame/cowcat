@@ -1,7 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
-import type { Attachment, ToolOutputStream, Truncation, TodoItem } from '../ports/index.js';
-import type { ModelUsage, StopReason } from '../ports/model.js';
+import type { Attachment, BackgroundEndState, TerminationReason, ToolOutputStream, Truncation, TodoItem } from '../ports/index.js';import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { SubagentRole, SubagentState } from '../ports/subagent.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
@@ -249,6 +248,39 @@ export type KernelEvent = EventBase &
          * travel this path (`attachment.read` is how a frontend asks for them).
          */
         readonly attachments: readonly Attachment[] | null;
+      }
+    | {
+        /**
+         * A background task started by this call (ADR-111).
+         *
+         * Durable, and paired with `tool.background.finished`: an ephemeral start would
+         * vanish on replay, leaving a process nobody can account for. The task itself is
+         * the host's registry; this is the fact that it existed.
+         */
+        readonly type: 'tool.background.started';
+        readonly callId: string;
+        readonly taskId: string;
+        readonly command: string;
+      }
+    | {
+        /**
+         * A background task ended (ADR-111). `state` is the registry's word, not a guess:
+         * `lost` means the host could not prove the process tree was gone.
+         */
+        readonly type: 'tool.background.finished';
+        readonly callId: string;
+        readonly taskId: string;
+        readonly exitCode: number | null;
+        readonly signal: string | null;
+        readonly state: BackgroundEndState;
+        /** Why the gateway stopped it (`none` when it exited on its own). */
+        readonly reason: TerminationReason;
+        /** What the gateway actually did; `null` only when no result was produced (ADR-033). */
+        readonly facts: ExecutionFacts | null;
+        /** The tail the registry kept; empty when the task never produced output. */
+        readonly tail: string;
+        readonly truncated: boolean;
+        readonly dropped: number;
       }
     | {
         /**

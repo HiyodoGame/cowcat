@@ -37,7 +37,10 @@ export async function statePaths(): Promise<CowcatPaths> {
  * A null rather than a thrown error because every wired verb needs the same three lines
  * of handling, and an exception would spread a `try` over each handler's body.
  */
-export async function buildHost(context: CommandContext): Promise<CowcatHost | null> {
+export async function buildHost(
+  context: CommandContext,
+  options: { readonly unattended?: boolean } = {},
+): Promise<CowcatHost | null> {
   const { createHost, HostConfigError } = await import('@corescense/cowcat-core');
   const configPath = flagValue(context.flags, 'config');
   try {
@@ -48,6 +51,7 @@ export async function buildHost(context: CommandContext): Promise<CowcatHost | n
       version: readVersion(),
       paths: await statePaths(),
       ...(configPath === null ? {} : { configPath }),
+      ...(options.unattended === true ? { unattended: true } : {}),
     });
   } catch (error) {
     if (error instanceof HostConfigError) {

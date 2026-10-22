@@ -146,9 +146,9 @@ test('a read tool runs without asking and its result reaches the next model call
 test('a running tool can report live output; subscribers see it and the log does not (ADR-108)', async () => {
   const streaming: ToolPort = {
     spec: { name: 'bash_stream', description: 'stream', risk: 'exec' },
-    run: async (_input, _signal, _grant, onOutput) => {
-      onOutput?.('stdout', 'compiling\n');
-      onOutput?.('stderr', 'warning\n');
+    run: async (_input, _signal, _grant, context) => {
+      context?.onOutput?.('stdout', 'compiling\n');
+      context?.onOutput?.('stderr', 'warning\n');
       return { ok: true, output: 'compiling\n' };
     },
   };
@@ -172,6 +172,58 @@ test('a running tool can report live output; subscribers see it and the log does
   ]);
   // The fragment is a view, not a fact: the complete output is in `tool.finished`.
   assert.equal(store.events.some((event) => (event.type as string) === 'tool.output.delta'), false);
+});
+
+test('a tool that starts a background task gets a durable started event after its result (ADR-111)', async () => {
+  const backgroundTool: ToolPort = {
+    spec: { name: 'bash_bg', description: 'bg', risk: 'exec' },
+    run: async () => ({ ok: true, output: 'started bg_1', background: { taskId: 'bg_1', command: 'pnpm dev' } }),
+  };
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'bash_bg', input: {} } }],
+    [{ type: 'text', text: 'started' }],
+  ]);
+  const { store, deps } = await setup(model, [backgroundTool]);
+  await runTurn(deps, 'start it', new AbortController().signal);
+
+  const started = store.events.find((event) => event.type === 'tool.background.started');
+  if (started?.type !== 'tool.background.started') assert.fail('expected a tool.background.started event');
+  assert.equal(started.callId, 'c1');
+  assert.equal(started.taskId, 'bg_1');
+  assert.equal(started.command, 'pnpm dev');
+
+  // The call succeeded first; the task exists after that. A log that says otherwise would
+  // let a replay show a task ending before it began.
+  const finishedAt = store.events.findIndex((event) => event.type === 'tool.finished');
+  const startedAt = store.events.findIndex((event) => event.type === 'tool.background.started');
+  assert.ok(startedAt > finishedAt);
+});
+
+test('concurrent writes are serialized: seq stays unique and contiguous (ADR-111)', async () => {
+  // A store that yields before writing opens the window the old code had: two emitters
+  // derived `lastSeq + 1` before either append landed, and the log got duplicate seqs.
+  class SlowStore extends MemoryEventStore {
+    override async append(event: Parameters<MemoryEventStore['append']>[0]): Promise<void> {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 1);
+      });
+      await super.append(event);
+    }
+  }
+
+  const store = new SlowStore();
+  const session = await Session.create(sessionDeps(store), 'sess_seq');
+  await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      session.emit({ type: 'turn.noted', turnId: null, note: 'rounds-exhausted', message: `note ${String(index)}` }),
+    ),
+  );
+
+  const events = await store.readAll('sess_seq');
+  assert.deepEqual(
+    events.map((event) => event.seq),
+    events.map((_, index) => index + 1),
+  );
 });
 
 test('a write tool is asked about, and a rejection is reported to the model instead of executed', async () => {

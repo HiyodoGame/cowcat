@@ -170,6 +170,12 @@ export class NodeBackgroundTasks implements BackgroundTasksPort {
       // only honest word for that is `lost`, not `stopped`.
       state: endStateOf(result),
       reason: result.termination.reason,
+      facts: {
+        sandbox: result.sandbox,
+        termination: result.termination,
+        removedEnv: result.removedEnv,
+        ignoredDeny: result.ignoredDeny,
+      },
       tail: tail.text,
       truncated: tail.dropped > 0,
       dropped: tail.dropped,
@@ -185,6 +191,7 @@ export class NodeBackgroundTasks implements BackgroundTasksPort {
       signal: null,
       state: 'lost',
       reason: 'none',
+      facts: null,
       tail: tail.text,
       truncated: tail.dropped > 0,
       dropped: tail.dropped,

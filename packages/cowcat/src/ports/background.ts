@@ -1,4 +1,4 @@
-import type { SandboxProfile, TerminationReason } from './process.js';
+import type { ExecutionFacts, SandboxProfile, TerminationReason } from './process.js';
 
 /**
  * Background tasks — a command the model deliberately started to outlive its turn (ADR-110).
@@ -33,6 +33,17 @@ export interface BackgroundTask {
   readonly taskId: string;
 }
 
+/**
+ * The part of a started task that belongs in the log and in the tool result (ADR-111).
+ *
+ * `command` is kept so the event explains itself without a join against an earlier
+ * `model.message`; the session and the call are already in the event envelope.
+ */
+export interface BackgroundTaskRef {
+  readonly taskId: string;
+  readonly command: string;
+}
+
 /** A running task, as the panel needs it. */
 export interface BackgroundTaskInfo extends BackgroundTask {
   readonly sessionId: string;
@@ -58,6 +69,12 @@ export interface BackgroundExit {
   readonly signal: string | null;
   readonly state: BackgroundEndState;
   readonly reason: TerminationReason;
+  /**
+   * What the gateway actually did (ADR-033): sandbox, termination record, removed env.
+   * `null` only for a `lost` exit that never produced a result, so "not known" stays
+   * distinguishable from "no sandbox".
+   */
+  readonly facts: ExecutionFacts | null;
   /** The tail kept for the record, bounded by the registry's tail cap. stdout and stderr are
    *  merged in arrival order — a background task is read as one stream, not two. */
   readonly tail: string;
