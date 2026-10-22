@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { WireEvent } from '@corescense/cowcat-protocol';
+import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { advanceReasoning, initialView, revealedReasoning, withScroll, type TuiView } from '../src/app/view.js';
-import { closeView, project, streamReasoning, streamText } from '../src/app/project.js';
+import { closeView, project, streamReasoning, streamText, streamToolOutput } from '../src/app/project.js';
 
 /**
  * `project()` is a pure function of the log (ADR-059 ②), so every assertion here is about
@@ -296,6 +296,113 @@ test('a compaction drops the old measurement instead of showing it against the n
   // 180k was about the history that just got replaced; the bar says nothing until the next
   // `model.usage` measures the new prompt (ADR-105 ②).
   assert.equal(compacted.usage, null);
+});
+
+test('a running tool keeps a capped live tail, and loses it when the call finishes (ADR-109)', () => {
+  seq = 0;
+  const asked = project(
+    initialView(),
+    event('model.message', {
+      text: '',
+      toolCalls: [{ callId: 'c1', name: 'Bash', input: { command: 'build' } }],
+      reasoning: [],
+      stopReason: null,
+    }),
+  );
+  const fragment = (callId: string, text: string): WireDelta => ({
+    type: 'tool.output.delta',
+    turnId: 't1',
+    callId,
+    stream: 'stdout',
+    text,
+  });
+
+  const withTail = streamToolOutput(asked, fragment('c1', 'first\nsecond\n'));
+  assert.deepEqual(withTail.toolOutput['c1'], { text: 'first\nsecond\n', truncated: false });
+
+  // A delta for a call this view is not running is late (the result already landed) and
+  // must not resurrect a card.
+  assert.equal(streamToolOutput(asked, fragment('c9', 'late')).toolOutput['c9'], undefined);
+
+  // Only the last few KB are kept for display; the durable output has its own cap.
+  const long = streamToolOutput(asked, fragment('c1', 'a'.repeat(5_000)));
+  const longTail = long.toolOutput['c1'];
+  assert.ok(longTail !== undefined);
+  assert.equal(longTail.text.length, 4_000);
+  assert.equal(longTail.truncated, true, 'the card must be able to say output was dropped');
+
+  // The cap counts grapheme clusters, not UTF-16 units: a split surrogate would paint U+FFFD.
+  const emoji = streamToolOutput(asked, fragment('c1', '😀'.repeat(5_000)));
+  const emojiTail = emoji.toolOutput['c1'];
+  assert.ok(emojiTail !== undefined);
+  assert.equal(Array.from(emojiTail.text).length, 4_000);
+  assert.equal(emojiTail.text.startsWith('😀'), true);
+
+  const finished = project(
+    long,
+    event('tool.finished', {
+      callId: 'c1',
+      name: 'Bash',
+      ok: true,
+      output: 'done',
+      facts: null,
+      truncation: null,
+      attachments: null,
+      path: null,
+    }),
+  );
+  assert.equal(finished.toolOutput['c1'], undefined, 'the durable output replaces the live tail');
+
+  const ended = project(withTail, event('turn.transitioned', { from: 'awaiting_tools', to: 'completed', reason: null }));
+  assert.deepEqual(ended.toolOutput, {}, 'a finished turn cannot leave live tails behind');
+  const failed = project(withTail, event('turn.transitioned', { from: 'awaiting_tools', to: 'failed', reason: 'boom' }));
+  assert.deepEqual(failed.toolOutput, {}, 'a failed turn cannot leave live tails behind either');
+
+  // A new turn starts empty, whatever the previous one left.
+  assert.deepEqual(project(long, event('turn.opened', { input: 'again' })).toolOutput, {});
+});
+
+test('two running tools keep separate tails, and one finishing does not clear the other', () => {
+  seq = 0;
+  const asked = project(
+    initialView(),
+    event('model.message', {
+      text: '',
+      toolCalls: [
+        { callId: 'c1', name: 'Bash', input: { command: 'build' } },
+        { callId: 'c2', name: 'Bash', input: { command: 'test' } },
+      ],
+      reasoning: [],
+      stopReason: null,
+    }),
+  );
+  const fragment = (callId: string, text: string): WireDelta => ({
+    type: 'tool.output.delta',
+    turnId: 't1',
+    callId,
+    stream: 'stdout',
+    text,
+  });
+
+  const both = streamToolOutput(streamToolOutput(asked, fragment('c1', 'one')), fragment('c2', 'two'));
+  assert.equal(both.toolOutput['c1']?.text, 'one');
+  assert.equal(both.toolOutput['c2']?.text, 'two');
+
+  const afterFirst = project(
+    both,
+    event('tool.finished', {
+      callId: 'c1',
+      name: 'Bash',
+      ok: true,
+      output: 'one',
+      facts: null,
+      truncation: null,
+      attachments: null,
+      path: null,
+    }),
+  );
+  assert.equal(afterFirst.toolOutput['c1'], undefined);
+  assert.equal(afterFirst.toolOutput['c2']?.text, 'two', 'the other call is still running');
 });
 
 test('a closed transport is a fact about the view, not a wipe', () => {

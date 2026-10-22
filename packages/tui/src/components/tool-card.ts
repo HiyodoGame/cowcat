@@ -1,5 +1,5 @@
 import { copyFor } from '../app/copy.js';
-import type { AttachmentView, TranscriptToolEntry, TuiView } from '../app/view.js';
+import type { AttachmentView, ToolTail, TranscriptToolEntry, TuiView } from '../app/view.js';
 import { imageBox } from '../image/layout.js';
 import { card, type CardBodyLine } from '../ui/card.js';
 import type { Line } from '../ui/line.js';
@@ -156,13 +156,43 @@ export function callSummary(input: unknown): string {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
 }
 
-export function runningToolLines(name: string, summary: string, width: number, now: number): readonly Line[] {
+export function runningToolLines(
+  name: string,
+  summary: string,
+  width: number,
+  now: number,
+  tail?: ToolTail,
+): readonly Line[] {
   const frame = RUNNING[Math.floor(now / 100) % RUNNING.length] ?? '·';
+  const body: CardBodyLine[] = [{ text: truncate(summary, Math.max(8, width - 6)), token: 'textDim' }];
+  if (tail !== undefined && tail.text !== '') body.push(...liveTailLines(tail, Math.max(8, width - 6)));
   return card({
     title: `${frame} ${name}`,
     titleToken: 'plan',
     suffix: '[运行中]',
-    body: [{ text: truncate(summary, Math.max(8, width - 6)), token: 'textDim' }],
+    body,
     width,
   });
+}
+
+/** Rows a running card spends on live output. One `Line` per row, per ADR-100. */
+const LIVE_TAIL_ROWS = 20;
+
+/**
+ * The tail of what a running command has printed (ADR-109).
+ *
+ * Wrapped here rather than by the renderer: a card row is one `Line` and must stay one row,
+ * or the transcript's scroll arithmetic starts lying (ADR-100). The budget is display only —
+ * the durable output keeps its own cap in the kernel.
+ */
+function liveTailLines(tail: ToolTail, inner: number): readonly CardBodyLine[] {
+  const rows = tail.text.split('\n').filter((row) => row !== '');
+  const wrapped = rows.flatMap((row) => wrap(row, inner));
+  const kept = wrapped.slice(-LIVE_TAIL_ROWS);
+  const hidden = wrapped.length - kept.length;
+  const lines: CardBodyLine[] = kept.map((row) => ({ text: `  ${row}`, token: 'tool' as const }));
+  // A count is only honest when the cap did not already drop output the count cannot see.
+  const hint = tail.truncated ? '… 只显示末尾输出' : hidden > 0 ? `… 上面还有 ${String(hidden)} 行` : null;
+  if (hint !== null) lines.unshift({ text: hint, token: 'textDim' as const });
+  return lines;
 }
