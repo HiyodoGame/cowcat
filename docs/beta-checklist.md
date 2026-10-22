@@ -211,6 +211,7 @@ COWCAT_HOME：临时目录 / 真实 home
 - 真实 MCP 服务器的 `list_changed` / 分页未触发。
 - 三个 support 包的 `latest` 仍停在 beta.1（CLI 用精确版本依赖，不影响安装）。
 - `system` 沙箱在 Windows 上被显式拒绝（设计如此）。
+- **`Shift+Enter` 换行依赖终端**：只有实现 kitty 键盘协议的终端才能把它与回车分开。2026-10-22 实测的验收终端对 `Shift+Enter` 发的是单个 `0d`（即回车本身），因此该终端上 `Shift+Enter` 会直接发送消息；换行请用 `Ctrl+J`（无条件可用）或 `Alt+Enter`（老终端编码成 `ESC CR`，见 ADR-104 ⑥、#140）。
 
 ## 9. 结果汇总
 
