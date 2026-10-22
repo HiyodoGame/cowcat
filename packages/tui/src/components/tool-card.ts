@@ -126,7 +126,9 @@ function diffLines(items: readonly UnifiedItem[], inner: number, budget: number)
 
 function outputLines(output: string, inner: number, expanded: boolean): readonly CardBodyLine[] {
   const rows = output.split('\n').filter((row) => row !== '');
-  const wrapped = rows.flatMap((row) => wrap(row, inner));
+  // The two-space prefix is part of the row: wrapping at `inner` first made every full row
+  // two cells too wide, and `padTo` ate them (plus an ellipsis) instead of the card growing.
+  const wrapped = rows.flatMap((row) => wrap(row, Math.max(1, inner - 2)));
   const budget = expanded ? OUTPUT_EXPANDED_LINES : TOOL_OUTPUT_TAIL;
   const kept = wrapped.slice(-budget);
   const hidden = wrapped.length - kept.length;

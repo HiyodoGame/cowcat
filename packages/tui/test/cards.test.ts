@@ -521,6 +521,35 @@ test('the task panel window follows the cursor instead of always showing the fir
   assert.doesNotMatch(text, /bg_a_1\b/u, 'the window scrolled past the first rows');
 });
 
+test('a finished card wraps its output without losing two cells to the frame (issue #134)', () => {
+  const output = 'a'.repeat(100);
+  const view = viewOf([
+    event('turn.opened', { input: 'run it' }),
+    event('tool.finished', {
+      callId: 'c1',
+      name: 'Bash',
+      ok: true,
+      output,
+      facts: null,
+      truncation: null,
+      attachments: null,
+      path: null,
+    }),
+  ]);
+  const frame = frameOf(view, { width: 40, now: 0 });
+  const rows = frame.body.map((row) => row.text);
+  // 40 columns − 4 of card frame − 2 of indent = 34 characters on a full row.
+  assert.ok(
+    rows.some((row) => row.includes('a'.repeat(34))),
+    'a full row keeps all 34 cells; before the fix padTo cut it to 33 plus an ellipsis',
+  );
+  assert.equal(
+    rows.some((row) => row.includes('…')),
+    false,
+    'no row is truncated by the card padding',
+  );
+});
+
 test('a running sub-agent is a panel; a finished one collapses to its notice', () => {
   const view = viewOf([
     event('turn.opened', { input: '派一个子 agent' }),
