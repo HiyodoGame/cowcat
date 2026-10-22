@@ -168,7 +168,7 @@ export function createClient(options: ClientOptions): ProtocolClient {
     },
 
     async sendTurn(sessionId: string, input: string, files?: readonly string[]) {
-      return (await request('turn.send', { sessionId, input, ...(files === undefined ? {} : { files }) })).turnId;
+      return (await request('turn.send', { sessionId, input, ...(files === undefined ? {} : { files: [...files] }) })).turnId;
     },
 
     async cancelTurn(sessionId: string) {
