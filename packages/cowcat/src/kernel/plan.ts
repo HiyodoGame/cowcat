@@ -91,6 +91,11 @@ export function parseExitPlanInput(input: unknown): ExitPlanParse {
     if (typeof title !== 'string' || title.trim() === '') {
       return { ok: false, reason: `plan ${String(index + 1)} needs a non-empty title` };
     }
+    if (title.includes('\n')) {
+      // A title renders on one card row and inside 《title》 in the tool result; a
+      // newline in it breaks both layouts (review of #167, P2-12).
+      return { ok: false, reason: `plan ${String(index + 1)} title must be a single line` };
+    }
     if (title.length > PLAN_TITLE_MAX_CHARS) {
       return { ok: false, reason: `plan ${String(index + 1)} title exceeds ${String(PLAN_TITLE_MAX_CHARS)} chars` };
     }

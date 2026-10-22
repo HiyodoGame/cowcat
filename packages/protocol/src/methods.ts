@@ -51,12 +51,18 @@ export const PARAMS = {
     enabled: z.boolean(),
   }),
   /** The answer to a plan review (ADR-125 ③): the chosen plan's index, or none with a reason. */
-  'plan.reply': z.strictObject({
-    sessionId: z.string().min(1),
-    callId: z.string().min(1),
-    choice: z.number().int().min(0).nullable(),
-    reason: z.string().nullable(),
-  }),
+  'plan.reply': z
+    .strictObject({
+      sessionId: z.string().min(1),
+      callId: z.string().min(1),
+      choice: z.number().int().min(0).nullable(),
+      reason: z.string().nullable(),
+    })
+    // A chosen plan carries no reason; a rejection carries no index. One shape per
+    // answer keeps the host from silently dropping a field (review of #167, P2-13).
+    .refine((value) => value.choice === null || value.reason === null, {
+      message: 'reason must be null when choice is set',
+    }),
   'attachment.read': z.strictObject({
     id: z.string().min(1),
     /** The caller's own cap. The host still enforces its own limit; the smaller one

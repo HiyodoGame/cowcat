@@ -330,3 +330,64 @@ test('mode entry mid-session folds and replays', async () => {
   await session.emit({ type: 'plan.mode-changed', turnId: null, enabled: false, by: 'user' });
   assert.equal(replay('sess_plan_replay', store.events as readonly KernelEvent[]).planMode, false);
 });
+
+test('an out-of-range choice counts as none: plan mode stays on with a protocol reason', async () => {
+  const store = new MemoryEventStore();
+  const session = await freshSession(store, 'sess_plan_oob');
+  await enablePlanMode(session);
+  const deps = turnDeps(
+    session,
+    new ScriptedModel([[exitPlanCall('c1')], [{ type: 'text', text: 'done' }]]),
+    {
+      tools: new Map(),
+      planReview: () => Promise.resolve<PlanChoice>({ kind: 'chosen', index: 99 }),
+    },
+  );
+  const outcome = await runTurn(deps, 'go', new AbortController().signal);
+  assert.equal(outcome.state, 'completed');
+  const decided = store.events.find((e) => e.type === 'plan.decided');
+  assert.ok(decided?.type === 'plan.decided' && decided.choice === null);
+  assert.ok(decided.reason !== null && decided.reason.includes('out of range'));
+  assert.equal(
+    store.events.filter((e) => e.type === 'plan.mode-changed' && e.by === 'plan-approved').length,
+    0,
+    'no mode exit without a real choice',
+  );
+  assert.equal(session.state.planMode, true);
+  const finished = store.events.find((e) => e.type === 'tool.finished');
+  assert.ok(finished?.type === 'tool.finished');
+  assert.match(finished.output, /rejected every plan/);
+});
+
+test('an unattended session refuses ExitPlan without parking or proposing', async () => {
+  const store = new MemoryEventStore();
+  const session = await freshSession(store, 'sess_plan_unattended');
+  await enablePlanMode(session);
+  let asked = false;
+  const deps = turnDeps(
+    session,
+    new ScriptedModel([[exitPlanCall('c1')], [{ type: 'text', text: 'done' }]]),
+    {
+      tools: new Map(),
+      unattended: 'nobody can answer here',
+      planReview: () => {
+        asked = true;
+        return new Promise<PlanChoice>(() => undefined);
+      },
+    },
+  );
+  const outcome = await runTurn(deps, 'go', new AbortController().signal);
+  assert.equal(outcome.state, 'completed');
+  assert.equal(asked, false, 'the bridge is never consulted');
+  assert.equal(store.events.some((e) => e.type === 'plan.proposed'), false);
+  const finished = store.events.find((e) => e.type === 'tool.finished');
+  assert.ok(finished?.type === 'tool.finished');
+  assert.match(finished.output, /plan review needs a reader/);
+  assert.equal(session.state.planMode, true);
+});
+
+test('a plan title with a newline is rejected before it can break the card layout', () => {
+  const parsed = parseExitPlanInput({ plans: [{ title: 'two\nlines', summary: 'x' }] });
+  assert.equal(parsed.ok, false);
+  assert.match('reason' in parsed ? parsed.reason : '', /single line/);
+});

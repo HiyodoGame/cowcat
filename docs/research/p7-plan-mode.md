@@ -93,3 +93,21 @@ dev-plan P7 行两件事：
 2. **方案数的合理上限**【推断】：4 借自上游二手证据；真机看模型给 2 还是给 4，卡片可读性如何。【须实测】
 3. **awaiting_approval 复用的语义混淆**【推断】：plan 评审挂在审批状态下，TUI 状态栏会显示「等待审批」字样——文案层混淆不是状态机混淆；TUI 可区分渲染（plan 卡 vs 审批卡）。接受。【源码可验证：TUI 渲染分支】
 4. **plan 模式与 compaction 的交互**【推断】：plan 模式不注入额外消息（工具描述即契约），压缩无特殊交互；planMode 是 state 字段不受水位线影响。接受，T1 加一条折叠共存测试即可。【须实测（单测）】
+
+## 10. #167 审查校准（2026-10-23）
+
+code-reviewer/k3 审查：1 P0 + 3 P1 + 9 P2，全部处理（#168）。
+
+- **P0（会话自杀级）**：评审超时后同回合第二次 ExitPlan 必失败——host 桥见陈旧
+  pendingPlan 即拒绝，错误穿透内核杀死回合，恰好打断 ADR 设计的「超时→修订→
+  重试」自愈路径。修复：内核串行发问，再发问即证明旧等待已被放弃，
+  askApproval/askPlanReview 一律替换陈旧项（**approval 桥同病同源，一并修复**）。
+  补 host 级回归：真协议全链路上超时→重试→二次评审可达、可答。
+- **P1**：越界 choice（第三方客户端可发 int≥0 任意值）按「都不选」处理，绝不
+  无有效选择退出只读约束；`deps.unattended` 短路落地（不调桥/不 proposed，
+  ADR-125 ⑤ 与代码对齐）；host 桥补测试（此前零覆盖）。
+- **P2 要点**：评审挂起期间 setPlanMode 拒绝（消除两个中途切换竞态）；TUI 卡
+  片互斥对称、plan 打开时 slash 菜单/Ctrl-P/回到底部全部退让；title 拒换行；
+  plan.reply 的 refine（choice 非 null 时 reason 必须 null）；删除死字段
+  PlanView.outcome；answerPlan 不再硬编码英文 reason、clearInput 同步 view。
+  ADR-124 ②⑤⑥ 随修复修订（门控位置描述、陈旧项规则、越界语义、缓存代价）。

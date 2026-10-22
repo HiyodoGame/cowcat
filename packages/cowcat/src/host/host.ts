@@ -806,6 +806,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
 
     async setPlanMode(sessionId: string, enabled: boolean): Promise<void> {
       const rec = open(sessionId);
+      // A pending review makes "you are still in plan mode" promises the UI and the
+      // model are both reading; toggling underneath them would leave each holding a
+      // different truth (review of #167, P2-6). Answer the review first.
+      if (rec.pendingPlan !== null) {
+        throw new ProtocolHostError(
+          'a plan review is pending; answer it before toggling plan mode',
+          ERROR_CODES.hostRefused,
+          { sessionId },
+        );
+      }
       await rec.session.emit({ type: 'plan.mode-changed', turnId: rec.session.turnId, enabled, by: 'user' });
     },
 
@@ -899,10 +909,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
  * second concurrent ask is a bug and is reported as one rather than silently queueing.
  */
 function askApproval(rec: SessionRecord, request: ActionRequest): Promise<ApprovalVerdict> {
-  return new Promise<ApprovalVerdict>((resolve, reject) => {
+  return new Promise<ApprovalVerdict>((resolve) => {
+    // The kernel asks serially, one question per turn segment: a new ask means the
+    // previous wait was abandoned upstream (timeout, cancel) and its stale entry is a
+    // corpse, not a concurrency bug. Replacing it is what keeps a timed-out question
+    // from refusing every later one in the same turn (review of #167, P0-1).
     if (rec.pendingApproval !== null) {
-      reject(new ProtocolHostError('an approval is already pending in this session', ERROR_CODES.hostRefused));
-      return;
+      rec.pendingApproval = null;
     }
     const early = rec.earlyApprovals.get(request.callId);
     if (early !== undefined) {
@@ -916,15 +929,15 @@ function askApproval(rec: SessionRecord, request: ActionRequest): Promise<Approv
 
 /**
  * The plan-review twin of {@link askApproval} (ADR-125 ③): same pairing rule, same
- * one-question-at-a-time invariant, same early-answer seam. The plans themselves travel
- * in the `plan.proposed` event the frontend already saw — the bridge only pairs the
- * answer back to the waiting call.
+ * one-question-at-a-time invariant, same early-answer seam, and the same stale-entry
+ * replacement (see askApproval — a timed-out review must not veto the model's retry).
+ * The plans themselves travel in the `plan.proposed` event the frontend already saw —
+ * the bridge only pairs the answer back to the waiting call.
  */
 function askPlanReview(rec: SessionRecord, callId: string): Promise<PlanChoice> {
-  return new Promise<PlanChoice>((resolve, reject) => {
+  return new Promise<PlanChoice>((resolve) => {
     if (rec.pendingPlan !== null) {
-      reject(new ProtocolHostError('a plan review is already pending in this session', ERROR_CODES.hostRefused));
-      return;
+      rec.pendingPlan = null;
     }
     const early = rec.earlyPlanReplies.get(callId);
     if (early !== undefined) {

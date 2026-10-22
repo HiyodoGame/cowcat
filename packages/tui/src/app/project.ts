@@ -188,8 +188,10 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         by: null,
       };
       // A question owns the keyboard: the task panel (and the `/` menu) close rather than
-      // leaving arrows with two possible meanings (ADR-113).
-      return { ...base, approval, approvalCursor: 0, taskPanel: null };
+      // leaving arrows with two possible meanings (ADR-113). Cards are mutually exclusive
+      // in the kernel (serial calls); the symmetric clearing keeps a replay honest if a
+      // log ever interleaves them anyway (review of #167, P2-8).
+      return { ...base, approval, approvalCursor: 0, taskPanel: null, plan: null };
     }
 
     case 'approval.answered': {
@@ -253,7 +255,6 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       const plan: PlanView = {
         callId: text(event, 'callId') ?? '',
         plans,
-        outcome: null,
       };
       // A review owns the keyboard exactly like an approval question (ADR-125 ③).
       return { ...base, plan, planCursor: 0, approval: null, taskPanel: null };
