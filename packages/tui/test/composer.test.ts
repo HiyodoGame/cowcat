@@ -118,6 +118,25 @@ test('Ctrl+J inserts a newline with no protocol support at all', async () => {
   }
 });
 
+test('a bare LF inserts a newline — that is what Ctrl+Enter and Ctrl+J really send (measured in Tabby)', async () => {
+  // xterm-family terminals collapse Ctrl+Enter and Ctrl+J onto 0x0a, so the binding that
+  // actually fires on them is `linefeed`, not `j+ctrl`. Our table spells that row out
+  // instead of leaning on opentui's default.
+  const h = await harness(false);
+  try {
+    await h.keys.typeText('one');
+    h.keys.pressKey('\n');
+    await h.keys.typeText('two');
+    h.sync();
+    await h.flush();
+    assert.equal(h.value(), 'one\ntwo');
+    assert.equal(h.lineCount(), 2);
+    assert.deepEqual(h.submit(), []);
+  } finally {
+    await h.dispose();
+  }
+});
+
 test('without the kitty protocol, Shift+Enter is indistinguishable from Enter — hence Alt+Enter', async () => {
   const h = await harness(false);
   try {
