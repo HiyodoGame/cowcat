@@ -565,7 +565,7 @@ test('a plan review opens a card, the answer closes it, and mode changes are not
 
   assert.equal(proposed.planMode, true);
   assert.ok(proposed.plan !== null && proposed.plan.plans.length === 2);
-  assert.equal(proposed.plan?.plans[0]?.title, 'small patch');
+  assert.equal(proposed.plan.plans[0]?.title, 'small patch');
   const modeNotice = proposed.entries.find((entry) => entry.kind === 'notice');
   assert.ok(modeNotice !== undefined && modeNotice.text.includes('plan 模式已开启'));
 
