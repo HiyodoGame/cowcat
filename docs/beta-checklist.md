@@ -223,7 +223,7 @@ COWCAT_HOME：临时目录 / 真实 home
 - `setup` 是非交互 flags，没有向导式问答。
 - Windows `.cmd` / `npx` 形式的 MCP 入口未支持。
 - 真实 MCP 服务器的 `list_changed` / 分页未触发。
-- 三个 support 包的 `latest` 仍停在 beta.1（CLI 用精确版本依赖，不影响安装）。
+- 三个 support 包（protocol / core / tui）的 `latest` 与 `beta` 都随批次推进（beta.3 已对齐）；CLI 的 `latest` 仍是 v1 `0.15.0`，由 §7 的门槛决定何时切。
 - `system` 沙箱在 Windows 上被显式拒绝（设计如此）。
 - **`Shift+Enter` 换行依赖终端**：只有实现 kitty 键盘协议的终端才能把它与回车分开。2026-10-22 实测的验收终端（Tabby Terminal，Electron + xterm.js）对 `Shift+Enter` 发的是单个 `0d`（即回车本身），因此该终端上 `Shift+Enter` 会直接发送消息。**换行用 `Ctrl+J` 或 `Ctrl+Enter`**——两者在该终端上是同一个 `0x0a`/LF，与终端能力无关；`Alt+Enter` 多数终端可用（`ESC CR`）。见 ADR-104 ⑥⑦、#140 / #141。**终端渲染之外的形态不受此限**：桌面端 / Web 端能拿到完整的 keyboard 事件，`Shift+Enter` 到那时再实现（已由用户 2026-10-22 决定，不在 beta 内做）。
 
