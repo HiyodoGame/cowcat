@@ -6,7 +6,6 @@ import {
   Session,
   type KernelEvent,
   type SkillFile,
-  type SkillPort,
 } from '../src/index.js';
 import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './support.js';
 
@@ -33,17 +32,8 @@ const demo: SkillFile = {
 
 const personal: SkillFile = { ...demo, name: 'personal', layer: 'user', path: '/home/me/.cowcat/skills/personal/SKILL.md' };
 
-function port(skills: readonly SkillFile[]): SkillPort & { readonly calls: number } {
-  let calls = 0;
-  return {
-    get calls() {
-      return calls;
-    },
-    discover: async () => {
-      calls += 1;
-      return { skills, warnings: [] };
-    },
-  };
+function skillsOf(skills: readonly SkillFile[]): { readonly skills: readonly SkillFile[] } {
+  return { skills };
 }
 
 async function session(): Promise<{ session: Session; store: MemoryEventStore }> {
@@ -56,7 +46,7 @@ const types = (events: readonly KernelEvent[]): readonly string[] => events.map(
 test('the first turn injects the catalog before the user message', async () => {
   const { session: s, store } = await session();
   const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
-  const deps = turnDeps(s, model, { skills: { port: port([demo]), cwd: '/repo', trust: { trusted: true } } });
+  const deps = turnDeps(s, model, { skills: { ...skillsOf([demo]), trust: { trusted: true } } });
 
   const outcome = await runTurn(deps, 'use the demo skill', new AbortController().signal);
   assert.equal(outcome.state, 'completed');
@@ -86,7 +76,7 @@ test('the catalog comes after the instructions, not before', async () => {
       cwd: '/repo',
       trust: { trusted: true },
     },
-    skills: { port: port([demo]), cwd: '/repo', trust: { trusted: true } },
+    skills: { ...skillsOf([demo]), trust: { trusted: true } },
   });
 
   await runTurn(deps, 'go', new AbortController().signal);
@@ -101,15 +91,13 @@ test('the catalog comes after the instructions, not before', async () => {
 test('a second turn does not inject again, and a reopened session does not either', async () => {
   const { session: s, store } = await session();
   const model = new ScriptedModel([[{ type: 'text', text: 'one' }], [{ type: 'text', text: 'two' }]]);
-  const reader = port([demo]);
-  const deps = turnDeps(s, model, { skills: { port: reader, cwd: '/repo', trust: { trusted: true } } });
+  const deps = turnDeps(s, model, { skills: { ...skillsOf([demo]), trust: { trusted: true } } });
 
   await runTurn(deps, 'first', new AbortController().signal);
   await runTurn(deps, 'second', new AbortController().signal);
 
   const events = await store.readAll('sess_skills');
   assert.equal(events.filter((event) => event.type === 'skills.loaded').length, 1);
-  assert.equal(reader.calls, 1, 'discovery is not even read a second time');
 
   const replayed = replay('sess_skills', events);
   assert.notEqual(replayed.skillsSeq, null);
@@ -119,7 +107,7 @@ test('a second turn does not inject again, and a reopened session does not eithe
 test('an untrusted workspace withholds project skills and says why, before the turn opens', async () => {
   const { session: s, store } = await session();
   const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
-  const deps = turnDeps(s, model, { skills: { port: port([demo]), cwd: '/repo', trust: { trusted: false } } });
+  const deps = turnDeps(s, model, { skills: { ...skillsOf([demo]), trust: { trusted: false } } });
 
   const outcome = await runTurn(deps, 'hello', new AbortController().signal);
   assert.equal(outcome.state, 'completed');
@@ -146,7 +134,7 @@ test('an untrusted workspace withholds project skills and says why, before the t
 test('personal skills still load when the project ones were withheld', async () => {
   const { session: s, store } = await session();
   const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
-  const deps = turnDeps(s, model, { skills: { port: port([personal, demo]), cwd: '/repo', trust: { trusted: false } } });
+  const deps = turnDeps(s, model, { skills: { ...skillsOf([personal, demo]), trust: { trusted: false } } });
 
   const outcome = await runTurn(deps, 'go', new AbortController().signal);
   assert.equal(outcome.state, 'completed');
@@ -161,17 +149,16 @@ test('personal skills still load when the project ones were withheld', async () 
   assert.ok(!event.text.includes('- demo:'), 'the withheld project skill is not in the catalog');
 });
 
-test('a broken port is reported, never fatal', async () => {
-  const { session: s } = await session();
+test('an empty snapshot injects nothing', async () => {
+  const { session: s, store } = await session();
   const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
-  const failing: SkillPort = { discover: () => Promise.reject(new Error('EACCES')) };
-  const deps = turnDeps(s, model, { skills: { port: failing, cwd: '/repo', trust: { trusted: true } } });
+  const deps = turnDeps(s, model, { skills: { ...skillsOf([]), trust: { trusted: true } } });
 
   const outcome = await runTurn(deps, 'hello', new AbortController().signal);
   assert.equal(outcome.state, 'completed');
-  const note = outcome.notes[0];
-  assert.ok(note !== undefined && note.kind === 'skills-skipped');
-  assert.match(note.reason, /EACCES/);
+  assert.deepEqual(outcome.notes, []);
+  const events = await store.readAll('sess_skills');
+  assert.equal(events.some((event) => event.type === 'skills.loaded'), false);
 });
 
 test('a compaction shadows the catalog, and the same turn puts it back after the instructions', async () => {
@@ -187,7 +174,7 @@ test('a compaction shadows the catalog, and the same turn puts it back after the
       cwd: '/repo',
       trust: { trusted: true },
     },
-    skills: { port: port([demo]), cwd: '/repo', trust: { trusted: true } },
+    skills: { ...skillsOf([demo]), trust: { trusted: true } },
   });
 
   const outcome = await runTurn(deps, 'x'.repeat(2_000), new AbortController().signal);

@@ -73,13 +73,20 @@ export function createSkillTool(options: SkillToolOptions): ToolPort {
         return { ok: true, output: full, truncation: { truncated: false, dropped: 0, reason: null } };
       }
 
-      const marker = `\n\n[… skill body truncated to ${String(limit)} bytes; ${String(bytes - limit)} bytes omitted. Read ${skill.path} directly if you need the rest.]`;
-      const room = Math.max(0, limit - utf8(marker));
-      const kept = clipUtf8(full, room);
+      // Two passes: the marker names the real omitted count, and the marker's own length
+      // depends on how many digits that count has. Pass one clips against a placeholder,
+      // pass two rebuilds with the true count and reclips if the marker grew.
+      const marker = (omitted: number): string =>
+        `\n\n[… skill body truncated to ${String(limit)} bytes; ${String(omitted)} bytes omitted. Read ${skill.path} directly if you need the rest.]`;
+      const kept = clipUtf8(full, Math.max(0, limit - utf8(marker(0))));
+      const dropped = bytes - utf8(kept);
+      const finalMarker = marker(dropped);
+      const finalKept = utf8(finalMarker) > utf8(marker(0)) ? clipUtf8(full, Math.max(0, limit - utf8(finalMarker))) : kept;
+      const finalDropped = bytes - utf8(finalKept);
       return {
         ok: true,
-        output: `${kept}${marker}`,
-        truncation: { truncated: true, dropped: bytes - utf8(kept), reason: `skill body: ${String(limit)} bytes` },
+        output: `${finalKept}${marker(finalDropped)}`,
+        truncation: { truncated: true, dropped: finalDropped, reason: `skill body: ${String(limit)} bytes` },
       };
     },
   );

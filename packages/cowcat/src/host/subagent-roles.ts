@@ -11,13 +11,16 @@ import type { SubagentRole, ToolPort } from '../ports/index.js';
 const EXPLORE_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep'];
 
 /**
- * Never given to a child, whatever the role (ADR-081 ①).
+ * Never given to a child, whatever the role (ADR-081 ①, ADR-114/117).
  *
  * `Task` is not in the parent's tool map at all (it is the kernel's own tool, ADR-080),
  * so the rule below is belt-and-braces; `TodoWrite` is real, and a child's full-replace
- * todo list would overwrite the parent's (ADR-054).
+ * todo list would overwrite the parent's (ADR-054). `Skill` is withheld because skills
+ * are top-level only: a child receives no catalog, and a tool whose description says "use
+ * the list you were given" is a lie without that list (the review of #149 caught the
+ * general role shipping it anyway).
  */
-const NEVER_GIVEN: readonly string[] = ['Task', 'TodoWrite'];
+const NEVER_GIVEN: readonly string[] = ['Task', 'TodoWrite', 'Skill'];
 
 /**
  * The tools one child may use.

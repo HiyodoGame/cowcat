@@ -106,6 +106,7 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
     nodePlatform,
     resolveSandboxProfile,
     selectModel,
+    skillCatalogBudget,
     trustedRules,
     withHostRules,
   } = await import('@corescense/cowcat-core');
@@ -174,17 +175,29 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
   // What skills the model would be offered (ADR-114~117). The row exists because the two
   // silent failure modes — a project skill withheld by trust, and a frontmatter field that
   // looks like a grant but is not honoured — are invisible from inside a turn.
+  //
+  // The budget is the one a real session would use (ADR-116 ②), not the 8 KB default:
+  // with a 128k window the live budget is 2%, and reporting the default would describe a
+  // catalog the model will never see.
+  let skillWindow: number | undefined;
+  try {
+    skillWindow = selectModel(loaded.config.model).preset.limits.context;
+  } catch {
+    // No usable model: a session would refuse before the catalog matters, and the default
+    // budget is the honest thing to report.
+  }
   const skillDiscovery = await new FileSkills({ fs, home }).discover(cwd);
-  const skills = decideSkills(skillDiscovery.skills, { trusted });
+  const skills = decideSkills(skillDiscovery.skills, { trusted }, skillCatalogBudget(skillWindow));
   if (skills.kind === 'injected') {
     const bytes = Buffer.byteLength(skills.catalog.text, 'utf8');
     const skipped = skills.skipped.length === 0 ? '' : `，未受信跳过 ${String(skills.skipped.length)} 个`;
-    note('skills', `${String(skills.skills.length)} 个，catalog ${String(bytes)} 字节${skipped}`);
+    note('skills', `${String(skills.skills.length)} 个，catalog ${String(bytes)} 字节（预算 ${String(skillCatalogBudget(skillWindow))}）${skipped}`);
     for (const skill of skills.skills) line(`  ${skill.name}（${skill.layer}/${skill.origin}）← ${skill.path}`);
     for (const shadowed of skills.shadowed) line(`同名覆盖：${shadowed.loser.path} → ${shadowed.winner.path}`);
     for (const skill of skills.skills) {
       if (skill.ignoredFields.length > 0) line(`未生效字段（${skill.name}）：${skill.ignoredFields.join(', ')}`);
     }
+    if (skills.catalog.omitted > 0) line(`预算内放不下全部名字，略过 ${String(skills.catalog.omitted)} 个`);
   } else if (skills.kind === 'skipped-untrusted') {
     note('skills', describeSkillSkip(skills.skills) ?? '未加载');
   } else if (skillDiscovery.skills.length > 0) {

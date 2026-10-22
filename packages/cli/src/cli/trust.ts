@@ -1,4 +1,5 @@
 import { basename, join } from 'node:path';
+import { homedir } from 'node:os';
 import { EXIT } from './exit.js';
 import { flagOn } from './flags.js';
 import { statePaths } from './host.js';
@@ -73,6 +74,13 @@ export async function runTrust(context: CommandContext): Promise<number> {
     if (decided.truncated !== null) context.stdout(`  超出预算已截断：${decided.truncated.path}`);
   } else {
     context.stdout('这个目录下没有 AGENTS.md / CLAUDE.md，指令链为空。');
+  }
+  // Skills gate on the same trust (ADR-114 ③); a session that just saw "skipped N skills"
+  // runs `cowcat trust` expecting the list to change, so say what will load.
+  const discovered = await new core.FileSkills({ fs, home: homedir() }).discover(target);
+  const unlocked = core.decideSkills(discovered.skills, { trusted: true });
+  if (unlocked.kind === 'injected' && unlocked.skipped.length === 0) {
+    context.stdout(`接下来会加载 ${String(unlocked.skills.length)} 个技能：${unlocked.skills.map((skill) => skill.name).join(', ')}`);
   }
   context.stdout(`项目层配置（${basename(paths.projectConfig)}）的 allow 从下一次会话起生效。`);
   return EXIT.ok;

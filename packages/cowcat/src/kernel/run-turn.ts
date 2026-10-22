@@ -2,7 +2,7 @@ import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from
 import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
-import type { InstructionPort, SkillPort } from '../ports/index.js';
+import type { InstructionPort, SkillFile } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
 import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/skills.js';
 import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput, type TaskInput } from './subagent.js';
@@ -37,10 +37,15 @@ export interface InstructionNeeds {
 }
 
 export interface SkillNeeds {
-  /** Discovers the four locations (ADR-114 ②). */
-  readonly port: SkillPort;
-  /** The directory the discovery is anchored at. */
-  readonly cwd: string;
+  /**
+   * What discovery found when the host opened: every parsed skill, unfiltered.
+   *
+   * A snapshot, not a live port: the same list feeds the `Skill` tool, so re-reading the
+   * filesystem here would let a mid-session edit update the catalog while the tool still
+   * serves the old body — half a hot reload. There is deliberately no hot reload
+   * (ADR-114 ⑥); the tool table and the catalog share this one truth.
+   */
+  readonly skills: readonly SkillFile[];
   /** Whether this workspace is trusted; project skills are withheld otherwise (ADR-114 ③). */
   readonly trust: { readonly trusted: boolean };
   /** The preset's context window, which sizes the catalog budget (ADR-116 ②). */
@@ -427,38 +432,33 @@ async function ensureSkills(
   if (needs === undefined) return;
   if (deps.session.state.skillsSeq !== null) return;
 
-  try {
-    const discovery = await needs.port.discover(needs.cwd);
-    const budget = needs.maxBytes ?? skillCatalogBudget(needs.window);
-    const decision = decideSkills(discovery.skills, needs.trust, budget);
-    if (decision.kind === 'none') return;
-    if (decision.kind === 'skipped-untrusted') {
-      const reason = describeSkillSkip(decision.skills);
-      if (reason !== null) await note({ kind: 'skills-skipped', reason });
-      return;
-    }
-    // Partial skip: personal skills still go in, but the user has to learn that the
-    // repository's own skills did not (ADR-114 ③).
-    if (decision.skipped.length > 0) {
-      const reason = describeSkillSkip(decision.skipped);
-      if (reason !== null) await note({ kind: 'skills-skipped', reason });
-    }
-    await deps.session.emit({
-      type: 'skills.loaded',
-      turnId: deps.session.turnId,
-      trigger: deps.session.state.skillsCount === 0 ? 'start' : 'refresh',
-      text: decision.catalog.text,
-      skills: decision.catalog.listed.map((entry) => ({
-        name: entry.skill.name,
-        layer: entry.skill.layer,
-        origin: entry.skill.origin,
-        bytes: entry.bytes,
-      })),
-    });
-  } catch (error) {
-    // Skills are guidance, like instructions: a broken read is reported, never fatal.
-    await note({ kind: 'skills-skipped', reason: error instanceof Error ? error.message : String(error) });
+  // Pure from here: the snapshot was read by the host, the decision is a pure function.
+  const budget = needs.maxBytes ?? skillCatalogBudget(needs.window);
+  const decision = decideSkills(needs.skills, needs.trust, budget);
+  if (decision.kind === 'none') return;
+  if (decision.kind === 'skipped-untrusted') {
+    const reason = describeSkillSkip(decision.skills);
+    if (reason !== null) await note({ kind: 'skills-skipped', reason });
+    return;
   }
+  // Partial skip: personal skills still go in, but the user has to learn that the
+  // repository's own skills did not (ADR-114 ③).
+  if (decision.skipped.length > 0) {
+    const reason = describeSkillSkip(decision.skipped);
+    if (reason !== null) await note({ kind: 'skills-skipped', reason });
+  }
+  await deps.session.emit({
+    type: 'skills.loaded',
+    turnId: deps.session.turnId,
+    trigger: deps.session.state.skillsCount === 0 ? 'start' : 'refresh',
+    text: decision.catalog.text,
+    skills: decision.catalog.listed.map((entry) => ({
+      name: entry.skill.name,
+      layer: entry.skill.layer,
+      origin: entry.skill.origin,
+      bytes: entry.bytes,
+    })),
+  });
 }
 
 async function streamModel(

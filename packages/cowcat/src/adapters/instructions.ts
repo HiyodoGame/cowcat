@@ -71,10 +71,21 @@ export function projectChainDirs(fs: FsPort, cwd: string): string[] {
   return dirs;
 }
 
-/** The directory the walk stops at; the project's own skills live here (ADR-114 ②). */
-export function projectRootOf(fs: FsPort, cwd: string): string {
-  const dirs = projectChainDirs(fs, cwd);
-  return dirs[dirs.length - 1] ?? fs.canonical(cwd);
+/**
+ * The directory the walk stops at, or null outside a repository.
+ *
+ * "Project root" is defined as the first directory up from `cwd` that carries `.git`
+ * (ADR-114 ②). Without one there IS no project layer: outside a repository the project
+ * skills would otherwise be scanned at the filesystem root (`/.cowcat/skills`), which is
+ * both meaningless and a wrong source for trust-gated content. The instruction chain is
+ * different on purpose — `*.local.md` overlays apply per directory, so its walk keeps
+ * going to the filesystem root; do not "unify" the two walks without deciding that.
+ */
+export function projectRootOf(fs: FsPort, cwd: string): string | null {
+  for (const dir of projectChainDirs(fs, cwd)) {
+    if (fs.exists(join(dir, '.git'))) return dir;
+  }
+  return null;
 }
 
 // One explicitly named file, by absolute path; the name is its basename.
