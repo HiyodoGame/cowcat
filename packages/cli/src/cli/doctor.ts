@@ -102,8 +102,10 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
     describeInstructionSkip,
     describeSkillSkip,
     isTrusted,
+    loadHookSources,
     loadHostConfig,
     nodePlatform,
+    projectRootOf,
     resolveSandboxProfile,
     selectModel,
     skillCatalogBudget,
@@ -115,6 +117,7 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
   const home = homedir();
   const paths = await statePaths();
   const fs = new NodeFs();
+  const projectRoot = projectRootOf(fs, cwd);
   const configPath = flagValue(context.flags, 'config');
   note('状态目录', paths.dir);
 
@@ -206,6 +209,27 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
     note('skills', '（没有发现 SKILL.md）');
   }
   for (const warning of skillDiscovery.warnings) line(`跳过：${warning}`);
+
+  // Hooks (ADR-121/123): discovered the same way the host discovers them — doctor does
+  // not run handlers, it reports what would run and what is parsed but inert.
+  const hookSources = await loadHookSources({
+    home,
+    cowcatDir: paths.dir,
+    projectRoot,
+    trusted,
+  });
+  const hookCount = hookSources.parsed.hooks.length;
+  const hookSkipped = hookSources.skippedUntrusted;
+  note(
+    'hooks',
+    hookCount === 0 && hookSkipped === 0
+      ? '（没有配置）'
+      : `${String(hookCount)} 个 handler（${String(hookSources.loaded)} 个文件）${hookSkipped === 0 ? '' : `，未受信跳过 ${String(hookSkipped)} 个 project 文件`}；doctor 不执行 hook`,
+  );
+  for (const hook of hookSources.parsed.hooks) {
+    line(`  ${hook.event}${hook.matcher === null ? '' : ` (${hook.matcher.kind === 'regex' ? hook.matcher.pattern : hook.matcher.kind === 'exact' ? hook.matcher.names.join('|') : '*'})`} ← ${hook.source}`);
+  }
+  for (const item of hookSources.parsed.inert) line(`  ${item}`);
 
   const mcpServers = Object.entries(loaded.config.mcp.servers);
   if (mcpServers.length === 0) {

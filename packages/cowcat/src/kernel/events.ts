@@ -304,6 +304,20 @@ export type KernelEvent = EventBase &
       }
     | {
         /**
+         * Context a hook injected through `additionalContext` (ADR-122 ④).
+         *
+         * A message-producing event for the same reason `instructions.loaded` is: the
+         * text is part of the conversation, and a replay has to show the model the same
+         * context without re-running the hook. Emitted before `turn.opened` when the
+         * hook fired on the prompt, so the model reads hook context ahead of the request
+         * — the same ordering instructions follow (ADR-078 ①).
+         */
+        readonly type: 'hooks.context-added';
+        readonly turnId: string | null;
+        readonly text: string;
+      }
+    | {
+        /**
          * A background task started by this call (ADR-111).
          *
          * Durable, and paired with `tool.background.finished`: an ephemeral start would
@@ -389,7 +403,8 @@ export type TurnNoteKind =
   | 'compaction-failed'
   | 'instructions-skipped'
   | 'skills-skipped'
-  | 'rounds-exhausted';
+  | 'rounds-exhausted'
+  | 'hook-failed';
 
 // Ephemeral updates exist for live rendering only. They are never persisted:
 // a streamed token is not a fact about the session, the final model.message is.

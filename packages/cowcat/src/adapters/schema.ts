@@ -180,7 +180,7 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn.noted'),
     // The list is duplicated from `TurnNoteKind` on purpose: this is the wire contract,
     // and the kernel's union is what it is checked against (the `Equals` assertion below).
-    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'skills-skipped', 'rounds-exhausted']),
+    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'skills-skipped', 'rounds-exhausted', 'hook-failed']),
     message: z.string(),
   }),
   z.object({
@@ -285,6 +285,11 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     callId: z.string(),
     name: z.string(),
     count: z.number().int().min(2),
+    text: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('hooks.context-added'),
     text: z.string(),
   }),
   // ADR-111: the pair that makes a background task auditable. Both are plain objects with no

@@ -13,6 +13,7 @@ export * from './attachments.js';
 export * from './audit.js';
 export * from './background.js';
 export * from './fs.js';
+export * from './hooks.js';
 export * from './instructions.js';
 export * from './model.js';
 export * from './platform.js';

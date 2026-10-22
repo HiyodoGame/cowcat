@@ -111,6 +111,9 @@ const documentSchema = z.strictObject({
   rules: z.array(z.unknown()).optional(),
   sandbox: sandboxSchema.optional(),
   model: modelSchema.optional(),
+  // The hooks section is validated and executed by the hooks adapter (ADR-123 ③), not
+  // resolved into kernel config — the file layer only has to let the key through.
+  hooks: z.record(z.string(), z.unknown()).optional(),
   mcp: z
     .strictObject({
       servers: z

@@ -1,7 +1,7 @@
 import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
+import type { FsPort, HooksPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
 import type { InstructionPort, SkillFile } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
 import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/skills.js';
@@ -102,6 +102,12 @@ export interface TurnDeps {
    */
   readonly skills?: SkillNeeds;
   /**
+   * Hooks the host wired for this session (ADR-121). Omitted means the session runs
+   * without hooks — kernel tests get a turn with no filesystem and no spawned scripts.
+   * `cwd` is the session's working directory, handed to hooks as their `cwd` input.
+   */
+  readonly hooks?: { readonly port: HooksPort; readonly cwd: string };
+  /**
    * The most model rounds this turn may take (ADR-082 ②), or unlimited when omitted.
    *
    * A delegated child sets this from the `max_turns` the parent asked for. Hitting the
@@ -151,6 +157,12 @@ export type TurnNote =
    * wondering why the model ignores the procedure they checked in.
    */
   | { readonly kind: 'skills-skipped'; readonly reason: string }
+  /**
+   * A hook handler failed non-blockingly (ADR-121 ③): non-zero exit, timeout, spawn
+   * error, or unparseable JSON output. Reported so a broken hook is visible the moment
+   * it starts failing, not silently never running.
+   */
+  | { readonly kind: 'hook-failed'; readonly message: string }
   /**
    * The delegation cap stopped the turn with work still to do (ADR-082 ②). Reported
    * rather than thrown: the rounds that ran produced real results, and the caller needs
@@ -234,6 +246,8 @@ export function describeTurnNote(note: TurnNote): string {
       return `工作区指令未注入：${note.reason}`;
     case 'skills-skipped':
       return `技能未加载：${note.reason}`;
+    case 'hook-failed':
+      return `hook 失败：${note.message}`;
     case 'rounds-exhausted':
       return `达到回合上限（${String(note.rounds)} 轮），结果不完整`;
   }
@@ -254,6 +268,38 @@ async function runTurnBody(
   // works under, so every exit carries them (ADR-046).
   if (!deps.preset.toolCalls) await note({ kind: 'tools-unsupported', model: deps.preset.model }, null);
   if (effort.note !== null) await note(effort.note, null);
+
+  // UserPromptSubmit (ADR-122): fires before the turn opens, like instructions, so hook
+  // context lands ahead of the request. A deny refuses the prompt: the turn opens and
+  // closes with a note, the model is never called — the log shows a submitted prompt
+  // that a hook turned away, which is what happened.
+  if (deps.hooks !== undefined) {
+    const report = await deps.hooks.port.run(
+      {
+        event: 'user-prompt-submit',
+        sessionId: session.state.sessionId,
+        cwd: deps.hooks.cwd,
+        prompt: input,
+      },
+      signal,
+    );
+    for (const failure of report.failures) await note({ kind: 'hook-failed', message: failure }, null);
+    if (report.outcome.effect === 'context') {
+      await session.emit({ type: 'hooks.context-added', turnId: null, text: report.outcome.text });
+    }
+    if (report.outcome.effect === 'deny') {
+      await session.openTurn(input, {
+        model: deps.preset.model,
+        ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
+      });
+      const deniedTurnId = session.turnId;
+      if (deniedTurnId === null) throw new Error('the session did not open a turn');
+      await note({ kind: 'hook-failed', message: `prompt 被 hook 拒绝：${report.outcome.reason}` }, deniedTurnId);
+      await session.transition('finishing');
+      await session.transition('completed');
+      return { turnId: deniedTurnId, state: 'completed', reason: 'hook-denied', partial: false };
+    }
+  }
 
   // Instructions go in **before** the turn opens, so the model reads the repository's
   // rules ahead of the request rather than after it (ADR-078 ①).
@@ -289,6 +335,7 @@ async function runTurnBody(
               model: deps.model,
               preset: deps.preset,
               tools: deps.preset.toolCalls ? [...deps.tools.values()].map((tool) => tool.spec) : [],
+              ...(deps.hooks === undefined ? {} : { hooks: deps.hooks }),
             },
             'auto',
             signal,
@@ -304,6 +351,7 @@ async function runTurnBody(
         // The cap is a normal ending: finishing → completed, with the caller told the
         // answer is partial rather than being handed a silent truncation.
         await note({ kind: 'rounds-exhausted', rounds }, turnId);
+        await fireStopHook(deps, turnId, signal, note);
         await session.transition('finishing');
         await session.transition('completed');
         return { turnId, state: 'completed', reason: null, partial: true };
@@ -311,6 +359,7 @@ async function runTurnBody(
       const calls = await streamModel(deps, effort.providerOptions, signal);
       rounds += 1;
       if (calls.length === 0) {
+        await fireStopHook(deps, turnId, signal, note);
         await session.transition('finishing');
         await session.transition('completed');
         return { turnId, state: 'completed', reason: null, partial: false };
@@ -870,24 +919,110 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   // branches stay typed without a non-null assertion, which the repository forbids.
   if (tool === undefined) return { result: { ok: false, output: `unknown tool: ${call.name}` }, path: null };
 
+  // PreToolUse (ADR-122): the last word before the call runs. A deny here produces a
+  // normal `ok:false` result — the tool genuinely did not run, so `tool.finished` stays
+  // the honest fact and replay agrees.
+  if (deps.hooks !== undefined) {
+    const report = await deps.hooks.port.run(
+      {
+        event: 'pre-tool-use',
+        sessionId: session.state.sessionId,
+        cwd: deps.hooks.cwd,
+        toolName: call.name,
+        toolInput: call.input,
+      },
+      signal,
+    );
+    await noteHookFailures(deps, report.failures);
+    if (report.outcome.effect === 'deny') {
+      return { result: { ok: false, output: `blocked by hook: ${report.outcome.reason}` }, path };
+    }
+  }
+
   const grant: ToolGrant = { networkApproved: approved };
   try {
     // The call id is closed over here so the tool never sees a session (ADR-108). A tool
     // with nothing to stream ignores the fourth parameter.
-    return {
-      result: await tool.run(call.input, signal, grant, {
-        sessionId: session.state.sessionId,
-        callId: call.callId,
-        onOutput: (stream, text) => {
-          session.toolOutput(call.callId, stream, text);
+    const result = await tool.run(call.input, signal, grant, {
+      sessionId: session.state.sessionId,
+      callId: call.callId,
+      onOutput: (stream, text) => {
+        session.toolOutput(call.callId, stream, text);
+      },
+    });
+    // PostToolUse (ADR-122): fires on success, mirrors CC (failures have their own event
+    // there, which v1 does not subscribe). A rewrite replaces what the model sees, and
+    // `tool.finished.output` below records exactly that — the log holds the model's view.
+    if (deps.hooks !== undefined && result.ok) {
+      const report = await deps.hooks.port.run(
+        {
+          event: 'post-tool-use',
+          sessionId: session.state.sessionId,
+          cwd: deps.hooks.cwd,
+          toolName: call.name,
+          toolInput: call.input,
+          toolResponse: { ok: result.ok, output: result.output },
         },
-      }),
-      path,
-    };
+        signal,
+      );
+      await noteHookFailures(deps, report.failures);
+      if (report.outcome.effect === 'rewrite') {
+        return {
+          result: {
+            ...result,
+            output: report.outcome.note !== null
+              ? `${report.outcome.output}\n\n[hook blocked: ${report.outcome.note}]`
+              : report.outcome.output,
+          },
+          path,
+        };
+      }
+    }
+    return { result, path };
   } catch (error) {
     if (signal.aborted) throw error;
     const message = error instanceof Error ? error.message : String(error);
     return { result: { ok: false, output: message }, path };
+  }
+}
+
+/**
+ * The Stop hook (ADR-122 ①) fires when the model finishes responding — before the
+ * terminal transitions, so a slow hook delays completion rather than racing it. v1 is
+ * observation-only: the outcome's effects are ignored by the runner, so the only thing
+ * that can reach the log here is a failure note.
+ */
+async function fireStopHook(
+  deps: TurnDeps,
+  turnId: string,
+  signal: AbortSignal,
+  note: (item: TurnNote, turnId: string | null) => Promise<void>,
+): Promise<void> {
+  if (deps.hooks === undefined) return;
+  const report = await deps.hooks.port.run(
+    { event: 'stop', sessionId: deps.session.state.sessionId, cwd: deps.hooks.cwd },
+    signal,
+  );
+  for (const failure of report.failures) await note({ kind: 'hook-failed', message: failure }, turnId);
+}
+
+/**
+ * Hook failures go straight to the log as notes (ADR-121 ③): `runCall` has no `notes`
+ * array of its own, and the event — not the outcome summary — is what frontends read.
+ * A failure to write is swallowed for the same reason `recordNote` swallows it.
+ */
+async function noteHookFailures(deps: TurnDeps, failures: readonly string[]): Promise<void> {
+  for (const failure of failures) {
+    try {
+      await deps.session.emit({
+        type: 'turn.noted',
+        turnId: deps.session.turnId,
+        note: 'hook-failed',
+        message: describeTurnNote({ kind: 'hook-failed', message: failure }),
+      });
+    } catch {
+      // A closed session is the ordinary way this fails; the call's outcome is unaffected.
+    }
   }
 }
 

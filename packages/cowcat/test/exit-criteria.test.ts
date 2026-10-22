@@ -197,6 +197,10 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // reprint AGENTS.md. They are in the log so a replay shows what the model was
         // told (ADR-078).
         break;
+      case 'hooks.context-added':
+        // Same as instructions: hook context is what the model was told, not something
+        // it said (ADR-122 ④).
+        break;
       case 'skills.loaded':
         // Same as instructions: the catalog is what the model was told, not something it
         // said (ADR-116 ⑥).

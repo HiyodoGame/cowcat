@@ -1,5 +1,5 @@
 import type { KernelEvent } from '../src/kernel/events.js';
-import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type ModelChunk, type ModelPort, type ModelPreset, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type SubagentPort, type ToolGrant, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort, type InstructionNeeds, type SkillNeeds } from '../src/index.js';
+import { LockHeldError, DEFAULT_RULES, type ActionRequest, type ApprovalVerdict, type Decision, type FsPort, type HooksPort, type ModelChunk, type ModelPort, type ModelPreset, type ModelRequest, type EventStore, type Clock, type IdSource, type Rule, type Session, type SubagentPort, type ToolGrant, type ToolPort, type ToolSpec, type ToolResult, type SessionDeps, type TurnDeps, type LockPort, type SessionShell, type SessionSnapshot, type SnapshotPort, type InstructionNeeds, type SkillNeeds } from '../src/index.js';
 
 export class MemoryEventStore implements EventStore {
   readonly events: KernelEvent[] = [];
@@ -146,6 +146,8 @@ export interface TurnDepsOptions {
   readonly instructions?: InstructionNeeds;
   /** Delegation (ADR-079). Omitted means `Task` is never offered to the model. */
   readonly subagents?: { readonly port: SubagentPort };
+  /** Hooks (ADR-121). Omitted means the turn runs without hooks. */
+  readonly hooks?: { readonly port: HooksPort; readonly cwd: string };
   /** Why approvals cannot be answered here (ADR-081 ③). */
   readonly unattended?: string;
   /** Model-round cap (ADR-082 ②). */
@@ -176,6 +178,7 @@ export function turnDeps(session: Session, model: ModelPort, options: TurnDepsOp
     ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
     ...(options.subagents === undefined ? {} : { subagents: options.subagents }),
+    ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
     ...(options.unattended === undefined ? {} : { unattended: options.unattended }),
     ...(options.maxRounds === undefined ? {} : { maxRounds: options.maxRounds }),
     tools: options.tools ?? new Map(),

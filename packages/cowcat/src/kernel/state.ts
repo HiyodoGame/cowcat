@@ -267,6 +267,14 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         messages: [...state.messages, { role: 'user', text: event.text }],
         messageSeqs: [...state.messageSeqs, event.seq],
       };
+    case 'hooks.context-added':
+      // Same shape as `instructions.loaded` (ADR-122 ④): hook context is part of the
+      // conversation, so replay reproduces it without re-running the hook.
+      return {
+        ...base,
+        messages: [...state.messages, { role: 'user', text: event.text }],
+        messageSeqs: [...state.messageSeqs, event.seq],
+      };
     case 'subagent.started':
     case 'subagent.finished':
       // Delegation is a fact about the parent log, not about its messages: what the model
