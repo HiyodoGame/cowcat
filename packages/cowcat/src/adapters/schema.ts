@@ -180,7 +180,7 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn.noted'),
     // The list is duplicated from `TurnNoteKind` on purpose: this is the wire contract,
     // and the kernel's union is what it is checked against (the `Equals` assertion below).
-    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'rounds-exhausted']),
+    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'skills-skipped', 'rounds-exhausted']),
     message: z.string(),
   }),
   z.object({
@@ -223,6 +223,22 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     trigger: z.enum(['start', 'refresh']),
     text: z.string(),
     files: z.readonly(z.array(z.object({ path: z.string(), bytes: z.number().int().nonnegative() }))),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('skills.loaded'),
+    trigger: z.enum(['start', 'refresh']),
+    text: z.string(),
+    skills: z.readonly(
+      z.array(
+        z.object({
+          name: z.string(),
+          layer: z.enum(['user', 'project']),
+          origin: z.enum(['cowcat', 'claude']),
+          bytes: z.number().int().nonnegative(),
+        }),
+      ),
+    ),
   }),
   z.object({ ...base, type: z.literal('policy.decided'), callId: z.string(), decision: decisionSchema }),
   z.object({ ...base, type: z.literal('todo.updated'), todos: z.readonly(z.array(todoItemSchema)) }),
@@ -356,6 +372,11 @@ const sessionStateSchema = z.object({
   // The instruction message currently in `messages` (ADR-078), and how many were injected.
   instructionsSeq: z.number().int().positive().nullable(),
   instructionsCount: z.number().int().nonnegative(),
+  // The skill catalog message currently in `messages` (ADR-116 ④). Same lifecycle as the
+  // instruction message: a snapshot written before the field existed fails validation and
+  // the caller replays instead (ADR-013).
+  skillsSeq: z.number().int().positive().nullable(),
+  skillsCount: z.number().int().nonnegative(),
   // The `always` answers this session has given. Part of the state, not a side
   // table, so a snapshot that dropped them would silently re-ask questions the user
   // already answered.

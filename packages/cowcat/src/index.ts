@@ -26,7 +26,7 @@ export {
   type CompactDeps,
   type CompactOutcome,
 } from './kernel/compact.js';
-export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type InstructionNeeds, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
+export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type InstructionNeeds, type SkillNeeds, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
 export {
   SUBAGENT_REPORT_MAX_CHARS,
   TASK_SPEC,
@@ -89,6 +89,28 @@ export {
 } from './policy/instructions.js';
 export { FileInstructionSource, type FileInstructionSourceOptions } from './adapters/instructions.js';
 export {
+  SKILL_BODY_MAX_BYTES,
+  SKILL_CATALOG_BYTES,
+  SKILL_CATALOG_FLOOR,
+  SKILL_CATALOG_SHARE,
+  SKILL_COMPATIBILITY_MAX,
+  SKILL_DESCRIPTION_MAX,
+  SKILL_FILENAME,
+  SKILL_NAME_MAX,
+  SKILL_NAME_PATTERN,
+  decideSkills,
+  describeSkillSkip,
+  renderSkillCatalog,
+  resolveSkills,
+  skillCatalogBudget,
+  skillNameProblem,
+  type CatalogEntry,
+  type ShadowedSkill,
+  type SkillCatalog,
+  type SkillsDecision,
+} from './policy/skills.js';
+export { FileSkills, type FileSkillsOptions } from './adapters/skills.js';
+export {
   loadConfig,
   type ConfigError,
   type ConfigLoadResult,
@@ -101,6 +123,11 @@ export {
   type SessionLock,
   type SessionSnapshot,
   type SnapshotPort,
+  type SkillDiscovery,
+  type SkillFile,
+  type SkillLayer,
+  type SkillOrigin,
+  type SkillPort,
   type ToolPort,
   type ToolSpec,
   type ToolResult,

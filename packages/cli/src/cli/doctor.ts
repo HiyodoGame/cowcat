@@ -92,12 +92,15 @@ type Line = (text: string) => void;
 async function reportKernel(context: CommandContext, row: Row, note: Note, line: Line): Promise<void> {
   const {
     FileInstructionSource,
+    FileSkills,
     FileTrustStore,
     GLOBAL_INSTRUCTION_FILENAME,
     ModelConfigError,
     NodeFs,
     decideInstruction,
+    decideSkills,
     describeInstructionSkip,
+    describeSkillSkip,
     isTrusted,
     loadHostConfig,
     nodePlatform,
@@ -167,6 +170,29 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
     // be the one kind of mistake this row exists to prevent.
     note('instr', '（没有可注入的 AGENTS.md / CLAUDE.md：不存在或为空）');
   }
+
+  // What skills the model would be offered (ADR-114~117). The row exists because the two
+  // silent failure modes — a project skill withheld by trust, and a frontmatter field that
+  // looks like a grant but is not honoured — are invisible from inside a turn.
+  const skillDiscovery = await new FileSkills({ fs, home }).discover(cwd);
+  const skills = decideSkills(skillDiscovery.skills, { trusted });
+  if (skills.kind === 'injected') {
+    const bytes = Buffer.byteLength(skills.catalog.text, 'utf8');
+    const skipped = skills.skipped.length === 0 ? '' : `，未受信跳过 ${String(skills.skipped.length)} 个`;
+    note('skills', `${String(skills.skills.length)} 个，catalog ${String(bytes)} 字节${skipped}`);
+    for (const skill of skills.skills) line(`  ${skill.name}（${skill.layer}/${skill.origin}）← ${skill.path}`);
+    for (const shadowed of skills.shadowed) line(`同名覆盖：${shadowed.loser.path} → ${shadowed.winner.path}`);
+    for (const skill of skills.skills) {
+      if (skill.ignoredFields.length > 0) line(`未生效字段（${skill.name}）：${skill.ignoredFields.join(', ')}`);
+    }
+  } else if (skills.kind === 'skipped-untrusted') {
+    note('skills', describeSkillSkip(skills.skills) ?? '未加载');
+  } else if (skillDiscovery.skills.length > 0) {
+    note('skills', `${String(skillDiscovery.skills.length)} 个全部被 disable-model-invocation 隐藏`);
+  } else {
+    note('skills', '（没有发现 SKILL.md）');
+  }
+  for (const warning of skillDiscovery.warnings) line(`跳过：${warning}`);
 
   const mcpServers = Object.entries(loaded.config.mcp.servers);
   if (mcpServers.length === 0) {

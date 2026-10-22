@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { advanceReasoning, initialView, markReplayedTasks, moveTaskPanel, openTaskPanel, revealedReasoning, selectedTask, withScroll, type TuiView } from '../src/app/view.js';
 import { closeView, project, streamReasoning, streamText, streamToolOutput } from '../src/app/project.js';
+import { findCommand } from '../src/app/commands.js';
 
 /**
  * `project()` is a pure function of the log (ADR-059 ②), so every assertion here is about
@@ -624,4 +625,44 @@ test('reasoning rides along with the answer, and redacted blocks are counted', (
 
   // Same log, same view: the thinking is part of the projection, not a side channel.
   assert.deepEqual(log.reduce(project, fresh()).entries, view.entries);
+});
+
+
+test('skills.loaded fills the /skills list without touching the transcript', () => {
+  const view = project(
+    fresh(),
+    event('skills.loaded', {
+      trigger: 'start',
+      text: '<system-reminder>catalog</system-reminder>',
+      skills: [
+        { name: 'pdf', layer: 'project', origin: 'cowcat', bytes: 12 },
+        { name: 'mine', layer: 'user', origin: 'claude', bytes: 8 },
+      ],
+    }),
+  );
+  assert.deepEqual(view.skills, [
+    { name: 'pdf', layer: 'project', origin: 'cowcat' },
+    { name: 'mine', layer: 'user', origin: 'claude' },
+  ]);
+  assert.equal(view.entries.length, 0, 'the catalog is context, not conversation');
+});
+
+test('/skills names the skills, and says so when there are none', () => {
+  const command = findCommand('skills');
+  assert.ok(command !== undefined);
+  const empty = command.run(fresh());
+  assert.equal(empty.kind, 'notice');
+  assert.match(empty.text, /没有可用技能/);
+
+  const view = project(
+    fresh(),
+    event('skills.loaded', {
+      trigger: 'start',
+      text: 'catalog',
+      skills: [{ name: 'pdf', layer: 'project', origin: 'cowcat', bytes: 12 }],
+    }),
+  );
+  const listed = command.run(view);
+  assert.equal(listed.kind, 'notice');
+  assert.match(listed.text, /pdf（project\/cowcat）/);
 });

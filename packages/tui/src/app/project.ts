@@ -233,6 +233,17 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // (ADR-078), not so the terminal repeats it.
       return base;
 
+    case 'skills.loaded': {
+      // Same silence in the transcript, but the list is kept for `/skills`: which skills
+      // the model was offered is the one question a user asks when it ignores theirs.
+      const skills = records(event, 'skills').map((entry) => ({
+        name: text(entry, 'name') ?? '?',
+        layer: text(entry, 'layer') === 'project' ? ('project' as const) : ('user' as const),
+        origin: text(entry, 'origin') === 'claude' ? ('claude' as const) : ('cowcat' as const),
+      }));
+      return { ...base, skills };
+    }
+
     case 'policy.decided':
       // Deliberately silent: the verdict reaches the transcript through the result it
       // produced ("denied by <rule>: <reason>"), and repeating it would print every

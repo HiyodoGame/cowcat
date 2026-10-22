@@ -236,6 +236,8 @@ function stateWithTurnIn(state: TurnState): SessionState {
     compactionOpen: false,
     instructionsSeq: null,
     instructionsCount: 0,
+    skillsSeq: null,
+    skillsCount: 0,
     grants: [],
     readFiles: [],
     todos: [],

@@ -66,7 +66,7 @@ node packages/cli/dist/src/cli/main.js doctor
 | `cowcat run "<prompt>"` | 一次性回合；默认拒绝所有审批，`--yes` 放行 |
 | `cowcat serve` | headless JSON-RPC over stdio |
 | `cowcat sessions list\|resume <id>` | 会话列表 / 恢复 |
-| `cowcat doctor` | 环境、配置、信任、指令链、沙箱、模型与 key 逐项检查 |
+| `cowcat doctor` | 环境、配置、信任、指令链、技能、沙箱、模型与 key 逐项检查 |
 | `cowcat trust [dir] [--list] [--remove]` | 信任一个目录（项目层 `allow` 与 `AGENTS.md` 才会生效），或列出/撤销 |
 | `cowcat setup --migrate` | 把现有 v1 配置翻译成 v2（备份原文件，不写密钥） |
 | `cowcat setup --preset <provider/model>` | 新建 v2 配置（`--api-key-env` / `--base-url` / `--force` / `--print`） |
@@ -89,6 +89,13 @@ MCP 服务器（stdio）：
   }
 }
 ```
+
+Skills（`SKILL.md`，兼容 Claude Code 的目录与 frontmatter）：
+
+- 位置：`~/.cowcat/skills/<name>/`、`<项目>/.cowcat/skills/<name>/`，同时只读兼容 `~/.claude/skills/` 与 `<项目>/.claude/skills/`
+- 首轮只注入 `name` + `description`（catalog），正文在模型调用 `Skill` 工具时才读取；`/skills` 查看本次会话的目录
+- 项目层的技能受工作区信任约束（未受信不加载并提示）；同名时项目覆盖个人、`.cowcat` 覆盖 `.claude`
+- frontmatter 的 `allowed-tools` **当前不生效**（技能不能给自己扩权），`doctor` 会列出被忽略的字段
 
 ## 包结构
 

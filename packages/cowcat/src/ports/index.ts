@@ -17,6 +17,7 @@ export * from './instructions.js';
 export * from './model.js';
 export * from './platform.js';
 export * from './process.js';
+export * from './skills.js';
 export * from './subagent.js';
 export * from './trust.js';
 

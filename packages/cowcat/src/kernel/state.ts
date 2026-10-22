@@ -64,6 +64,17 @@ export interface SessionState {
   /** How many times instructions have been injected, which decides `start` vs `refresh`. */
   readonly instructionsCount: number;
   /**
+   * The seq of the `skills.loaded` message currently in `messages`, or null when there is
+   * none (ADR-116 ④).
+   *
+   * Same rule as `instructionsSeq`: a compaction shadows the catalog message and resets
+   * this, so the next turn re-injects it rather than leaving the model with a list it can
+   * no longer see.
+   */
+  readonly skillsSeq: number | null;
+  /** How many times the catalog was injected, which decides `start` vs `refresh`. */
+  readonly skillsCount: number;
+  /**
    * Actions answered `always`, for the rest of this session (ADR-031 decision 3).
    *
    * Derived from the log rather than held beside it, which is what makes the promise
@@ -103,6 +114,8 @@ export function initialState(sessionId: string): SessionState {
     compactionOpen: false,
     instructionsSeq: null,
     instructionsCount: 0,
+    skillsSeq: null,
+    skillsCount: 0,
     grants: [],
     readFiles: [],
     todos: [],
@@ -192,6 +205,9 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         ...(state.instructionsSeq !== null && state.instructionsSeq <= event.throughSeq
           ? { instructionsSeq: null }
           : {}),
+        // The catalog is injected after the instructions for the same reason, and follows
+        // the same rule: summarized away means re-inject (ADR-116 ④).
+        ...(state.skillsSeq !== null && state.skillsSeq <= event.throughSeq ? { skillsSeq: null } : {}),
       };
     }
     case 'instructions.loaded':
@@ -204,6 +220,16 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         messageSeqs: [...state.messageSeqs, event.seq],
         instructionsSeq: event.seq,
         instructionsCount: state.instructionsCount + 1,
+      };
+    case 'skills.loaded':
+      // Same shape as `instructions.loaded` (ADR-116 ⑥): the catalog is a fact about what
+      // the model was told, so it is a message, not a side table.
+      return {
+        ...base,
+        messages: [...state.messages, { role: 'user', text: event.text }],
+        messageSeqs: [...state.messageSeqs, event.seq],
+        skillsSeq: event.seq,
+        skillsCount: state.skillsCount + 1,
       };
     case 'context.compaction.started':
       return { ...base, compactionOpen: true };

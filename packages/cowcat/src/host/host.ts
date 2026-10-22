@@ -29,7 +29,10 @@ import { createSessionIndex } from '../adapters/session-index.js';
 import { startMcpServers } from '../adapters/mcp/servers.js';
 import { FileTrustStore } from '../adapters/trust.js';
 import { FileInstructionSource } from '../adapters/instructions.js';
+import { FileSkills } from '../adapters/skills.js';
+import { createSkillTool } from '../adapters/tools/skill.js';
 import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
+import { decideSkills } from '../policy/skills.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
 import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
 import type { KernelEvent, SessionUpdate } from '../kernel/events.js';
@@ -52,6 +55,8 @@ import {
   type PlatformPort,
   type ProcessPort,
   type SnapshotPort,
+  type SkillFile,
+  type SkillPort,
   type SubagentOutcome,
   type SubagentRequest,
   type ToolPort,
@@ -113,6 +118,8 @@ export interface CreateHostOptions {
   readonly readFiles?: ConfigFileReader;
   readonly readTextFile?: ReadTextFile;
   readonly fs?: FsPort;
+  /** Injected so a test can describe skills without a real home directory (ADR-114). */
+  readonly skills?: SkillPort;
   readonly platform?: PlatformPort;
   readonly process?: ProcessPort;
   readonly store?: EventStore;
@@ -215,6 +222,20 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
 
   const warnings: string[] = loaded.warnings.map((warning) => `${warning.source}: ${warning.problem}`);
   const background = new NodeBackgroundTasks({ process: processes });
+
+  // Skills (ADR-114). Discovery is host work; precedence and the trust gate are decided in
+  // policy from the same `workspaceTrusted` value the rules and instructions use.
+  const skillsPort = options.skills ?? new FileSkills({ fs, home: options.home });
+  const skillDiscovery = await skillsPort.discover(options.cwd);
+  warnings.push(...skillDiscovery.warnings);
+  const skillDecision = decideSkills(skillDiscovery.skills, { trusted: workspaceTrusted });
+  if (skillDecision.kind === 'injected') {
+    for (const shadowed of skillDecision.shadowed) {
+      warnings.push(`skill "${shadowed.name}": ${shadowed.loser.path} is shadowed by ${shadowed.winner.path}`);
+    }
+  }
+  const availableSkills = skillDecision.kind === 'injected' ? skillDecision.skills : [];
+
   const builtinTools = createTools({
     cwd: options.cwd,
     platform,
@@ -222,6 +243,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     sandbox: sandbox.profile,
     background,
     allowBackground: options.unattended !== true,
+    skills: availableSkills,
   });
 
   // MCP servers (ADR-083~087). Project entries are executable entry points, so the same
@@ -620,6 +642,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
           trust: { trusted: workspaceTrusted },
           global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
         },
+        // Skills are top-level only for the same reason delegation is: a child gets a
+        // narrowed tool subset, and a catalog naming a tool it cannot call is a lie.
+        skills: {
+          port: skillsPort,
+          cwd: options.cwd,
+          trust: { trusted: workspaceTrusted },
+          ...(configured.selection.preset.limits.context === undefined
+            ? {}
+            : { window: configured.selection.preset.limits.context }),
+        },
         // Delegation is available to a top-level session only: the child's deps are built
         // without this field, which is what makes depth 0 the default (ADR-081 ④).
         subagents: { port: { spawn: spawnSubagent } },
@@ -786,6 +818,8 @@ function createTools(options: {
   readonly sandbox: ResolvedSandboxProfile['profile'];
   readonly background: BackgroundTasksPort;
   readonly allowBackground: boolean;
+  /** Trusted, visible skills; empty means no `Skill` tool is offered at all (ADR-117 ①). */
+  readonly skills: readonly SkillFile[];
 }): ReadonlyMap<string, ToolPort> {
   const tools: readonly ToolPort[] = [
     createReadTool({ cwd: options.cwd }),
@@ -803,6 +837,8 @@ function createTools(options: {
       ...(options.allowBackground ? { background: options.background } : {}),
     }),
     createTodoWriteTool(),
+    // No skills, no tool: an empty `Skill` would only tell the model what is not there.
+    ...(options.skills.length === 0 ? [] : [createSkillTool({ skills: options.skills })]),
   ];
   return new Map(tools.map((tool) => [tool.spec.name, tool]));
 }

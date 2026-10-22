@@ -2,8 +2,9 @@ import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from
 import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
-import type { InstructionPort } from '../ports/index.js';
+import type { InstructionPort, SkillPort } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
+import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/skills.js';
 import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput, type TaskInput } from './subagent.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
@@ -32,6 +33,19 @@ export interface InstructionNeeds {
   /** The user-global file, if the host has one (ADR-075). */
   readonly global?: string;
   /** Overrides INSTRUCTION_MAX_BYTES (ADR-076). */
+  readonly maxBytes?: number;
+}
+
+export interface SkillNeeds {
+  /** Discovers the four locations (ADR-114 ②). */
+  readonly port: SkillPort;
+  /** The directory the discovery is anchored at. */
+  readonly cwd: string;
+  /** Whether this workspace is trusted; project skills are withheld otherwise (ADR-114 ③). */
+  readonly trust: { readonly trusted: boolean };
+  /** The preset's context window, which sizes the catalog budget (ADR-116 ②). */
+  readonly window?: number;
+  /** Overrides the computed budget. */
   readonly maxBytes?: number;
 }
 
@@ -77,6 +91,11 @@ export interface TurnDeps {
    */
   readonly instructions?: InstructionNeeds;
   /**
+   * Where skills come from (ADR-114/116). Omitted means the session has none — no
+   * discovery, no catalog, no `Skill` tool on the wire.
+   */
+  readonly skills?: SkillNeeds;
+  /**
    * The most model rounds this turn may take (ADR-082 ②), or unlimited when omitted.
    *
    * A delegated child sets this from the `max_turns` the parent asked for. Hitting the
@@ -120,6 +139,12 @@ export type TurnNote =
    * the workspace's rules are not in play — the notice is the point, not the absence.
    */
   | { readonly kind: 'instructions-skipped'; readonly reason: string }
+  /**
+   * Skills were found but withheld, or discovery failed (ADR-114 ③). Reported for the same
+   * reason as the line above: a project whose skills are silently not in play is a user
+   * wondering why the model ignores the procedure they checked in.
+   */
+  | { readonly kind: 'skills-skipped'; readonly reason: string }
   /**
    * The delegation cap stopped the turn with work still to do (ADR-082 ②). Reported
    * rather than thrown: the rounds that ran produced real results, and the caller needs
@@ -201,6 +226,8 @@ export function describeTurnNote(note: TurnNote): string {
       return `上下文压缩失败：${note.reason}（回合继续，历史未被替换）`;
     case 'instructions-skipped':
       return `工作区指令未注入：${note.reason}`;
+    case 'skills-skipped':
+      return `技能未加载：${note.reason}`;
     case 'rounds-exhausted':
       return `达到回合上限（${String(note.rounds)} 轮），结果不完整`;
   }
@@ -225,6 +252,7 @@ async function runTurnBody(
   // Instructions go in **before** the turn opens, so the model reads the repository's
   // rules ahead of the request rather than after it (ADR-078 ①).
   await ensureInstructions(deps, (item) => note(item, null));
+  await ensureSkills(deps, (item) => note(item, null));
   await session.openTurn(input, {
     model: deps.preset.model,
     ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
@@ -257,6 +285,7 @@ async function runTurnBody(
           // A compaction shadows the instruction message, so the fix is to put it back
           // (ADR-078 ①) — in the same turn, before the next request goes out.
           await ensureInstructions(deps, (item) => note(item, turnId));
+          await ensureSkills(deps, (item) => note(item, turnId));
         }
       }
       if (deps.maxRounds !== undefined && rounds >= deps.maxRounds) {
@@ -377,6 +406,58 @@ async function ensureInstructions(
     // Instructions are guidance. A broken read is reported, never fatal — the same rule
     // compaction follows (ADR-072 ④).
     await note({ kind: 'instructions-skipped', reason: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/**
+ * Make sure the model's history carries the skill catalog (ADR-116 ④).
+ *
+ * Called after `ensureInstructions` at the same two moments — before a turn opens and right
+ * after a compaction — so the prefix order is always "instructions, then skills" rather
+ * than depending on when a compaction happened to run.
+ *
+ * Doing nothing when `skillsSeq` is set is the dedupe, for the same reason as instructions:
+ * the fold decides, so a reopened session does not inject a second copy.
+ */
+async function ensureSkills(
+  deps: TurnDeps,
+  note: (item: TurnNote) => Promise<void>,
+): Promise<void> {
+  const needs = deps.skills;
+  if (needs === undefined) return;
+  if (deps.session.state.skillsSeq !== null) return;
+
+  try {
+    const discovery = await needs.port.discover(needs.cwd);
+    const budget = needs.maxBytes ?? skillCatalogBudget(needs.window);
+    const decision = decideSkills(discovery.skills, needs.trust, budget);
+    if (decision.kind === 'none') return;
+    if (decision.kind === 'skipped-untrusted') {
+      const reason = describeSkillSkip(decision.skills);
+      if (reason !== null) await note({ kind: 'skills-skipped', reason });
+      return;
+    }
+    // Partial skip: personal skills still go in, but the user has to learn that the
+    // repository's own skills did not (ADR-114 ③).
+    if (decision.skipped.length > 0) {
+      const reason = describeSkillSkip(decision.skipped);
+      if (reason !== null) await note({ kind: 'skills-skipped', reason });
+    }
+    await deps.session.emit({
+      type: 'skills.loaded',
+      turnId: deps.session.turnId,
+      trigger: deps.session.state.skillsCount === 0 ? 'start' : 'refresh',
+      text: decision.catalog.text,
+      skills: decision.catalog.listed.map((entry) => ({
+        name: entry.skill.name,
+        layer: entry.skill.layer,
+        origin: entry.skill.origin,
+        bytes: entry.bytes,
+      })),
+    });
+  } catch (error) {
+    // Skills are guidance, like instructions: a broken read is reported, never fatal.
+    await note({ kind: 'skills-skipped', reason: error instanceof Error ? error.message : String(error) });
   }
 }
 
