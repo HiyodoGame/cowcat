@@ -130,3 +130,25 @@ dev-plan P7 行：**触发时机、失败语义、是否经过策略；出生即
 2. UserPromptSubmit 纯文本 stdout 不注入（CC 当作 system reminder 给模型）——v1 只做 additionalContext。
 3. `${CLAUDE_PROJECT_DIR}` 文本替换在 Windows 路径（反斜杠/空格）下脆弱——env 通道（`CLAUDE_PROJECT_DIR` 环境变量）已正确设置，Windows 上推荐 exec 形 + env。
 4. trust 判定在 cwd、hook 文件来自 projectRoot 祖先目录——与 skills/instructions 同一先例（未信目录里的任何项目层内容都不加载）；hooks 载荷是指令这一点使风险高于文本类载荷，若真机出现「只信任了子目录却在跑父目录 hooks」的意外，再收紧为对 projectRoot 判定。
+
+## 12. T5 真机验收记录（2026-10-22）
+
+**结论：PreToolUse deny 链路真机端到端通过，doctor 汇报正确。**
+
+### 环境
+
+- 模型：`zai-coding-plan/glm-5.3-flash`（真实 API），`cowcat run --yes`
+- 内核版本：#162 合并后（含审查修复）
+- 场景：临时受信项目配 `.claude/settings.json`（CC 原生格式）→ `matcher: "Bash"` 的 PreToolUse hook，脚本 `.claude/hooks/block-rm.cjs` 读 stdin JSON、命令含 `rm -rf` 时输出 `hookSpecificOutput.permissionDecision: "deny"`——**照抄 CC 文档 block-rm 形态**（`${CLAUDE_PROJECT_DIR}` 占位符 + JSON 决策），零 cowcat 专属改写
+
+### 结果
+
+1. **doctor**：hooks 行输出「1 个 handler（1 个文件）；doctor 不执行 hook」+ 来源明细 `pre-tool-use (Bash) ← …/.claude/settings.json`——三要素齐全（ADR-123 ④）。
+2. **deny 真机触发**：prompt 让模型 `rm -rf ./notes.txt` → 模型报告「被项目配置的安全钩子拦截」、主动确认文件仍在、给出三个替代方案（mv 到回收站/清空内容/用户自己删）——行为教科书级。会话日志（`sess_7d65c383…`）seq 14：`tool.finished Bash ok=false "blocked by hook: destructive rm is blocked by the project hook"`，seq 25 模型 Read 验证文件存在——**日志事实与 ADR-122 ④ 完全一致，重放可复现**。
+3. **零配置迁移成本验证**：settings.json 与脚本均按 CC 文档形态书写即生效（D3 的本意，实测成立）。
+
+### 未覆盖 / 边界
+
+- PostToolUse 改写与 additionalContext 注入只有内核级测试，真机未触发（需要模型配合产出特定输出，性价比低）。
+- UserPromptSubmit 拒 prompt 真机未触发（同上）。
+- 观测 hook（Stop/SessionStart/PreCompact）真机开销未量化【推断：每次 fork 一个进程，60s 上限兜底；真机量化列为后续】。
