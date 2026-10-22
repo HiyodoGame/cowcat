@@ -111,3 +111,30 @@ code-reviewer/k3 审查：1 P0 + 3 P1 + 9 P2，全部处理（#168）。
   plan.reply 的 refine（choice 非 null 时 reason 必须 null）；删除死字段
   PlanView.outcome；answerPlan 不再硬编码英文 reason、clearInput 同步 view。
   ADR-124 ②⑤⑥ 随修复修订（门控位置描述、陈旧项规则、越界语义、缓存代价）。
+## 11. T4 真机验收记录（2026-10-23）
+
+**结论：全链路真机通过**（glm-5.3-flash 真实 API，`cowcat serve` + 脚本化
+NDJSON 协议客户端，驱动脚本 `cowcat-tui-accept/t4-plan-accept.mjs`）。
+
+### 场景
+
+临时受信项目（app.js + notes.md），prompt 要求「plan 模式探索后给 2 个方案」。
+驱动：initialize → session.create → `plan.setMode(true)` → turn.send →
+自动应答 plan.reply / approval.respond。
+
+### 结果（两轮）
+
+1. **首轮**：门控拒了 1 次模型的写/命令尝试（模型随后改用只读探索——被拒后
+   自适应属实）；ExitPlan 提出 2 方案（保守/彻底，内容质量高）；
+   `user:true → plan-approved:false` 事件序列正确；choice=0 后模式退出。
+2. **次轮**（驱动补了审批自动应答）：回合 completed；模式退出后 Write(UNLICENSE)
+   按正常规则 ask → 放行 → **1211 字节 UNLICENSE 真实落盘**。
+
+### 观察 / 边界
+
+- 方案数：两轮模型都自发给 2 个方案，卡片与模型行为匹配设计预期
+  （§9.2 的「上限 4」真机未见触顶场景）。
+- 门控摩擦（§9.1）：首轮 1 次被拒后模型立即改道只读工具，未见死循环；
+  样本 2 轮，继续观察。
+- TUI 卡片点击/键盘回答只有组件级测试，真人点击未验（风险低：交互回环与
+  审批卡同构）。
