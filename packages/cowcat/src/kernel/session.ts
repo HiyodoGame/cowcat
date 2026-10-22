@@ -27,6 +27,9 @@ export interface SessionDeps {
 /** What a `create` may attach that no later append can add (ADR-079 ③). */
 export interface SessionCreateOptions {
   readonly parent?: SessionParent;
+  /** Creation directory and initial preset model, recorded on the header (ADR-126). */
+  readonly cwd?: string;
+  readonly model?: string;
 }
 
 export class Session {
@@ -84,6 +87,8 @@ export class Session {
         cowcatVersion: deps.cowcatVersion,
         shell: deps.shell,
         ...(options.parent === undefined ? {} : { parent: options.parent }),
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+        ...(options.model === undefined ? {} : { model: options.model }),
       });
       return session;
     } catch (error) {

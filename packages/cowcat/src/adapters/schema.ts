@@ -157,7 +157,10 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     shell: sessionShellSchema,
     // Added with delegation (ADR-079 ③); absent means a top-level session, which is what
     // every log written before this field existed says.
-    parent: z.object({ sessionId: z.string(), role: z.enum(['explore', 'general']) }).optional(),
+    parent: z.object({ sessionId: z.string(), role: z.enum(['explore', 'general', 'fork']) }).optional(),
+    // Added with ADR-126; absent means "not recorded" on every older log, same rule.
+    cwd: z.string().optional(),
+    model: z.string().optional(),
   }),
   z.object({
     ...base,
@@ -291,6 +294,11 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     ...base,
     type: z.literal('hooks.context-added'),
     text: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('prompt.attached'),
+    files: z.readonly(z.array(z.readonly(z.object({ name: z.string(), content: z.string() })))),
   }),
   z.object({
     ...base,

@@ -545,7 +545,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | Plan 模式 | 进入/退出契约（ADR-032 已记既有缺口，P5 对照表判归 P7 但此前无对应行）；**多方案预审**：执行前生成 2~N 个方案供用户选择（D5）。**已实现主体**（[research/p7-plan-mode.md](research/p7-plan-mode.md)、ADR-124~125）：T1 内核（`plan.mode-changed`/`plan.proposed`/`plan.decided` 三事件、`SessionState.planMode`、runCall 门控、ExitPlan 虚拟工具、评审暂停复用 awaiting_approval）+ T2 host/protocol/TUI/CLI（`plan.setMode`/`plan.reply` 两 method、host 评审桥照抄审批桥、TUI `/plan` 命令与方案卡、oneshot 兜底拒答）；**T4 真机验收通过**（§11：serve + 协议客户端全链路，2 方案→选择→退模式→审批执行→UNLICENSE 落盘） | P3、P5 |
 | 工具结果治理 | tool clearing（旧工具输出整段清除，与压缩分层）、超限结果外置、重复调用防护；**稳定前缀不被改写**以命中提示缓存（D6）。**已完成**（[research/p7-tool-governance.md](research/p7-tool-governance.md)、ADR-118~120）：调研（#153）→ ADR（#154）→ T1~T3 实现（#155，`policy/tool-clearing`、`adapters/spill`、bash/read 接入、`tool.repeat-detected`）+ 审查修复（#156，1 P0 + 2 P1 + 4 P2）+ **T5 真机验收通过**（§12：三机制真机触发、零 400、cache ~90%+） | P5、上下文压缩 |
 | 审批与沙箱闭环 | 沙箱/权限拒绝 → 一次性扩权申请与重试；用量仪表（token / 成本进事件与状态条）（D7） | P2、P3 |
-| 会话体验 | 会话头补 cwd 与模型（`resume` 语境，`HANDOFF.md` §6 已登记）；日志推导标题；回退并 fork 的事件语义；`@` 文件引用（D8）。**已调研**（[research/p7-session-experience.md](research/p7-session-experience.md)）：ADR-126~128 草案（rewind v1 不做）；待实现 | P6、上下文压缩 |
+| 会话体验 | 会话头补 cwd 与模型（`resume` 语境，`HANDOFF.md` §6 已登记）；日志推导标题；回退并 fork 的事件语义；`@` 文件引用（D8）。**已调研**（[research/p7-session-experience.md](research/p7-session-experience.md)）：ADR-126~128：T1 会话头 cwd/model + 标题派生（T2 session.fork 事件重放 + T3 @ 文件引用 + T4 TUI/CLI 均已实现，#173）；剩余 T5 真机验收。rewind v1 不做（grants/锁/header 三重坑） | P6、上下文压缩 |
 | 可观测性 | OTel GenAI 语义约定子集；事件日志 → span 适配器边界（D9） | P6 组合根 |
 | 记忆续篇：经验蒸馏 | 任务后后台蒸馏回写 AGENTS.md / skills 的**写入闸门**（与信任模型的交互）；衔接 ADR-075~078（D10） | 记忆模块 |
 | 视觉工具 | 纯文本模型的 OCR / 布局结构化工具；本地与云端取舍；附件通路复用（ADR-057/058）（D11） | P6 T5–T6 |

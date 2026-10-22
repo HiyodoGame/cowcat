@@ -146,6 +146,8 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return openSession(id, params as Params<'session.open'>);
       case 'session.create':
         return createSession(id, params as Params<'session.create'>);
+      case 'session.fork':
+        return forkSession(id, params as Params<'session.fork'>);
       case 'session.list':
         return listSessions(id);
       case 'turn.send':
@@ -220,12 +222,16 @@ export function createServer(options: ServerOptions): ProtocolServer {
     reply(id, created);
   }
 
+  async function forkSession(id: RequestId, params: Params<'session.fork'>): Promise<void> {
+    reply(id, await host.forkSession(params.sessionId));
+  }
+
   async function listSessions(id: RequestId): Promise<void> {
     reply(id, { sessions: await host.listSessions() });
   }
 
   async function sendTurn(id: RequestId, params: Params<'turn.send'>): Promise<void> {
-    reply(id, await host.sendTurn(params.sessionId, params.input));
+    reply(id, await host.sendTurn(params.sessionId, params.input, params.files));
   }
 
   async function cancelTurn(id: RequestId, params: Params<'turn.cancel'>): Promise<void> {

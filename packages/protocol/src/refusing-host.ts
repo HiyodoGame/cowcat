@@ -24,6 +24,7 @@ export function refusingHost(reason: string = NOT_WIRED): ProtocolHost {
     listSessions: () => refuse(),
     createSession: () => refuse(),
     attach: () => refuse(),
+    forkSession: () => refuse(),
     sendTurn: () => refuse(),
     cancelTurn: () => refuse(),
     respondApproval: () => refuse(),

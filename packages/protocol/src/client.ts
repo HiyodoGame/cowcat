@@ -38,7 +38,8 @@ export interface ProtocolClient {
   listSessions(): Promise<readonly SessionSummary[]>;
   createSession(sessionId?: string): Promise<SessionSummary>;
   openSession(sessionId: string): Promise<ResultTable['session.open']>;
-  sendTurn(sessionId: string, input: string): Promise<string>;
+  forkSession(sessionId: string): Promise<string>;
+  sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<string>;
   cancelTurn(sessionId: string): Promise<void>;
   respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']): Promise<void>;
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
@@ -162,8 +163,12 @@ export function createClient(options: ClientOptions): ProtocolClient {
       return request('session.open', { sessionId });
     },
 
-    async sendTurn(sessionId: string, input: string) {
-      return (await request('turn.send', { sessionId, input })).turnId;
+    async forkSession(sessionId: string) {
+      return (await request('session.fork', { sessionId })).sessionId;
+    },
+
+    async sendTurn(sessionId: string, input: string, files?: readonly string[]) {
+      return (await request('turn.send', { sessionId, input, ...(files === undefined ? {} : { files: [...files] }) })).turnId;
     },
 
     async cancelTurn(sessionId: string) {

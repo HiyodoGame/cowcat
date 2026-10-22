@@ -32,14 +32,16 @@ import { FileTrustStore } from '../adapters/trust.js';
 import { FileInstructionSource } from '../adapters/instructions.js';
 import { FileSkills } from '../adapters/skills.js';
 import { createHooksPort, loadHookSources } from '../adapters/hooks.js';
+import { PromptFileError, readPromptFile } from '../adapters/prompt-files.js';
 import { createSkillTool } from '../adapters/tools/skill.js';
 import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
 import { projectRootOf } from '../adapters/instructions.js';
 import { decideSkills } from '../policy/skills.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
+import { isTerminal } from '../kernel/turn.js';
 import type { PlanChoice } from '../kernel/plan.js';
 import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
-import type { KernelEvent, SessionUpdate } from '../kernel/events.js';
+import type { AttachedFile, EventInput, KernelEvent, SessionUpdate } from '../kernel/events.js';
 import { trustedRules, isTrusted } from '../policy/trust.js';
 import { resolveSandboxProfile, type ResolvedSandboxProfile } from '../policy/sandbox-profile.js';
 import type { CowcatConfig } from '../policy/config.js';
@@ -580,6 +582,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         sessionId: entry.sessionId,
         lastSeq: entry.lastSeq,
         ...(entry.parentSessionId === null ? {} : { parentSessionId: entry.parentSessionId }),
+        ...(entry.parentRole === null ? {} : { parentRole: entry.parentRole }),
+        ...(entry.title === null ? {} : { title: entry.title }),
+        ...(entry.cwd === null ? {} : { cwd: entry.cwd }),
+        ...(entry.model === null ? {} : { model: entry.model }),
       }));
     },
 
@@ -590,7 +596,12 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       }
       let session: Session;
       try {
-        session = await Session.create(sessionDeps, id);
+        // The header records where and as-whom the session started (ADR-126); the
+        // configured preset is the initial model, per-turn truth stays on turn.opened.
+        session = await Session.create(sessionDeps, id, {
+          cwd: options.cwd,
+          ...(config.model.preset === null ? {} : { model: config.model.preset }),
+        });
       } catch (error) {
         if (error instanceof LockHeldError) throw lockedError(id, error);
         throw new ProtocolHostError(`${id}: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId: id });
@@ -620,6 +631,56 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         })
         .catch(() => undefined);
       return { sessionId: id, lastSeq: rec.lastSeq };
+    },
+
+    /**
+     * Fork by replay (ADR-127): a new session is created with the source as its
+     * `fork` parent, then every source event is re-emitted — seq, ts and sessionId
+     * are re-minted by `emit`, so the fork's log is a first-class log whose audit
+     * fields match its identity. A byte copy would leave every line's embedded
+     * sessionId pointing at the source and would need a rewritten header, which the
+     * append-only store forbids itself to do.
+     */
+    async forkSession(sessionId: string): Promise<{ readonly sessionId: string }> {
+      const rec = open(sessionId);
+      if (rec.running !== null) {
+        // The terminal transition reaches a client a beat before the host's cleanup
+        // microtask clears this flag; a turn that already ended is not running.
+        if (rec.session.state.turn !== null && isTerminal(rec.session.state.turn.state)) {
+          rec.running = null;
+        } else {
+          throw new ProtocolHostError(
+            `session ${sessionId} has a running turn; cancel it before forking`,
+            ERROR_CODES.hostRefused,
+            { sessionId },
+          );
+        }
+      }
+      const newId = sessionDeps.ids.next('sess');
+      let forked: Session;
+      try {
+        forked = await Session.create(sessionDeps, newId, {
+          cwd: options.cwd,
+          ...(config.model.preset === null ? {} : { model: config.model.preset }),
+          parent: { sessionId, role: 'fork' },
+        });
+      } catch (error) {
+        if (error instanceof LockHeldError) throw lockedError(newId, error);
+        throw new ProtocolHostError(`${newId}: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId: newId });
+      }
+      try {
+        const source = await sessionDeps.store.readAll(sessionId);
+        for (const event of source) {
+          if (event.type === 'session.opened') continue;
+          await forked.emit(stripEventIds(event));
+        }
+      } catch (error) {
+        await forked.close();
+        throw new ProtocolHostError(`fork failed: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      const forkRec = adopt(forked);
+      sessions.set(newId, forkRec);
+      return { sessionId: newId };
     },
 
     async attach(sessionId: string): Promise<AttachedSession> {
@@ -674,12 +735,31 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       };
     },
 
-    async sendTurn(sessionId: string, input: string): Promise<{ turnId: string }> {
+    async sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string }> {
       const rec = await record(sessionId);
       if (rec.running !== null) {
         throw new ProtocolHostError(`session ${sessionId} already has a turn running`, ERROR_CODES.hostRefused, {
           sessionId,
         });
+      }
+      // `@` references (ADR-128): read and validated here — the kernel touches no host
+      // runtime and the FsPort has no read. Any bad file refuses the WHOLE send: a log
+      // must never hold half a prompt. The event lands before `turn.opened`, so the
+      // model reads the files ahead of the instruction that references them.
+      if (files !== undefined && files.length > 0) {
+        const attached: AttachedFile[] = [];
+        for (const path of files) {
+          try {
+            attached.push(await readPromptFile(path));
+          } catch (error) {
+            // A bad file refuses the WHOLE send (ADR-128): the log must never hold
+            // half a prompt. The path is in the message — it is the only question a
+            // person has at that moment.
+            const why = error instanceof PromptFileError ? error.message : String(error);
+            throw new ProtocolHostError(`@文件 ${path}：${why}`, ERROR_CODES.hostRefused);
+          }
+        }
+        await rec.session.emit({ type: 'prompt.attached', turnId: null, files: attached });
       }
       // Before anything is opened: an unconfigured model is a refusal with a hint, not a
       // turn that starts and fails a moment later.
@@ -947,6 +1027,19 @@ function askPlanReview(rec: SessionRecord, callId: string): Promise<PlanChoice> 
     }
     rec.pendingPlan = { callId, resolve };
   });
+}
+
+/**
+ * The replayable body of a logged event: everything `emit` re-mints itself. Deleting
+ * rather than destructuring: the linter reads an unused destructure as dead code, and
+ * a fresh object here is one copy of a small record, not a hot path.
+ */
+function stripEventIds(event: KernelEvent): EventInput {
+  const clone: Record<string, unknown> = { ...event };
+  delete clone.seq;
+  delete clone.ts;
+  delete clone.sessionId;
+  return clone as unknown as EventInput;
 }
 
 function createTools(options: {

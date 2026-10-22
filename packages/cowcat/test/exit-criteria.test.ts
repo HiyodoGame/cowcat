@@ -201,6 +201,10 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // Same as instructions: hook context is what the model was told, not something
         // it said (ADR-122 ④).
         break;
+      case 'prompt.attached':
+        // Same as instructions: attached file content is what the model was shown, not
+        // something it said (ADR-128).
+        break;
       case 'plan.mode-changed':
         out.push(withoutVolatile(event));
         break;

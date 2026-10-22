@@ -12,6 +12,7 @@ export const METHODS = [
   'initialize',
   'session.open',
   'session.create',
+  'session.fork',
   'session.list',
   'turn.send',
   'turn.cancel',
@@ -37,8 +38,15 @@ export const PARAMS = {
   /** `sessionId` is optional so the server can mint one; minting needs an id source,
    *  which lives in the host, not here. */
   'session.create': z.strictObject({ sessionId: z.string().min(1).optional() }),
+  /** Fork a session by replaying its log into a new one (ADR-127). */
+  'session.fork': z.strictObject({ sessionId: z.string().min(1) }),
   'session.list': noParams,
-  'turn.send': z.strictObject({ sessionId: z.string().min(1), input: z.string() }),
+  'turn.send': z.strictObject({
+    sessionId: z.string().min(1),
+    input: z.string(),
+    /** `@` file references: absolute paths, validated and read by the host (ADR-128). */
+    files: z.array(z.string().min(1)).max(8).optional(),
+  }),
   'turn.cancel': z.strictObject({ sessionId: z.string().min(1) }),
   'approval.respond': z.strictObject({
     sessionId: z.string().min(1),
@@ -91,6 +99,16 @@ export interface SessionSummary {
    * what every client did before delegation existed.
    */
   readonly parentSessionId?: string;
+  /**
+   * Derived, never stored (ADR-126): the first turn's prompt, clipped; the creation
+   * directory and initial model from the session header. All absent on sessions written
+   * before these existed — the same additive rule as `parentSessionId`.
+   */
+  /** Why it has a parent (ADR-127 ④): absent when there is no parent. */
+  readonly parentRole?: string;
+  readonly title?: string;
+  readonly cwd?: string;
+  readonly model?: string;
 }
 
 export interface AttachmentBytes {
@@ -114,6 +132,8 @@ export interface ResultTable {
    */
   readonly 'session.open': SessionSummary & { readonly replayed: number };
   readonly 'session.create': SessionSummary;
+  /** The forked session's new id (ADR-127). */
+  readonly 'session.fork': { readonly sessionId: string };
   readonly 'session.list': { readonly sessions: readonly SessionSummary[] };
   readonly 'turn.send': { readonly turnId: string };
   readonly 'turn.cancel': { readonly cancelled: boolean };

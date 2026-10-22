@@ -45,14 +45,21 @@ export interface SkillSource {
  */
 export interface SessionParent {
   readonly sessionId: string;
-  readonly role: SubagentRole;
+  /** `fork` is set by session forking (ADR-127); subagent logic never reads it. */
+  readonly role: SubagentRole | 'fork';
 }
 
 // Durable facts. Anything in this union is written to the session log before it
 // is applied to state, so replaying the log reproduces the session exactly.
 export type KernelEvent = EventBase &
   (
-    | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell; readonly parent?: SessionParent | undefined }
+    | { readonly type: 'session.opened'; readonly schemaVersion: number; readonly cowcatVersion: string; readonly shell: SessionShell; readonly parent?: SessionParent | undefined; /**
+     * Where and as-whom the session started (ADR-126). Optional for the same reason
+     * `parent` is: every log written before this header field existed decodes as "not
+     * recorded", which is the truth. `model` is the creating preset; the per-turn truth
+     * stays on `turn.opened`.
+     */
+    readonly cwd?: string | undefined; readonly model?: string | undefined }
     | {
         readonly type: 'turn.opened';
         readonly input: string;
@@ -318,6 +325,18 @@ export type KernelEvent = EventBase &
       }
     | {
         /**
+         * `@` file references the user attached to their prompt (ADR-128). A
+         * message-producing event like `hooks.context-added`: the content is part of
+         * the conversation, so replay reproduces it without touching the disk. Emitted
+         * by the host before the turn opens, so the model reads the files ahead of the
+         * instruction that references them.
+         */
+        readonly type: 'prompt.attached';
+        readonly turnId: string | null;
+        readonly files: readonly { readonly name: string; readonly content: string }[];
+      }
+    | {
+        /**
          * Plan mode toggled (ADR-124). `by: 'user'` is a person flipping the switch
          * (TUI `/plan`, protocol `plan.setMode`); `'plan-approved'` is the automatic
          * exit after the person picks a plan. Folded into `SessionState.planMode`.
@@ -480,3 +499,14 @@ export type SessionUpdate = KernelEvent | StreamDelta | ReasoningDelta | ToolOut
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 export type EventInput = DistributiveOmit<KernelEvent, 'seq' | 'ts' | 'sessionId'>;
+
+export interface AttachedFile {
+  readonly name: string;
+  readonly content: string;
+}
+
+/** The user message an `prompt.attached` event folds into. Deterministic by construction. */
+export function formatAttachedFiles(files: readonly AttachedFile[]): string {
+  const parts = files.map((file) => [`--- ${file.name} ---`, file.content].join('\n'));
+  return ['The user attached the following files. Read them before answering:', '', ...parts].join('\n\n');
+}

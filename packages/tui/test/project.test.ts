@@ -595,6 +595,12 @@ test('the /plan command toggles plan mode from the view state (ADR-124 ⑥)', ()
   assert.deepEqual(on, { kind: 'plan', enabled: false });
 });
 
+test('the /fork command asks the loop to fork the session (ADR-127)', () => {
+  const command = findCommand('fork');
+  assert.ok(command !== undefined);
+  assert.deepEqual(command.run(fresh()), { kind: 'fork' });
+});
+
 
 test('turn.noted is a notice, not assistant text, and a replay says the same thing', () => {
   const log: readonly WireEvent[] = [

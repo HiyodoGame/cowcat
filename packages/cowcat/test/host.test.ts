@@ -622,7 +622,14 @@ test('opening a session that is not there says so, and lists what is', async (t)
   await fixture.client.createSession('sess_listed');
 
   const listed = await fixture.client.listSessions();
-  assert.deepEqual(listed, [{ sessionId: 'sess_listed', lastSeq: 1 }]);
+  // The header facts ride the summary (ADR-126); the title stays absent — no turn yet.
+  assert.equal(listed.length, 1);
+  const first = listed[0];
+  assert.ok(first !== undefined);
+  assert.equal(first.sessionId, 'sess_listed');
+  assert.equal(first.lastSeq, 1);
+  assert.equal(first.cwd, cwd);
+  assert.equal(first.model, PRESET);
 
   const error = await rejection(fixture.client.openSession('sess_missing'));
   assert.ok(error instanceof ProtocolClientError);
@@ -1383,4 +1390,159 @@ test('a project skill in an untrusted folder is neither offered nor announced as
   assert.ok(noted !== undefined);
   assert.equal(noted.type, 'turn.noted');
   assert.equal(noted.note, 'skills-skipped');
+});
+
+// ---------------------------------------------------------------------------
+// Session experience (ADR-126/127/128): fork, @ file references
+// ---------------------------------------------------------------------------
+
+test('a session forks by replay: new identity, inherited conversation, refuses while running', async (t) => {
+  const home = tempDir(t, 'cowcat-fork-home-');
+  const cwd = tempDir(t, 'cowcat-fork-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [{ type: 'text', text: 'first answer' }],
+    [{ type: 'text', text: 'second answer' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_fork_src');
+  await fixture.client.openSession('sess_fork_src');
+  await fixture.client.sendTurn('sess_fork_src', 'what is this repo');
+  await fixture.until('the first turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  const forkedId = await fixture.client.forkSession('sess_fork_src');
+  assert.match(forkedId, /^sess_/);
+  assert.notEqual(forkedId, 'sess_fork_src');
+
+  const opened = await fixture.client.openSession(forkedId);
+  assert.ok(opened.replayed >= 3, 'the fork replays the source conversation');
+
+  // The fork log is a first-class log: header names the fork parent, and every line
+  // carries the FORK's id (a byte copy would have left the source's id in every line).
+  const forkLog = readFileSync(join(home, '.cowcat', 'sessions', `${forkedId}.jsonl`), 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as { type?: string; sessionId?: string; parent: { role?: string; sessionId?: string } | undefined });
+  const header = forkLog[0];
+  assert.ok(header !== undefined);
+  assert.equal(header.type, 'session.opened');
+  const parentInfo: { role?: string; sessionId?: string } | undefined = header.parent;
+  assert.deepEqual(parentInfo, { role: 'fork', sessionId: 'sess_fork_src' });
+  assert.ok(forkLog.every((line) => line.sessionId === forkedId), 'every audit field names the fork');
+  const srcLogLines = readFileSync(join(home, '.cowcat', 'sessions', 'sess_fork_src.jsonl'), 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0).length;
+  assert.equal(forkLog.length, srcLogLines, 'same event count, header for header');
+
+  // The fork answers on its own: its second turn runs the second scripted round.
+  await fixture.client.sendTurn(forkedId, 'and now?');
+  await fixture.until('the fork turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  // A running turn refuses the fork (covered by its own test below).
+});
+
+test('turn.send carries @ files into the log ahead of the prompt; a bad file refuses the whole send', async (t) => {
+  const home = tempDir(t, 'cowcat-at-home-');
+  const cwd = tempDir(t, 'cowcat-at-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const notes = join(cwd, 'notes.md');
+  writeFileSync(notes, '# Notes\nkeep it simple\n');
+  const binary = join(cwd, 'blob.bin');
+  writeFileSync(binary, Buffer.from([0xff, 0xfe, 0xfd]));
+  const big = join(cwd, 'big.txt');
+  writeFileSync(big, 'x'.repeat(33 * 1024));
+
+  const model = new ScriptedModel([
+    [{ type: 'text', text: 'read it' }],
+    [{ type: 'text', text: 'plain answer' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_at');
+  await fixture.client.openSession('sess_at');
+
+  await fixture.client.sendTurn('sess_at', '总结这个文件', [notes]);
+  await fixture.until('the attached turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  const attached = first(fixture.events(), 'prompt.attached');
+  assert.ok(attached !== undefined);
+  const filesField = field(attached, 'files') as readonly { readonly name?: unknown }[] | undefined;
+  assert.equal(filesField?.[0]?.name, 'notes.md');
+  const opened = first(fixture.events(), 'turn.opened');
+  assert.ok(attached.seq < (opened?.seq ?? 0), 'attachment lands ahead of the prompt');
+  const request = model.requests[0];
+  assert.ok(request !== undefined && JSON.stringify(request.messages).includes('keep it simple'), 'the model sees the file');
+
+  // A missing file refuses the WHOLE send: no turn.opened at all. The session's idle
+  // flag clears a beat after the completed event, so retry past that race.
+  let refused = false;
+  for (let attempt = 0; attempt < 20 && !refused; attempt += 1) {
+    try {
+      await fixture.client.sendTurn('sess_at', 'this must not start', [join(cwd, 'nope.md')]);
+    } catch (error) {
+      const text = String(error);
+      if (/already has a turn running/.test(text)) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        continue;
+      }
+      assert.match(text, /cannot be read|读不到/);
+      refused = true;
+    }
+  }
+  assert.equal(refused, true, 'the missing file refused the send');
+  assert.equal(fixture.events().filter((event) => event.type === 'turn.opened').length, 1, 'no second turn opened');
+
+  // Binary is refused with the UTF-8 reason.
+  await assert.rejects(fixture.client.sendTurn('sess_at', 'binary', [binary]), /UTF-8/);
+
+  // Over the 32KB cap.
+  await assert.rejects(fixture.client.sendTurn('sess_at', 'big', [big]), /cap|上限/);
+
+  // The session is still usable after the refusals.
+  await fixture.client.sendTurn('sess_at', 'plain');
+  await fixture.until('the plain turn to complete', () =>
+    fixture.events().filter((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed').length >= 2,
+  );
+});
+
+test('fork refuses while a turn is running', async (t) => {
+  const home = tempDir(t, 'cowcat-forkrun-home-');
+  const cwd = tempDir(t, 'cowcat-forkrun-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const gate = new Promise<void>((resolve) => setTimeout(resolve, 400));
+  const model: ModelPort = {
+    async *stream() {
+      await gate;
+      yield { type: 'text', text: 'done' };
+    },
+  };
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_busy');
+  await fixture.client.openSession('sess_busy');
+  await fixture.client.sendTurn('sess_busy', 'slow turn');
+  await fixture.until('the turn to start', () => first(fixture.events(), 'turn.opened') !== undefined);
+
+  await assert.rejects(fixture.client.forkSession('sess_busy'), /running turn/);
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+  const forkedId = await fixture.client.forkSession('sess_busy');
+  assert.match(forkedId, /^sess_/);
 });

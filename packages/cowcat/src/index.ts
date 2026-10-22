@@ -35,7 +35,8 @@ export {
   type TaskParse,
 } from './kernel/subagent.js';
 export { canTransition, isTerminal, IllegalTransitionError, type TurnState } from './kernel/turn.js';
-export type { KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
+export { formatAttachedFiles } from './kernel/events.js';
+export type { AttachedFile, KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ReasoningBlock, ToolCall } from './kernel/messages.js';
 export type { ModelLimits, ModelPreset, ModelProtocol } from './kernel/preset.js';
 export {

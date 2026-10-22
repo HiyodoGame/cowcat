@@ -40,7 +40,14 @@ export interface ProtocolHost {
   /** `null` asks the host to mint the id — it has the id source, this layer does not. */
   createSession(sessionId: string | null): Promise<SessionSummary>;
   attach(sessionId: string): Promise<AttachedSession>;
-  sendTurn(sessionId: string, input: string): Promise<{ turnId: string }>;
+  /** Fork a session by replaying its log into a new one (ADR-127); refuses a running turn. */
+  forkSession(sessionId: string): Promise<{ readonly sessionId: string }>;
+  /**
+   * `files` are `@` references (absolute paths): validated and read by the host, which
+   * emits `prompt.attached` before the turn opens (ADR-128). A bad file refuses the
+   * whole send, never half of it.
+   */
+  sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string }>;
   cancelTurn(sessionId: string): Promise<void>;
   respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void>;
   /**
