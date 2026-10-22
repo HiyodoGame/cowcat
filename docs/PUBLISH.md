@@ -52,12 +52,15 @@ npm whoami --registry=https://registry.npmjs.org
 3. `@corescense/cowcat-tui`
 4. `@corescense/cowcat`
 
-从 `tools/pack-release.mjs --out` 生成的暂存目录逐个发布（tarball 里已经是精确版本，不再依赖本仓库的 `file:` 链接）：
+从 `tools/pack-release.mjs --out` 生成的暂存目录逐个发布（tarball 里已经是精确版本，不再依赖本仓库的 `file:` 链接）。`pack-release` 把四个 tarball **平铺**在 `--out` 目录里，所以按文件发布，不要假设有 `packages-<name>/` 子目录：
 
 ```bash
-for pkg in protocol cowcat tui cli; do
-  (cd "$TEMP/cowcat-stage/packages-$pkg" && npm publish --access=public --registry=https://registry.npmjs.org)
-done
+TAG=1.0.0-beta.3
+cd "$TEMP/cowcat-stage"
+npm publish "./corescense-cowcat-protocol-$TAG.tgz" --access=public --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-core-$TAG.tgz"     --access=public --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-tui-$TAG.tgz"      --access=public --registry=https://registry.npmjs.org
+npm publish "./corescense-cowcat-$TAG.tgz"          --access=public --registry=https://registry.npmjs.org
 ```
 
 > `pack-release.mjs` 的暂存目录默认会清理；发布批次请显式传 `--out`，再手动进入每个暂存目录发布。
