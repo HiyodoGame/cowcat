@@ -95,8 +95,6 @@ export interface PlanCardOption {
 export interface PlanView {
   readonly callId: string;
   readonly plans: readonly PlanCardOption[];
-  /** `null` while the question is open; 'none' or the picked plan afterwards. */
-  readonly outcome: string | null;
 }
 
 /** What the highlighted plan row answers: a plan index, or `null` for "none of them". */

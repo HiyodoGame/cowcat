@@ -50,8 +50,9 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   // ADR-105: the one affordance for "there is newer output below you". It goes first, which
   // puts it directly under the transcript, and exists only while the reader is scrolled up —
   // an always-present button would be chrome on a screen that already follows the tail.
-  // A pending question outranks it: the answer is what that screen is about.
-  if (view.scrollOffset > 0 && view.approval === null) {
+  // A pending question outranks it: the answer is what that screen is about. Plan reviews
+  // count as a question too (review of #167, P2-9).
+  if (view.scrollOffset > 0 && view.approval === null && view.plan === null) {
     const paused = copyFor(view.lang);
     dock.push(
       line(

@@ -1056,16 +1056,35 @@ async function runExitPlanCall(deps: TurnDeps, call: ToolCall, signal: AbortSign
   if (!parsed.ok) return { result: { ok: false, output: `invalid ExitPlan input: ${parsed.reason}` }, path: null };
   const plans = parsed.plans;
 
+  // ADR-125 ⑤: with no reader at all, the review is refused instead of parking the
+  // turn on a bridge nobody watches. (Frontends that simply stay silent are covered by
+  // the bridge timeout, which answers "none" rather than refusing.)
+  if (deps.unattended !== undefined) {
+    return {
+      result: { ok: false, output: `plan review needs a reader: ${deps.unattended}` },
+      path: null,
+    };
+  }
+
   await session.emit({ type: 'plan.proposed', turnId: session.turnId, callId: call.callId, plans });
   await session.transition('awaiting_approval', 'plan review');
-  let choice: PlanChoice;
+  let rawChoice: PlanChoice;
   try {
-    choice = await askPlanReview(deps, call.callId, plans, signal);
+    rawChoice = await askPlanReview(deps, call.callId, plans, signal);
   } finally {
     // Back to the tool loop whether the answer arrived, timed out, or the turn was
     // aborted — a parked state must never outlive the wait that parked it.
     await session.transition('awaiting_tools');
   }
+  // The wire cannot bound `choice`: a third-party client may send an index no plan
+  // owns. An out-of-range pick is "none" with a protocol reason — never a mode exit
+  // without a real choice behind it (review of #167, P1-2).
+  const choice: PlanChoice =
+    rawChoice.kind === 'chosen' && rawChoice.index < plans.length
+      ? rawChoice
+      : rawChoice.kind === 'chosen'
+        ? { kind: 'none', reason: `invalid plan choice ${String(rawChoice.index)} (out of range)` }
+        : rawChoice;
   await session.emit({
     type: 'plan.decided',
     turnId: session.turnId,

@@ -402,12 +402,13 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       if (plan === null) return;
       const answer = planAnswerAt(view.current);
       screen.clearInput();
+      view.current = withInput(view.current, '');
       options.client
         .respondPlan(
           sessionId,
           plan.callId,
           answer.kind === 'plan' ? answer.index : null,
-          answer.kind === 'none' ? 'none of the plans' : null,
+          null,
         )
         .catch((error: unknown) => {
           view.current = addNotice(view.current, 'error', message(error));

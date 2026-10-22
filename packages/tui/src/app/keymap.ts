@@ -53,7 +53,9 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
       case 'c':
         return { kind: 'quit' };
       case 'p':
-        return { kind: 'palette' };
+        // A pending question outranks chrome: Ctrl-P over an open review would hide the
+        // card behind the palette while its arrows mean two things (review of #167, P2-9).
+        return view.approval !== null || view.plan !== null ? null : { kind: 'palette' };
       case 'o':
         return { kind: 'toggleLastCard' };
       case 't':
@@ -84,8 +86,9 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   }
 
   // The `/` menu owns arrows, Tab and Escape while it is open; the input still owns the
-  // letters. A space in the input closes the menu (slashMatches returns []).
-  if (view.approval === null && slashMatches(view.input).length > 0) {
+  // letters. A space in the input closes the menu (slashMatches returns []). Neither it
+  // nor the palette opens over a pending question — arrows belong to the card.
+  if (view.approval === null && view.plan === null && slashMatches(view.input).length > 0) {
     if (key.name === 'up') return { kind: 'slashMove', delta: -1 };
     if (key.name === 'down') return { kind: 'slashMove', delta: 1 };
     if (key.name === 'tab') return { kind: 'slashAccept' };

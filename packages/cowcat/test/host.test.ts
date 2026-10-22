@@ -240,7 +240,7 @@ interface Fixture {
 async function start(
   options: { readonly cwd: string; readonly home: string; readonly model: ModelPort; readonly env?: Readonly<Record<string, string>> } & Pick<
     CreateHostOptions,
-    'platform' | 'process' | 'store'
+    'platform' | 'process' | 'store' | 'approvalTimeoutMs'
   >,
 ): Promise<Fixture> {
   const host = await createHost({
@@ -249,7 +249,7 @@ async function start(
     env: options.env ?? {},
     version: '0.0.0-test',
     model: options.model,
-    approvalTimeoutMs: 5_000,
+    approvalTimeoutMs: options.approvalTimeoutMs ?? 5_000,
     ...(options.platform === undefined ? {} : { platform: options.platform }),
     ...(options.process === undefined ? {} : { process: options.process }),
     ...(options.store === undefined ? {} : { store: options.store }),
@@ -339,6 +339,121 @@ function pngHeader(width: number, height: number): Buffer {
   return buffer;
 }
 
+
+// ---------------------------------------------------------------------------
+// Plan review bridge (ADR-125): the host side of ExitPlan
+// ---------------------------------------------------------------------------
+
+test('a timed-out review does not veto the retry: the second proposal reaches the client', async (t) => {
+  const home = tempDir(t, 'cowcat-host-plan-home-');
+  const cwd = tempDir(t, 'cowcat-host-plan-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const plans = (callId: string) => ({
+    type: 'tool_call' as const,
+    call: {
+      callId,
+      name: 'ExitPlan',
+      input: {
+        plans: [
+          { title: 'small patch', summary: 'edit one file' },
+          { title: 'full rewrite', summary: 'replace the module' },
+        ],
+      },
+    },
+  });
+  const model = new ScriptedModel([
+    [plans('call_p1')],
+    [plans('call_p2')],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const fixture = await start({ cwd, home, model, approvalTimeoutMs: 60 });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_plan_retry');
+  await fixture.client.openSession('sess_plan_retry');
+  await fixture.client.setPlanMode('sess_plan_retry', true);
+
+  await fixture.client.sendTurn('sess_plan_retry', 'plan the work');
+  await fixture.until('the first proposal', () => first(fixture.events(), 'plan.proposed') !== undefined);
+
+  // Nobody answers: the review times out, the model is told "none", and it retries.
+  await fixture.until('the retry proposal', () =>
+    fixture.events().some((event) => event.type === 'plan.proposed' && field(event, 'callId') === 'call_p2'),
+  );
+
+  // The retry must be answerable — this is the stale-pendingPlan regression (#167 review P0).
+  const second = fixture.events().find((event) => event.type === 'plan.proposed' && field(event, 'callId') === 'call_p2');
+  assert.ok(second !== undefined);
+  await fixture.client.respondPlan('sess_plan_retry', 'call_p2', 1, null);
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  const decided = fixture.events().find((event) => event.type === 'plan.decided' && field(event, 'callId') === 'call_p2');
+  assert.equal(field(decided, 'choice'), 1);
+  const modeOff = fixture.events().filter((event) => event.type === 'plan.mode-changed');
+  assert.equal(
+    modeOff.some((event) => field(event, 'by') === 'plan-approved' && field(event, 'enabled') === false),
+    true,
+  );
+  const firstResult = fixture.events().find((event) => event.type === 'tool.finished' && field(event, 'callId') === 'call_p1');
+  assert.match(String(field(firstResult, 'output')), /rejected every plan/);
+});
+
+test('toggling plan mode during a pending review is refused', async (t) => {
+  const home = tempDir(t, 'cowcat-host-planmode-home-');
+  const cwd = tempDir(t, 'cowcat-host-planmode-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [{
+      type: 'tool_call' as const,
+      call: {
+        callId: 'call_p1',
+        name: 'ExitPlan',
+        input: { plans: [{ title: 'only way', summary: 'do the thing' }] },
+      },
+    }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_plan_toggle');
+  await fixture.client.openSession('sess_plan_toggle');
+  await fixture.client.setPlanMode('sess_plan_toggle', true);
+  await fixture.client.sendTurn('sess_plan_toggle', 'plan it');
+  await fixture.until('the proposal', () => first(fixture.events(), 'plan.proposed') !== undefined);
+
+  // The event can reach this client a beat before the kernel parks on the bridge. Poll:
+  // a call that lands early toggles successfully (undo it and try again); once parked,
+  // the same call must refuse.
+  let refused: Error | null = null;
+  for (let attempt = 0; attempt < 50 && refused === null; attempt += 1) {
+    const result = await fixture.client.setPlanMode('sess_plan_toggle', false).then(
+      () => null as Error | null,
+      (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
+    );
+    if (result === null) {
+      await fixture.client.setPlanMode('sess_plan_toggle', true).catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } else if (/plan review is pending/.test(result.message)) {
+      refused = result;
+    } else {
+      assert.fail(`unexpected setPlanMode error: ${result.message}`);
+    }
+  }
+  assert.ok(refused !== null, 'toggle refused while a review is pending');
+
+  await fixture.client.respondPlan('sess_plan_toggle', 'call_p1', 0, null);
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+});
 // ---------------------------------------------------------------------------
 // A turn, end to end
 // ---------------------------------------------------------------------------
