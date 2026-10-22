@@ -101,6 +101,13 @@ node -e "fetch('https://registry.npmjs.org/@corescense/cowcat/<版本>').then(r=
 4. **TUI 的 Node 门槛**：`@corescense/cowcat-tui` 要求 Node ≥ 26.4；在 Node 22 上安装 CLI 会出现 EBADENGINE 警告，但 `run`/`serve`/`doctor` 不受影响。
 5. **版本号只有一处批次操作**：四个 `package.json` + `pack-release.mjs` 的 `VERSION` 必须一起改；不要只改一个。
 6. **prerelease 必须 `--tag beta`**：`npm publish` 对 `-beta.N` 版本直接报 `You must specify a tag using --tag when publishing a prerelease version`（2026-10-22 实测）。这条报错是安全网——不带 `--tag` 时 npm 的默认 tag 是 `latest`，若哪天 npm 放宽了检查，一条 `latest` 就会被 beta 版本占掉。
+7. **`npm view` 会说谎**：本机 npm 缓存（`E:\DevEnv\npm-cache`）可能返回旧 packument，让人以为某个包没发出去，进而重发 → `E403 You cannot publish over the previously published versions`。判断「有没有发出去」**只用直连 registry 且禁缓存**的结果：
+
+   ```bash
+   curl -sH 'cache-control: no-cache' https://registry.npmjs.org/@corescense%2fcowcat-core | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log(j['dist-tags'],Object.keys(j.versions).join(','))})"
+   ```
+
+   2026-10-22 就是这样误判了 `cowcat-core`（实际已发布），并因此得到一条 403。
 
 ## ⑥ 自动发布
 
