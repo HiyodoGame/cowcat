@@ -2,7 +2,7 @@ import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { graphemes } from '../text/width.js';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
-import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
+import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
 import { noteBelow } from './view.js';
 
 /**
@@ -186,7 +186,9 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         verdict: null,
         by: null,
       };
-      return { ...base, approval, approvalCursor: 0 };
+      // A question owns the keyboard: the task panel (and the `/` menu) close rather than
+      // leaving arrows with two possible meanings (ADR-113).
+      return { ...base, approval, approvalCursor: 0, taskPanel: null };
     }
 
     case 'approval.answered': {
@@ -279,12 +281,60 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       return add({ ...base, agents }, notice(base, seq, done ? 'info' : 'warn', line));
     }
 
-    case 'tool.background.started':
-    case 'tool.background.finished':
-      // Durable and ignored for now: the panel that shows background tasks is the next
-      // step (T6c). They must not read as "an event this build does not know" in the
-      // meantime, because both events are expected in every session that uses the feature.
-      return base;
+    case 'tool.background.started': {
+      const taskId = text(event, 'taskId');
+      const callId = text(event, 'callId');
+      if (taskId === null || callId === null) return base;
+      // A replayed start has no end after it: the host that knew is not necessarily this
+      // one, so the honest word is `unknown`, not "still running" (ADR-113).
+      const state: BackgroundTaskState = seq <= base.replayedThrough ? 'unknown' : 'running';
+      const task: BackgroundTaskView = {
+        taskId,
+        callId,
+        command: text(event, 'command') ?? '',
+        startedAt: number(event, 'ts') ?? 0,
+        startedSeq: seq,
+        state,
+        endedAt: null,
+        exitCode: null,
+      };
+      return { ...base, tasks: [task, ...base.tasks.filter((entry) => entry.taskId !== taskId)] };
+    }
+
+    case 'tool.background.finished': {
+      const taskId = text(event, 'taskId');
+      if (taskId === null) return base;
+      const reported = text(event, 'state');
+      const state: BackgroundTaskState =
+        reported === 'exited' || reported === 'stopped' || reported === 'lost' ? reported : 'unknown';
+      const endedAt = number(event, 'ts');
+      const exitCode = number(event, 'exitCode');
+      const existing = base.tasks.find((entry) => entry.taskId === taskId);
+      if (existing === undefined) {
+        // No start in this log (replay began mid-history, or a start this build never saw):
+        // record the end rather than dropping a fact the host did write.
+        return {
+          ...base,
+          tasks: [
+            {
+              taskId,
+              callId: text(event, 'callId') ?? '',
+              command: '',
+              startedAt: endedAt ?? 0,
+              startedSeq: seq,
+              state,
+              endedAt,
+              exitCode,
+            },
+            ...base.tasks,
+          ],
+        };
+      }
+      return {
+        ...base,
+        tasks: base.tasks.map((entry) => (entry.taskId === taskId ? { ...entry, state, endedAt, exitCode } : entry)),
+      };
+    }
 
     default:
       return unsupported(base, updateType(event) ?? 'unknown');
@@ -355,7 +405,12 @@ export function addNotice(view: TuiView, level: 'info' | 'warn' | 'error', text:
 
 /** The transport went away. The view stays as it is — it just cannot grow. */
 export function closeView(view: TuiView): TuiView {
-  return { ...view, closed: true };
+  // A running background task is only known to be running while the host can still say so;
+  // with the transport gone, "unknown" is the truthful label (ADR-113).
+  const tasks = view.tasks.map((task) =>
+    task.state === 'running' ? { ...task, state: 'unknown' as const } : task,
+  );
+  return { ...view, closed: true, tasks };
 }
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);

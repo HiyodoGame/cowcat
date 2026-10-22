@@ -105,6 +105,27 @@ export interface PendingTool {
 }
 
 /**
+ * How a background task stands on screen (ADR-113).
+ *
+ * `unknown` is not a fifth state the registry reports: it is what this view says about a
+ * task whose start it replayed but whose end it never saw, or whose transport closed while
+ * the task was running.
+ */
+export type BackgroundTaskState = 'running' | 'exited' | 'stopped' | 'lost' | 'unknown';
+
+export interface BackgroundTaskView {
+  readonly taskId: string;
+  readonly callId: string;
+  readonly command: string;
+  readonly startedAt: number;
+  /** The log seq of the start, so a replay can be recognised after the fact. */
+  readonly startedSeq: number;
+  readonly state: BackgroundTaskState;
+  readonly endedAt: number | null;
+  readonly exitCode: number | null;
+}
+
+/**
  * One running tool's live tail (ADR-109).
  *
  * `truncated` records that the character cap dropped earlier output, so the card can say
@@ -182,6 +203,23 @@ export interface TuiView {
   readonly pendingTools: readonly PendingTool[];
   /** Delegated runs, newest last. Finished ones stay for the session's history. */
   readonly agents: readonly AgentView[];
+  /**
+   * Background tasks from `tool.background.started/finished` (ADR-113), newest first.
+   *
+   * Durable events, so a replay rebuilds it. A task whose start was replayed but whose end
+   * was not is `unknown`: this view cannot know whether the host that started it is still
+   * the host it is talking to.
+   */
+  readonly tasks: readonly BackgroundTaskView[];
+  /** The `/tasks` panel when it is open: which row is selected. */
+  readonly taskPanel: { readonly index: number } | null;
+  /**
+   * The highest seq that arrived as replay rather than live (from `session.open.lastSeq`).
+   *
+   * Only used to tell "this task was already running when I connected" (unknown) from "I
+   * watched it start" (running).
+   */
+  readonly replayedThrough: number;
   /**
    * Every tool call the log has seen, by `callId`.
    *
@@ -291,6 +329,9 @@ export function initialView(): TuiView {
     approvalCursor: 0,
     pendingTools: [],
     agents: [],
+    tasks: [],
+    taskPanel: null,
+    replayedThrough: 0,
     calls: {},
     expanded: [],
     thinkingExpanded: false,
@@ -344,6 +385,46 @@ export function moveSlash(view: TuiView, delta: number, count: number): TuiView 
   if (count === 0) return view;
   const next = (view.slashIndex + delta + count) % count;
   return next === view.slashIndex ? view : { ...view, slashIndex: next };
+}
+
+/** Open the `/tasks` panel (ADR-113); nothing to show means nothing opens. */
+export function openTaskPanel(view: TuiView): TuiView {
+  if (view.tasks.length === 0) return view;
+  return { ...view, taskPanel: { index: 0 } };
+}
+
+export function closeTaskPanel(view: TuiView): TuiView {
+  return view.taskPanel === null ? view : { ...view, taskPanel: null };
+}
+
+/** Wrap-around like the other lists: a last row is one keystroke from the first. */
+export function moveTaskPanel(view: TuiView, delta: number): TuiView {
+  const panel = view.taskPanel;
+  if (panel === null || view.tasks.length === 0) return view;
+  const next = (panel.index + delta + view.tasks.length) % view.tasks.length;
+  return next === panel.index ? view : { ...view, taskPanel: { index: next } };
+}
+
+/** The task under the panel's cursor, or null when the panel is closed. */
+export function selectedTask(view: TuiView): BackgroundTaskView | null {
+  const panel = view.taskPanel;
+  if (panel === null) return null;
+  return view.tasks[panel.index] ?? null;
+}
+
+/**
+ * After `session.open` returns, the events up to `lastSeq` were replay, not something this
+ * view watched happen. A start among them whose end never arrived is `unknown`: the host
+ * that knew about it may not be the host we are talking to (ADR-113).
+ */
+export function markReplayedTasks(view: TuiView, lastSeq: number): TuiView {
+  return {
+    ...view,
+    replayedThrough: lastSeq,
+    tasks: view.tasks.map((task) =>
+      task.state === 'running' && task.startedSeq <= lastSeq ? { ...task, state: 'unknown' as const } : task,
+    ),
+  };
 }
 
 /** Positive `delta` scrolls up (older lines). Reaching 0 resumes following new output. */

@@ -8,6 +8,7 @@ import { approvalCardLines } from './approval-card.js';
 import { paletteLines } from './palette.js';
 import { slashMenuLines } from './slash-menu.js';
 import { statusLine } from './status-bar.js';
+import { taskPanelLines } from './task-panel.js';
 import { todoPanelLines } from './todo-panel.js';
 import { transcriptLines } from './transcript.js';
 
@@ -64,6 +65,9 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   }
   if (view.approval !== null) {
     dock.push(...approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }));
+  }
+  if (view.taskPanel !== null) {
+    dock.push(...taskPanelLines(view.tasks, view.taskPanel.index, options.width, options.now));
   }
   const matches = view.approval === null ? slashMatches(view.input) : [];
   if (matches.length > 0) {

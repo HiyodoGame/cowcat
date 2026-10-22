@@ -9,14 +9,19 @@ import {
   APPROVAL_CHOICES,
   approvalChoiceAt,
   closePalette,
+  closeTaskPanel,
   initialView,
+  markReplayedTasks,
   moveApprovalCursor,
   movePalette,
   moveSlash,
+  moveTaskPanel,
   openPalette,
+  openTaskPanel,
   pendingAttachments,
   rememberInput,
   resetScroll,
+  selectedTask,
   toggleExpanded,
   toggleThinking,
   withAttachment,
@@ -219,6 +224,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
             }
           }
         }
+        // The task panel owns `x` and its arrows: without this the key would also be typed
+        // into the composer (the textarea gets everything the global handler does not claim).
+        if (intent !== null && (intent.kind === 'taskMove' || intent.kind === 'taskStop' || intent.kind === 'tasksClose')) {
+          key.preventDefault();
+        }
         handle(intent);
         // The input widget swallows the printable keys, so its value is read back rather
         // than reconstructed: one source of truth for both hinting and what is sent.
@@ -248,7 +258,12 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
     await options.client.initialize();
     const sessionId = options.sessionId ?? (await options.client.createSession()).sessionId;
-    await options.client.openSession(sessionId);
+    const opened = await options.client.openSession(sessionId);
+    // The events up to this seq are replay, not something this view watched happen; the
+    // helper also marks their still-running tasks unknown. Draw: the last replay event
+    // painted the old state, and an idle session would otherwise sit on it forever.
+    view.current = markReplayedTasks(view.current, opened.lastSeq);
+    draw();
 
     function handle(intent: ReturnType<typeof intentFor>): void {
       if (intent === null) return;
@@ -288,6 +303,17 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         case 'scrollBottom':
           view.current = resetScroll(view.current);
           draw();
+          return;
+        case 'taskMove':
+          view.current = moveTaskPanel(view.current, intent.delta);
+          draw();
+          return;
+        case 'tasksClose':
+          view.current = closeTaskPanel(view.current);
+          draw();
+          return;
+        case 'taskStop':
+          stopSelectedTask();
           return;
         case 'slashMove': {
           const count = slashMatches(view.current.input).length;
@@ -362,6 +388,43 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       });
     }
 
+    /**
+     * Stop the task under the panel's cursor (ADR-113).
+     *
+     * The panel stays open and the row does not change here: only
+     * `tool.background.finished` proves a task ended, and a `true` answer from `task.stop`
+     * means "the request was accepted", not "it is gone".
+     */
+    function stopSelectedTask(): void {
+      const task = selectedTask(view.current);
+      if (task === null) return;
+      if (task.state !== 'running') {
+        const why =
+          task.state === 'unknown'
+            ? '这个任务的状态未知（宿主可能已重启），不能从这里停止。'
+            : '这个任务已经结束了。';
+        view.current = addNotice(view.current, 'info', why);
+        draw();
+        return;
+      }
+      options.client
+        .stopTask(sessionId, task.taskId)
+        .then((stopped) => {
+          if (disposed) return;
+          view.current = addNotice(
+            view.current,
+            stopped ? 'info' : 'warn',
+            stopped ? `已请求停止 ${task.taskId}，等结束事件确认。` : `${task.taskId} 已经不在运行。`,
+          );
+          draw();
+        })
+        .catch((error: unknown) => {
+          if (disposed) return;
+          view.current = addNotice(view.current, 'error', message(error));
+          draw();
+        });
+    }
+
     /** Mirror the input widget's value into the view; the frame hints at `/` from it. */
     function syncInput(): void {
       if (disposed) return;
@@ -387,6 +450,19 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         case 'sessions':
           void showSessions();
+          return;
+        case 'tasks':
+          if (view.current.approval !== null) {
+            view.current = addNotice(view.current, 'info', '先回答上面那个审批，再看后台任务。');
+            draw();
+            return;
+          }
+          view.current = openTaskPanel(withInput(closePalette(view.current), ''));
+          screen.clearInput();
+          if (view.current.taskPanel === null) {
+            view.current = addNotice(view.current, 'info', '没有后台任务。');
+          }
+          draw();
           return;
         case 'quit':
           quit(0);

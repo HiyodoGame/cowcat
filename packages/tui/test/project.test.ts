@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
-import { advanceReasoning, initialView, revealedReasoning, withScroll, type TuiView } from '../src/app/view.js';
+import { advanceReasoning, initialView, markReplayedTasks, moveTaskPanel, openTaskPanel, revealedReasoning, selectedTask, withScroll, type TuiView } from '../src/app/view.js';
 import { closeView, project, streamReasoning, streamText, streamToolOutput } from '../src/app/project.js';
 
 /**
@@ -403,6 +403,102 @@ test('two running tools keep separate tails, and one finishing does not clear th
   );
   assert.equal(afterFirst.toolOutput['c1'], undefined);
   assert.equal(afterFirst.toolOutput['c2']?.text, 'two', 'the other call is still running');
+});
+
+test('background tasks are projected from their events, and a replayed start is unknown (ADR-113)', () => {
+  seq = 0;
+  const live = project(
+    initialView(),
+    event('tool.background.started', { callId: 'c1', taskId: 'bg_a_1', command: 'pnpm dev' }),
+  );
+  assert.equal(live.tasks.length, 1);
+  const started = live.tasks[0];
+  assert.ok(started !== undefined);
+  assert.equal(started.state, 'running');
+  assert.equal(started.command, 'pnpm dev');
+
+  // A start that arrived as replay (seq at or below the snapshot) is not "running": the host
+  // that knew about it may be gone.
+  const replayed = project(
+    { ...initialView(), replayedThrough: 99 },
+    event('tool.background.started', { callId: 'c1', taskId: 'bg_a_1', command: 'pnpm dev' }),
+  );
+  assert.equal(replayed.tasks[0]?.state, 'unknown');
+
+  const finished = project(
+    live,
+    event('tool.background.finished', {
+      callId: 'c1',
+      taskId: 'bg_a_1',
+      exitCode: 0,
+      signal: null,
+      state: 'exited',
+      reason: 'none',
+      facts: null,
+      tail: '',
+      truncated: false,
+      dropped: 0,
+    }),
+  );
+  const done = finished.tasks[0];
+  assert.ok(done !== undefined);
+  assert.equal(done.state, 'exited');
+  assert.equal(done.exitCode, 0);
+  assert.notEqual(done.endedAt, null);
+
+  // Tasks outlive turns: the end of a turn says nothing about them.
+  const ended = project(finished, event('turn.transitioned', { from: 'streaming', to: 'completed', reason: null }));
+  assert.equal(ended.tasks.length, 1);
+
+  // With the transport gone, "running" can no longer be known.
+  const closed = closeView(
+    project(initialView(), event('tool.background.started', { callId: 'c1', taskId: 'bg_b_1', command: 'npm test' })),
+  );
+  assert.equal(closed.tasks[0]?.state, 'unknown');
+});
+
+test('markReplayedTasks only downgrades starts at or below the snapshot seq (ADR-113)', () => {
+  const task = (taskId: string, startedSeq: number): TuiView['tasks'][number] => ({
+    taskId,
+    callId: `call_${taskId}`,
+    command: 'pnpm dev',
+    startedAt: 0,
+    startedSeq,
+    state: 'running',
+    endedAt: null,
+    exitCode: null,
+  });
+  const view: TuiView = { ...initialView(), tasks: [task('bg_a_1', 2), task('bg_a_2', 10)] };
+
+  const marked = markReplayedTasks(view, 5);
+  assert.equal(marked.replayedThrough, 5);
+  const [replayed, live] = marked.tasks;
+  assert.ok(replayed !== undefined && live !== undefined);
+  assert.equal(replayed.state, 'unknown', 'a start inside the replay has no known end');
+  assert.equal(live.state, 'running', 'a start after the snapshot was watched live');
+});
+
+test('the task panel opens, wraps, and reports the selected task', () => {
+  assert.equal(openTaskPanel(initialView()).taskPanel, null, 'nothing to show, nothing opens');
+
+  const task = (taskId: string): TuiView['tasks'][number] => ({
+    taskId,
+    callId: 'c1',
+    command: 'pnpm dev',
+    startedAt: 0,
+    startedSeq: 2,
+    state: 'running',
+    endedAt: null,
+    exitCode: null,
+  });
+  const view: TuiView = { ...initialView(), tasks: [task('bg_a_1'), task('bg_a_2')] };
+  const open = openTaskPanel(view);
+  assert.deepEqual(open.taskPanel, { index: 0 });
+  assert.equal(selectedTask(open)?.taskId, 'bg_a_1');
+
+  const wrapped = moveTaskPanel(open, -1);
+  assert.deepEqual(wrapped.taskPanel, { index: 1 }, 'the list wraps like the other panels');
+  assert.equal(selectedTask(wrapped)?.taskId, 'bg_a_2');
 });
 
 test('a closed transport is a fact about the view, not a wipe', () => {

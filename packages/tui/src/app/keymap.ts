@@ -38,7 +38,13 @@ export type Intent =
   /** Close the `/` menu (Escape while it is open). */
   | { readonly kind: 'slashClose' }
   /** Jump back to the newest row and resume following. */
-  | { readonly kind: 'scrollBottom' };
+  | { readonly kind: 'scrollBottom' }
+  /** Move the background-task panel's cursor (ADR-113). */
+  | { readonly kind: 'taskMove'; readonly delta: number }
+  /** Stop the task under the panel's cursor. */
+  | { readonly kind: 'taskStop' }
+  /** Close the background-task panel. */
+  | { readonly kind: 'tasksClose' };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -56,6 +62,15 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
       default:
         return null;
     }
+  }
+
+  // The task panel is a list. It owns arrows, `x` and Escape — and nothing printable:
+  // letters (including j/k) still belong to the input so a person can keep typing (ADR-113).
+  if (view.taskPanel !== null) {
+    if (key.name === 'up') return { kind: 'taskMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'taskMove', delta: 1 };
+    if (key.name === 'x') return { kind: 'taskStop' };
+    if (key.name === 'escape') return { kind: 'tasksClose' };
   }
 
   // Arrow keys and j/k only mean something while there is a list to move through. Letting
