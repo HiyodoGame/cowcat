@@ -54,6 +54,13 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve({ sessionId: id, lastSeq: session.lastSeq });
   }
 
+  readonly forks: { sessionId: string }[] = [];
+
+  forkSession(sessionId: string): Promise<{ readonly sessionId: string }> {
+    this.forks.push({ sessionId });
+    return Promise.resolve({ sessionId: `fork-of-${sessionId}` });
+  }
+
   attach(sessionId: string): Promise<AttachedSession> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) throw new NoSuchSessionError(sessionId);

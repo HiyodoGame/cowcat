@@ -1,4 +1,5 @@
 import { createCliRenderer, type CliRenderer } from '@opentui/core';
+import { isAbsolute, resolve } from 'node:path';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { COMMANDS, lastToolCallId, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
@@ -518,6 +519,20 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
             draw();
           });
           return;
+        case 'fork':
+          view.current = withInput(closePalette(view.current), '');
+          screen.clearInput();
+          options.client
+            .forkSession(sessionId)
+            .then((forkedId) => {
+              view.current = addNotice(view.current, 'info', `已 fork 出新会话：${forkedId}（cowcat sessions resume ${forkedId}）`);
+              draw();
+            })
+            .catch((error: unknown) => {
+              view.current = addNotice(view.current, 'error', message(error));
+              draw();
+            });
+          return;
         case 'quit':
           quit(0);
           return;
@@ -542,10 +557,13 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         }
         for (const session of sessions.slice(0, 10)) {
           const current = session.sessionId === sessionId ? '（当前）' : '';
+          const fork = session.parentRole === 'fork' ? ' · fork' : '';
+          const facts = [session.title, session.cwd, session.model].filter((part) => part !== undefined);
+          const detail = facts.length === 0 ? '' : ` · ${facts.join(' · ')}`;
           view.current = addNotice(
             view.current,
             'info',
-            `${session.sessionId}${current} · ${String(session.lastSeq)} 条事件 · cowcat sessions resume ${session.sessionId}`,
+            `${session.sessionId}${current}${fork}${detail} · ${String(session.lastSeq)} 条事件 · cowcat sessions resume ${session.sessionId}`,
           );
         }
         draw();
@@ -663,7 +681,12 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       screen.clearInput();
       view.current = rememberInput(resetScroll(withLangFrom(view.current, trimmed)), trimmed);
       draw();
-      options.client.sendTurn(sessionId, trimmed).catch((error: unknown) => {
+      // `@` file references (ADR-128): bare tokens, resolved against the TUI's cwd. The
+      // tokens stay in the text — they are the user's words — and the resolved paths
+      // ride the send; the host validates, reads, and injects them ahead of the prompt.
+      const atRefs = [...trimmed.matchAll(/@(\S+)/g)].map((match) => match[1] ?? '');
+      const files = atRefs.map((path) => (isAbsolute(path) ? path : resolve(process.cwd(), path)));
+      options.client.sendTurn(sessionId, trimmed, files.length === 0 ? undefined : files).catch((error: unknown) => {
         // The host refuses with a sentence a user can act on ("no model is configured …",
         // "already has a turn running"); showing it verbatim is the point of that work.
         view.current = addNotice(view.current, 'error', message(error));

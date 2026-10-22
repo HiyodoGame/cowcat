@@ -21,6 +21,8 @@ export type CommandEffect =
   | { readonly kind: 'sessions' }
   /** Open the background-task panel (ADR-113); the loop owns the stop call. */
   | { readonly kind: 'tasks' }
+  /** Fork the current session (ADR-127); the loop calls `session.fork`. */
+  | { readonly kind: 'fork' }
   /** Toggle plan mode (ADR-124 ⑥); the loop calls `plan.setMode` with the new state. */
   | { readonly kind: 'plan'; readonly enabled: boolean };
 
@@ -73,6 +75,11 @@ export const COMMANDS: readonly TuiCommand[] = [  {
           ? '没有可用技能（未发现 SKILL.md，或项目未受信）。'
           : view.skills.map((skill) => `${skill.name}（${skill.layer}/${skill.origin}）`).join('　'),
     }),
+  },
+  {
+    name: 'fork',
+    summary: '把当前会话复制成一个新会话（事件重放式，可各自继续）',
+    run: () => ({ kind: 'fork' }),
   },
   {
     name: 'plan',

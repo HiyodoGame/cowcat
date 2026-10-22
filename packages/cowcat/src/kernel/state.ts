@@ -1,4 +1,5 @@
 import type { KernelEvent } from './events.js';
+import { formatAttachedFiles } from './events.js';
 import type { Message } from './messages.js';
 import type { TodoItem } from '../ports/index.js';
 import { canTransition, type TurnState } from './turn.js';
@@ -281,6 +282,14 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       return {
         ...base,
         messages: [...state.messages, { role: 'user', text: event.text }],
+        messageSeqs: [...state.messageSeqs, event.seq],
+      };
+    case 'prompt.attached':
+      // Same shape for the same reason (ADR-128): attached file content is part of
+      // the conversation, replay reproduces it without re-reading the disk.
+      return {
+        ...base,
+        messages: [...state.messages, { role: 'user', text: formatAttachedFiles(event.files) }],
         messageSeqs: [...state.messageSeqs, event.seq],
       };
     case 'plan.mode-changed':
