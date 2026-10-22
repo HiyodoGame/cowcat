@@ -41,6 +41,8 @@ export function statusLine(view: TuiView, options: StatusOptions = { now: 0 }): 
     const done = view.todos.filter((todo) => todo.status === 'completed').length;
     parts.push(`待办 ${String(done)}/${String(view.todos.length)}`);
   }
+  const background = view.tasks.filter((task) => task.state === 'running').length;
+  if (background > 0) parts.push(`后台 ${String(background)}`);
   if (view.usage !== null) {
     // A share of the window the turn declared (ADR-105). `input` is the last prompt the
     // provider billed, which is the closest thing to "how full is it" that a client can know;

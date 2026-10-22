@@ -5,6 +5,7 @@ import { initialView, toggleExpanded, toggleThinking, withAttachment, type TuiVi
 import { project } from '../src/app/project.js';
 import { frameOf } from '../src/components/session-frame.js';
 import { statusLine } from '../src/components/status-bar.js';
+import { taskPanelLines } from '../src/components/task-panel.js';
 import { paletteLines } from '../src/components/palette.js';
 import { COMMANDS, slashMatches } from '../src/app/commands.js';
 import { stringWidth } from '../src/text/width.js';
@@ -331,7 +332,7 @@ test('a running tool is a card with an animated marker and its command', () => {
 test('the input line hints at / commands as they are typed', () => {
   const empty = frameOf({ ...initialView(), input: '/' }, { width: WIDTH, now: 1_000 });
   assert.match(empty.placeholder, /\/todos/u);
-  assert.match(empty.placeholder, /共 7 个/u);
+  assert.match(empty.placeholder, /共 8 个/u);
 
   const narrowed = frameOf({ ...initialView(), input: '/th' }, { width: WIDTH, now: 1_000 });
   assert.match(narrowed.placeholder, /\/thinking/u);
@@ -460,6 +461,66 @@ test('a running tool card shows the live tail, capped at twenty rows (ADR-109)',
   assert.doesNotMatch(truncatedText, /上面还有/u);
 });
 
+test('the /tasks panel lists background tasks and the status bar counts the running ones (ADR-113)', () => {
+  const view: TuiView = {
+    ...initialView(),
+    sessionId: 'sess_bg',
+    turn: { id: 'turn_1', state: 'streaming', reason: null },
+    tasks: [
+      {
+        taskId: 'bg_a_1',
+        callId: 'c1',
+        command: 'pnpm dev',
+        startedAt: 0,
+        startedSeq: 2,
+        state: 'running',
+        endedAt: null,
+        exitCode: null,
+      },
+      {
+        taskId: 'bg_a_2',
+        callId: 'c2',
+        command: 'pnpm test',
+        startedAt: 0,
+        startedSeq: 3,
+        state: 'exited',
+        endedAt: 5_000,
+        exitCode: 1,
+      },
+    ],
+    taskPanel: { index: 1 },
+  };
+
+  const frame = frameOf(view, { width: WIDTH, now: 12_000 });
+  const dock = (frame.dock ?? []).map((row) => row.text).join('\n');
+  assert.match(dock, /后台任务（2）/u);
+  assert.match(dock, /运行中 12s/u);
+  assert.match(dock, /已结束\(1\)/u);
+  assert.match(dock, /pnpm dev/u);
+  // The cursor is on the second row; the marker follows the view, not the array order.
+  assert.equal((frame.dock ?? []).find((row) => row.text.includes('pnpm test'))?.text.startsWith('▸'), true);
+
+  assert.match(statusLine(view, { now: 12_000 }).text, /后台 1/u);
+});
+
+test('the task panel window follows the cursor instead of always showing the first rows (ADR-113)', () => {
+  const tasks = Array.from({ length: 8 }, (_, index) => ({
+    taskId: `bg_a_${String(index + 1)}`,
+    callId: 'c1',
+    command: `cmd ${String(index + 1)}`,
+    startedAt: 0,
+    startedSeq: index + 2,
+    state: 'running' as const,
+    endedAt: null,
+    exitCode: null,
+  }));
+  const text = taskPanelLines(tasks, 7, 80, 0)
+    .map((row) => row.text)
+    .join('\n');
+  assert.match(text, /bg_a_8/u, 'the selected task is visible');
+  assert.doesNotMatch(text, /bg_a_1\b/u, 'the window scrolled past the first rows');
+});
+
 test('a running sub-agent is a panel; a finished one collapses to its notice', () => {
   const view = viewOf([
     event('turn.opened', { input: '派一个子 agent' }),
@@ -573,7 +634,7 @@ test('the / menu is a selectable list in the dock, not a placeholder', () => {
   assert.match(text, /\/todos/u);
   assert.match(text, /▸ \/todos/u);
   // A row click runs that command, so the id is on the card row.
-  assert.equal(dock.find((row) => row.text.includes('/help'))?.hit, 'slash:5');
+  assert.equal(dock.find((row) => row.text.includes('/help'))?.hit, 'slash:6');
 
   const moved = frameOf({ ...view, slashIndex: 2 }, { width: WIDTH, now: 1_000 });
   assert.match((moved.dock ?? []).map((row) => row.text).join('\n'), /▸ \/cancel/u);

@@ -18,7 +18,9 @@ export type CommandEffect =
   | { readonly kind: 'cancel' }
   | { readonly kind: 'quit' }
   /** Ask the loop for the session list; it is the only thing here that needs the client. */
-  | { readonly kind: 'sessions' };
+  | { readonly kind: 'sessions' }
+  /** Open the background-task panel (ADR-113); the loop owns the stop call. */
+  | { readonly kind: 'tasks' };
 
 export interface TuiCommand {
   /** As typed, without the slash. */
@@ -56,6 +58,7 @@ export const COMMANDS: readonly TuiCommand[] = [  {
     run: (view) => ({ kind: 'view', view: toggleThinking(closePalette(view)) }),
   },
   { name: 'sessions', summary: '列出会话与恢复命令', run: () => ({ kind: 'sessions' }) },
+  { name: 'tasks', summary: '后台任务：查看与终止', run: () => ({ kind: 'tasks' }) },
   { name: 'help', summary: '键位与用法', run: (view) => ({ kind: 'notice', level: 'info', text: KEYS_HELP.replace('（/help 看这个列表）', '').trim() + `　【${view.sessionId ?? '无会话'}】` }) },
   { name: 'quit', summary: '退出 cowcat', run: () => ({ kind: 'quit' }) },
 ];

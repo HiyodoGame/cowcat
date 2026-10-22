@@ -35,6 +35,31 @@ test('arrows move the approval highlight only while a question is open', () => {
   assert.equal(intentFor({ name: 'up', ctrl: false }, initialView()), null);
 });
 
+test('the task panel owns arrows, x and Escape while it is open (ADR-113)', () => {
+  const view: TuiView = {
+    ...initialView(),
+    tasks: [
+      {
+        taskId: 'bg_a_1',
+        callId: 'c1',
+        command: 'pnpm dev',
+        startedAt: 0,
+        startedSeq: 2,
+        state: 'running',
+        endedAt: null,
+        exitCode: null,
+      },
+    ],
+    taskPanel: { index: 0 },
+  };
+  assert.deepEqual(intentFor({ name: 'up', ctrl: false }, view), { kind: 'taskMove', delta: -1 });
+  assert.deepEqual(intentFor({ name: 'down', ctrl: false }, view), { kind: 'taskMove', delta: 1 });
+  assert.deepEqual(intentFor({ name: 'x', ctrl: false }, view), { kind: 'taskStop' });
+  assert.deepEqual(intentFor({ name: 'escape', ctrl: false }, view), { kind: 'tasksClose' });
+  // Closed panel: `x` belongs to the input again.
+  assert.equal(intentFor({ name: 'x', ctrl: false }, initialView()), null);
+});
+
 test('the / menu owns arrows, Tab and Escape while it is open', () => {
   const view: TuiView = { ...initialView(), input: '/th' };
   assert.deepEqual(intentFor({ name: 'up', ctrl: false }, view), { kind: 'slashMove', delta: -1 });
