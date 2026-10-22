@@ -537,7 +537,7 @@ Linux CI 腿新增一步打印探测裁决，用来回答「AppArmor profile 生
 | 子 agent | 子会话是否独立日志、结果如何回传、权限是否收窄；**排期提前到 MCP 之前**（D1）。**已完成**（[research/p7-subagents.md](research/p7-subagents.md)、ADR-079~082）：独立子会话 + `Task` 虚拟工具 + 只收不放的权限 + 结果预算；`sessions list` 默认折叠、TUI 一行摘要；端到端（重放 / 取消 / 锁清理）已验 | P3、P5 |
 | MCP | 官方 SDK 评估；stdio 服务器必须经 ProcessPort，因此天然被沙箱覆盖；对齐 **2026-07-28 规范**（D2：**无状态、逐请求 `_meta`**；HTTP 授权首选 Client ID Metadata Documents，**DCR 已 deprecated**）且首版**只做 stdio + tools**；v1 旧规范实现只迁结论不迁代码。**已调研并落表**（[research/p7-mcp.md](research/p7-mcp.md)）：ADR-083~088；**T1 已合（#80）**（双时代探测、`mcp__server__tool`、项目层受信、`ProcessPort.open()`、崩溃不重启）；**T2 已合（#81）**（分页、`subscriptions/listen` / 旧版 `list_changed`、活工具表）；**真实端点实测完成**（模型 + `server-everything`） | P2、P3 |
 | Hooks | 触发时机、失败语义、是否经过策略；出生即兼容 Claude Code hooks.json 格式的取舍（D3） | P3 |
-| Skills | 加载机制与工具暴露；渐进披露（首轮只注入目录、全文按需取用）（D4） | P5 |
+| Skills | 加载机制与工具暴露；渐进披露（首轮只注入目录、全文按需取用）（D4）。**已调研**（[research/p7-skills.md](research/p7-skills.md)）：决定草案 S1~S10，ADR-114~117 待落表；四类目录（原生 + `.claude` 兼容只读）、项目层受信、`yaml` 依赖（运行时 4/6）、catalog 预算与 `Skill` 工具契约 | P5 |
 | 后台任务 | 生命周期与会话的关系，取消与清理 | P2 |
 | Worktree | 与会话和信任的关系 | P2、P3 |
 | Cron | 无人值守下的策略收窄 | P3、后台任务 |
