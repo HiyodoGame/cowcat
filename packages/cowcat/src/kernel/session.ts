@@ -1,4 +1,4 @@
-import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort } from '../ports/index.js';
+import type { Clock, EventStore, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort, ToolOutputStream } from '../ports/index.js';
 import type { EventInput, KernelEvent, SessionParent, SessionUpdate } from './events.js';
 import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
 import { initialState, reduce, replay, type SessionState } from './state.js';
@@ -152,6 +152,19 @@ export class Session {
     const turnId = this.turnId;
     if (turnId === null) throw new Error('reasoningDelta outside a turn');
     for (const listener of this.#listeners) listener({ type: 'reasoning.delta', turnId, text });
+  }
+
+  /**
+   * A live fragment of a tool's output (ADR-108).
+   *
+   * Ephemeral like the two above: `tool.finished.output` is the fact, this is the view.
+   * `callId` travels with it because a turn can have several tools running and the card
+   * that asked for this output is keyed by it.
+   */
+  toolOutput(callId: string, stream: ToolOutputStream, text: string): void {
+    const turnId = this.turnId;
+    if (turnId === null) throw new Error('toolOutput outside a turn');
+    for (const listener of this.#listeners) listener({ type: 'tool.output.delta', turnId, callId, stream, text });
   }
 
   async openTurn(

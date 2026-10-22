@@ -1,6 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
-import type { Attachment, Truncation, TodoItem } from '../ports/index.js';
+import type { Attachment, ToolOutputStream, Truncation, TodoItem } from '../ports/index.js';
 import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { SubagentRole, SubagentState } from '../ports/subagent.js';
 import type { ExecutionFacts } from '../ports/process.js';
@@ -326,7 +326,22 @@ export interface ReasoningDelta {
   readonly text: string;
 }
 
-export type SessionUpdate = KernelEvent | StreamDelta | ReasoningDelta;
+/**
+ * A live fragment of a tool's output while the call is still running (ADR-108).
+ *
+ * Ephemeral for the same reason as the two above: the complete output lands in
+ * `tool.finished.output`, so a fragment is not a fact. `callId` is what lets a renderer
+ * attach it to the card that is still running; filtering by it is the frontend's job.
+ */
+export interface ToolOutputDelta {
+  readonly type: 'tool.output.delta';
+  readonly turnId: string;
+  readonly callId: string;
+  readonly stream: ToolOutputStream;
+  readonly text: string;
+}
+
+export type SessionUpdate = KernelEvent | StreamDelta | ReasoningDelta | ToolOutputDelta;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 

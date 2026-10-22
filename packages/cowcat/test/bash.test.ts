@@ -9,6 +9,7 @@ import {
   createBashTool,
   defaultSandboxProfile,
   nodePlatform,
+  type OutputSink,
   type PlatformPort,
   type ProcessPort,
   type ProcessResult,
@@ -46,10 +47,12 @@ function resultOf(spec: ProcessSpec, overrides: Partial<ProcessResult> = {}): Pr
 
 class FakeProcess implements ProcessPort {
   readonly specs: ProcessSpec[] = [];
+  readonly sinks: (OutputSink | undefined)[] = [];
   constructor(private readonly overrides: Partial<ProcessResult> = {}, private readonly failure?: Error) {}
 
-  run(spec: ProcessSpec): Promise<ProcessResult> {
+  run(spec: ProcessSpec, _signal?: AbortSignal, sink?: OutputSink): Promise<ProcessResult> {
     this.specs.push(spec);
+    this.sinks.push(sink);
     if (this.failure !== undefined) return Promise.reject(this.failure);
     return Promise.resolve(resultOf(spec, this.overrides));
   }
@@ -72,6 +75,23 @@ test('the command is one argument to the resolved shell, not a shell string', as
   assert.equal(spec.cwd, '/repo');
   assert.deepEqual(spec.env, { PATH: '/usr/bin' });
   assert.equal(spec.outputCap, BASH_DEFAULT_OUTPUT_CAP);
+});
+
+test('a live listener is forwarded to the process sink, and absent when nobody listens (ADR-108)', async () => {
+  const process = new FakeProcess();
+  const seen: string[] = [];
+  await tool(process).run({ command: 'build' }, signal, notApproved, (stream, text) => {
+    seen.push(`${stream}:${text}`);
+  });
+
+  const sink = process.sinks[0];
+  assert.ok(sink !== undefined, 'the tool must not swallow the listener');
+  sink.onOutput('stdout', 'ok\n');
+  assert.deepEqual(seen, ['stdout:ok\n'], 'one vocabulary: the tool listener is the port sink');
+
+  const quiet = new FakeProcess();
+  await tool(quiet).run({ command: 'build' }, signal, notApproved);
+  assert.equal(quiet.sinks[0], undefined, 'no listener, no sink — nothing is fabricated downstream');
 });
 
 test('the timeout defaults, clamps low, and caps high', async () => {
