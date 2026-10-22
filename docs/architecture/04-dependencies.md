@@ -23,11 +23,12 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `typescript-eslint` | 8.71.2 | 开发：TS 规则 | 使用 `strictTypeChecked`；测试目录对 `no-floating-promises` 与 `require-await` 放宽（见 eslint.config.js 注释） |
 | `zod` | `^4.6.7`（当前 4.6.7） | **运行时**：日志解码的结构校验 | 只允许出现在 `src/adapters/`，由 lint 单独一条 pattern 强制。JSON Schema 转换内置，省掉 P5 与模型交互的一个依赖。选型对比、被否决的方案与保留的重估条件见 [../research/p1-kernel.md](../research/p1-kernel.md) §2 |
 | `openai` | `^7.36.0`（当前 7.36.0） | **运行时**：OpenAI 兼容协议的模型适配器（ADR-036） | P4 T2 引入。engines `node >=22.0.0` 与包一致；**实测零运行时依赖**，6 个 peer 全部 `optional: true` 故不会自动安装。**`maxRetries: 0`**：ADR-039 的重试策略由适配器自己实现（T5），留着 SDK 自带的两次重试会让两条策略同时生效。边界同样由 lint 强制（`no-restricted-imports` 的第三条 pattern，与 zod 分开写是为了让报错指向「跨了端口边界」而不是别的理由），`tools/lint-probe.mjs` 已验证它会报错 |
+| `yaml` | `^2.9.1`（当前 2.9.1） | **运行时**：`SKILL.md` frontmatter 解析（ADR-115） | **实测零运行时依赖**、`engines node >= 14.6`、CJS（Node 的 named-export interop 提供 `parse`）。**只在 `src/adapters/`**，与 zod 共用同一条 lint 边界。选它而不是 `js-yaml`（后者带 `argparse`），不自己写是因为块标量 `description: >-`、带冒号的单行标量、引号、列表/map 都是真实写法，手写子集会**静默**读错。**实测（2026-10-22）**：Node 24 ESM 下 `import { parse } from 'yaml'` 可用，`description: >-` 折叠为单行正确。重估条件：出现原生编译需求，或包体超过内核产物 5% |
 | `fast-check` | `^4.10.2`（当前 4.10.2） | 开发：属性测试 | 用例见 `test/property.test.ts`。种子固定在测试里（`COWCAT_PROPERTY_SEED` 可覆盖），失败输出自带 `{ seed, path }` 与收缩后的 counterexample |
 
-运行时依赖：**3 个**（`zod`、`openai`、`@anthropic-ai/sdk`）。上限 6，每引入一个都要有 ADR。
+运行时依赖：**4 个**（`zod`、`openai`、`@anthropic-ai/sdk`、`yaml`）。上限 6，每引入一个都要有 ADR。
 
-**口径已定（评审，2026-10-18）：数直接依赖。** 上限 **6 不变**——P4 之后为 **3 / 6**。理由：传递依赖不是我们的选择，「每一个都必须有 ADR」这句在传递依赖上无从执行；而判断标准 1（协议与安全责任）要求的是**引入方说明自己带进来了什么**，不是给每个传递依赖立一份 ADR。
+**口径已定（评审，2026-10-18）：数直接依赖。** 上限 **6 不变**——P4 之后为 **3 / 6**，P7 Skills 起为 **4 / 6**。理由：传递依赖不是我们的选择，「每一个都必须有 ADR」这句在传递依赖上无从执行；而判断标准 1（协议与安全责任）要求的是**引入方说明自己带进来了什么**，不是给每个传递依赖立一份 ADR。
 
 **传递依赖已核实（P4 T3 履行了这条承诺）**：`@anthropic-ai/sdk` 的 7 个依赖树成员里，**4 个真的进运行时、3 个是纯类型层**（详见上表该行）。若将来有人改口径为「数整棵树」，这 3 个是可以争辩的余地——它们已被证明运行时零加载。**但注意**：依赖树实测为 **10 个包**，其中 **3 个**（`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`）已证明运行时零加载，能否靠打包/裁剪把它们去掉不在本阶段的范围内。
 
@@ -42,14 +43,14 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | 包 | 阶段 | 角色 | 当前判断 |
 |---|---|---|---|
 | `@anthropic-ai/sdk` | `^0.135.0`（当前 0.135.0） | **运行时**：Anthropic 原生协议的模型适配器（ADR-036） | P4 T3 引入。**它自带传递依赖，实测结论如下**（这是引入方必须说明「带进来了什么」）：依赖树里 7 个包，**只有 4 个真的进运行时**——`@opentelemetry/api`（9 个运行时文件引用，含 `client.js`；不注册 provider 时是空门面）、`standardwebhooks`（仅 `resources/beta/webhooks.js`，却**在 import 时就被解析**）、`fast-sha256` 与 `@stablelib/base64`（`standardwebhooks` 的下游）；**另外 3 个是纯类型层，运行时完全不加载**——`json-schema-to-ts`、`ts-algebra`、`@babel/runtime`（源码扫描零命中 + 解析钩子 in `not resolved`）。取证方法：`registerHooks` 解析钩子记录 import 时真正被解析的裸模块，并对运行时 `.js`（排除 `.d.ts`）做源码扫描。`maxRetries: 0`，理由同 `openai` |
-| `@opentui/core` | P6（当前 0.6.6） | **运行时：仅前端包**（`packages/tui/`）：TUI 渲染（ADR-056） | **不进内核包的依赖计数**（内核仍是 3 / 6）。判断标准 4（跨平台分发负担）在此**显式豁免一次**：它带 8 个平台的原生核心（`@opentui/core-{win32,darwin,linux}-{x64,arm64}` + 两个 musl），并要求 `node >=26.4.0`——换掉的是整块渲染与图片协议的自研量。**锁版本**；`engines.node` 变化等于我们的门槛变化。平台二进制缺失时**显式报错**，不静默降级。**T1 实测（2026-10-19）**：`0.6.6` 可安装（12 个包 / 8 秒），`@opentui/core-win32-x64` 内含 `opentui.dll`（5.06 MB）；Node **26.12.0 不需要** `--experimental-ffi`（只在 stderr 打警告），而 **Node 24 上该 flag 是启动期硬错误**——门槛是真的。取证与结论见 [`06-frontend.md`](06-frontend.md) 的「T1 前提验证」一节；两条 Node 26 CI 腿在 PR #56 上 pass |
+| `@opentui/core` | P6（当前 0.6.6） | **运行时：仅前端包**（`packages/tui/`）：TUI 渲染（ADR-056） | **不进内核包的依赖计数**（内核仍是 4 / 6）。判断标准 4（跨平台分发负担）在此**显式豁免一次**：它带 8 个平台的原生核心（`@opentui/core-{win32,darwin,linux}-{x64,arm64}` + 两个 musl），并要求 `node >=26.4.0`——换掉的是整块渲染与图片协议的自研量。**锁版本**；`engines.node` 变化等于我们的门槛变化。平台二进制缺失时**显式报错**，不静默降级。**T1 实测（2026-10-19）**：`0.6.6` 可安装（12 个包 / 8 秒），`@opentui/core-win32-x64` 内含 `opentui.dll`（5.06 MB）；Node **26.12.0 不需要** `--experimental-ffi`（只在 stderr 打警告），而 **Node 24 上该 flag 是启动期硬错误**——门槛是真的。取证与结论见 [`06-frontend.md`](06-frontend.md) 的「T1 前提验证」一节；两条 Node 26 CI 腿在 PR #56 上 pass |
 | `@modelcontextprotocol/sdk` | P7 | MCP | 候选。协议层不手写。版本与 API 稳定性在 P7 核对 |
 
-### 包内依赖（**不进 3 / 6 的计数**）
+### 包内依赖（**不进 4 / 6 的计数**）
 
 | 边 | 阶段 | 为什么不算一次「引入」 |
 |---|---|---|
-| `packages/cowcat` → `@corescense/cowcat-protocol`（`file:../protocol`） | P6 T4a 2/3（ADR-062 ③、ADR-064 ⑤） | 这是**同一个仓库**里的 `file:` 链接，不带来任何第三方代码——3 / 6 量的是「引入方带进来了什么外部代码」，而这条边的另一头是我们自己的包（P8 起可发布，见 ADR-090）。**代价记在别处**：`file:` 是 junction，npm 不装目标的依赖也不构建它，所以 `packages/cowcat` 的**三条 CI 腿**各自要多一步 `npm --prefix ../protocol ci && run build`（本 PR 已加）。发布时 `tools/pack-release.mjs` 会把这条边改写成精确版本（ADR-090） |
+| `packages/cowcat` → `@corescense/cowcat-protocol`（`file:../protocol`） | P6 T4a 2/3（ADR-062 ③、ADR-064 ⑤） | 这是**同一个仓库**里的 `file:` 链接，不带来任何第三方代码——4 / 6 量的是「引入方带进来了什么外部代码」，而这条边的另一头是我们自己的包（P8 起可发布，见 ADR-090）。**代价记在别处**：`file:` 是 junction，npm 不装目标的依赖也不构建它，所以 `packages/cowcat` 的**三条 CI 腿**各自要多一步 `npm --prefix ../protocol ci && run build`（本 PR 已加）。发布时 `tools/pack-release.mjs` 会把这条边改写成精确版本（ADR-090） |
 
 ## 明确不引入的
 
@@ -69,7 +70,7 @@ v2 的判断标准不是「依赖多少」，而是下面四个问题：
 | `engines.node >=26.4.0`（实测 `@opentui/core@0.6.6`；Node v26.4.0 于 2026-06-24 发布） | **前端是独立 workspace 包**（`packages/tui/`），它声明自己的 `engines` 与一条 Node 26 的 CI 腿；**内核包保持 Node ≥ 22 不变**。**T1 实测**：26 线当前 v26.12.0 可用，且**无需** `--experimental-ffi` |
 | 8 个平台的原生核心走 `optionalDependencies` | 缺失时**显式报错**，不静默降级到「没有 TUI」 |
 | 一个更新频繁的原生库 | 锁版本；`engines.node` 的变化等于我们的门槛变化，升级前先在 CI 验证 Node 腿 |
-| 与「零运行时依赖」的距离 | 判断标准 4（跨平台分发负担）**被显式豁免一次**，理由是它换掉的是整块渲染与图片协议的自研量；内核侧依赖数（3 / 6）**不受影响**，因为 opentui 只出现在前端包内 |
+| 与「零运行时依赖」的距离 | 判断标准 4（跨平台分发负担）**被显式豁免一次**，理由是它换掉的是整块渲染与图片协议的自研量；内核侧依赖数（4 / 6）**不受影响**，因为 opentui 只出现在前端包内 |
 
 调研中同时核实的**不引入项**：`@opentui/react` / `@opentui/solid`（先用命令式 renderable，引入渲染器是第二个决定）；ink（与「事件流 → view model」的既有输入模型不匹配，且图片协议仍要自己写）。
 
