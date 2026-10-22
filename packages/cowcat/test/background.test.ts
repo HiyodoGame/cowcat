@@ -17,7 +17,12 @@ import {
 // properties of a process, and a double would answer by asserting on itself.
 
 function registry(): NodeBackgroundTasks {
-  return new NodeBackgroundTasks({ process: new NodeProcess({ platform: new NodePlatform() }) });
+  return new NodeBackgroundTasks({
+    process: new NodeProcess({ platform: new NodePlatform() }),
+    // A fixed boot id keeps ids assertable; the default is random precisely so two hosts
+    // can never mint the same id (ADR-113).
+    bootId: 'boot',
+  });
 }
 
 function spec(script: string, overrides: Partial<BackgroundStart> = {}): BackgroundStart {
@@ -50,13 +55,13 @@ test('a task runs to completion and reports its exit with the tail', async () =>
   tasks.onExit((exit) => exits.push(exit));
 
   const task = await tasks.start(spec("process.stdout.write('hello\\n'); process.exitCode = 3"));
-  assert.equal(task.taskId, 'bg_1');
+  assert.equal(task.taskId, 'bg_boot_1');
   assert.equal(tasks.list().length, 1);
 
   await until(() => exits.length === 1);
   const exit = exits[0];
   assert.ok(exit !== undefined);
-  assert.equal(exit.taskId, 'bg_1');
+  assert.equal(exit.taskId, 'bg_boot_1');
   assert.equal(exit.sessionId, 'sess_bg');
   assert.equal(exit.callId, 'call_1');
   assert.equal(exit.exitCode, 3);
@@ -198,7 +203,7 @@ test('an exit that is already known is still reported after start returns', asyn
       }),
     open: () => Promise.reject(new Error('not used in this test')),
   };
-  const tasks = new NodeBackgroundTasks({ process: instant });
+  const tasks = new NodeBackgroundTasks({ process: instant, bootId: 'instant' });
   const order: string[] = [];
   tasks.onExit(() => order.push('exit'));
 
@@ -206,7 +211,7 @@ test('an exit that is already known is still reported after start returns', asyn
   order.push('started');
   await until(() => order.length === 2);
   assert.deepEqual(order, ['started', 'exit']);
-  assert.equal(task.taskId, 'bg_1');
+  assert.equal(task.taskId, 'bg_instant_1');
 });
 
 test('an unsubscribed listener stops hearing about exits', async () => {

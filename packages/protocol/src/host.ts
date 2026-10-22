@@ -45,6 +45,11 @@ export interface ProtocolHost {
   respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void>;
   /** `null` means the host's own limit only; the caller's cap is applied by the host. */
   readAttachment(id: string, maxBytes: number | null): Promise<AttachmentBytes>;
+  /**
+   * Stop a background task the session started (ADR-113). False when the task is already
+   * gone or does not belong to this session — never a silent success.
+   */
+  stopTask(sessionId: string, taskId: string): Promise<boolean>;
 }
 
 /**

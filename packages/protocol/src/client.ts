@@ -42,6 +42,8 @@ export interface ProtocolClient {
   cancelTurn(sessionId: string): Promise<void>;
   respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']): Promise<void>;
   readAttachment(id: string, maxBytes?: number): Promise<AttachmentBytes>;
+  /** Stop a background task this session started; false when it is already gone. */
+  stopTask(sessionId: string, taskId: string): Promise<boolean>;
   shutdown(): Promise<void>;
   on<N extends NotificationName>(name: N, handler: (params: NotificationParams[N]) => void): () => void;
   /** Resolves when the transport closes, whoever closed it. */
@@ -172,6 +174,11 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async readAttachment(id: string, maxBytes?: number) {
       return request('attachment.read', maxBytes === undefined ? { id } : { id, maxBytes });
+    },
+
+    async stopTask(sessionId: string, taskId: string) {
+      const result = await request('task.stop', { sessionId, taskId });
+      return result.stopped;
     },
 
     async shutdown() {

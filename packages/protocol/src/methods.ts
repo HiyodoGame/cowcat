@@ -17,6 +17,7 @@ export const METHODS = [
   'turn.cancel',
   'approval.respond',
   'attachment.read',
+  'task.stop',
   'shutdown',
 ] as const;
 
@@ -49,6 +50,10 @@ export const PARAMS = {
      *  truncation (ADR-057: bytes are not silently clipped). */
     maxBytes: z.number().int().positive().optional(),
   }),
+  // A background task is stopped by id, within the session that owns it (ADR-113): the
+  // host refuses ids that belong to another session rather than letting one client kill
+  // another's work.
+  'task.stop': z.strictObject({ sessionId: z.string().min(1), taskId: z.string().min(1) }),
   shutdown: noParams,
 } satisfies Record<MethodName, z.ZodType>;
 
@@ -94,6 +99,8 @@ export interface ResultTable {
   readonly 'turn.cancel': { readonly cancelled: boolean };
   readonly 'approval.respond': { readonly accepted: boolean };
   readonly 'attachment.read': AttachmentBytes;
+  /** False when the task is already gone (finished, or never belonged to this session). */
+  readonly 'task.stop': { readonly stopped: boolean };
   readonly shutdown: { readonly closing: true };
 }
 
