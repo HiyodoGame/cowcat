@@ -10,6 +10,7 @@ import type { ExecutionFacts } from './process.js';
 // and the tests.
 export * from './attachments.js';
 export * from './audit.js';
+export * from './background.js';
 export * from './fs.js';
 export * from './instructions.js';
 export * from './model.js';
