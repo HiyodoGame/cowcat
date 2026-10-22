@@ -129,11 +129,11 @@ COWCAT_HOME="$TEST_HOME" cowcat doctor
 npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" tui
 ```
 
-- [ ] 对话流、工具卡、审批卡、待办、命令面板可用
-- [ ] 工具卡折叠/展开；大段输出不卡死
-- [ ] 中文/宽字符对齐正常
-- [ ] 调整窗口大小后布局正常
-- [ ] `Ctrl-C` 退出后会话锁释放
+- [x] 对话流、工具卡、审批卡、待办、命令面板可用
+- [x] 工具卡折叠/展开；大段输出不卡死
+- [x] 中文/宽字符对齐正常
+- [x] 调整窗口大小后布局正常
+- [x] `Ctrl-C` 退出后会话锁释放
 - [ ] 真实终端连续使用 30 分钟，无崩溃、无残留进程
 
 ### 4.2 MCP
@@ -158,6 +158,19 @@ npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" 
 - 协议提醒（这次踩到的）：`session.create` **不订阅事件**，必须再调 `session.open` 才会收到 `event` 通知（`packages/protocol/src/server.ts:203`）
 - 未验证：服务器中途退出的「失败且不重启」；`turn.cancel` 后进程被终止（两条都需要可控的会崩溃服务器或协议级取消）
 
+
+### 4.4 本轮记录（2026-10-22，源码版 `main`）
+
+**环境**：Tabby Terminal（Electron + xterm.js）· Node 26.12.0（`npx node@26.12.0`，从仓库 `packages/cli/dist` 直接跑，**不是** npm 上的 beta.2）· 隔离目录 `%TEMP%\cowcat-tui-accept`（已 `trust`）· 模型 `zai-coding-plan/glm-5.3-flash`。
+
+**结论**：组 1–3 走完，**无阻塞问题**。用户口述「没太大问题」，逐项细节未逐条登记。
+
+修复项（本轮验收发现，均已合并）：
+
+- **多行输入不可用**：该终端对 `Shift+Enter` 发 `0d`（回车本身），不支持 kitty 键盘协议，`Shift+Enter` 直接发送消息。→ #140 补 `Alt+Enter`、#141 把 `Ctrl+J`/`Ctrl+Enter` 走的 `linefeed → newline` 显式写进绑定表（ADR-104 ⑥⑦）。实测换行可用键：`Ctrl+J` / `Ctrl+Enter`。
+- 该终端能力缺口记入 §8；`Shift+Enter` 留待桌面端 / Web 端。
+
+**未覆盖**：§4.1 最后一条（连续 30 分钟）本轮未专门计时；§5 平台差异仍缺。
 
 ## 5. 平台差异（有条件才做）
 
@@ -221,6 +234,7 @@ COWCAT_HOME：临时目录 / 真实 home
 | 2026-10-21 | 编码任务 | 通过（4 轮同一会话 + 1 次拒绝路径；§2.1） | 测试 5/5、无重复读、`instructions.loaded` 1 次 | — |
 | 2026-10-21 | MCP | 通过（list 命名 + call + 崩溃不重启 + cancel 杀进程；§4.3） | `mcp__everything__echo` → `Echo: mcp-ok`；`die` 后第二次调用报 no restart；cancel 前后进程 1→0 | — |
 | 2026-10-21 | 长会话/子 agent | 通过（14 轮，第 12 轮压缩；§3.1） | `context.compacted` + `instructions.loaded(refresh)`；压缩后暗号与最近文件仍可用；父子取消后无锁 | — |
+| 2026-10-22 | TUI | 通过（组 1–3 无阻塞；§4.4） | 用户实测（Tabby Terminal + 源码 `packages/cli/dist`）；发现并修复多行输入 #140/#141 | — |
 | | 编码任务 | | | |
 | | 长会话/子 agent | | | |
 | | TUI | | | |
