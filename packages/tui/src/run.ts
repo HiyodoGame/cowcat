@@ -3,7 +3,7 @@ import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { COMMANDS, lastToolCallId, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
 import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
-import { addNotice, closeView, project, streamReasoning, streamText } from './app/project.js';
+import { addNotice, closeView, project, streamReasoning, streamText, streamToolOutput } from './app/project.js';
 import {
   advanceReasoning,
   APPROVAL_CHOICES,
@@ -164,7 +164,14 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         fetchAttachments();
       }),
       options.client.on('delta', (delta) => {
-        view.current = delta.type === 'reasoning.delta' ? streamReasoning(view.current, delta) : streamText(view.current, delta);
+        // Three ephemeral channels now (ADR-098/109); the loop routes by type rather than
+        // feeding everything to one stream.
+        view.current =
+          delta.type === 'reasoning.delta'
+            ? streamReasoning(view.current, delta)
+            : delta.type === 'tool.output.delta'
+              ? streamToolOutput(view.current, delta)
+              : streamText(view.current, delta);
         draw();
       }),
       options.client.on('log', (line) => {

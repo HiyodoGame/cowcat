@@ -431,6 +431,35 @@ test('the status bar says what is running, and counts running sub-agents', () =>
   assert.doesNotMatch(idle.text, /⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏/u, 'no spinner when nothing is running');
 });
 
+test('a running tool card shows the live tail, capped at twenty rows (ADR-109)', () => {
+  const base: TuiView = {
+    ...initialView(),
+    turn: { id: 'turn_1', state: 'awaiting_tools', reason: null },
+    pendingTools: [{ callId: 'c1', name: 'Bash' }],
+    calls: { c1: { name: 'Bash', input: { command: 'pnpm build' } } },
+  };
+
+  const withTail = frameOf({ ...base, toolOutput: { c1: { text: 'first\nsecond', truncated: false } } }, { width: WIDTH, now: 0 });
+  const text = withTail.body.map((row) => row.text).join('\n');
+  assert.match(text, /pnpm build/u);
+  assert.match(text, /first/u);
+  assert.match(text, /second/u);
+
+  const many = Array.from({ length: 30 }, (_, index) => `row${String(index)}`).join('\n');
+  const capped = frameOf({ ...base, toolOutput: { c1: { text: many, truncated: false } } }, { width: WIDTH, now: 0 });
+  const cappedText = capped.body.map((row) => row.text).join('\n');
+  assert.match(cappedText, /row29/u, 'the newest rows are the ones kept');
+  assert.doesNotMatch(cappedText, /row0/u);
+  assert.match(cappedText, /上面还有 10 行/u);
+
+  // When the character cap already dropped output, a line count would understate what was
+  // lost: the card says the honest thing instead (ADR-109).
+  const truncated = frameOf({ ...base, toolOutput: { c1: { text: many, truncated: true } } }, { width: WIDTH, now: 0 });
+  const truncatedText = truncated.body.map((row) => row.text).join('\n');
+  assert.match(truncatedText, /只显示末尾输出/u);
+  assert.doesNotMatch(truncatedText, /上面还有/u);
+});
+
 test('a running sub-agent is a panel; a finished one collapses to its notice', () => {
   const view = viewOf([
     event('turn.opened', { input: '派一个子 agent' }),

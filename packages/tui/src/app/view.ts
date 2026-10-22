@@ -104,6 +104,18 @@ export interface PendingTool {
   readonly name: string;
 }
 
+/**
+ * One running tool's live tail (ADR-109).
+ *
+ * `truncated` records that the character cap dropped earlier output, so the card can say
+ * "只显示末尾输出" instead of a line count that would only describe what survived the cap —
+ * a smaller number than what the command actually printed.
+ */
+export interface ToolTail {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
 /** A tool call the model asked for, before its result arrives. */
 export interface ToolCallView {
   readonly name: string;
@@ -245,6 +257,13 @@ export interface TuiView {
   readonly unsupported: readonly string[];
   /** The highest `seq` seen, which is what a reconnect has to resume after. */
   readonly lastSeq: number;
+  /**
+   * The live output tail each running tool has produced so far, keyed by call id (ADR-109).
+   *
+   * Interface state, not log state: the delta that fills it is ephemeral and never replayed,
+   * and `tool.finished` replaces it with the durable output. Capped where it is written.
+   */
+  readonly toolOutput: Readonly<Record<string, ToolTail>>;
   /** Lines scrolled up from the newest row; 0 follows the tail. */
   readonly scrollOffset: number;
   /**
@@ -290,6 +309,7 @@ export function initialView(): TuiView {
     usage: null,
     unsupported: [],
     lastSeq: 0,
+    toolOutput: {},
     scrollOffset: 0,
     newSinceScroll: 0,
     closed: false,

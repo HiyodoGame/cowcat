@@ -64,7 +64,10 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
     // A long command used to be invisible until it finished. The running card is the
     // same shape as its result, so the transcript does not jump when the result lands.
     const summary = callSummary(view.calls[tool.callId]?.input);
-    push({ lines: runningToolLines(tool.name, summary, options.width, options.now), images: [] });
+    push({
+      lines: runningToolLines(tool.name, summary, options.width, options.now, view.toolOutput[tool.callId]),
+      images: [],
+    });
     lines.push(line('', 'text'));
   }
 

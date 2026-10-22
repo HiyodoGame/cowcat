@@ -1,4 +1,5 @@
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
+import { graphemes } from '../text/width.js';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
 import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type Entry, type TodoView, type ToolCallView, type TuiView } from './view.js';
@@ -46,6 +47,8 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         contextWindow: number(event, 'contextWindow') ?? base.contextWindow,
         turnStartedAt: number(event, 'ts') ?? base.turnStartedAt,
         slashIndex: 0,
+        // A new turn cannot have output from the previous one attached to it.
+        toolOutput: {},
       };
     }
 
@@ -65,6 +68,9 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         streaming: done ? '' : base.streaming,
         // No tool of a finished turn is still running, whatever the log's last word was.
         pendingTools: done ? [] : base.pendingTools,
+        // Its live tail is a view of a call that no longer exists; the durable output is in
+        // the transcript already.
+        toolOutput: done ? {} : base.toolOutput,
       };
     }
 
@@ -147,6 +153,8 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       const cleared: TuiView = {
         ...withImages,
         pendingTools: withImages.pendingTools.filter((tool) => tool.callId !== callId),
+        // The durable output below replaces the live tail; keeping both would print it twice.
+        toolOutput: withoutToolOutput(withImages.toolOutput, callId),
       };
       return noteBelow(
         add(cleared, {
@@ -287,6 +295,43 @@ export function streamReasoning(view: TuiView, delta: WireDelta): TuiView {
   if (delta.type !== 'reasoning.delta') return view;
   return { ...view, reasoningStream: view.reasoningStream + delta.text };
 }
+
+/** How much live output a running card keeps. Display only: the log has the real tail (ADR-109). */
+const LIVE_TOOL_TAIL_CHARS = 4_000;
+
+/**
+ * A live fragment of a running tool's output (ADR-109).
+ *
+ * Two filters, both about not lying on screen: the fragment must belong to a call this view
+ * is still showing (a late delta after `tool.finished` must not resurrect a card), and the
+ * kept tail is capped — the screen shows the last few KB while the durable output keeps its
+ * own cap in the kernel.
+ */
+export function streamToolOutput(view: TuiView, delta: WireDelta): TuiView {
+  if (delta.type !== 'tool.output.delta') return view;
+  const callId = text(delta, 'callId');
+  const chunk = text(delta, 'text') ?? '';
+  if (callId === null || chunk === '') return view;
+  if (!view.pendingTools.some((tool) => tool.callId === callId)) return view;
+
+  const previous = view.toolOutput[callId];
+  const joined = (previous?.text ?? '') + chunk;
+  // Fast path: a UTF-16 length under the cap implies a grapheme count under it too.
+  const kept =
+    joined.length <= LIVE_TOOL_TAIL_CHARS
+      ? { text: joined, truncated: previous?.truncated ?? false }
+      : // Whole grapheme clusters, not code units: cutting a ZWJ emoji or a combining mark in
+        // half paints a replacement character at the top of the card (ADR-109).
+        { text: graphemes(joined).slice(-LIVE_TOOL_TAIL_CHARS).join(''), truncated: true };
+  return { ...view, toolOutput: { ...view.toolOutput, [callId]: kept } };
+}
+
+/** Drop one call's live tail, leaving the others (a turn can run several tools). */
+function withoutToolOutput(outputs: TuiView['toolOutput'], callId: string): TuiView['toolOutput'] {
+  if (outputs[callId] === undefined) return outputs;
+  return Object.fromEntries(Object.entries(outputs).filter(([key]) => key !== callId));
+}
+
 /**
  * A line the interface itself wants to say — a server diagnostic, a refusal the host
  * reported, a hint about which keys answer an approval.
