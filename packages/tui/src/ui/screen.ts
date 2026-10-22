@@ -181,6 +181,12 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       { name: 'return', meta: true, action: 'newline' },
       // Ctrl+J is a literal LF, so it needs no protocol support at all.
       { name: 'j', ctrl: true, action: 'newline' },
+      // Spelling out opentui's own `linefeed → newline` default on purpose. Ctrl+Enter and
+      // Ctrl+J both arrive as a single 0x0a on xterm-family terminals (measured in Tabby), so
+      // this row — not the `j` row above — is what actually inserts the newline there. Leaving
+      // the only terminal-independent way to type a second line to a dependency's default is
+      // the same mistake ADR-104 already made once with `shift`.
+      { name: 'linefeed', action: 'newline' },
     ],
   });
   // A bordered composer instead of a bare line: the input is where a person spends the
