@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   BackgroundEndState,
   BackgroundExit,
@@ -27,6 +28,12 @@ export interface NodeBackgroundTasksOptions {
   readonly process: ProcessPort;
   readonly now?: () => number;
   readonly tailCap?: number;
+  /**
+   * Prefix for task ids. The default is random per registry, so a task id from a previous
+   * host can never name a new task: the log outlives the registry, and `bg_1` twice would
+   * let a stale client stop the wrong process (ADR-113).
+   */
+  readonly bootId?: string;
 }
 
 const DEFAULT_TAIL_CAP = 2_000;
@@ -47,6 +54,7 @@ export class NodeBackgroundTasks implements BackgroundTasksPort {
   readonly #process: ProcessPort;
   readonly #now: () => number;
   readonly #tailCap: number;
+  readonly #boot: string;
   readonly #tasks = new Map<string, Running>();
   readonly #listeners = new Set<(exit: BackgroundExit) => void>();
   #next = 0;
@@ -55,10 +63,11 @@ export class NodeBackgroundTasks implements BackgroundTasksPort {
     this.#process = options.process;
     this.#now = options.now ?? Date.now;
     this.#tailCap = Math.max(0, options.tailCap ?? DEFAULT_TAIL_CAP);
+    this.#boot = options.bootId ?? randomUUID().slice(0, 8);
   }
 
   async start(spec: BackgroundStart): Promise<BackgroundTask> {
-    const taskId = `bg_${String((this.#next += 1))}`;
+    const taskId = `bg_${this.#boot}_${String((this.#next += 1))}`;
     const info: BackgroundTaskInfo = {
       taskId,
       sessionId: spec.sessionId,

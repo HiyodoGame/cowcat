@@ -676,6 +676,60 @@ test('closing the host stops a running background task and records its end', asy
   assert.equal(finished.reason, 'cancel');
 });
 
+test('task.stop stops a running task and refuses ids from another session', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, {
+    model: { preset: PRESET },
+    rules: [{ name: 'bash-is-fine', verdict: 'allow', when: { risk: 'exec' } }],
+  });
+
+  const store = new MemoryEventStore();
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_1', name: 'Bash', input: { command: 'pnpm dev', run_in_background: true } } }],
+    [{ type: 'text', text: 'started' }],
+  ]);
+  const host = await createHost({
+    cwd,
+    home,
+    env: {},
+    version: '0.0.0-test',
+    model,
+    store,
+    platform: fakePlatform(),
+    process: new HangingProcess(),
+  });
+  t.after(() => host.close());
+
+  await host.createSession('sess_bg');
+  await host.sendTurn('sess_bg', 'start the dev server');
+  await poll(
+    async () => (await store.readAll('sess_bg')).some((event) => event.type === 'tool.background.started'),
+    'the started event',
+  );
+
+  // The task belongs to sess_bg; another session cannot stop it by id.
+  await host.createSession('sess_other');
+  const started = (await store.readAll('sess_bg')).find((event) => event.type === 'tool.background.started');
+  if (started?.type !== 'tool.background.started') assert.fail('expected a started event');
+  const { taskId } = started;
+
+  assert.equal(await host.stopTask('sess_other', taskId), false);
+  assert.equal(await host.stopTask('sess_bg', `bg_unknown`), false, 'an id that never existed is false too');
+
+  assert.equal(await host.stopTask('sess_bg', taskId), true);
+  await poll(
+    async () => (await store.readAll('sess_bg')).some((event) => event.type === 'tool.background.finished'),
+    'the finished event',
+  );
+  const finished = (await store.readAll('sess_bg')).find((event) => event.type === 'tool.background.finished');
+  if (finished?.type !== 'tool.background.finished') assert.fail('expected a finished event');
+  assert.equal(finished.state, 'stopped');
+  assert.equal(finished.reason, 'cancel');
+
+  assert.equal(await host.stopTask('sess_bg', taskId), false, 'an already-stopped task is false, not an error');
+});
+
 // ---------------------------------------------------------------------------
 // Attachments (ADR-057)
 // ---------------------------------------------------------------------------

@@ -28,6 +28,9 @@ export class ScriptedHost implements ProtocolHost {
   readonly turns: { readonly sessionId: string; readonly input: string }[] = [];
   readonly approvals: { readonly sessionId: string; readonly callId: string; readonly verdict: ApprovalVerdict }[] = [];
   readonly cancellations: string[] = [];
+  readonly stoppedTasks: { readonly sessionId: string; readonly taskId: string }[] = [];
+  /** Task ids this fake host currently considers running. */
+  readonly runningTasks = new Set<string>();
   readonly attachments = new Map<string, AttachmentBytes>();
   /** The host's own cap; a caller's `maxBytes` can be lower, never higher. */
   attachmentLimit = 1024;
@@ -89,6 +92,12 @@ export class ScriptedHost implements ProtocolHost {
     const limit = Math.min(maxBytes ?? this.attachmentLimit, this.attachmentLimit);
     if (attachment.byteLength > limit) throw new AttachmentTooLargeError(id, attachment.byteLength, limit);
     return Promise.resolve(attachment);
+  }
+
+  stopTask(sessionId: string, taskId: string): Promise<boolean> {
+    this.stoppedTasks.push({ sessionId, taskId });
+    if (!this.sessions.has(sessionId)) throw new NoSuchSessionError(sessionId);
+    return Promise.resolve(this.runningTasks.delete(taskId));
   }
 
   /** Push a durable fact or a streamed delta to whoever attached this session. */

@@ -129,6 +129,21 @@ test('a delta keeps its own shape and tolerates later fields', async () => {
   assert.equal(toolDelta.text, 'compiling');
 });
 
+test('task.stop reports whether the task was stopped, and stopping twice is false', async () => {
+  const host = new ScriptedHost([newScriptedSession('s1')]);
+  host.runningTasks.add('bg_1');
+  const { client } = wire(host);
+  await client.initialize();
+  await client.openSession('s1');
+
+  assert.equal(await client.stopTask('s1', 'bg_1'), true);
+  assert.equal(await client.stopTask('s1', 'bg_1'), false, 'an already-stopped task is not a failure');
+  assert.deepEqual(host.stoppedTasks, [
+    { sessionId: 's1', taskId: 'bg_1' },
+    { sessionId: 's1', taskId: 'bg_1' },
+  ]);
+});
+
 test('parseIncoming separates requests, notifications and junk', () => {
   assert.equal(parseIncoming('{"jsonrpc":"2.0","id":1,"method":"session.list"}').kind, 'request');
   assert.equal(parseIncoming('{"jsonrpc":"2.0","method":"session.list"}').kind, 'notification');

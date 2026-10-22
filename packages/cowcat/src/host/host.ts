@@ -665,6 +665,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       await running.done;
     },
 
+    async stopTask(sessionId: string, taskId: string): Promise<boolean> {
+      // Opening validates the session; a task id from another session must not be
+      // stoppable from here, so the ownership check is on the registry record, not on
+      // the caller's word (ADR-113).
+      open(sessionId);
+      const task = background.list().find((info) => info.taskId === taskId);
+      if (task === undefined || task.sessionId !== sessionId) return false;
+      return background.stop(taskId);
+    },
+
     respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void> {
       const rec = open(sessionId);
       const pending = rec.pendingApproval;

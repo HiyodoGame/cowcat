@@ -156,6 +156,8 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return respondApproval(id, params as Params<'approval.respond'>);
       case 'attachment.read':
         return readAttachment(id, params as Params<'attachment.read'>);
+      case 'task.stop':
+        return stopTask(id, params as Params<'task.stop'>);
       case 'shutdown':
         shutdown(id);
         return;
@@ -234,6 +236,10 @@ export function createServer(options: ServerOptions): ProtocolServer {
 
   async function readAttachment(id: RequestId, params: Params<'attachment.read'>): Promise<void> {
     reply(id, await host.readAttachment(params.id, params.maxBytes ?? null));
+  }
+
+  async function stopTask(id: RequestId, params: Params<'task.stop'>): Promise<void> {
+    reply(id, { stopped: await host.stopTask(params.sessionId, params.taskId) });
   }
 
   function shutdown(id: RequestId): void {
