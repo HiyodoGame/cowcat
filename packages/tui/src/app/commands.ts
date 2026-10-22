@@ -60,6 +60,18 @@ export const COMMANDS: readonly TuiCommand[] = [  {
   },
   { name: 'sessions', summary: '列出会话与恢复命令', run: () => ({ kind: 'sessions' }) },
   { name: 'tasks', summary: '后台任务：查看与终止', run: () => ({ kind: 'tasks' }) },
+  {
+    name: 'skills',
+    summary: '本次会话可用的技能',
+    run: (view) => ({
+      kind: 'notice',
+      level: 'info',
+      text:
+        view.skills.length === 0
+          ? '没有可用技能（未发现 SKILL.md，或项目未受信）。'
+          : view.skills.map((skill) => `${skill.name}（${skill.layer}/${skill.origin}）`).join('　'),
+    }),
+  },
   { name: 'help', summary: '键位与用法', run: (view) => ({ kind: 'notice', level: 'info', text: KEYS_HELP.replace('（/help 看这个列表）', '').trim() + `　【${view.sessionId ?? '无会话'}】` }) },
   { name: 'quit', summary: '退出 cowcat', run: () => ({ kind: 'quit' }) },
 ];

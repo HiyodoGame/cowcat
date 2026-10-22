@@ -196,6 +196,10 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // reprint AGENTS.md. They are in the log so a replay shows what the model was
         // told (ADR-078).
         break;
+      case 'skills.loaded':
+        // Same as instructions: the catalog is what the model was told, not something it
+        // said (ADR-116 ⑥).
+        break;
       case 'turn.noted':
         // A note is reported beside the conversation, not inside it (ADR-093): the
         // projection of a turn is what was said, and a skip notice is not something the

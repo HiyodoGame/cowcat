@@ -1,6 +1,6 @@
 import type { ApprovalBy, ApprovalVerdict } from '../policy/approval.js';
 import type { Decision } from '../policy/decide.js';
-import type { Attachment, BackgroundEndState, TerminationReason, ToolOutputStream, Truncation, TodoItem } from '../ports/index.js';import type { ModelUsage, StopReason } from '../ports/model.js';
+import type { Attachment, BackgroundEndState, SkillLayer, SkillOrigin, TerminationReason, ToolOutputStream, Truncation, TodoItem } from '../ports/index.js';import type { ModelUsage, StopReason } from '../ports/model.js';
 import type { SubagentRole, SubagentState } from '../ports/subagent.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
@@ -19,6 +19,20 @@ interface EventBase {
 export interface InstructionSource {
   readonly path: string;
   /** UTF-8 bytes after the budget was applied. */
+  readonly bytes: number;
+}
+
+/**
+ * One skill whose name made it into the catalog (ADR-116 ①).
+ *
+ * The path is deliberately absent: a replay only has to reproduce the text the model was
+ * shown, and the catalog names no paths. `doctor` reports paths from live discovery.
+ */
+export interface SkillSource {
+  readonly name: string;
+  readonly layer: SkillLayer;
+  readonly origin: SkillOrigin;
+  /** UTF-8 bytes of the line this skill contributed. */
   readonly bytes: number;
 }
 
@@ -169,6 +183,25 @@ export type KernelEvent = EventBase &
         readonly text: string;
         /** What went into `text`, in the order it appears. Bytes are post-budget. */
         readonly files: readonly InstructionSource[];
+      }
+    | {
+        /**
+         * The skill catalog the model is now being sent (ADR-116 ①).
+         *
+         * A message-producing event for the same reason `instructions.loaded` is: what the
+         * model was told about the skills available to it is part of the conversation, and
+         * a replay that had to re-read the filesystem could show a different catalog than
+         * the one the model actually saw. `text` is the rendered catalog, so replay needs
+         * nothing on disk.
+         *
+         * `trigger` mirrors the instruction event: `start` on the first injection of the
+         * session, `refresh` when a compaction shadowed the previous one (ADR-116 ④).
+         */
+        readonly type: 'skills.loaded';
+        readonly trigger: 'start' | 'refresh';
+        readonly text: string;
+        /** Which names made it into `text`, and how much of the budget each took. */
+        readonly skills: readonly SkillSource[];
       }
     | { readonly type: 'policy.decided'; readonly callId: string; readonly decision: Decision }
     | {
@@ -335,6 +368,7 @@ export type TurnNoteKind =
   | 'effort-not-declared'
   | 'compaction-failed'
   | 'instructions-skipped'
+  | 'skills-skipped'
   | 'rounds-exhausted';
 
 // Ephemeral updates exist for live rendering only. They are never persisted:

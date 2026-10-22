@@ -30,18 +30,7 @@ export class FileInstructionSource implements InstructionPort {
   }
 
   async chain(cwd: string, options: InstructionChainOptions = {}): Promise<readonly InstructionFile[]> {
-    const dirs: string[] = [];
-    let dir = this.#fs.canonical(cwd);
-    for (;;) {
-      dirs.push(dir);
-      // `.git` is a directory in a normal checkout and a file in a worktree; `exists`
-      // does not care which, and neither should the walk.
-      if (this.#fs.exists(join(dir, '.git'))) break;
-      const parent = dirname(dir);
-      // dirname of a root is itself, which is how the walk ends on both platforms.
-      if (parent === dir || parent === '') break;
-      dir = parent;
-    }
+    const dirs = projectChainDirs(this.#fs, cwd);
 
     const out: InstructionFile[] = [];
     // The user-global file first: it is the broadest scope there is (ADR-075).
@@ -56,6 +45,36 @@ export class FileInstructionSource implements InstructionPort {
     }
     return out;
   }
+}
+
+/**
+ * The chain of directories from `cwd` up to the project root, **specific to broad**.
+ *
+ * Extracted rather than inlined so `skills` uses the same definition of "project root"
+ * (ADR-114 ②): two walks that disagree by one directory would load a repository's rules
+ * and its skills from different places, and nothing would fail.
+ *
+ * `.git` is a directory in a normal checkout and a file in a worktree; `exists` does not
+ * care which, and neither should the walk. Outside a repository the chain is just `cwd`.
+ */
+export function projectChainDirs(fs: FsPort, cwd: string): string[] {
+  const dirs: string[] = [];
+  let dir = fs.canonical(cwd);
+  for (;;) {
+    dirs.push(dir);
+    if (fs.exists(join(dir, '.git'))) break;
+    const parent = dirname(dir);
+    // dirname of a root is itself, which is how the walk ends on both platforms.
+    if (parent === dir || parent === '') break;
+    dir = parent;
+  }
+  return dirs;
+}
+
+/** The directory the walk stops at; the project's own skills live here (ADR-114 ②). */
+export function projectRootOf(fs: FsPort, cwd: string): string {
+  const dirs = projectChainDirs(fs, cwd);
+  return dirs[dirs.length - 1] ?? fs.canonical(cwd);
 }
 
 // One explicitly named file, by absolute path; the name is its basename.

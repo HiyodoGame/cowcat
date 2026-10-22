@@ -113,6 +113,13 @@ export interface PendingTool {
  */
 export type BackgroundTaskState = 'running' | 'exited' | 'stopped' | 'lost' | 'unknown';
 
+/** One line of the catalog the model was given (ADR-116), as `/skills` shows it. */
+export interface SkillView {
+  readonly name: string;
+  readonly layer: 'user' | 'project';
+  readonly origin: 'cowcat' | 'claude';
+}
+
 export interface BackgroundTaskView {
   readonly taskId: string;
   readonly callId: string;
@@ -211,6 +218,13 @@ export interface TuiView {
    * the host it is talking to.
    */
   readonly tasks: readonly BackgroundTaskView[];
+  /**
+   * The skill catalog the model was given (ADR-116), in the order it appeared.
+   *
+   * Durable: `skills.loaded` is a log event, so `/skills` works in a resumed session without
+   * asking the host to rediscover anything.
+   */
+  readonly skills: readonly SkillView[];
   /** The `/tasks` panel when it is open: which row is selected. */
   readonly taskPanel: { readonly index: number } | null;
   /**
@@ -330,6 +344,7 @@ export function initialView(): TuiView {
     pendingTools: [],
     agents: [],
     tasks: [],
+    skills: [],
     taskPanel: null,
     replayedThrough: 0,
     calls: {},

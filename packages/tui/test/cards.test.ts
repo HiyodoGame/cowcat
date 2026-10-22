@@ -332,7 +332,7 @@ test('a running tool is a card with an animated marker and its command', () => {
 test('the input line hints at / commands as they are typed', () => {
   const empty = frameOf({ ...initialView(), input: '/' }, { width: WIDTH, now: 1_000 });
   assert.match(empty.placeholder, /\/todos/u);
-  assert.match(empty.placeholder, /共 8 个/u);
+  assert.match(empty.placeholder, /共 9 个/u);
 
   const narrowed = frameOf({ ...initialView(), input: '/th' }, { width: WIDTH, now: 1_000 });
   assert.match(narrowed.placeholder, /\/thinking/u);
@@ -662,8 +662,9 @@ test('the / menu is a selectable list in the dock, not a placeholder', () => {
   assert.match(text, /命令/u);
   assert.match(text, /\/todos/u);
   assert.match(text, /▸ \/todos/u);
-  // A row click runs that command, so the id is on the card row.
-  assert.equal(dock.find((row) => row.text.includes('/help'))?.hit, 'slash:6');
+  // A row click runs that command, so the id is on the card row. The menu is windowed, so
+  // `/skills` (index 6) is the last row that fits; `/quit` is below the fold.
+  assert.equal(dock.find((row) => row.text.includes('/skills'))?.hit, 'slash:6');
 
   const moved = frameOf({ ...view, slashIndex: 2 }, { width: WIDTH, now: 1_000 });
   assert.match((moved.dock ?? []).map((row) => row.text).join('\n'), /▸ \/cancel/u);

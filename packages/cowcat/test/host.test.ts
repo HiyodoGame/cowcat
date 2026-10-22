@@ -42,6 +42,7 @@ import {
   type ProcessResult,
   type ProcessSpec,
   type SessionShell,
+  type SkillFile,
 } from '../src/index.js';
 import { MemoryEventStore, ScriptedModel } from './support.js';
 
@@ -1168,4 +1169,103 @@ test('a project-declared MCP server contributes namespaced tools to a turn', asy
   assert.match(String(field(finished, 'output')), /echo: hello/u);
   // No approval was asked: the user rule matched the namespaced name.
   assert.equal(first(active.events(), 'approval.requested'), undefined);
+});
+
+
+// ---------------------------------------------------------------------------
+// Skills (ADR-114~117)
+// ---------------------------------------------------------------------------
+
+const demoSkill = (over: Partial<SkillFile> = {}): SkillFile => ({
+  name: 'demo',
+  description: 'A demo skill.',
+  path: '/skills/demo/SKILL.md',
+  root: '/skills/demo',
+  layer: 'user',
+  origin: 'cowcat',
+  body: 'Do the demo.',
+  ignoredFields: [],
+  hidden: false,
+  ...over,
+});
+
+test('the composition root offers Skill and injects the catalog before the request', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const store = new MemoryEventStore();
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const host = await createHost({
+    cwd,
+    home,
+    env: {},
+    version: '0.0.0-test',
+    model,
+    store,
+    skills: { discover: async () => ({ skills: [demoSkill()], warnings: [] }) },
+  });
+  t.after(() => host.close());
+
+  await host.createSession('sess_skills');
+  await host.sendTurn('sess_skills', 'use the demo skill');
+  await poll(
+    async () => (await store.readAll('sess_skills')).some((event) => event.type === 'turn.transitioned' && event.to === 'completed'),
+    'the turn to complete',
+  );
+
+  const request = model.requests[0];
+  assert.ok(request !== undefined);
+  assert.ok(
+    request.tools.some((tool) => tool.name === 'Skill'),
+    'the tool the catalog tells the model to call is actually on the wire',
+  );
+  const first = request.messages[0];
+  assert.ok(first !== undefined);
+  assert.equal(first.role, 'user');
+  assert.match(first.text, /demo: A demo skill\./);
+
+  const events = await store.readAll('sess_skills');
+  assert.ok(events.some((event) => event.type === 'skills.loaded'));
+});
+
+test('a project skill in an untrusted folder is neither offered nor announced as available', async (t) => {
+  const home = tempDir(t, 'cowcat-host-home-');
+  const cwd = tempDir(t, 'cowcat-host-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const store = new MemoryEventStore();
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const host = await createHost({
+    cwd,
+    home,
+    env: {},
+    version: '0.0.0-test',
+    model,
+    store,
+    skills: { discover: async () => ({ skills: [demoSkill({ layer: 'project' })], warnings: [] }) },
+  });
+  t.after(() => host.close());
+
+  await host.createSession('sess_untrusted');
+  await host.sendTurn('sess_untrusted', 'hello');
+  await poll(
+    async () => (await store.readAll('sess_untrusted')).some((event) => event.type === 'turn.transitioned' && event.to === 'completed'),
+    'the turn to complete',
+  );
+
+  const request = model.requests[0];
+  assert.ok(request !== undefined);
+  assert.equal(
+    request.tools.some((tool) => tool.name === 'Skill'),
+    false,
+    'without a visible skill the tool is not offered at all',
+  );
+
+  const events = await store.readAll('sess_untrusted');
+  assert.equal(events.some((event) => event.type === 'skills.loaded'), false);
+  const noted = events.find((event) => event.type === 'turn.noted');
+  assert.ok(noted !== undefined);
+  assert.equal(noted.type, 'turn.noted');
+  assert.equal(noted.note, 'skills-skipped');
 });
