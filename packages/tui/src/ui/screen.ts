@@ -172,6 +172,14 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       // here would silently leave the composer unable to submit.
       { name: 'return', action: 'submit' },
       { name: 'return', shift: true, action: 'newline' },
+      // Shift+Enter and Ctrl+Enter are only *distinguishable* from Enter when the terminal
+      // speaks the kitty keyboard protocol (opentui asks for disambiguation at startup, and
+      // plenty of terminals ignore the request). Without it both keys arrive as a bare CR and
+      // the row above would submit. `Alt` survives that: legacy terminals encode it as ESC CR,
+      // which still parses as `meta + return` — measured with a headless renderer, see
+      // `test/composer.test.ts`.
+      { name: 'return', meta: true, action: 'newline' },
+      // Ctrl+J is a literal LF, so it needs no protocol support at all.
       { name: 'j', ctrl: true, action: 'newline' },
     ],
   });
