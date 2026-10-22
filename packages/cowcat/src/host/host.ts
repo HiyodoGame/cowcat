@@ -588,12 +588,22 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // SessionStart (ADR-122 ①): fires once per session creation — resume reopens a
       // log and fires nothing, matching the log's own shape (session.opened exists,
       // re-open does not). Failure cannot reject creation: a broken start hook must
-      // not keep a session from existing.
+      // not keep a session from existing, so failures land in the session's own log
+      // (a turn.noted with no turn yet), where every frontend will see them.
       hooksPort
         .run({ event: 'session-start', sessionId: id, cwd: options.cwd }, new AbortController().signal)
-        .then((report) => {
+        .then(async (report) => {
           for (const failure of report.failures) {
-            warnings.push(`hooks: session-start 失败：${failure}`);
+            try {
+              await session.emit({
+                type: 'turn.noted',
+                turnId: null,
+                note: 'hook-failed',
+                message: `hook 失败：${failure}`,
+              });
+            } catch {
+              // The session is there to be written; if even that fails, nothing else is honest to do.
+            }
           }
         })
         .catch(() => undefined);

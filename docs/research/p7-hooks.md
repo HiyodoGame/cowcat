@@ -110,4 +110,23 @@ dev-plan P7 行：**触发时机、失败语义、是否经过策略；出生即
 2. **matcher 正则的 JS 语义**【推断】：CC 用 `RegExp.test`（不锚定），我们照用 `new RegExp(m).test(name)`；异常正则（如 `(`）视为永不匹配 + doctor 汇报。【须实测（单测覆盖）】
 3. **观测 hook 拖慢回合**【推断】：SessionStart/Stop 每次 fork 进程，60s 超时上限兜底；真机量化 T5。【须实测】
 4. **cowcat.json `hooks` 段与 CC 文件的优先级**【推断】：同层叠加、执行顺序 user→project；若同事件同 matcher 的 deny hook 在两个文件都配，都跑（先 user 后 project），先 deny 者胜。T1 前定死写入 ADR-123。
-5. **stdin JSON 里给哪些字段**【推断】：CC common 字段我们全给（session_id/transcript_path/cwd/hook_event_name/permission_mode?）——我们没有 permission_mode 概念，v1 给 `"default"` 还是不给，T1 前定死（倾向不给：宁缺毋假）。【须裁决】
+5. **stdin JSON 里给哪些字段**【推断】：CC common 字段我们全给（session_id/transcript_path/cwd/hook_event_name/permission_mode?）——我们没有 permission_mode 概念，v1 给 `"default"` 还是不给，T1 前定死（倾向不给：宁缺毋假）。【须裁决】→ **2026-10-22 已裁决**：不给（宁缺毋假），已写入 ADR-122 ③。
+
+## 11.1 #161 审查校准与已知偏差（2026-10-22，全部已处理或文档化）
+
+审查（code-reviewer/k3）结论：无 P0；5 P1 + 14 P2。P1 全部修复（#162），要点：
+
+- stdin `hook_event_name` 用 PascalCase（CC 脚本按它分支，kebab-case 会让多事件脚本全部失配）。
+- CC 现行决策格式是**顶层** `{decision, reason}`（UserPromptSubmit/PostToolUse）；`hookSpecificOutput.permissionDecision` 是 PreToolUse 的较旧形态。两处都读、文档形态优先。
+- `additionalContext` 文档位置在 `hookSpecificOutput` 内，顶层旧拼写也读（fallback）。
+- tool 事件的 context outcome 原先被内核丢弃（与端口契约矛盾）——现收集到轮末批量注入（ADR-120 ② 同款防 wire 配对断裂教训）。
+- hook spec 加 outputCap 100K（bash 同款）；context/rewrite 文本按 CC 的 10K 上限截断。
+
+修复的 P2：exitCode null（cancel/信号杀死）不再当成功解析（防半截 JSON 变假 deny）；内核四处 port 调用全经 runHooksSafely（port 抛错 → note，不杀回合/调用）；SessionStart 失败改投会话日志（原 warnings 是死信）；PostToolUse block 无 rewrite 时 reason 以 note 效果附在原输出旁；跨文件相同 handler 去重（CC「runs once」）；deny 路径查 abort；exit≠0 失败行带 env 剥离计数。
+
+**已知偏差（有意为之，非缺陷）**：
+
+1. `updatedToolOutput` 收 string 或 `{output}`，不是 CC 的工具形状对象；`tool_response` 是 `{ok, output}` 而非工具原生形状——结构性偏离，脚本跨工具复用时需知晓。
+2. UserPromptSubmit 纯文本 stdout 不注入（CC 当作 system reminder 给模型）——v1 只做 additionalContext。
+3. `${CLAUDE_PROJECT_DIR}` 文本替换在 Windows 路径（反斜杠/空格）下脆弱——env 通道（`CLAUDE_PROJECT_DIR` 环境变量）已正确设置，Windows 上推荐 exec 形 + env。
+4. trust 判定在 cwd、hook 文件来自 projectRoot 祖先目录——与 skills/instructions 同一先例（未信目录里的任何项目层内容都不加载）；hooks 载荷是指令这一点使风险高于文本类载荷，若真机出现「只信任了子目录却在跑父目录 hooks」的意外，再收紧为对 projectRoot 判定。

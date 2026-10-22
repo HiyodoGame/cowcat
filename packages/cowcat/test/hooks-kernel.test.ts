@@ -224,3 +224,61 @@ test('hook failures never fail the turn (ADR-121 ③)', async () => {
   );
   assert.equal(outcome.state, 'completed');
 });
+
+test('tool-event hook context is injected after the round’s tool results, not between them', async () => {
+  // PreToolUse additionalContext must not land between two tool results (wire pairing,
+  // the ADR-120 ② lesson) — the loop batches it after the last tool.finished.
+  const { store, session } = await runWithHooks(
+    (input) =>
+      input.event === 'pre-tool-use' &&
+      typeof input.toolInput === 'object' && input.toolInput !== null &&
+      (input.toolInput as { readonly a?: number }).a === 1
+        ? { outcome: { effect: 'context', text: 'ctx from pre-tool hook' }, failures: [] }
+        : none,
+    [
+      [call('c1', { a: 1 }), call('c2', { b: 2 })],
+      [{ type: 'text', text: 'done' }],
+    ],
+  );
+
+  const roles = session.state.messages.map((message) =>
+    message.role === 'tool' ? `tool:${message.callId}` : message.role,
+  );
+  assert.deepEqual(roles, ['user', 'assistant', 'tool:c1', 'tool:c2', 'user', 'assistant']);
+  const added = store.events.find((event) => event.type === 'hooks.context-added');
+  assert.ok(added?.type === 'hooks.context-added' && added.text === 'ctx from pre-tool hook');
+  const finished = store.events.filter((event) => event.type === 'tool.finished');
+  assert.ok(added.seq > (finished[finished.length - 1]?.seq ?? 0), 'after every tool.finished');
+});
+
+test('a throwing hooks port becomes a note, not a failed turn or call (ADR-121 ③)', async () => {
+  const store = new MemoryEventStore();
+  const session = await Session.create(sessionDeps(store), SESSION);
+  const throwing: HooksPort = {
+    run: () => Promise.reject(new Error('port exploded')),
+  };
+  const deps = turnDeps(session, new ScriptedModel([[call('c1', { x: 1 })], [{ type: 'text', text: 'done' }]]), {
+    tools: new Map([[probe.spec.name, probe]]),
+    hooks: { port: throwing, cwd: '/repo' },
+  });
+  const outcome = await runTurn(deps, 'go', new AbortController().signal);
+
+  assert.equal(outcome.state, 'completed');
+  const finished = store.events.find((event) => event.type === 'tool.finished');
+  assert.ok(finished !== undefined && finished.ok, 'call ran normally');
+  const noted = store.events.filter((event) => event.type === 'turn.noted');
+  assert.ok(noted.some((event) => event.note === 'hook-failed' && event.message.includes('port exploded')));
+});
+
+test('PostToolUse note effect appends the reason beside the original output', async () => {
+  const { session } = await runWithHooks(
+    (input) =>
+      input.event === 'post-tool-use'
+        ? { outcome: { effect: 'note', text: 'lint failed' }, failures: [] }
+        : none,
+    [[call('c1', { x: 1 })], [{ type: 'text', text: 'done' }]],
+  );
+  const toolMessage = session.state.messages.find((message) => message.role === 'tool');
+  assert.ok(toolMessage?.role === 'tool');
+  assert.equal(toolMessage.output, 'raw output\n\n[hook blocked: lint failed]');
+});

@@ -17,6 +17,18 @@ export const HOOK_MIN_TIMEOUT_MS = 1_000;
 export const HOOK_DEFAULT_TIMEOUT_MS = 60_000;
 /** The bash v1 ceiling (bash.ts): a hook is a short script, not a build. */
 export const HOOK_MAX_TIMEOUT_MS = 600_000;
+/**
+ * stdout/stderr cap per stream, the bash tool's number: a runaway hook (`yes`, an
+ * accidental `cat` of a big file) must not pile unbounded bytes on the heap inside
+ * the default 60s window.
+ */
+export const HOOK_OUTPUT_CAP_CHARS = 100_000;
+/**
+ * What may enter the conversation from one hook run (CC caps additionalContext at
+ * 10,000 characters 【上游】). Context and rewrites land in `messages` and the log,
+ * so they get the same ceiling here.
+ */
+export const HOOK_MAX_EFFECT_CHARS = 10_000;
 
 const EVENT_NAMES: Readonly<Record<string, HookEventName>> = {
   PreToolUse: 'pre-tool-use',
@@ -25,6 +37,16 @@ const EVENT_NAMES: Readonly<Record<string, HookEventName>> = {
   Stop: 'stop',
   SessionStart: 'session-start',
   PreCompact: 'pre-compact',
+};
+
+/** Inverse of {@link EVENT_NAMES} for the stdin payload: CC scripts branch on PascalCase. */
+const CC_EVENT_NAMES: Readonly<Record<HookEventName, string>> = {
+  'pre-tool-use': 'PreToolUse',
+  'post-tool-use': 'PostToolUse',
+  'user-prompt-submit': 'UserPromptSubmit',
+  stop: 'Stop',
+  'session-start': 'SessionStart',
+  'pre-compact': 'PreCompact',
 };
 
 /** Events CC defines matchers for, inside our v1 subset. */
@@ -196,6 +218,7 @@ export function createHooksPort(options: HookRunnerOptions): HooksPort {
       const failures: string[] = [];
       let contexts: string[] = [];
       let rewrite: { output: string; note: string | null } | null = null;
+      let note: string | null = null;
 
       for (const hook of matched) {
         const result = await runHandler(options, hook, input, signal, failures);
@@ -204,17 +227,20 @@ export function createHooksPort(options: HookRunnerOptions): HooksPort {
         }
         if (result.context !== null) contexts = [...contexts, result.context];
         if (result.rewrite !== null) rewrite = result.rewrite;
+        if (result.note !== null) note = result.note;
         if (signal.aborted) break;
       }
 
       // Observation events stay observation (ADR-122 ①): their JSON output is validated
       // but no effect is applied, so a Stop hook can never rewrite a finished turn.
       const observable = input.event === 'stop' || input.event === 'session-start' || input.event === 'pre-compact';
-      const outcome: HookOutcome = contexts.length > 0 && !observable
+      const outcome: HookOutcome = !observable && contexts.length > 0
         ? { effect: 'context', text: contexts.join('\n\n') }
         : rewrite !== null
           ? { effect: 'rewrite', output: rewrite.output, note: rewrite.note }
-          : { effect: 'none' };
+          : !observable && note !== null
+            ? { effect: 'note', text: note }
+            : { effect: 'none' };
       return { outcome, failures };
     },
   };
@@ -230,6 +256,8 @@ interface HandlerEffect {
   readonly deny: string | null;
   readonly context: string | null;
   readonly rewrite: { output: string; note: string | null } | null;
+  /** PostToolUse `decision:"block"` without a rewrite: the note rides beside the original output. */
+  readonly note: string | null;
 }
 
 async function runHandler(
@@ -250,6 +278,7 @@ async function runHandler(
     env: { ...currentEnv(options.env), CLAUDE_PROJECT_DIR: options.projectDir },
     stdin,
     timeoutMs: hook.timeoutMs,
+    outputCap: HOOK_OUTPUT_CAP_CHARS,
     sandbox: options.sandbox,
   };
 
@@ -258,15 +287,20 @@ async function runHandler(
     result = await options.process.run(spec, signal);
   } catch (error) {
     failures.push(`${hook.source}: hook 没能启动（${error instanceof Error ? error.message : String(error)}）`);
-    return { deny: null, context: null, rewrite: null };
+    return { deny: null, context: null, rewrite: null, note: null };
   }
 
-  const timedOut = result.termination.reason === 'timeout';
-  if (timedOut) {
-    failures.push(`${hook.source}: hook 超时（${String(Math.round(hook.timeoutMs / 1_000))}s）`);
-    return { deny: null, context: null, rewrite: null };
+  if (result.exitCode === null) {
+    // Cancelled or signal-killed: half a stdout is not a decision, and a truncated
+    // JSON fragment must never become a fake deny.
+    failures.push(`${hook.source}: hook 被终止（${result.termination.reason}），输出作废`);
+    return { deny: null, context: null, rewrite: null, note: null };
   }
-  if (result.exitCode === null || result.exitCode === 0) {
+  if (result.termination.reason === 'timeout') {
+    failures.push(`${hook.source}: hook 超时（${String(Math.round(hook.timeoutMs / 1_000))}s）`);
+    return { deny: null, context: null, rewrite: null, note: null };
+  }
+  if (result.exitCode === 0) {
     return parseSuccessOutput(hook, result.stdout, failures);
   }
   if (result.exitCode === 2) {
@@ -275,13 +309,14 @@ async function runHandler(
     // failure line instead.
     const reason = firstLine(result.stderr) ?? firstLine(result.stdout) ?? 'blocked by hook';
     if (input.event === 'pre-tool-use' || input.event === 'user-prompt-submit') {
-      return { deny: reason, context: null, rewrite: null };
+      return { deny: reason, context: null, rewrite: null, note: null };
     }
     failures.push(`${hook.source}: hook exit 2（${reason}）`);
-    return { deny: null, context: null, rewrite: null };
+    return { deny: null, context: null, rewrite: null, note: null };
   }
-  failures.push(`${hook.source}: hook exit ${String(result.exitCode)}（${firstLine(result.stderr) ?? 'no stderr'}）`);
-  return { deny: null, context: null, rewrite: null };
+  const removed = result.removedEnv.length > 0 ? `；env 剥离 ${String(result.removedEnv.length)} 项` : '';
+  failures.push(`${hook.source}: hook exit ${String(result.exitCode)}（${firstLine(result.stderr) ?? 'no stderr'}${removed}）`);
+  return { deny: null, context: null, rewrite: null, note: null };
 }
 
 /** Builds the stdin JSON, CC input shape with only the fields that are true here. */
@@ -290,7 +325,9 @@ function hookInputJson(options: HookRunnerOptions, input: HookEventInput): Recor
     session_id: input.sessionId,
     transcript_path: joinPath(options.sessionsDir, `${input.sessionId}.jsonl`),
     cwd: input.cwd,
-    hook_event_name: input.event,
+    // PascalCase, exactly as CC scripts branch on it — a kebab-case event name would
+    // silently misroute every multi-event CC script (review of #161, P1-1).
+    hook_event_name: CC_EVENT_NAMES[input.event],
   };
   if (input.toolName !== undefined) json.tool_name = input.toolName;
   if (input.toolInput !== undefined) json.tool_input = input.toolInput;
@@ -305,49 +342,78 @@ function parseSuccessOutput(
   stdout: string,
   failures: string[],
 ): HandlerEffect {
+  const none: HandlerEffect = { deny: null, context: null, rewrite: null, note: null };
   const trimmed = stdout.trim();
-  if (trimmed === '') return { deny: null, context: null, rewrite: null };
+  if (trimmed === '') return none;
   if (!trimmed.startsWith('{')) {
     // Plain text stdout is not a failure 【上游】: a hook that just logs succeeds.
-    return { deny: null, context: null, rewrite: null };
+    // (CC injects plain-text stdout as a UserPromptSubmit reminder; v1 does not — a
+    // documented deviation, see research/p7-hooks.md §11.)
+    return none;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
     failures.push(`${hook.source}: hook 输出了看似 JSON 但解析失败的内容`);
-    return { deny: null, context: null, rewrite: null };
+    return none;
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     failures.push(`${hook.source}: hook 的 JSON 输出不是对象`);
-    return { deny: null, context: null, rewrite: null };
+    return none;
   }
   const record = parsed as Record<string, unknown>;
   const specific = asRecord(record.hookSpecificOutput);
 
+  // Decision formats: CC's current shape is TOP-LEVEL {decision, reason} for
+  // UserPromptSubmit/PostToolUse; the older hookSpecificOutput.permissionDecision is
+  // PreToolUse's and still honored. Read both, documented shape first (review P1-2).
   let deny: string | null = null;
-  const decision = stringField(specific, 'permissionDecision') ?? stringField(specific, 'decision');
-  if ((decision === 'deny' || decision === 'block') && inputCanDeny(hook.event)) {
-    deny = stringField(specific, 'permissionDecisionReason') ?? stringField(specific, 'reason') ?? 'denied by hook';
+  let note: string | null = null;
+  if (inputCanDeny(hook.event)) {
+    const decision =
+      stringField(record, 'decision') ??
+      stringField(specific, 'permissionDecision') ??
+      stringField(specific, 'decision');
+    if (decision === 'deny' || decision === 'block') {
+      deny = topReason(record, specific) ?? 'denied by hook';
+    }
   }
 
+  // additionalContext lives in hookSpecificOutput in CC's documented shape; the
+  // top-level spelling is older but seen in the wild. Read both, documented first.
   let context: string | null = null;
   if (!observableEvent(hook.event)) {
-    context = stringField(record, 'additionalContext');
+    context = limitEffectText(
+      stringField(specific, 'additionalContext') ?? stringField(record, 'additionalContext'),
+    );
   }
 
   let rewrite: { output: string; note: string | null } | null = null;
-  if (hook.event === 'post-tool-use' && specific !== null) {
-    const updated = specific.updatedToolOutput;
+  if (hook.event === 'post-tool-use') {
+    const updated = specific?.updatedToolOutput;
     const outputText = typeof updated === 'string' ? updated : stringField(asRecord(updated), 'output');
+    const decision = stringField(record, 'decision') ?? stringField(specific, 'decision');
+    const blockReason = decision === 'block' ? topReason(record, specific) : null;
     if (outputText !== null) {
-      rewrite = {
-        output: outputText,
-        note: decision === 'block' ? stringField(specific, 'reason') : null,
-      };
+      rewrite = { output: limitEffectText(outputText) ?? outputText, note: blockReason };
+    } else if (blockReason !== null) {
+      // block without a rewrite: the model keeps the original output, the reason rides
+      // beside it (CC PostToolUse semantics).
+      note = blockReason;
     }
   }
-  return { deny, context, rewrite };
+  return { deny, context, rewrite, note };
+}
+
+function topReason(record: Record<string, unknown>, specific: Record<string, unknown> | null): string | null {
+  return stringField(record, 'reason') ?? stringField(specific, 'permissionDecisionReason') ?? stringField(specific, 'reason');
+}
+
+/** CC's 10,000-character ceiling on what a hook may add to the conversation. */
+function limitEffectText(text: string | null): string | null {
+  if (text === null) return null;
+  return text.length <= HOOK_MAX_EFFECT_CHARS ? text : `${text.slice(0, HOOK_MAX_EFFECT_CHARS)}…[截断：超过 ${String(HOOK_MAX_EFFECT_CHARS)} 字符上限]`;
 }
 
 function inputCanDeny(event: HookEventName): boolean {
@@ -435,6 +501,7 @@ export async function loadHookSources(input: HookSourceInput): Promise<LoadedHoo
   const inert: string[] = [];
   let loaded = 0;
   let skippedUntrusted = 0;
+  const seen = new Set<string>();
   for (const candidate of candidates) {
     if (candidate.layer === 'project' && !input.trusted) {
       skippedUntrusted += 1;
@@ -454,7 +521,14 @@ export async function loadHookSources(input: HookSourceInput): Promise<LoadedHoo
       : undefined;
     if (section === undefined) continue;
     const parsed = parseHookSection(section, candidate.path);
-    hooks.push(...parsed.hooks);
+    // CC merges across settings files but runs the same handler once; dedupe on the
+    // identity that matters (review of #161, P2-6). First occurrence wins the slot.
+    for (const hook of parsed.hooks) {
+      const key = `${hook.event}\n${hook.command}\n${(hook.args ?? []).join('')}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hooks.push(hook);
+    }
     inert.push(...parsed.inert);
     loaded += 1;
   }

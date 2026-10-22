@@ -1,7 +1,7 @@
 import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
-import type { FsPort, HooksPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
+import type { FsPort, HookEventInput, HookRunReport, HooksPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
 import type { InstructionPort, SkillFile } from '../ports/index.js';
 import { decideInstruction, describeInstructionSkip } from '../policy/instructions.js';
 import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/skills.js';
@@ -274,20 +274,17 @@ async function runTurnBody(
   // closes with a note, the model is never called — the log shows a submitted prompt
   // that a hook turned away, which is what happened.
   if (deps.hooks !== undefined) {
-    const report = await deps.hooks.port.run(
-      {
-        event: 'user-prompt-submit',
-        sessionId: session.state.sessionId,
-        cwd: deps.hooks.cwd,
-        prompt: input,
-      },
-      signal,
-    );
-    for (const failure of report.failures) await note({ kind: 'hook-failed', message: failure }, null);
+    const report = await runHooksSafely(deps, {
+      event: 'user-prompt-submit',
+      sessionId: session.state.sessionId,
+      cwd: deps.hooks.cwd,
+      prompt: input,
+    }, signal);
     if (report.outcome.effect === 'context') {
       await session.emit({ type: 'hooks.context-added', turnId: null, text: report.outcome.text });
     }
     if (report.outcome.effect === 'deny') {
+      if (signal.aborted) throw new TurnAborted('aborted while a prompt hook was deciding');
       await session.openTurn(input, {
         model: deps.preset.model,
         ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
@@ -351,7 +348,7 @@ async function runTurnBody(
         // The cap is a normal ending: finishing → completed, with the caller told the
         // answer is partial rather than being handed a silent truncation.
         await note({ kind: 'rounds-exhausted', rounds }, turnId);
-        await fireStopHook(deps, turnId, signal, note);
+        await fireStopHook(deps, signal);
         await session.transition('finishing');
         await session.transition('completed');
         return { turnId, state: 'completed', reason: null, partial: true };
@@ -359,7 +356,7 @@ async function runTurnBody(
       const calls = await streamModel(deps, effort.providerOptions, signal);
       rounds += 1;
       if (calls.length === 0) {
-        await fireStopHook(deps, turnId, signal, note);
+        await fireStopHook(deps, signal);
         await session.transition('finishing');
         await session.transition('completed');
         return { turnId, state: 'completed', reason: null, partial: false };
@@ -370,13 +367,17 @@ async function runTurnBody(
       // pairing both protocols require (every tool_use answered immediately after the
       // assistant turn) — the cost of one round of delay is nothing against a 400.
       const pendingReminders: { readonly callId: string; readonly name: string; readonly count: number; readonly previousOk: boolean }[] = [];
+      // Hook context rides the same batching rule as reminders (ADR-120 ②): a user
+      // message between two tool results would break the wire pairing.
+      const pendingHookContexts: string[] = [];
       for (const call of calls) {
         // `normalizeCall` has already JSON-round-tripped the input, so equal arguments
         // stringify equal — key order included, which is fine for detecting literal loops.
         const callKey = `${call.name}\n${JSON.stringify(call.input)}`;
         const matched = callKey === lastCallKey;
         repeatCount = matched ? repeatCount + 1 : 1;
-        const { result, path } = await runCall(deps, call, signal);
+        const { result, path, hookContexts } = await runCall(deps, call, signal);
+        if (hookContexts !== undefined) pendingHookContexts.push(...hookContexts);
         // Before `tool.finished` on purpose (ADR-054): two appends are never atomic, and
         // the two directions are not equal — a crash here leaves the list recorded, while
         // the other order would lose the user-visible state and still claim success.
@@ -411,6 +412,9 @@ async function runTurnBody(
         }
         lastCallKey = callKey;
         lastCallOk = result.ok;
+      }
+      for (const text of pendingHookContexts) {
+        await session.emit({ type: 'hooks.context-added', turnId: session.turnId, text });
       }
       for (const reminder of pendingReminders) {
         // The reminder is a fact the model was shown, so it goes in the log as a message
@@ -709,6 +713,13 @@ interface ApprovalOutcome {
 interface CompletedCall {
   readonly result: ToolResult;
   readonly path: string | null;
+  /**
+   * Context a Pre/PostToolUse hook asked to inject (ADR-122). Absent means none, and
+   * never emitted here: a user message between two tool results would break the wire
+   * pairing, so the loop batches these after the round's last `tool.finished` — the
+   * same lesson the repeat reminder learned (ADR-120 ②).
+   */
+  readonly hookContexts?: readonly string[];
 }
 
 // Refusal text when a write-risk tool is about to overwrite an existing file the
@@ -921,22 +932,21 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
 
   // PreToolUse (ADR-122): the last word before the call runs. A deny here produces a
   // normal `ok:false` result — the tool genuinely did not run, so `tool.finished` stays
-  // the honest fact and replay agrees.
+  // the honest fact and replay agrees. A throwing port is a failure note, never a dead
+  // turn: hooks must not be able to fail the call they gate (ADR-121 ③).
+  const hookContexts: string[] = [];
   if (deps.hooks !== undefined) {
-    const report = await deps.hooks.port.run(
-      {
-        event: 'pre-tool-use',
-        sessionId: session.state.sessionId,
-        cwd: deps.hooks.cwd,
-        toolName: call.name,
-        toolInput: call.input,
-      },
-      signal,
-    );
-    await noteHookFailures(deps, report.failures);
+    const report = await runHooksSafely(deps, {
+      event: 'pre-tool-use',
+      sessionId: session.state.sessionId,
+      cwd: deps.hooks.cwd,
+      toolName: call.name,
+      toolInput: call.input,
+    }, signal);
     if (report.outcome.effect === 'deny') {
       return { result: { ok: false, output: `blocked by hook: ${report.outcome.reason}` }, path };
     }
+    if (report.outcome.effect === 'context') hookContexts.push(report.outcome.text);
   }
 
   const grant: ToolGrant = { networkApproved: approved };
@@ -954,18 +964,15 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
     // there, which v1 does not subscribe). A rewrite replaces what the model sees, and
     // `tool.finished.output` below records exactly that — the log holds the model's view.
     if (deps.hooks !== undefined && result.ok) {
-      const report = await deps.hooks.port.run(
-        {
-          event: 'post-tool-use',
-          sessionId: session.state.sessionId,
-          cwd: deps.hooks.cwd,
-          toolName: call.name,
-          toolInput: call.input,
-          toolResponse: { ok: result.ok, output: result.output },
-        },
-        signal,
-      );
-      await noteHookFailures(deps, report.failures);
+      const report = await runHooksSafely(deps, {
+        event: 'post-tool-use',
+        sessionId: session.state.sessionId,
+        cwd: deps.hooks.cwd,
+        toolName: call.name,
+        toolInput: call.input,
+        toolResponse: { ok: result.ok, output: result.output },
+      }, signal);
+      if (report.outcome.effect === 'context') hookContexts.push(report.outcome.text);
       if (report.outcome.effect === 'rewrite') {
         return {
           result: {
@@ -975,10 +982,18 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
               : report.outcome.output,
           },
           path,
+          ...(hookContexts.length === 0 ? {} : { hookContexts }),
+        };
+      }
+      if (report.outcome.effect === 'note') {
+        return {
+          result: { ...result, output: `${result.output}\n\n[hook blocked: ${report.outcome.text}]` },
+          path,
+          ...(hookContexts.length === 0 ? {} : { hookContexts }),
         };
       }
     }
-    return { result, path };
+    return { result, path, ...(hookContexts.length === 0 ? {} : { hookContexts }) };
   } catch (error) {
     if (signal.aborted) throw error;
     const message = error instanceof Error ? error.message : String(error);
@@ -990,29 +1005,35 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
  * The Stop hook (ADR-122 ①) fires when the model finishes responding — before the
  * terminal transitions, so a slow hook delays completion rather than racing it. v1 is
  * observation-only: the outcome's effects are ignored by the runner, so the only thing
- * that can reach the log here is a failure note.
+ * that can reach the log here is a failure note (handled inside {@link runHooksSafely}).
  */
-async function fireStopHook(
-  deps: TurnDeps,
-  turnId: string,
-  signal: AbortSignal,
-  note: (item: TurnNote, turnId: string | null) => Promise<void>,
-): Promise<void> {
+async function fireStopHook(deps: TurnDeps, signal: AbortSignal): Promise<void> {
   if (deps.hooks === undefined) return;
-  const report = await deps.hooks.port.run(
-    { event: 'stop', sessionId: deps.session.state.sessionId, cwd: deps.hooks.cwd },
-    signal,
-  );
-  for (const failure of report.failures) await note({ kind: 'hook-failed', message: failure }, turnId);
+  await runHooksSafely(deps, { event: 'stop', sessionId: deps.session.state.sessionId, cwd: deps.hooks.cwd }, signal);
 }
 
 /**
- * Hook failures go straight to the log as notes (ADR-121 ③): `runCall` has no `notes`
- * array of its own, and the event — not the outcome summary — is what frontends read.
- * A failure to write is swallowed for the same reason `recordNote` swallows it.
+ * Runs the hooks port the way ADR-121 ③ promises: whatever the port does — throw,
+ * reject, report failures — the turn survives it and the failure reaches the log as a
+ * note. `runCall` has no `notes` array of its own, and the event — not the outcome
+ * summary — is what frontends read.
  */
-async function noteHookFailures(deps: TurnDeps, failures: readonly string[]): Promise<void> {
-  for (const failure of failures) {
+async function runHooksSafely(
+  deps: TurnDeps,
+  input: HookEventInput,
+  signal: AbortSignal,
+): Promise<HookRunReport> {
+  if (deps.hooks === undefined) return { outcome: { effect: 'none' }, failures: [] };
+  let report: HookRunReport;
+  try {
+    report = await deps.hooks.port.run(input, signal);
+  } catch (error) {
+    report = {
+      outcome: { effect: 'none' },
+      failures: [`hook 抛错：${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+  for (const failure of report.failures) {
     try {
       await deps.session.emit({
         type: 'turn.noted',
@@ -1024,6 +1045,7 @@ async function noteHookFailures(deps: TurnDeps, failures: readonly string[]): Pr
       // A closed session is the ordinary way this fails; the call's outcome is unaffected.
     }
   }
+  return report;
 }
 
 /**

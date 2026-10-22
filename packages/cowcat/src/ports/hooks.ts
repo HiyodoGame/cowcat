@@ -43,7 +43,9 @@ export type HookOutcome =
   /** Exit 0 `additionalContext`: injected into the conversation as a user message. */
   | { readonly effect: 'context'; readonly text: string }
   /** PostToolUse `updatedToolOutput`: replaces the output the model sees. */
-  | { readonly effect: 'rewrite'; readonly output: string; readonly note: string | null };
+  | { readonly effect: 'rewrite'; readonly output: string; readonly note: string | null }
+  /** PostToolUse `decision:"block"` without a rewrite: the note rides beside the original output. */
+  | { readonly effect: 'note'; readonly text: string };
 
 export interface HookRunReport {
   readonly outcome: HookOutcome;
