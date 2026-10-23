@@ -2,7 +2,7 @@ import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { graphemes } from '../text/width.js';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, texts, updateSeq, updateType } from './fields.js';
-import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type Entry, type PlanCardOption, type PlanView, type TodoView, type ToolCallView, type TuiView } from './view.js';
+import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type CronJobView, type Entry, type PlanCardOption, type PlanView, type TodoView, type ToolCallView, type TuiView } from './view.js';
 import { noteBelow } from './view.js';
 
 /**
@@ -35,11 +35,17 @@ export function project(view: TuiView, event: WireEvent): TuiView {
 
     case 'turn.opened': {
       const input = text(event, 'input') ?? '';
-      const opened = add(withLangFrom(base, input), { kind: 'user', seq, text: input });
+      const turnId = text(event, 'turnId') ?? '';
+      // A turn a cron fire opened carries the marker (ADR-142 ④): the fired event named
+      // this id first. The pending entry is consumed; the id stays for the session.
+      const cronSourced = base.cronPendingTurns.includes(turnId);
+      const opened = add(withLangFrom(base, input), { kind: 'user', seq, text: input, ...(cronSourced ? { cron: true as const } : {}) });
       return {
         ...opened,
         streaming: '',
-        turn: { id: text(event, 'turnId') ?? '', state: 'opened', reason: null },
+        turn: { id: turnId, state: 'opened', reason: null, cronSourced },
+        cronPendingTurns: cronSourced ? base.cronPendingTurns.filter((id) => id !== turnId) : base.cronPendingTurns,
+        cronTurnIds: cronSourced && !base.cronTurnIds.includes(turnId) ? [...base.cronTurnIds, turnId] : base.cronTurnIds,
         model: text(event, 'model') ?? base.model,
         // The fallback is for a log that says nothing (an older kernel, or a preset with no
         // window). A live host builds its preset once, so a session cannot change windows
@@ -76,6 +82,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
           id: text(event, 'turnId') ?? base.turn?.id ?? '',
           state: to,
           reason: text(event, 'reason'),
+          cronSourced: base.turn?.cronSourced ?? base.cronTurnIds.includes(text(event, 'turnId') ?? ''),
         },
         // A question cannot outlive the turn that asked it, and neither can a half-sent
         // answer: both are cleared by the terminal transition that makes them stale.
@@ -418,6 +425,48 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       return {
         ...base,
         tasks: base.tasks.map((entry) => (entry.taskId === taskId ? { ...entry, state, endedAt, exitCode } : entry)),
+      };
+    }
+
+    case 'cron.created': {
+      const jobId = text(event, 'jobId');
+      if (jobId === null) return base;
+      const job: CronJobView = {
+        jobId,
+        schedule: text(event, 'schedule') ?? '',
+        prompt: text(event, 'prompt') ?? '',
+        recurring: flag(event, 'recurring') ?? false,
+        createdAt: number(event, 'createdAt') ?? 0,
+        nextRun: null,
+        lastFiredAt: null,
+      };
+      return { ...base, cronJobs: [job, ...base.cronJobs.filter((entry) => entry.jobId !== jobId)] };
+    }
+
+    case 'cron.deleted': {
+      const jobId = text(event, 'jobId');
+      if (jobId === null) return base;
+      return { ...base, cronJobs: base.cronJobs.filter((entry) => entry.jobId !== jobId) };
+    }
+
+    case 'cron.fired': {
+      const jobId = text(event, 'jobId');
+      const turnId = text(event, 'turnId');
+      const firedAt = number(event, 'firedAt');
+      // The fired event names the turn before it opens (ADR-140 ②); the pending id is
+      // consumed by that turn's `turn.opened`. A one-shot's terminal state is the fire
+      // itself — the fold drops it without a deleted event (ADR-141 ④).
+      const pending = turnId === null ? base.cronPendingTurns : [...base.cronPendingTurns, turnId];
+      if (jobId === null) return { ...base, cronPendingTurns: pending };
+      const existing = base.cronJobs.find((entry) => entry.jobId === jobId);
+      if (existing === undefined) return { ...base, cronPendingTurns: pending };
+      if (!existing.recurring) {
+        return { ...base, cronPendingTurns: pending, cronJobs: base.cronJobs.filter((entry) => entry.jobId !== jobId) };
+      }
+      return {
+        ...base,
+        cronPendingTurns: pending,
+        cronJobs: base.cronJobs.map((entry) => (entry.jobId === jobId ? { ...entry, lastFiredAt: firedAt } : entry)),
       };
     }
 

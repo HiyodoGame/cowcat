@@ -13,10 +13,16 @@ import { wrap } from '../text/wrap.js';
  */
 export function userMessageLines(entry: UserEntry, width: number): readonly Line[] {
   const text = entry.text === '' ? '（空输入）' : entry.text;
+  // A cron-fired turn is unattended (ADR-142): the marker says who started it and what the
+  // model cannot do, so a refused write later in the card never reads as the model acting up.
+  const cronRow =
+    entry.cron === true
+      ? [{ text: '⏰ 定时任务触发（无人值守：不能询问审批，做不了会报告）', token: 'textDim' as const }]
+      : [];
   return card({
-    title: '你',
+    title: entry.cron === true ? '⏰' : '你',
     titleToken: 'user',
-    body: wrap(text, width - 4).map((row) => ({ text: row, token: 'user' as const })),
+    body: [...cronRow, ...wrap(text, width - 4).map((row) => ({ text: row, token: 'user' as const }))],
     width,
   });
 }

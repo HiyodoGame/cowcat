@@ -9,22 +9,27 @@ import {
   advanceReasoning,
   APPROVAL_CHOICES,
   approvalChoiceAt,
+  closeCronPanel,
   closePalette,
   closeTaskPanel,
   initialView,
   markReplayedTasks,
   moveApprovalCursor,
+  moveCronPanel,
   movePalette,
   movePlanCursor,
   planAnswerAt,
   moveSlash,
   moveTaskPanel,
+  openCronPanel,
   openPalette,
   openTaskPanel,
   pendingAttachments,
   rememberInput,
   resetScroll,
+  selectedCronJob,
   selectedTask,
+  setCronJobs,
   toggleExpanded,
   toggleThinking,
   withAttachment,
@@ -229,7 +234,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         }
         // The task panel owns `x` and its arrows: without this the key would also be typed
         // into the composer (the textarea gets everything the global handler does not claim).
-        if (intent !== null && (intent.kind === 'taskMove' || intent.kind === 'taskStop' || intent.kind === 'tasksClose')) {
+        if (
+          intent !== null &&
+          (intent.kind === 'taskMove' || intent.kind === 'taskStop' || intent.kind === 'tasksClose' ||
+            intent.kind === 'cronMove' || intent.kind === 'cronDelete' || intent.kind === 'cronsClose')
+        ) {
           key.preventDefault();
         }
         handle(intent);
@@ -321,6 +330,17 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         case 'taskStop':
           stopSelectedTask();
+          return;
+        case 'cronMove':
+          view.current = moveCronPanel(view.current, intent.delta);
+          draw();
+          return;
+        case 'cronsClose':
+          view.current = closeCronPanel(view.current);
+          draw();
+          return;
+        case 'cronDelete':
+          deleteSelectedCronJob();
           return;
         case 'slashMove': {
           const count = slashMatches(view.current.input).length;
@@ -467,6 +487,34 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         });
     }
 
+    /**
+     * Delete the job under the `/cron` panel's cursor (ADR-143 ③).
+     *
+     * The row leaves the list only when the `cron.deleted` event arrives — the method's
+     * boolean means "the request was accepted", and the event is the fact that carries
+     * the audit trail (`by: 'user'`).
+     */
+    function deleteSelectedCronJob(): void {
+      const job = selectedCronJob(view.current);
+      if (job === null) return;
+      options.client
+        .removeCronJob(sessionId, job.jobId)
+        .then((removed) => {
+          if (disposed) return;
+          view.current = addNotice(
+            view.current,
+            removed ? 'info' : 'warn',
+            removed ? `已请求删除 ${job.jobId}，等 cron.deleted 事件确认。` : `${job.jobId} 不在本会话的活任务里。`,
+          );
+          draw();
+        })
+        .catch((error: unknown) => {
+          if (disposed) return;
+          view.current = addNotice(view.current, 'error', message(error));
+          draw();
+        });
+    }
+
     /** Mirror the input widget's value into the view; the frame hints at `/` from it. */
     function syncInput(): void {
       if (disposed) return;
@@ -505,6 +553,33 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
             view.current = addNotice(view.current, 'info', '没有后台任务。');
           }
           draw();
+          return;
+        case 'cron':
+          if (view.current.approval !== null) {
+            view.current = addNotice(view.current, 'info', '先回答上面那个审批，再看定时任务。');
+            draw();
+            return;
+          }
+          view.current = withInput(closePalette(openCronPanel(view.current)), '');
+          screen.clearInput();
+          draw();
+          // The list the panel shows comes from the host: the fold knows the jobs exist,
+          // but only the projection can say when each fires next (ADR-143 ③).
+          options.client
+            .listCronJobs(sessionId)
+            .then((jobs) => {
+              if (disposed) return;
+              view.current = setCronJobs(view.current, jobs);
+              if (jobs.length === 0) {
+                view.current = addNotice(view.current, 'info', '没有定时任务（让模型用 CronCreate 建一个）。');
+              }
+              draw();
+            })
+            .catch((error: unknown) => {
+              if (disposed) return;
+              view.current = addNotice(view.current, 'error', message(error));
+              draw();
+            });
           return;
         case 'plan':
           if (view.current.plan !== null) {

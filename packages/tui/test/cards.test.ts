@@ -377,7 +377,7 @@ test('a running tool is a card with an animated marker and its command', () => {
 test('the input line hints at / commands as they are typed', () => {
   const empty = frameOf({ ...initialView(), input: '/' }, { width: WIDTH, now: 1_000 });
   assert.match(empty.placeholder, /\/todos/u);
-  assert.match(empty.placeholder, /共 11 个/u);
+  assert.match(empty.placeholder, /共 12 个/u);
 
   const narrowed = frameOf({ ...initialView(), input: '/th' }, { width: WIDTH, now: 1_000 });
   assert.match(narrowed.placeholder, /\/thinking/u);
@@ -449,7 +449,7 @@ test('the status bar says what is running, and counts running sub-agents', () =>
   const running: TuiView = {
     ...initialView(),
     sessionId: 'sess_run',
-    turn: { id: 'turn_1', state: 'awaiting_tools', reason: null },
+    turn: { id: 'turn_1', state: 'awaiting_tools', reason: null, cronSourced: false },
     pendingTools: [{ callId: 'c1', name: 'Bash' }],
   };
   const line = statusLine(running, { now: 0 });
@@ -480,7 +480,7 @@ test('the status bar says what is running, and counts running sub-agents', () =>
 test('a running tool card shows the live tail, capped at twenty rows (ADR-109)', () => {
   const base: TuiView = {
     ...initialView(),
-    turn: { id: 'turn_1', state: 'awaiting_tools', reason: null },
+    turn: { id: 'turn_1', state: 'awaiting_tools', reason: null, cronSourced: false },
     pendingTools: [{ callId: 'c1', name: 'Bash' }],
     calls: { c1: { name: 'Bash', input: { command: 'pnpm build' } } },
   };
@@ -510,7 +510,7 @@ test('the /tasks panel lists background tasks and the status bar counts the runn
   const view: TuiView = {
     ...initialView(),
     sessionId: 'sess_bg',
-    turn: { id: 'turn_1', state: 'streaming', reason: null },
+    turn: { id: 'turn_1', state: 'streaming', reason: null, cronSourced: false },
     tasks: [
       {
         taskId: 'bg_a_1',
@@ -708,8 +708,8 @@ test('the / menu is a selectable list in the dock, not a placeholder', () => {
   assert.match(text, /\/todos/u);
   assert.match(text, /▸ \/todos/u);
   // A row click runs that command, so the id is on the card row. The menu is windowed, so
-  // `/skills` (index 6) is the last row that fits; `/quit` is below the fold.
-  assert.equal(dock.find((row) => row.text.includes('/skills'))?.hit, 'slash:6');
+  // `/cron` (index 6, after tasks) is the last row that fits; `/quit` is below the fold.
+  assert.equal(dock.find((row) => row.text.includes('/cron'))?.hit, 'slash:6');
 
   const moved = frameOf({ ...view, slashIndex: 2 }, { width: WIDTH, now: 1_000 });
   assert.match((moved.dock ?? []).map((row) => row.text).join('\n'), /▸ \/cancel/u);
@@ -723,7 +723,7 @@ test('the status line names the model and counts seconds', () => {
     ...initialView(),
     sessionId: 'sess_status',
     model: 'zai-coding-plan/glm-5.3-flash',
-    turn: { id: 'turn_1', state: 'streaming', reason: null },
+    turn: { id: 'turn_1', state: 'streaming', reason: null, cronSourced: false },
     turnStartedAt: 0,
   };
   const line = statusLine(view, { now: 12_000 });

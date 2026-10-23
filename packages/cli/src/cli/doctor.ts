@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { EXIT } from './exit.js';
 import { flagValue } from './flags.js';
@@ -120,6 +121,24 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
   const projectRoot = projectRootOf(fs, cwd);
   const configPath = flagValue(context.flags, 'config');
   note('状态目录', paths.dir);
+
+  /** Whether the project root's .gitignore already admits `path` (exact or parent line). */
+  const gitignoreCovers = (path: string): boolean => {
+    if (projectRoot === null) return true;
+    let text: string;
+    try {
+      text = readFileSync(join(projectRoot, '.gitignore'), 'utf8');
+    } catch {
+      return false;
+    }
+    const needle = path.replace(/\\/g, '/');
+    const covered = (line: string): boolean => {
+      const pattern = line.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+      if (pattern === '' || pattern.startsWith('#') || pattern.startsWith('!')) return false;
+      return pattern === needle || pattern === `${needle}/` || needle.startsWith(`${pattern}/`);
+    };
+    return text.split('\n').some(covered);
+  };
 
   const loaded = await loadHostConfig({
     cwd,
@@ -246,6 +265,13 @@ async function reportKernel(context: CommandContext, row: Row, note: Note, line:
   const sandbox = resolveSandboxProfile(loaded.config.sandbox, { cwd, home, fs });
   note('sandbox', `mode ${sandbox.profile.mode} / backend ${sandbox.profile.backend} / network ${sandbox.profile.network}`);
   for (const limitation of sandbox.profile.limitations) line(`未被采纳：${limitation}`);
+
+  // Worktree sessions live under .cowcat/worktrees/ (ADR-144); an un-ignored directory
+  // there shows up as an embedded-repo hint on every `git add`, which is the measured
+  // annoyance this line exists to prevent.
+  if (projectRoot !== null && !gitignoreCovers('.cowcat/worktrees')) {
+    note('worktree', '建议把 .cowcat/worktrees/ 写进 .gitignore（--worktree 的会话树，避免嵌套仓库提示）');
+  }
 
   const verdicts = nodePlatform({ env: process.env }).sandboxBackends();
   const usable = verdicts.filter((verdict) => verdict.usable).map((verdict) => verdict.name);

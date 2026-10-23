@@ -21,6 +21,8 @@ export interface UserEntry {
   /** The event's `seq`. One event, one entry, so the log's numbering is the key. */
   readonly seq: number;
   readonly text: string;
+  /** True when a cron fire opened this turn (ADR-142 ④) — the card says so. */
+  readonly cron?: boolean;
 }
 
 export interface AssistantEntry {
@@ -201,6 +203,19 @@ export interface TurnView {
   readonly id: string;
   readonly state: string;
   readonly reason: string | null;
+  /** True when this turn was opened by a cron fire (ADR-140/142): the card says so. */
+  readonly cronSourced: boolean;
+}
+
+/** One scheduled job as the `/cron` panel needs it (ADR-143 ③), newest first. */
+export interface CronJobView {
+  readonly jobId: string;
+  readonly schedule: string;
+  readonly prompt: string;
+  readonly recurring: boolean;
+  readonly createdAt: number;
+  readonly nextRun: number | null;
+  readonly lastFiredAt: number | null;
 }
 
 export interface TuiView {
@@ -257,6 +272,17 @@ export interface TuiView {
   readonly skills: readonly SkillView[];
   /** The `/tasks` panel when it is open: which row is selected. */
   readonly taskPanel: { readonly index: number } | null;
+  /**
+   * Scheduled cron jobs (ADR-140), newest first — folded from `cron.*` events and
+   * refreshed from `cron.list` when the panel opens. A one-shot that fired is gone.
+   */
+  readonly cronJobs: readonly CronJobView[];
+  /** The `/cron` panel when it is open: which row is selected. */
+  readonly cronPanel: { readonly index: number } | null;
+  /** Turn ids that cron fires opened (the fired event names them, ADR-140 ②). */
+  readonly cronTurnIds: readonly string[];
+  /** Fired turn ids whose `turn.opened` has not arrived yet. */
+  readonly cronPendingTurns: readonly string[];
   /**
    * The highest seq that arrived as replay rather than live (from `session.open.lastSeq`).
    *
@@ -400,6 +426,10 @@ export function initialView(): TuiView {
     tasks: [],
     skills: [],
     taskPanel: null,
+    cronJobs: [],
+    cronPanel: null,
+    cronTurnIds: [],
+    cronPendingTurns: [],
     replayedThrough: 0,
     calls: {},
     expanded: [],
@@ -462,6 +492,40 @@ export function moveSlash(view: TuiView, delta: number, count: number): TuiView 
 export function openTaskPanel(view: TuiView): TuiView {
   if (view.tasks.length === 0) return view;
   return { ...view, taskPanel: { index: 0 } };
+}
+
+// ── /cron panel (ADR-143 ③) ──────────────────────────────────────────────────────
+
+export function openCronPanel(view: TuiView): TuiView {
+  return { ...view, cronPanel: { index: 0 } };
+}
+
+export function closeCronPanel(view: TuiView): TuiView {
+  return view.cronPanel === null ? view : { ...view, cronPanel: null };
+}
+
+/** Wrap-around like the other lists: a last row is one keystroke from the first. */
+export function moveCronPanel(view: TuiView, delta: number): TuiView {
+  const panel = view.cronPanel;
+  if (panel === null || view.cronJobs.length === 0) return view;
+  const next = (panel.index + delta + view.cronJobs.length) % view.cronJobs.length;
+  return next === panel.index ? view : { ...view, cronPanel: { index: next } };
+}
+
+/** The row under the cursor, if the panel is open and has rows. */
+export function selectedCronJob(view: TuiView): CronJobView | null {
+  const panel = view.cronPanel;
+  if (panel === null) return null;
+  return view.cronJobs[panel.index] ?? null;
+}
+
+/**
+ * Replace the panel rows with the `cron.list` answer, newest created first. The
+ * projection is fresher than the fold (next fires move), and it is the same source of
+ * truth the host serves — no merge policy to get wrong.
+ */
+export function setCronJobs(view: TuiView, jobs: readonly CronJobView[]): TuiView {
+  return { ...view, cronJobs: [...jobs].sort((a, b) => b.createdAt - a.createdAt) };
 }
 
 export function closeTaskPanel(view: TuiView): TuiView {
