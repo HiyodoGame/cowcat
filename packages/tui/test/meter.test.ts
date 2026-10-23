@@ -20,6 +20,8 @@ test('formatCost keeps two decimals so the meter reads as a meter', () => {
   assert.equal(formatCost(0.0234), '$0.02');
   assert.equal(formatCost(1.2), '$1.20');
   assert.equal(formatCost(12.4), '$12.40');
+  assert.equal(formatCost(0.0001), '<$0.01', '$0.00 reads as free; a meter never says free');
+  assert.equal(formatCost(0), '$0.00');
 });
 
 test('stripControl removes C0/C1 and bidi controls, keeps ordinary text intact', () => {

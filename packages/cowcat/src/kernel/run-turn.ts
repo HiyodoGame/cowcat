@@ -343,6 +343,12 @@ async function runTurnBody(
   let lastCallKey: string | null = null;
   let lastCallOk = false;
   let repeatCount = 0;
+  // Escalate policing, TURN-scoped (ADR-129/130): how many appeals reached the user,
+  // and which exact subjects the sandbox refused in this turn. One instance per turn,
+  // NOT per round: the refusal lands in round N (the tool result), and the appeal can
+  // only come in round N+1, after the model has seen that result — a per-round
+  // collection would always be empty when Escalate reads it (review of #180, P0-1).
+  const escalation: EscalationTurnContext = { asked: 0, sandboxRefusedKeys: new Set() };
   try {
     for (;;) {
       if (signal.aborted) throw new TurnAborted('aborted before the model was called');
@@ -394,10 +400,7 @@ async function runTurnBody(
       // Hook context rides the same batching rule as reminders (ADR-120 ②): a user
       // message between two tool results would break the wire pairing.
       const pendingHookContexts: string[] = [];
-      // Escalate policing, turn-scoped (ADR-129/130): how many appeals reached the
-      // user, and which exact subjects the sandbox refused in this turn. Memory, not
-      // log facts — a replayed turn must not re-ask anyone anything.
-      const escalation: EscalationTurnContext = { asked: 0, sandboxRefusedKeys: new Set() };
+
       for (const call of calls) {
         // `normalizeCall` has already JSON-round-tripped the input, so equal arguments
         // stringify equal — key order included, which is fine for detecting literal loops.
@@ -863,6 +866,10 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
   // reports (ADR-051). A `deny` or a `reject` never reaches the tool at all; an `allow`
   // verdict means no question was asked, so nothing was granted either.
   let approved = false;
+  // Deny-override escalation is tracked apart from `approved` (review of #180, P1-5):
+  // setting `approved` here would hand the appeal a free `networkApproved` too, which
+  // ADR-129 (7) forbids — each dimension is approved on its own line, or not at all.
+  let escalatedPastDeny = false;
 
   if (decision.verdict === 'deny') {
     // An approved Escalate appeal overrides a rule's deny for one exact subject
@@ -882,10 +889,11 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
       verdict: standing,
       by: 'policy',
     });
-    if (standing === 'once') {
-      await session.emit({ type: 'escalation.consumed', turnId, callId: call.callId, key, dimension: 'deny-override' });
-    }
-    approved = true;
+    // The grant is NOT consumed here: plan mode and the read-before-write gate run
+    // below, and burning the once before they pass would waste the approval on a call
+    // that cannot run (review of #180, P1-3). Consumption happens at grant assembly,
+    // after every gate, beside the unsandboxed dimension.
+    escalatedPastDeny = true;
   }
 
   // Plan mode (ADR-124): a host-enforced read-only constraint. It downgrades ask/allow
@@ -968,6 +976,10 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
         name: call.name,
         rule: decision.rule,
         reason: decision.reason,
+        // The exact subject rides every question now (ADR-129 7): a plain Bash ask's
+        // card shows the same command an appeal would, not just a rule name.
+        ...(request.command === undefined ? {} : { command: request.command }),
+        ...(request.path === undefined ? {} : { path: request.path }),
         ...(warning === null ? {} : { warning }),
       });
       await session.emit({
@@ -990,6 +1002,10 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
         name: call.name,
         rule: decision.rule,
         reason: decision.reason,
+        // The exact subject rides every question now (ADR-129 7): a plain Bash ask's
+        // card shows the same command an appeal would, not just a rule name.
+        ...(request.command === undefined ? {} : { command: request.command }),
+        ...(request.path === undefined ? {} : { path: request.path }),
         ...(warning === null ? {} : { warning }),
       });
       const outcome = await askForApproval(deps, request, decision, signal);
@@ -1041,7 +1057,15 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
     if (report.outcome.effect === 'context') hookContexts.push(report.outcome.text);
   }
 
-  // An unsandboxed appeal approved for this exact subject lets THIS run go without the
+  // Escalation grants burn HERE, at assembly, after every gate (plan mode, hooks,
+  // read-before-write) has passed: a `once` grant is spent by the run it buys, whatever
+  // the exit code turns out to be. A crash between the consumption event and the run
+  // wastes the grant rather than lying about a run that never happened — re-appealing
+  // is one question, a forged record is not (review of #180, P1-3/P2-12).
+  const escalateKey = approvalKey(request);
+  if (escalatedPastDeny && escalationStanding(session.state, escalateKey, 'deny-override') === 'once') {
+    await session.emit({ type: 'escalation.consumed', turnId, callId: call.callId, key: escalateKey, dimension: 'deny-override' });
+  }  // An unsandboxed appeal approved for this exact subject lets THIS run go without the
   // sandbox (ADR-130 ②). A `once` grant burns here, before the run: the retry is the
   // grant, whatever the command's exit code turns out to be.
   const unsandboxedKey = approvalKey(request);
@@ -1202,13 +1226,25 @@ async function runEscalateCall(
   if (tool === undefined) {
     return { result: { ok: false, output: `unknown tool: ${input.name}` }, path: null };
   }
+  if (deps.unattended !== undefined) {
+    // Nobody can answer here (review of #180, P2-8): refuse now, not after a five-minute
+    // timeout — the same rule the ask path and runExitPlanCall keep. Unreachable under
+    // this host (top-level turns are attended, children have no Escalate on the wire),
+    // but the kernel is a library and another host may combine the two.
+    return { result: { ok: false, output: `escalation needs a reader: ${deps.unattended}` }, path: null };
+  }
   const request: ActionRequest = {
     kind: 'tool',
     callId: call.callId,
     name: input.name,
     risk: tool.spec.risk,
     ...(input.command === null ? {} : { command: input.command }),
-    ...(input.path === null ? {} : { path: input.path }),
+    // Canonical BEFORE the key is computed (review of #180, P0-2): runCall keys its
+    // grants on the canonical spelling (fs.canonical, ADR-017), so an appeal built on
+    // the model's raw spelling would approve a key the retry never matches — the
+    // override would look granted and still refuse. The same canonical value rides the
+    // approval.requested event, so the card shows exactly what a "once" grants.
+    ...(input.path === null ? {} : { path: deps.fs.canonical(input.path) }),
   };
   const key = approvalKey(request);
   const dimension = input.withoutSandbox ? 'unsandboxed' : 'deny-override';
@@ -1286,18 +1322,28 @@ async function runEscalateCall(
       name: input.name,
       rule: 'escalation',
       reason: input.justification,
-      ...(input.command === null ? {} : { command: input.command }),
-      ...(input.path === null ? {} : { path: input.path }),
+      // The request's values, not the raw input's: the path is already canonical, and
+      // the card must show exactly what the grant key is computed from.
+      ...(request.command === undefined ? {} : { command: request.command }),
+      ...(request.path === undefined ? {} : { path: request.path }),
       dimensions: [dimension],
       ...(warning === null ? {} : { warning }),
     });
     const outcome = await askForApproval(deps, request, { verdict: 'deny', rule: 'escalation', reason: input.justification }, signal);
+    // `session` answers are not offered for appeals (review P1-2); a client that sends
+    // one anyway gets the narrowest scope. Sandbox-free approval is once-only (P1-5).
+    // The ANSWER event records the EFFECTIVE verdict, not the raw one (review of #180,
+    // P1-4): folding a narrowed `always` into `grants` would attach a standing ask-path
+    // grant the card never offered, so a once-narrowed answer logs as `once` and folds
+    // into nothing but the escalation record.
+    const scope = outcome.verdict === 'always' && !input.withoutSandbox ? 'always' : 'once';
+    const effectiveVerdict: ApprovalVerdict = scope === 'always' ? 'always' : 'once';
     await session.emit({
       type: 'approval.answered',
       turnId: session.turnId,
       callId: call.callId,
       key,
-      verdict: outcome.verdict,
+      verdict: outcome.verdict === 'reject' ? 'reject' : effectiveVerdict,
       by: outcome.by,
     });
     if (outcome.verdict === 'reject') {
@@ -1311,9 +1357,6 @@ async function runEscalateCall(
         path: null,
       };
     }
-    // `session` answers are not offered for appeals (review P1-2); a client that sends
-    // one anyway gets the narrowest scope. Sandbox-free approval is once-only (P1-5).
-    const scope = outcome.verdict === 'always' && !input.withoutSandbox ? 'always' : 'once';
     await session.emit({ type: 'escalation.granted', turnId: session.turnId, callId: call.callId, key, scope, dimension });
     if (dimension === 'unsandboxed') {
       return {

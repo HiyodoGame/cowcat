@@ -577,14 +577,26 @@ export function withHistory(view: TuiView, direction: 'older' | 'newer'): TuiVie
   return { ...view, historyIndex: null, input: view.historyDraft, historyDraft: '' };
 }
 
+/**
+ * The rows an approval card offers (ADR-129 ②): an Escalate appeal has no `session`
+ * answer — one click may not widen a whole tool — so that row stays hidden and the
+ * `s` habit refuses (run.ts guards it). Shared by the card and the keymap so a cursor
+ * index means the same row in both.
+ */
+export function approvalChoicesFor(rule: string): readonly ApprovalChoice[] {
+  return rule === 'escalation' ? APPROVAL_CHOICES.filter((choice) => choice !== 'session') : APPROVAL_CHOICES;
+}
+
 /** The answer the highlighted row stands for. */
 export function approvalChoiceAt(view: TuiView): ApprovalChoice {
-  return APPROVAL_CHOICES[view.approvalCursor] ?? 'once';
+  const rule = view.approval?.rule ?? '';
+  return approvalChoicesFor(rule)[view.approvalCursor] ?? 'once';
 }
 
 /** Move the highlight, clamped: a list of four is not a carousel. */
 export function moveApprovalCursor(view: TuiView, delta: number): TuiView {
-  const next = Math.max(0, Math.min(APPROVAL_CHOICES.length - 1, view.approvalCursor + delta));
+  const rule = view.approval?.rule ?? '';
+  const next = Math.max(0, Math.min(approvalChoicesFor(rule).length - 1, view.approvalCursor + delta));
   return next === view.approvalCursor ? view : { ...view, approvalCursor: next };
 }
 

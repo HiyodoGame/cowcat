@@ -1,5 +1,5 @@
 import type { ApprovalChoice, ApprovalView } from '../app/view.js';
-import { APPROVAL_CHOICES } from '../app/view.js';
+import { approvalChoicesFor } from '../app/view.js';
 import { copyFor } from '../app/copy.js';
 import { stripControl } from '../app/meter.js';
 import { card, type CardBodyLine } from '../ui/card.js';
@@ -36,12 +36,16 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
   // P2-2): ESC and bidi controls can make the card show a different sentence than the
   // one the grant key records, and the card and the key must be the same words.
   const subject = stripControl(approval.command ?? approval.path ?? '');
+  // The exact subject comes FIRST (ADR-129 7): an answer grants this command or path,
+  // and a card that led with the model's own justification was asking for a blind
+  // click. It WRAPS rather than truncates (review of #180, P1-6): a truncated tail is
+  // exactly where a harmful suffix would hide, and the card and the grant key must be
+  // the same words, all of them.
+  const subjectLines: CardBodyLine[] =
+    subject === '' ? [] : wrap(subject, Math.max(8, options.width - 4)).map((text) => ({ text, token: 'text' as const }));
   const body: CardBodyLine[] = [
     { text: answered ? describeVerdict(approval) : copy.approveQuip, token: answered ? 'textDim' : 'plan' },
-    // The exact subject comes FIRST (ADR-129 7): an answer grants this command or path,
-    // and a card that led with the model's own justification was asking for a blind
-    // click. The rule line stays for the plain ask questions, where it names the policy.
-    ...(subject === '' ? [] : [{ text: subject, token: 'text' as const }]),
+    ...subjectLines,
     { text: `规则：${stripControl(approval.rule)}`, token: 'textDim' },
   ];
   // What an approval would widen, in words a non-author of the config can act on
@@ -56,7 +60,7 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
   if (!answered) {
     // The four answers as rows, because "remember to type always" is a memory test, not a
     // choice. The letters still work for anyone who has the habit (run.ts keeps them).
-    for (const [index, choice] of APPROVAL_CHOICES.entries()) {
+    for (const [index, choice] of approvalChoicesFor(approval.rule).entries()) {
       const selected = index === options.cursor;
       body.push({
         text: `${selected ? '▸' : ' '} ${labelFor(choice, approval.name)}`,
