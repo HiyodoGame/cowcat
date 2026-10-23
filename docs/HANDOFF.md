@@ -2,71 +2,65 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-23（P7 第九个模块视觉工具全链路收尾）**。
-> 交接时仓库状态：**`main` = `f766277`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
+> 最近一次更新：**2026-10-24（P7 Cron/Worktree 模块全链路收尾）**。
+> 交接时仓库状态：**`main` = `63f2269`；本会话产出在三个分支上：#202（调研）、#203（ADR，链 #202）、#204（实现 T1~T9），均待评审合并；最新发布仍为 `v1.0.0-beta.3`。**
 >
-> **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API 跑出的会话日志；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
+> **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实 git 跑出的验收记录（`tools/t9-cron-worktree-accept.mjs`，13/13）；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
-> **归属**：本会话产出 **#147~#200**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环、可观测性、记忆蒸馏、视觉工具九个 P7 模块全链路 + 收尾）。
+> **归属**：本会话产出 **#202~#204**（Cron/Worktree 一个模块的两半边：调研 → ADR 落表 → T1~T7 实现 → T9 真机验收 → T8 文档收尾）。
 
 ---
 
 ## 1. 本次会话做了什么
 
-九个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
+一个 P7 模块（Cron/Worktree），走完整链路「专项调研 → ADR → T1~T7 实现 → T9 真机验收 → 文档收尾」。模块开工前确认：原表内依赖「后台任务」已完成于更早会话（#135~138，ADR-107~113），无需重做。
 
-### 已完成模块（概要）
+### Cron（ADR-140~143）
 
-- **Skills（#147~152）**：ADR-114~117；T4 真机自然触发 2/2。
-- **工具结果治理 T-A（#153~157）**：ADR-118~120；clearing 派生视图/spill 50KB/repeat 轮末批量；T5 三机制全触发、零 400、cache 88%–99%。
-- **Hooks（#159~163）**：ADR-121~123；CC hooks.json 兼容 v1（六事件 command-only、五配置源叠加、trust 门）；T5 block-rm 照抄 CC 文档形态零改写生效。
-- **Plan 模式（#165~169）**：ADR-124~125；planMode 会话级状态 + ExitPlan 方案预审复用审批卡；审查 P0 = 超时重试被陈旧 pendingPlan 杀回合（approval 桥同病同源一并修）；T4 真机：门控拒写→模型自适应→2 方案→选中退模式→UNLICENSE 落盘。
-- **会话体验（#171~175）**：ADR-126~128——
-  - **会话头/标题**：session.opened 可选 cwd/model（不升版本）；标题不存只派生（首个 prompt 截断 40 字符）；SessionSummary 纯增量。
-  - **session.fork**：事件重放式（parent role 'fork'、seq/ts/sessionId 重铸、失败删半截日志）；源无在跑回合才允许；fork header 继承源 cwd/model。
-  - **@ 文件引用**：turn.send 扩 files；host 校验（绝对/UTF-8 fatal/32KB/8 个）后回合前注入 prompt.attached；失败拒整个 send；TUI parseAtRefs（词边界+路径字符+存在性过滤）。
-  - **审查捎带修的真竞态**：attach/subscribe 的 buffer flush 由 queueMicrotask 改同步——原实现里 subscribe 后微任务前到达的事件会超车缓冲队列（表现为 [1,3,2] 乱序），该竞态自接缝诞生即存在。
-  - **rewind 明确不做**（grants/锁/header 三重坑，后续立项条件 = 先答「截断后授权归哪」）。
-  - T5 真机：@ 注入作答、fork 重放继承实证（fork 新回合无附件即答出源上下文）、标题/cwd/模型全字段可见。
-- **审批与沙箱闭环（#178~182）**：ADR-129~131——
-  - **Escalate 申诉**：内核虚拟工具（顶层门控）复用审批桥；仅 decide=deny 才受理；选项无 session；escalations 与 grants 完全分离（专用事件对 + 折叠，once 消费即焚=「加宽后只重试一次」的可重放形式）；reject 折叠 refused（被拒不再打扰）；每回合 3 次上限；subject 拒 `*`/NUL（修 P1-4 潜伏碰撞）。
-  - **grants 覆盖 deny**：同会话人工批准可覆盖配置 deny（只认精确 key；plan mode/unattended 不可覆盖）；deny 覆盖不附赠 network/沙箱维度（各维度在自己的行上被批准）。
-  - **沙箱闭环**：两类沙箱拒绝不再伪装成启动失败（专属文案 + Escalate 指引）；ToolGrant.unsandboxedApproved 只随 once，照 decideNetwork 先例 decideSandbox。
-  - **用量仪表**：state.usageTotals 折叠（fork 继承）；session.open 应答携带 usage；turn.opened 带 preset price（可选）；成本现算不存事件、无 price 不显示。
-  - **审批卡诚实（安全评审 P0-1）**：approval.requested 带 command/path/dimensions，卡片 subject 首行 + wrap 不截断 + stripControl（C0/C1/bidi）。
-  - **实现前 security-reviewer 评审**（10 条全部落实）；**实现后 code-reviewer 抓到 2 P0**（EscalationTurnContext 轮级建导致 withoutSandbox 链路不可达；Escalate path 未 canonical）——全部修复（#181）。
-  - T5 真机：glm **未加教学自然申诉** 1/1、once 重试放行、price/usage 全字段真机可见（cache 命中 ~97%）。
-- **可观测性（#184~188）**：ADR-132~134——
-  - **边界**：span 是事件流的纯派生视图（`adapters/otel/` 翻译器 + OTel 绑定），内核/policy/ports 零改动；host 组合根挂 subscribe tap（**遥测订阅先于 delivery**）；重放安全（subscribe 只接 live emit）；**fork 如实双计**（与供应商计费现实一致）；翻译器永不 throw、关闭 flush ≤1s 吞错。
-  - **语义子集**：`invoke_agent`(回合)/`chat {model}`(每轮 CLIENT，usage 四字段直映 ModelUsage、finish_reasons 协议词映射)/`execute_tool`(每调用)；内容属性默认不导出（上游 Opt-In + PII）。
-  - **审查抓到 3 P1**（#187）：provider.name 生产死代码（`session.opened` 早于订阅 → EventStore 端口加 `readHeader()` 有界读、adopt 后 prime——**Required 属性原本永远缺席，测试假象掩盖**）；畸形 endpoint 拖死 createHost（协议白名单——WHATWG 把 `localhost:` 当合法 scheme）；subagent 子会话不进遥测（其 token 是真实花费）。
-  - **配置**：user config `otel` 块（endpoint/headersEnv，schema 带 `^https?://`）；project/session 层携带显式警告并丢弃；env `OTEL_EXPORTER_OTLP_ENDPOINT` 优先；**密钥只走 env**；otel 不进 index 根导出（不加载 node:http 传输图）。
-  - T4 真机：span 树完整到达 OTLP receiver、provider.name/conversation.id 全字段在场、**span 级 usage 与 usageTotals 对账一致**（glm cache ~99.6%）；观察：otlp-http exporter 默认发 **application/json** 不是 protobuf。
+- **作业即事件（T1，`policy/cron.ts` + 内核事件）**：`cron.created/deleted/fired` 落会话日志；调度器 = 日志投影 + 宿主 1s 心跳。v1 的跨会话串台与 `-p` 失效全是「调度状态与日志两存」的结构性产物，事件溯源让 resume 恢复作业表成为免费性质。`fired` 预铸 turnId（`Session.openTurn` 增 `reservedTurnId` 可选参）——审计链在事件层钉死。
+- **调度纯函数**：5 字段 vixie 子集（拒扩展语法与越界值）、`nextFire`（严格晚于、本地时区、DOM/DOW 或语义、5 年搜索界）、`isDue`（`*/5` 提前 15s 保提示缓存——ADR-141 ⑥ 半量 jitter 裁决）、50 上限、7 天 TTL。
+- **宿主调度器（T3）**：空闲三重检查（`running`/`turnStarting`/`reflecting`，与 reflect 同旗）；**全局每拍至多 1 个 cron 回合**（本机版防惊群）；过期作业先最后 fire 一次再 `by:'expiry'` 自删；调度时间走注入 Clock（sessionDeps 同钟，测试假时钟驱动 due-ness）。
+- **cron 回合收窄（T2/T3）**：turn-scoped `unattended`（子 agent 先例同构，零新内核机制）；`startTurn` 泛化 kind='user'|'reflect'|'cron'——cron 回合全工具面但裁 planReview/escalation（桥前拒绝不如不上线）；unattended 宿主无端口无工具无调度（ADR-112 同款）。
+- **工具与用户面（T2/T4/T6）**：CronCreate/CronList/CronDelete（Create/Delete risk=write——无人值守花费默认 ask）；协议 `cron.list`/`cron.remove`（不 bump 版本，task.stop 先例）；用户删除写 `cron.deleted by:'user'`；TUI `/cron` 面板（x 删除只认事件）与 ⏰「定时任务触发（无人值守）」回合标注；`cron.enabled` user 层 only。
+
+### Worktree（ADR-144~147，P2 接口债兑现）
+
+- **形态**：`cowcat tui --worktree <name>`——宿主经 ProcessPort `git worktree add .cowcat/worktrees/<name>`（HEAD 基点，sandbox off，宿主动作非模型工具）；已存在复用；link 路径拒绝。
+- **信任（ADR-145）**：主检出受信 → 创建成功即 `FileTrustStore.add` 显式继承（可审计可单独撤销）；不受信 → 拒绝且先于一切动作。**不做** CC 的 `-p` skip（ADR-016）与 repo identity 推导（ADR-028 启动快照纪律）。
+- **resume 恢复 cwd（ADR-146，存量缺口修复）**：`sessions resume`/`tui --session` 读会话头 cwd 建宿主；目录消失 → stderr 警告并在启动目录继续；只追加不改历史。**行为变更**：旧行为静默在启动目录跑。
+- **写策略（ADR-147）**：`createHost.extraWritePaths/extraReadPaths`——worktree 会话追加主检出 `.git` 的 canonical 路径（`git rev-parse --absolute-git-dir`），worktree 里 `git commit` 沙箱内可用；CC 四条隔离检查第一版不做（被否 #6）。
+- **退出清理**：`git status --porcelain` + 未推送提交（`log <branch> --not --branches --remotes`）双检查，干净才删树删分支；检查失败保留。
+
+### T9 真机验收（13/13 过，`tools/t9-cron-worktree-accept.mjs`）
+
+- **Cron 腿**（deepseek-flash 真实端点）：自然语言 CronCreate（无教学）→ 心跳 fired → `fired.turnId === turn.opened.turnId` → cron 回合 Write 询问被 `by:'unattended'` 拒绝并留审计 → 一次性 fire 后投影自删 → 周期作业 nextRun/过期 → `cron.remove` 写 `by:'user'`。
+- **Worktree 腿**（真 git）：ensureWorktree + 信任继承进 trust.json → 会话头 cwd=worktree → 会话内 Write + `git commit` 经审批成功（沙箱放行主检出 `.git`）→ 提交落 worktree 分支且主检出 `git log` 可见。
+- 验收期外部事件：智谱账号 429（余额耗尽）——产品如实记录失败（turn.failed 带原因），驱动改走内置 deepseek provider 完成；catalogue 的 `deepseek-flash` output 上限（393216）为未实测数字，驱动用自定义 preset 限 8192（视觉模块教训再次应验）。
 
 ## 2. 测试基线
 
 | 包 | 通过 | 说明 |
 |---|---|---|
-| cowcat | 870+ | 逐文件全绿（host 46、remember 10、view 7、observability 17、approval 13、model-openai 21、model-anthropic 19、bash 25、config 24、schema 14 等） |
-| protocol | 43 | |
-| tui | 119 | **必须 Node 26**（本机 Node 24 是 FFI 假失败） |
-| cli | 31 | |
+| cowcat | 910 | 870 → 910（cron 解析/工具/调度器/worktree）；逐文件全绿，16 skip 为平台既有项 |
+| protocol | 44 | 43 → 44（cron.list/cron.remove 契约） |
+| tui | 121 | 119 → 121（/cron 折叠与回合标注；**需 Node 26**，本机 `npx --yes node@26.12.0 --test dist/test/`） |
+| cli | 31 | 不变全绿（--worktree flag、doctor worktree 行） |
 
-**本机环境注意**：有两个外部 `du` 进程长期跑满磁盘 IO，全量并行的计时敏感测试（background/bash/process）本地随机 flake、**逐文件全绿**；CI 为权威门（三平台绿）。改完跑 `npm test`（含 lint），别只 `npm run build`。
+**本机环境注意**：外部 `du` 进程干扰与计时 flake 的既有结论不变；CI 为权威门（三平台）。
 
-## 3. 新增 ADR（本会话）
+## 3. 新增 ADR
 
-ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hooks、124~125 Plan、126 会话头与标题、127 session.fork、128 @ 文件引用）· **129~131 审批沙箱（129 Escalate 与 grant 精确语义**（覆盖 deny、refused 折叠、once 消耗语义、审批卡 subject、维度分离）· **130 沙箱闭环**（拒绝识别、unsandboxedApproved 只随 once）· **131 用量累计与成本**（usageTotals、price 可选、成本现算不存事件）——126~128 已按 #174 审查修订，129/131 已按 #180/#181 审查修订。
+**ADR-140~147**（#203，草案见 [`research/p7-cron-worktree.md`](research/p7-cron-worktree.md) §4）：140 作业即事件 · 141 触发语义（含 §9-1 取 7 天过期、§9-2 半量 jitter、§9-6 到期最后 fire 一次三裁决）· 142 cron 回合 turn-scoped 收窄 · 143 工具与用户面（§9-3 配置键裁决）· 144 Worktree 形态（§9-4 `run --worktree` 留后续、§9-5 `.worktreeinclude` 留后续）· 145 信任创建时显式继承 · 146 resume 恢复 cwd · 147 extraWritePaths 兑现 P2 接口债。
 
-## 4. 未验证 / 风险
+## 4. 未验证 / 风险（登记，不声称已解决）
 
-- **会话体验**：fork 万级事件的重放时延未实测；相对 @ 路径的 resume 跨目录语义（已知语义未真机）；TUI @ 无自动补全。
-- **Plan 模式**：Bash 一刀切摩擦样本少；TUI 方案卡真人点击未验。
-- **Hooks 已知偏差**（调研 §11.1）：updatedToolOutput 形状、纯文本 stdout、Windows 占位符、trust 目录语义。
-- **T-A 遗留**：clearing 保留窗口三档对比、大会话缓存对照。
-- **approval 桥语义变更**（#168）：超时后同回合下一次 ask 现在替换陈旧 pending 而非拒绝——行为变更，无已知外部依赖。
-- **attach 语义变更**（#174）：subscribe 同步 flush——对服务端调用顺序的约束不变（server 先回复+重放再 subscribe），但自定义 host 消费者若依赖微任务延迟需知。
-- **审批与沙箱闭环**：withoutSandbox 的真沙箱后端真机未验（本机无 bwrap/seatbelt，FakeProcess 全链路钉住）；Escalate 自然申诉率样本 1/1；成本只 USD；network/沙箱维度各问各的（exec ask + 申诉同回合会问到两次——真机已观察，属维度分离的设计结果）。
+- **TUI 人眼验收**：`/cron` 面板与 ⏰ 标注只有帧快照覆盖，真实终端渲染未看（T10 人眼清单的既有缺口同类）。
+- **CLI 端到端**：`tui --worktree` 的 chdir/退出清理是薄胶水（单元测试 + 真 git 探针覆盖），真终端组合未跑；resume 恢复 cwd 同理。
+- **cron 回合委托子 agent**：代码路径有测试，真机未遇。
+- **外部 `git worktree remove` 对在跑会话的影响**（调研 §8-4）：宿主运行期间不防外部删除，表现未实测。
+- **Windows 路径矩阵**：短名（8.3）、含空格的 worktree 路径未跑（常规路径真机已过）。
+- **智谱 429**：账号余额问题，非产品缺陷；glm 路线的 cron 真机复验待充值后。
+- **失败的 cron fire**（如模型未配置）：下拍重试，无退避——真机未遇。
 
 ## 5. 开放 issue
 
@@ -74,39 +68,19 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
 
 ## 6. 下一步建议
 
-1. **P7 下一个模块，用户选**：Cron/Worktree；R3~R8 远期清单（插件生态等，D12）；或九个已完成模块攒一批发 `beta.4`。
-2. **rewind**：立项前必须先答「截断后 always/session 授权归哪、锁怎么收、0 行 header 怎么办」。
-3. **发版**：九个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环/可观测性/记忆蒸馏/视觉工具）攒一批发 `beta.4` 由用户定。
+1. **评审合并三 PR**：#202（调研）→ #203（ADR，链 #202）→ #204（实现 T1~T9；合并前 retarget main）。合并顺序不可乱（#203 基于 #202，#204 基于 main 但语义依赖 #203 先落）。
+2. **P7 下一个模块，用户选**：上下文压缩已在计划内？（此前已完成）；剩 NotebookEdit/PDF、WebFetch/WebSearch、`run --worktree`（§9-4）、`.worktreeinclude`（§9-5）；或攒一批发 `beta.4`（现十个模块未发）。
+3. **发版**：Cron/Worktree + 之前九个模块攒 `beta.4` 由用户定。
 
 ## 7. 会话踩坑（新增）
 
-- **`@types/node` 的 assert 带断言签名**：`assert.equal(x.ok, false)` 后 TS 已收窄，守卫 if 会被 `no-unnecessary-condition` 报——收窄后直接访问。
-- **事件驱动测试的时序**：completed 事件到达客户端 ≠ 主机清理完成；断言「拒绝切换」类行为要轮询。根治法（#174）：清理挂在**事件送达时同步做**，不留微任务窗口。
-- **微任务 flush 是竞态温床**：「subscribe 后 queueMicrotask flush」会被期间到达的事件超车；要保序就同步 flush。
-- **本机外部 `du` 进程**让全量测试 10 倍慢、计时测试随机 flake——逐文件绿即代码绿，CI 是权威。
-- PowerShell here-string 不转义 `''`；带 CRLF 的文件做 .NET Replace 前先确认匹配；改完必须 `git branch --show-current`。
-- **环境重启会清空含 junction 的 node_modules 树**（本会话 packages/cowcat 与 protocol 整包被清空，TUI/CLI 幸存）：恢复 = `git checkout -- <pkg>` + `npm ci` + 按依赖序重建 dist（protocol → cowcat → tui → cli）；未提交的审查修复按会话记录重放。教训：审查修复批次应尽快成 PR，别把大改留在工作区过夜。
-- **记忆续篇·经验蒸馏（#190~194）**：ADR-135~137——
-  - **写路闭环**：`Remember` 工具是记忆写路唯一门（四目标 instructions/skill × user/project；指令 append 或 `rewrite-cowcat-section` 标记段；skill 整文件写、frontmatter 仅 name/description；caps 8K/32K/1024）；**无自由路径参数**（枚举目标，逃逸构造上不可能）；**内核零改动、零新事件**（approval.* + tool.finished 全审计）。
-  - **信任镜像（ADR-136 ② 两层）**：未信任 workspace 时 host 注入条件 deny 规则（`when: {tool: 'Remember', command: '<target>'}`）**在 ask 之前**拒绝（不问必然失败的写）；Escalate 申诉可推翻 deny → **工具内信任门兜底**拒绝重试（不可申诉）——「未信任不回写」是 ADR-030 的对称句。
-  - **approvalKey 载体**：`commandInput: 'target'` 借道（ADR-027 data-only 声明不动内核）——approvalKey = name+目标；对某目标 always = 该目标后续写入免展示免问（显式接受的产品语义，卡面**无内容预览**，要更紧用规则 scoped ask/deny）。
-  - **后台蒸馏（ADR-137）**：`memory.reflect` 默认 off（user 层 only，跨层警告丢弃）；on 时用户回合 completed 后自动起受限反射回合（仅 Remember 工具、无 subagents/skills/hooks/planReview/escalation；reflecting 旗覆盖整个回合；完成监视器仅非 reflect 安装防重入）；unattended/plan mode/失败回合不反射；reflect 占用期间用户 sendTurn 吃**区分文案**的 busy 拒绝。
-  - 审查 #193：1 P0（maybeReflect×@文件 sendTurn 竞态可致日志永久不可 replay——守卫+claim 同一把 turnStarting 旗）+ 4 P1（description YAML 注入面→JSON.stringify；reflect 占用文案；ADR-136 ④ 文档诚实化；Escalate 链与 always 宽放补测试）+ 6 P2（子代理 NEVER_GIVEN 加 Remember 等）全修。
-  - T4 真机：glm 自主 Remember 落盘 `~/.cowcat/AGENTS.md`、审批卡 subject 真机可见、reflect 回合真机触发、**新会话 probe 命中沉淀经验**（写路闭环到读取侧全通）。
-- **视觉工具（#196~200）**：ADR-138~139——
-  - **View=给文本模型加眼**：{path, prompt?} 读本地图发给用户配置的 vision preset（默认 `zai/glm-4v-flash` 复用 ZHIPU_API_KEY），OCR/描述文本回会话；主模型有眼时直接用 Read（ADR-057 既有通路）。**类型闸在内容层**（sniffBuffer 魔数嗅探）——risk=read 在 reads-are-free 默认下免审批，改名 .png 的敏感文件曾经零干预出网（审查 #199 P1-3）。
-  - **ModelRequest.images** 直接调用通道：首条 user 消息内容部件；对话路径（tool 结果附件）不动；两适配器各映一次、物化复用 tryMaterializeAttachment；View 的 ToolResult 只带文本（日志继续零字节）。
-  - **vision 端点懒解析**：selectModel/createModelPort 错误在首次调用变拒绝（含 hint 指引），不拖死 createHost；显式 config.vision 启动即校验；vision 配置 user 层 only（跨层警告丢弃）；anthropic 协议 preset 带 limits.output 作 maxTokens。
-  - 审查 #199：3 P1（hint 字段错配/anthropic 必败/maxTokens、类型闸升级内容嗅探）+ 10 P2 全修。T3 真机：glm-5.3-flash 经 View 从 glm-4v 完整 OCR「HELLO COWCAT 42」；**首轮 FAIL 真机校准 catalogue（max_tokens 实测 [1,1024]）**。
-- **catalogue 数字必须实测**：glm-4v-flash 的 limits 是调研【推断】级，真机首轮即被端点拒（400 限 [1,1024]）——内置 preset 的限额一律以真实端点响应为准，勿凭文档填。
-- **decide 规范化按 process.cwd、工具按 options.cwd**（审查 #198 P2-6 登记，与 Read 同款的既有形态）：嵌入式宿主 cwd 不同时策略与工具看的不是同一文件——未来统一走 FsPort 时一并解决。
-- **reflect usage 与会话总额不可区分**（审查 P2-10 登记）：反射回合的 model.usage 混入 usageTotals，TUI 无法区分后台蒸馏花费——未来用 turn.noted 打标或按 turnId 归类。
-- **reflect 占用会话的未来选项**（审查 P1-3 评估记录）：用户回合到达即 abort reflect 曾被考虑后放弃（审批 promise 悬挂到超时）；若将来要做，需先解决 askApproval 的 abort 语义。
-- **configWarnings 通道无消费者**（#63 存量）：ADR-134 依赖它把「project/session 层 otel 被丢弃」送达用户，当前 CLI/TUI 均不读——下一模块顺手接上或开 issue。
-- **OTel JS 依赖线**：api/core/resources/sdk-trace-base 锁 1.30.x + exporter-trace-otlp-http 0.57.x（peer 对齐）；**该 http exporter 发 application/json 不是 protobuf**；3.x core 与 sdk-trace-base 2.x peer 冲突勿混升。
-- **真机驱动要当「橡皮图章用户」**：回合会停在 awaiting_approval 直到每个问题被回答——驱动循环里自动 respondApproval，别只等 completed。
-- **exec ask 与申诉会问两次**：维度分离的设计结果（waiver 不豁免 exec 风险询问），真机已观察；不是 bug，但写验收驱动时要预期到。
-- **`tsc`/`npm test` 必须在包目录里跑**：从仓库根 `npx tsc` 会命中 npm 的 tsc 占位包（"This is not the tsc command you are looking for"）。
+- **`turn.send` 应答跑赢回合本身**：send 的 RPC 回复在 turn.opened 后即可返回，回合随后才跑完——断言作业/事件存在前必须等到了 `cron.created`/`turn.completed`；动了时钟的测试同理（createdAt 可能落在推进后的时钟上，next fire 推远一分钟）。三个测试栽在这。
+- **块注释里的 `` `*/5` `` 会提前闭合 docblock**（`*/` 序列）——cron 源码注释里写表达式要拆开写。
+- **`canonical()` 把缺失尾巴重拼成平台分隔符**：比较用户拼写与 canonical 结果必须先 `normalize` 拼写（Windows 下 `/` vs `\`）。
+- **PowerShell 双引号字符串会插值 `${...}`**：脚本化批量替换 `.ts` 文件内容时模板里的 `${main}` 被吃掉、替换静默不生效——用 edit 工具或单引号。
+- **真 git 的两处教材**（调研 §8-1 的价值实证）：无 remote 时 `--not --remotes` 把主检出已有的提交算成未推送；删目录不留情面会触发 stale registration 拒建，须 `prune` 后重试。
+- **catalogue 数字必须实测**（第三次应验）：`deepseek-flash` 内置 output=393216 是推断级，验收驱动用自定义 preset 绕开。
+- **真机验收断言要对协议形状**：`session.open` 应答按设计不带 cwd（ADR-126 ③ 走 `session.list`），断言写错地方会把产品误判成缺陷。
 
 ## 8. 构建与测试（不变）
 
@@ -117,4 +91,4 @@ cd packages/tui && npm test           # 本机用 npx --yes node@26.12.0 --test 
 cd packages/cli && npm test
 ```
 
-探针 `node tools/lint-probe.mjs`。真机素材：`~/.cowcat/config.json` preset `zai-coding-plan/glm-5.3-flash`；验收驱动在 `C:\Users\Con_WKK\AppData\Local\Temp\cowcat-tui-accept\`（t4-plan-accept.mjs、t5-se-accept.mjs 可复用）。
+探针：`node tools/lint-probe.mjs`、`node tools/t9-cron-worktree-accept.mjs`（真机，需 ZHIPU_API_KEY 或 DEEPSEEK_API_KEY）。真机素材 preset：驱动内自定义 `deepseek/t9-flash`（避开 catalogue 未实测限额）。
