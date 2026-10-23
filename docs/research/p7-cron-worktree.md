@@ -276,3 +276,31 @@
 5. **`.worktreeinclude`**：`.env` 拷不进 worktree 是实测会踩的坑（CC 专门做了文件）。第一版不做，是否在文档里给「worktree 里手动 setup」的指引？
 6. **周期任务到期是否「最后 fire 一次」**（若 §9-1 取过期）：CC 是 fire 一次再删。照抄还是安静删除？倾向照抄（有头有尾，模型能交代）。
 7. **cron 回合的 subagents**：cron 回合无人值守，Task 子 agent 在其下跑时子 agent 本就收窄（ADR-081）——无新语义，但要在 T3 测试里覆盖「cron 回合委托子 agent」不挂审批。
+
+---
+
+## 10. 实现与真机验收记录（T1~T9 完成后补记，2026-10-24）
+
+> 本节是调研的「事后卷」：§4 草案的落地结果与 §8/§9 的处置，证据分级不变。**【实测】**指 `tools/t9-cron-worktree-accept.mjs`（13/13 过，deepseek-flash 真实端点 + 真 git）或文中具名测试。
+
+### 落地与草案的偏差（全部有据）
+
+1. **§8-1 真 git 实测校准两处**【实测】：① 无 remote 时「未推送检查」若只查 `--remotes` 会把主检出已有的提交算成未推送、worktree 永远删不掉——修正为 `log <branch> --not --branches --remotes`；② 手动删过 worktree 目录后 git 留 stale registration（"missing but already registered"）拒建——收养路径补 `worktree prune` 后重试。
+2. **§8-5 按倾向前者落地**（fired 预铸 turnId，`Session.openTurn` 增 `reservedTurnId` 可选参）；「fired 但 send 被拒」在实现中不存在（claim 先于 await，sendTurn 式拒绝路径直接不写 fired），孤儿 fired 只剩理论形态。
+3. **§8-3 互斥照抄 reflect 双旗**（`running`/`turnStarting`/`reflecting` 三重检查），调度器集成测试钉住【实测 `cron-scheduler.test.ts`】。
+4. **§9-1/2/3/4/5/6 全部按 ADR #203 记录的裁决落地**（7 天过期取、半量 jitter、`cron.enabled` 配置键、`run --worktree` 与 `.worktreeinclude` 留后续、到期最后 fire 一次）。
+
+### 真机验收（T9，13/13 过）
+
+- **Cron 腿**【实测】：deepseek-flash 自然语言 CronCreate（无教学）→ `cron.created` 落日志 → 心跳在下一分钟边界 fired → `fired.turnId === turn.opened.turnId` → cron 回合内 Write 询问被 `by:'unattended'` 拒绝并留审计（有 `approval.requested` 记录、无挂起等待）→ 一次性任务 fire 后投影自删 → 周期作业带 nextRun 与 7 天过期 → `cron.remove` 真删且日志记 `by:'user'`。
+- **Worktree 腿**【实测】：真 git 仓库 `ensureWorktree` → 信任显式继承进 trust.json → 宿主 cwd=worktree + `extraPaths` 放行主检出 `.git` → 会话头 cwd=worktree（`session.open` 应答按设计不带 cwd，断言走头事件与 `session.list`）→ 会话内 Write + `git commit` 经审批成功 → 提交落在 worktree 分支且主检出 `git log` 可见。
+- **验收期外部事件**：智谱账号 429（余额耗尽）——产品如实把失败记进日志（turn.failed 带原因），驱动改走内置 deepseek provider 完成验收；catalogue 的 `deepseek-flash` output 上限（393216）为未实测数字，驱动用自定义 preset 限 8192（HANDOFF 教训的再次应验）。
+- **测试基数**：cowcat 870→910、protocol 43→44、tui 119→121、cli 31，本机全绿，CI 为权威门。
+
+### 登记未验（不声称已完成）
+
+- TUI `/cron` 面板与 ⏰ 标注的**人眼验收**（帧快照覆盖布局，真实终端渲染未看——T10 人眼清单的既有缺口同类）。
+- cron 回合委托子 agent 的真机样本（代码路径有测试，真机未遇）。
+- `cowcat tui --worktree` 的 CLI 端到端（chdir/退出清理是薄胶水，单元测试 + 真 git 探针覆盖；真终端组合未跑）。
+- 外部 `git worktree remove` 对在跑会话的影响（§8-4，仍登记）。
+- Windows 短名/含空格路径的 worktree 矩阵（§8-1 只跑了常规路径）。
