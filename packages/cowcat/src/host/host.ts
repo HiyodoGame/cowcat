@@ -20,6 +20,7 @@ import { createTodoWriteTool } from '../adapters/tools/todo.js';
 import { createWriteTool } from '../adapters/tools/write.js';
 import { NodeBackgroundTasks } from '../adapters/background.js';
 import { AttachmentUnavailableError, materializeAttachment } from '../adapters/attachments.js';
+import { createSpanTranslator, initTelemetry } from '../adapters/otel/index.js';
 import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
 import { NodeFs } from '../adapters/fs.js';
 import { NodePlatform } from '../adapters/platform.js';
@@ -227,6 +228,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const config = loaded.config;
   const fs = options.fs ?? new NodeFs();
   const version = options.version ?? '0.0.0';
+
+  // Telemetry is a pure view over the live event stream (ADR-132): the tap subscribes
+  // alongside the delivery subscription in adopt(), and absent an endpoint (config
+  // or the standard env var) initTelemetry returns null and the host behaves exactly
+  // as it always has — zero overhead is the default (ADR-134).
+  const telemetry = initTelemetry({
+    env: options.env,
+    endpoint: config.otel?.endpoint,
+    headersEnv: config.otel?.headersEnv,
+    serviceVersion: version,
+  });
+  const spanTap = telemetry === null ? null : createSpanTranslator(telemetry.sink, { agentVersion: version });
 
   // Trust is a statement about the workspace (ADR-028), so it is read here and applied
   // to the rules: without this, a repository's own `cowcat.json` could hand itself
@@ -557,6 +570,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     rec.unsubscribe = session.subscribe((update) => {
       deliver(rec, update);
     });
+    // The telemetry tap is its own subscription: it must die with the record even
+    // though its translator is host-scoped (the translator keys conversations by
+    // sessionId, so a re-adopted session is safe — stale state is overwritten by
+    // the new turn.opened).
+    const unsubscribeTelemetry = spanTap === null ? null : session.subscribe(spanTap.observe);
+    if (unsubscribeTelemetry !== null) {
+      const unsubscribeDelivery = rec.unsubscribe;
+      rec.unsubscribe = () => {
+        unsubscribeDelivery();
+        unsubscribeTelemetry();
+      };
+    }
     return rec;
   }
 
@@ -1056,6 +1081,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       sessions.clear();
       pendingBackgroundExits.clear();
       startedBackground.clear();
+      // Abandon open spans first (so their end timestamps precede the exporter
+      // flush), then best-effort flush — the 1s budget lives in the handle.
+      if (spanTap !== null) spanTap.finish(Date.now());
+      if (telemetry !== null) await telemetry.finish();
     },
   };
 }
