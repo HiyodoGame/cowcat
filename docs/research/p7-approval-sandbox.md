@@ -135,3 +135,29 @@ P0/P1 决定「用户批的东西 ≠ grant 实际覆盖的东西」，必须先
 评审对问题 4 的答复：refused 无法被模型灌水（每条目都需用户亲手 reject；
 timeout/unattended 不折叠）。对问题 1 的答复：path/command 混淆不成立
 （精确匹配 + canonical），成立的是上述 P1-2/1-4/2-3 三条。
+## 9. #180 审查校准（2026-10-23，code-reviewer/k3）
+
+实现后审查：2 P0 + 5 P1 + 5 P2（#181 全部处理）。要点：
+
+- **P0-1（真断裂）**：`EscalationTurnContext` 建在每轮模型循环体内——沙箱拒绝
+  落在第 N 轮、申诉只能在第 N+1 轮，轮级集合恒为空，withoutSandbox 链路实际
+  不可达；每回合上限形同虚设。修复：上下文提升到回合级。
+- **P0-2**：Escalate 的 path 未过 `fs.canonical`——批准的重试按 canonical key
+  查 standing，申诉按原始拼写建 key，path 型申诉在 macOS/Windows 上批准即
+  失效。修复：键计算前 canonical 化（与 runCall 同源）。
+- **P1**：① deny-override 的 once 消费移到 grant 组装处（plan mode /
+  read-before-write 闸门之后）——批了却跑不了的调用不再白烧授权；② 申诉的
+  approval.answered 记录**生效后** verdict（session/always 被窄化为 once 时
+  不折叠进 grants，杜绝静默附赠 ask 通路免问）；TUI 申诉卡不再渲染
+  「本会话」行，`s` 键 habit 被明确拒绝；③ deny 覆盖不再置 `approved`
+  （networkApproved 只由 ask 通路人答产生——每个维度在自己的行上被批准）；
+  ④ subject 行改 wrap 不截断（截断的尾巴正是藏后缀的地方）；⑤ 补测试
+  （withoutSandbox 全链路/每回合上限/plan-mode 不烧授权）。
+- **P2**：unattended 短路（内核作为库的组合面）；grants/refused 折叠去重；
+  formatCost 小于半分钱显示 `<$0.01`（`$0.00` 读作免费）；普通 ask 的
+  approval.requested 也带 command/path（所有审批卡都显示确切 subject）；
+  消费与 tool.run 之间的崩溃窗口注释（宁可丢授权不可谎称已跑）。
+- **环境事故**：本会话中途系统更新把 packages/cowcat 与 packages/protocol
+  从磁盘清空（TUI/CLI/docs 幸存）。恢复 = git 还原到 #180 + npm ci +
+  按会话记录重放内核侧修复（TUI 修复在盘上幸存）。教训：长会话的未提交
+  改动是易失的，审查修复批次应尽快成 PR。

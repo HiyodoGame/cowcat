@@ -669,6 +669,14 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
           return;
         }
+        // Escalate appeals have no `session` answer (ADR-129 2): the kernel would
+        // narrow it anyway, but the habit should be told, not silently downgraded.
+        if (verdict === 'session' && approval.rule === 'escalation') {
+          view.current = addNotice(view.current, 'info', '申诉没有「本会话」选项：只能一次、总是（这一条）或拒绝');
+          draw();
+          return;
+        }
+        screen.clearInput();
         screen.clearInput();
         options.client.respondApproval(sessionId, approval.callId, verdict).catch((error: unknown) => {
           view.current = addNotice(view.current, 'error', message(error));

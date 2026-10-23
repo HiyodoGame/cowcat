@@ -41,6 +41,7 @@ import {
   type ProcessPort,
   type ProcessResult,
   type ProcessSpec,
+  SandboxRequestRefusedError,
   type SessionShell,
   type SkillFile,
 } from '../src/index.js';
@@ -1764,4 +1765,179 @@ test('usage totals accumulate per turn and ride session.open; a fork inherits th
   const forkedId = await fixture.client.forkSession('sess_usage');
   const forked = await fixture.client.openSession(forkedId);
   assert.deepEqual(forked.usage, afterTwo.usage, 'a fork inherits the parent meter through replay');
+});
+
+
+test('a sandbox refusal can be appealed unsandboxed: refusal (round N) -> appeal (round N+1) -> waived run', async (t) => {
+  const home = tempDir(t, 'cowcat-unsandbox-home-');
+  const cwd = tempDir(t, 'cowcat-unsandbox-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  // Refuses the exact command once (the sandbox precedent), then runs and records the
+  // sandbox mode the spec carried — the waived retry must arrive with mode 'off'.
+  const seenModes: string[] = [];
+  let refused = false;
+  const process: ProcessPort = {
+    async run(spec: ProcessSpec): Promise<ProcessResult> {
+      const command = spec.argv.at(-1) ?? '';
+      if (!refused && command === 'npm run release') {
+        refused = true;
+        throw new SandboxRequestRefusedError('network: on', 'test refusal', 'profile forbids the network', ['run without the network']);
+      }
+      seenModes.push(spec.sandbox.mode);
+      return {
+        exitCode: 0,
+        signal: null,
+        stdout: 'ok',
+        stderr: '',
+        truncated: false,
+        dropped: { stdout: 0, stderr: 0 },
+        removedEnv: [],
+        ignoredDeny: [],
+        sandbox: { mode: spec.sandbox.mode, backend: null, limitations: [] },
+        termination: { requested: false, reason: 'none', strategy: 'none', escalated: false, fallbackUsed: false, residuePossible: false },
+      };
+    },
+    open(): Promise<never> {
+      return Promise.reject(new Error('not used'));
+    },
+  };
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Bash', input: { command: 'npm run release' } } }],
+    [{ type: 'tool_call', call: { callId: 'c2', name: 'Escalate', input: { name: 'Bash', command: 'npm run release', justification: '发布需要联网', withoutSandbox: true } } }],
+    [{ type: 'tool_call', call: { callId: 'c3', name: 'Bash', input: { command: 'npm run release' } } }],
+    [{ type: 'text', text: 'released' }],
+  ]);
+  const fixture = await start({ cwd, home, model, process });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_unsandbox');
+  await fixture.client.openSession('sess_unsandbox');
+  await fixture.client.sendTurn('sess_unsandbox', 'ship it');
+
+  // Answer questions as they arrive: round 1's exec ask, the unsandbox appeal, and the
+  // retry's own exec ask (each dimension is approved on its own line — the waiver says
+  // nothing about the exec-risk question).
+  const answered = new Set<string>();
+  const deadline = Date.now();
+  let completed = false;
+  while (Date.now() - deadline < 30_000) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const requests = fixture.events().filter((event) => event.type === 'approval.requested');
+    for (const request of requests) {
+      const callId = field(request, 'callId') as string;
+      if (!answered.has(callId)) {
+        answered.add(callId);
+        await fixture.client.respondApproval('sess_unsandbox', callId, 'once');
+      }
+    }
+    if (fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed')) {
+      completed = true;
+      break;
+    }
+  }
+  assert.equal(completed, true, 'the turn completed');
+
+  const requested = fixture.events().find((event) => event.type === 'approval.requested' && field(event, 'rule') === 'escalation');
+  assert.deepEqual(field(requested, 'dimensions'), ['unsandboxed']);
+  const bash = fixture.events().filter((event) => event.type === 'tool.finished' && field(event, 'name') === 'Bash');
+  assert.equal(bash.length, 2);
+  assert.equal(field(bash[0], 'ok'), false);
+  assert.match(String(field(bash[0], 'output')), /sandbox refused/);
+  assert.equal(field(bash[1], 'ok'), true, 'the waived retry runs');
+  assert.deepEqual(seenModes, ['off'], 'the retry arrived without the sandbox');
+});
+
+test('Escalate reaches the user at most three times per turn', async (t) => {
+  const home = tempDir(t, 'cowcat-esclimit-home-');
+  const cwd = tempDir(t, 'cowcat-esclimit-proj-');
+  // Four distinct denied commands: each appeal keys on its own subject, so the refused
+  // short-circuit cannot fire and the questions keep coming — until the turn limit does.
+  writeUserConfig(home, {
+    model: { preset: PRESET },
+    rules: [1, 2, 3, 4].map((n) => ({ name: `no-echo-${String(n)}`, verdict: 'deny', when: { tool: 'Bash', command: `echo blocked${String(n)}` } })),
+  });
+
+  const appeal = (callId: string, command: string, justification: string): readonly ModelChunk[] => [
+    { type: 'tool_call', call: { callId, name: 'Escalate', input: { name: 'Bash', command, justification } } },
+  ];
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Bash', input: { command: 'echo blocked1' } } }],
+    appeal('c2', 'echo blocked1', 'first'),
+    appeal('c3', 'echo blocked2', 'second'),
+    appeal('c4', 'echo blocked3', 'third'),
+    appeal('c5', 'echo blocked4', 'fourth'),
+    [{ type: 'text', text: 'done asking' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_esclimit');
+  await fixture.client.openSession('sess_esclimit');
+  await fixture.client.sendTurn('sess_esclimit', 'keep asking');
+
+  // Answer the three questions as they arrive.
+  for (let answered = 0; answered < 3; answered += 1) {
+    await fixture.until(`appeal ${String(answered + 1)}`, () =>
+      fixture.events().filter((event) => event.type === 'approval.requested').length > answered,
+    );
+    const requests = fixture.events().filter((event) => event.type === 'approval.requested');
+    await fixture.client.respondApproval('sess_esclimit', field(requests[answered], 'callId') as string, 'reject');
+  }
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  assert.equal(fixture.events().filter((event) => event.type === 'approval.requested').length, 3);
+  const escalates = fixture.events().filter((event) => event.type === 'tool.finished' && field(event, 'name') === 'Escalate');
+  assert.equal(escalates.length, 4);
+  assert.match(String(field(escalates[3], 'output')), /at most 3 times per turn/);
+});
+
+test('a plan-mode block does not burn the escalation grant', async (t) => {
+  const home = tempDir(t, 'cowcat-escplan-home-');
+  const cwd = tempDir(t, 'cowcat-escplan-proj-');
+  writeUserConfig(home, ESCALATE_RULES);
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'tool_call', call: { callId: 'c2', name: 'Escalate', input: { name: 'Bash', command: 'echo blocked', justification: '需要它' } } }],
+    [{ type: 'tool_call', call: { callId: 'c3', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'tool_call', call: { callId: 'c4', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_escplan');
+  await fixture.client.openSession('sess_escplan');
+  await fixture.client.setPlanMode('sess_escplan', true);
+  await fixture.client.sendTurn('sess_escplan', 'try while planning');
+
+  await fixture.until('the escalation question', () => first(fixture.events(), 'approval.requested') !== undefined);
+  await fixture.client.respondApproval('sess_escplan', field(first(fixture.events(), 'approval.requested'), 'callId') as string, 'once');
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  // The retry was blocked by plan mode, and the grant must NOT have been consumed:
+  // burning it on a call that could not run would waste the approval (review P1-3).
+  // Plan mode stays on to the end of the turn, so every Bash here is refused — what
+  // the test guards is the ABSENCE of the consumption event, i.e. the grant survives
+  // for a retry that can actually run.
+  assert.equal(first(fixture.events(), 'escalation.consumed'), undefined);
+  const bash = fixture.events().filter((event) => event.type === 'tool.finished' && field(event, 'name') === 'Bash');
+  assert.equal(bash.length, 3);
+  assert.equal(field(bash[0], 'ok'), false);
+  assert.match(String(field(bash[0], 'output')), /denied by no-blocked-echo/);
+  assert.equal(field(bash[1], 'ok'), false);
+  assert.match(String(field(bash[1], 'output')), /plan mode/);
+  assert.equal(field(bash[2], 'ok'), false, 'plan mode still refuses the retry; the grant is untouched, not spent');
+  assert.ok(first(fixture.events(), 'escalation.granted') !== undefined);
 });

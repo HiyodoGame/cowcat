@@ -34,9 +34,10 @@ export function costOf(usage: MeterUsage, price: MeterPrice): number {
 }
 
 /** `$0.02`, `$1.20`, `$12.40` — two decimals, always, because a meter that rounds
- *  differently every row reads as noise. */
+ *  differently every row reads as noise. Below half a cent it says `<$0.01`: `$0.00`
+ *  reads as "free", and a meter must never say free when it means "small". */
 export function formatCost(usd: number): string {
-  return `$${usd.toFixed(2)}`;
+  return usd > 0 && usd < 0.005 ? '<$0.01' : `$${usd.toFixed(2)}`;
 }
 
 /**

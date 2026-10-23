@@ -360,16 +360,20 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
     case 'approval.answered':
       // Both standing answers are keys. `always` stores the exact action; `session`
       // stores the tool-level key it was emitted with (ADR-094), so a reopened session
-      // gets the narrower grant back and not something wider.
+      // gets the narrower grant back and not something wider. A key that is already
+      // there is not re-appended: a standing `always` re-emitted on every reuse would
+      // otherwise grow `grants` linearly with retries (review of #180, P2-9).
       if (event.verdict === 'always' || event.verdict === 'session') {
-        return { ...base, grants: [...state.grants, event.key] };
+        return state.grants.includes(event.key) ? base : { ...base, grants: [...state.grants, event.key] };
       }
       // A person's explicit reject folds into `refused`; timeouts and unattended
-      // refusals do not (ADR-129 ⑤ — nobody answering is not a person answering no).
+      // refusals do not (ADR-129): nobody answering is not a person answering no.
+      // Same dedupe rule as `grants`.
       return event.verdict === 'reject' && event.by === 'user'
-        ? { ...base, refused: [...state.refused, event.key] }
-        : base;
-    case 'escalation.granted':
+        ? state.refused.includes(event.key)
+          ? base
+          : { ...base, refused: [...state.refused, event.key] }
+        : base;    case 'escalation.granted':
       return { ...base, escalations: [...state.escalations, { key: event.key, scope: event.scope, dimension: event.dimension }] };
     case 'escalation.consumed':
       return { ...base, escalationsConsumed: [...state.escalationsConsumed, escalationSlot(event.key, event.dimension)] };
