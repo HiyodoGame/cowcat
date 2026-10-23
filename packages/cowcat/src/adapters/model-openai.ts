@@ -229,7 +229,12 @@ function toWireMessages(
 function directImageParts(images: readonly Attachment[]): OpenAI.Chat.ChatCompletionContentPart[] {
   const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
   for (const image of images) {
-    if (image.type !== 'image') continue;
+    if (image.type === 'document') {
+      // Named, not dropped (ADR-016): this protocol has no portable document part,
+      // same call the tool-result path makes.
+      parts.push({ type: 'text', text: `document referenced, not inlined: ${image.mediaType} at ${image.path} (${String(image.bytes)} bytes)` });
+      continue;
+    }
     const materialized = tryMaterializeAttachment(image);
     if (!materialized.ok) {
       parts.push({ type: 'text', text: unavailableAttachmentNote(image, materialized.error.reason) });

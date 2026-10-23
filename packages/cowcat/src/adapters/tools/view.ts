@@ -4,11 +4,19 @@
 // preset does not need this: it reads images natively through the attachment path
 // (ADR-057). The image bytes go to the vision endpoint, never into the session log
 // (the ToolResult carries text only, ADR-139 ③).
+//
+// The image kind is decided by sniffing the bytes, not the extension — the same
+// discipline Read documents in imageinfo.ts ("the name is the model's claim; the
+// magic is the fact"). This matters more here than for Read: View's bytes leave the
+// machine for a third-party endpoint, and `reads-are-free` means no approval stands
+// in between.
 
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { z } from 'zod';
-import type { Attachment, ModelPort, ToolPort } from '../../ports/index.js';
+import { sniffBuffer } from '../imageinfo.js';
+import { makeAttachment } from '../../ports/attachments.js';
+import type { ModelPort, ToolPort } from '../../ports/index.js';
 import { defineTool } from './define-tool.js';
 
 export interface ViewToolOptions {
@@ -19,7 +27,7 @@ export interface ViewToolOptions {
    * is the contract: the tool turns it into a refusal with the guidance, and createHost
    * is never affected (ADR-138 ③).
    */
-  readonly vision: () => { readonly port: ModelPort; readonly model: string };
+  readonly vision: () => { readonly port: ModelPort; readonly model: string; readonly maxTokens?: number | undefined };
 }
 
 // ADR-058's 5MB口径, same as the attachment path it rides.
@@ -28,16 +36,8 @@ const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 // which is what Read is for.
 const OUTPUT_MAX_CHARS = 16 * 1024;
 
-const MEDIA_BY_EXTENSION: Readonly<Record<string, string>> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.bmp': 'image/bmp',
-};
-
-const DEFAULT_PROMPT = 'Describe this image in detail: its content and structure, and transcribe ALL text in it (OCR). Preserve the original language of any text you find.';
+const DEFAULT_PROMPT =
+  'Describe this image in detail: its content and structure, and transcribe ALL text in it (OCR). Preserve the original language of any text you find.';
 
 const DESCRIPTION = [
   'Look at an image file and answer a question about it, using a vision-capable model configured by the user. The answer comes back as text.',
@@ -45,7 +45,7 @@ const DESCRIPTION = [
   'When to use: the session model is text-only and you need what is IN an image — a screenshot of an error, a diagram, a photo of a whiteboard, text that only exists as pixels.',
   'When NOT to use: the session model is multimodal (then Read the image directly — it sees the picture, this tool would only describe it). Text files. PDFs (Read handles those).',
   '',
-  'The image bytes are sent to the vision endpoint the user configured (default zai/glm-4v-flash). Sizes over 5MB and non-image files are refused.',
+  'The image bytes are sent to the vision endpoint the user configured (default zai/glm-4v-flash). Files over 5MB and non-image files (checked by content, not by name) are refused.',
   'With no `prompt`, the tool describes the image and transcribes all text (OCR). Pass a `prompt` to ask something specific instead.',
 ].join('\n');
 
@@ -70,39 +70,64 @@ export function createViewTool(options: ViewToolOptions): ToolPort {
       if (!existsSync(filePath)) {
         return { ok: false, output: `no such file: ${filePath}` };
       }
-      const mediaType = MEDIA_BY_EXTENSION[extname(filePath).toLowerCase()];
-      if (mediaType === undefined) {
-        return {
-          ok: false,
-          output: `refused: ${filePath} is not a supported image (png/jpeg/gif/webp/bmp); PDFs and other documents are Read's job`,
-        };
+      if (!statSync(filePath).isFile()) {
+        return { ok: false, output: `refused: ${filePath} is not a regular file` };
       }
-      const size = statSync(filePath).size;
-      if (size > IMAGE_MAX_BYTES) {
-        return { ok: false, output: `refused: ${filePath} is ${String(size)} bytes, past the ${String(IMAGE_MAX_BYTES)} image ceiling` };
+      // The 5MB gate runs on the bytes actually read, not the stat: a file swapped or
+      // grown between check and read is caught at the size that matters (review of
+      // #198, P2-1). The wire-time re-read is still bounded by the attachment hard
+      // limit, so the residual TOCTOU window cannot pass 20MB on this protocol.
+      const buffer = readFileSync(filePath);
+      if (buffer.byteLength > IMAGE_MAX_BYTES) {
+        return { ok: false, output: `refused: ${filePath} is ${String(buffer.byteLength)} bytes, past the ${String(IMAGE_MAX_BYTES)} image ceiling` };
       }
-      if (size === 0) {
+      if (buffer.byteLength === 0) {
         return { ok: false, output: `refused: ${filePath} is empty` };
       }
+      const sniffed = sniffBuffer(buffer);
+      // Explicit negative checks rather than the isImageKind guard: === narrowing
+      // discriminates the Sniffed union, which is what makes mediaType/width/height
+      // reachable below.
+      if (sniffed.kind === 'pdf' || sniffed.kind === 'image-unsupported' || sniffed.kind === 'text' || sniffed.kind === 'binary') {
+        const claim =
+          sniffed.kind === 'image-unsupported'
+            ? `an unsupported image format (${sniffed.format})`
+            : sniffed.kind === 'pdf'
+              ? 'a PDF (Read handles documents)'
+              : sniffed.kind === 'text'
+                ? 'text'
+                : 'binary data';
+        return {
+          ok: false,
+          output: `refused: ${filePath} is ${claim} by its bytes, not an image View can send — the name says ${extname(filePath) || '(none)'}, the content decides, and rename-to-.png does not make a file an image.`,
+        };
+      }
 
-      let vision: { readonly port: ModelPort; readonly model: string };
+      let vision: { readonly port: ModelPort; readonly model: string; readonly maxTokens?: number | undefined };
       try {
         vision = options.vision();
       } catch (error) {
-        const detail = error as { readonly message?: string; readonly guidance?: string };
+        const detail = error as { readonly message?: string; readonly hint?: string };
         return {
           ok: false,
           output: [
             `the vision endpoint is not available: ${detail.message ?? String(error)}`,
-            detail.guidance === undefined ? '' : detail.guidance,
-            'The View tool needs a vision-capable preset: set "vision": "<preset-id>" in your user config (default zai/glm-4v-flash), or run cowcat doctor to list presets.',
+            detail.hint === undefined ? '' : detail.hint,
+            'The View tool needs a vision-capable preset: set "vision": "<preset-id>" in your user config (cowcat doctor lists the built-in ids).',
           ]
             .filter((line) => line !== '')
             .join('\n'),
         };
       }
 
-      const image: Attachment = { type: 'image', mediaType, path: filePath, bytes: size, width: null, height: null, pages: null };
+      const image = makeAttachment({
+        type: 'image',
+        mediaType: sniffed.mediaType,
+        path: filePath,
+        bytes: buffer.byteLength,
+        width: sniffed.width,
+        height: sniffed.height,
+      });
       let text = '';
       try {
         for await (const chunk of vision.port.stream(
@@ -110,6 +135,7 @@ export function createViewTool(options: ViewToolOptions): ToolPort {
             messages: [{ role: 'user', text: input.prompt ?? DEFAULT_PROMPT }],
             tools: [],
             model: vision.model,
+            ...(vision.maxTokens === undefined ? {} : { maxTokens: vision.maxTokens }),
             images: [image],
           },
           signal,
@@ -118,6 +144,10 @@ export function createViewTool(options: ViewToolOptions): ToolPort {
           if (text.length > OUTPUT_MAX_CHARS) break;
         }
       } catch (error) {
+        // A cancellation is not a tool failure: rethrow so the turn ends the way the
+        // user asked, instead of logging a fake "vision call failed" (review of #198,
+        // P2-3 — the run-turn convention).
+        if (signal.aborted) throw error;
         return { ok: false, output: `vision call failed: ${error instanceof Error ? error.message : String(error)}` };
       }
       if (text.trim() === '') {

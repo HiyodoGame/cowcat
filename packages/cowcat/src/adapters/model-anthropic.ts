@@ -238,9 +238,9 @@ type PendingBlock =
 function toWireMessages(messages: readonly Message[], images: readonly Attachment[] | undefined, carryReasoning: boolean): Anthropic.MessageParam[] {
   const wire: Anthropic.MessageParam[] = [];
   // The direct-call channel (ADR-139): images join the FIRST user message after its
-  // text, using the same block builder as tool-result attachments.
-  const directImages =
-    images === undefined || images.length === 0 ? [] : images.filter((image) => image.type === 'image').map(toAttachmentBlock);
+  // text, through the same block builder as tool-result attachments — documents
+  // included, named by that builder rather than dropped.
+  const directImages = images === undefined || images.length === 0 ? [] : images.map(toAttachmentBlock);
   let imagesPlaced = directImages.length === 0;
   for (const message of messages) {
     if (message.role === 'tool') {
