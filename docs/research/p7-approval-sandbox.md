@@ -95,3 +95,43 @@ P2（执行网关含沙箱执行器）、P3（策略、配置与审批协议）�
 3. **成本币种**：preset price 只声明 USD；多币种不做（v1）【须裁决】。
 4. **沙箱真机覆盖**：本机 Windows 无 bwrap/seatbelt，SandboxUnavailable 路径可测；RequestRefused 需 profile 与请求冲突的构造【须实测，T5 构造】。
 5. **grants 覆盖 deny 的评审**：安全敏感语义，实现前过 security-reviewer【须执行】。
+
+## 8. 安全评审校准（2026-10-23，security-reviewer/k3-256k）
+
+实现**前**评审结论：结构（复用审批桥、事件折叠、不静默降级）成立，但三条
+P0/P1 决定「用户批的东西 ≠ grant 实际覆盖的东西」，必须先进 ADR：
+
+- **P0-1 卡片盲批**：approval.requested 无 subject 字段、审批卡不显示确切
+  命令/路径（既有 ask 流程的缺口，Escalate 把它从弱升级为致命——deny 恰恰
+  是最需要看清对象的动作）。**修订（新 E8）**：approval.requested 增
+  `command?/path?`（与 grant key 同一份值），卡片第一行渲染；escalation
+  的 subject 同样跑 `assessCommand` 出 warning；justification 只作补充行。
+- **P1-1 once 无消耗**：once 若照草案记 grants 则变「本会话无限次」。**修订**：
+  once 记 grants 的同时发 `approval.consumed {key}`（工具放行时），fold 进
+  `state.consumed`；standing 检查 = grants 含 key 且 consumed 不含——「加宽后
+  只重试一次」成为可重放的精确语义（消费即焚）。
+- **P1-2 session 宽度失控**：Escalate 若可答 session，一次点击作废该工具全部
+  deny 规则。**修订**：Escalate 选项只给 once/always/reject；deny 覆盖路径
+  只认精确 approvalKey，不认 toolGrantKey。
+- **P1-3 维度混淆**：deny 覆盖放行沿 approved=true 通路会静默附赠 network
+  放宽与无沙箱。**修订**：grant 分维度——Escalate(deny 救济)只覆盖 deny，
+  不带 network/unsandboxed；approval.requested 增 dimensions 行，卡片逐项
+  列出；unsandboxedApproved **只随 once**（P1-5：always 保留沙箱）。
+- **P1-4 `*` key 碰撞（既有潜伏缺陷）**：Bash 命令恰为 `*` 时 approvalKey ≡
+  toolGrantKey，一次批准=全 Bash 绕过。**修订**：subject 校验拒 `'*'` 与
+  NUL；toolGrantKey 换带引号前缀 `${name}\u0000"*"` 消除碰撞。
+- **P2-1 骚扰回路**：Escalate 每回合硬上限 3 次（turn 内存计数，防无限
+  变体串行挂起审批桥）。
+- **P2-2 渲染注入**：justification/subject 渲染前剥 C0/C1 控制字符与 bidi
+  控制符（TUI 渲染层）。
+- **P2-3 refused 归一化**：key 计算前 trim + 折叠连续空白（堵「加个空格换
+  key」）；「清除拒绝记录」逃生口 v1 不做。
+- **P2-4 Escalate 后门**：仅当 decide(subject)=deny 才发起审批（预支授权/
+  绕 ask 直接报错）；withoutSandbox 模式要求本会话该 subject 有
+  sandboxRefused 记录（Bash 在 facts 标记，run-turn 记 turn 内集合）。
+- **P2-5 不向注入面广告申诉路径**：deny 文案保持中性事实；申诉通路写进
+  内核系统提示（稳定文本，ADR-078 链），不随工具结果广播。
+
+评审对问题 4 的答复：refused 无法被模型灌水（每条目都需用户亲手 reject；
+timeout/unattended 不折叠）。对问题 1 的答复：path/command 混淆不成立
+（精确匹配 + canonical），成立的是上述 P1-2/1-4/2-3 三条。
