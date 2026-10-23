@@ -113,3 +113,26 @@ code-reviewer/k3 审查：1 P0 + 5 P1 + 7 P2（#174 全部处理）。要点：
   时序偏移后被确定性触发）。改为 subscribe 内同步 flush。该竞态一直存在。
 - **本机环境噪声**：两个外部 `du` 进程造成磁盘 IO 竞争，全量并行的计时敏感测试
   （background/bash/process 等）本地随机 flake、逐文件全绿；以 CI 为权威。
+## 12. T5 真机验收记录（2026-10-23）
+
+**结论：三件套全链路真机通过**（glm-5.3-flash 真实 API，`cowcat serve` +
+脚本化 NDJSON 客户端，驱动 `cowcat-tui-accept/t5-se-accept.mjs`，#174 后内核）。
+
+### 结果
+
+1. **@ 文件引用**：`files:[notes.md]` → `prompt.attached`（seq=2，全文路径名）
+   先于 `turn.opened`；模型据文件内容答出核心原则「keep it simple」。
+2. **session.fork**：新 id；fork header `parent:{role:'fork'}` 且 **cwd 继承源**；
+   行数与源一致；**fork 后的新回合无需重新附件即答出笔记内容**——重放式
+   继承的实证（上下文、grants 全部随日志过去）。
+3. **标题派生**：`session.list` 对每个会话给出 title（首个 prompt 截断）；
+   新会话带 cwd/model，ADR-126 之前的旧会话显示「无」——「缺席即无」语义
+   真机可见；fork 条目标注 `parentRole=fork` 且带全部派生事实。
+
+### 观察 / 边界
+
+- fork 重放成本：本规模（十余事件）无感；万级事件的时延仍无数据（§8.1
+  保持开放）。
+- 相对 @ 路径的 resume 跨目录语义真机未验（已知语义，ADR-128 ⑤ 明示）。
+- 真机列表里历史会话的 title 偶尔是「nihao/你好」类短句——派生规则本身
+  工作正常，标题质量由首条 prompt 决定。
