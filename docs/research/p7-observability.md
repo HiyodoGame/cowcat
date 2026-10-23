@@ -205,3 +205,33 @@ no-op）；导出走 BatchSpanProcessor 异步，host 关闭时 `shutdown()` 尽
 - **新测试 +7**：交错双会话独立成树、dangling turn 放弃、forget 重收养、
   畸形 endpoint 双路径、真实 createHost provider.name 集成、subagent 独立
   conversation 树、（既有）迟到回填改为真实顺序。
+## 9. T4 真机验收记录（2026-10-23）
+
+**结论：全链路真机通过**（glm-5.3-flash 真实 API，`cowcat serve`，user config
+`otel.endpoint=http://127.0.0.1:14318/v1/traces`，进程内迷你 OTLP receiver 收
+application/json 负载；驱动 `cowcat-tui-accept/t4-otel-accept.mjs`，两次运行
+均 ACCEPTANCE PASS，exit=0）。
+
+### 结果（第二次运行，数字为真机账单）
+
+- span 树完整到达：`invoke_agent cowcat`（根）+ 2× `chat glm-5.3-flash`
+  （两轮 CLIENT span）+ `execute_tool Read`（glm 自然调 Read 读预置文件）。
+- Required 属性真机在场：`gen_ai.provider.name=zai-coding-plan`（#187 的
+  readHeader prime 修复在真实链路验证——审查前的版本这里会缺席）、
+  `gen_ai.conversation.id`=sessionId、`gen_ai.agent.version=1.0.0-beta.3`、
+  resource `service.name=cowcat`。
+- chat span：operation=chat、request.model、request.stream=true、
+  finish_reasons=["tool_calls"]（首轮）。
+- **用量对账**：两轮 chat span 的 input 之和（4163+4190）= session.open
+  usageTotals.input（8353）；cacheRead 合计 8320（命中率 ~99.6%）——span 级
+  与累计级数字同源吻合，两本账一致。
+- 配置路径真机覆盖：`otel.endpoint` 走 user config（非 env）启用。
+
+### 观察 / 边界
+
+- exporter-trace-otlp-http 0.57 默认发 **application/json**（protobuf 编码是
+  另一个包 exporter-trace-otlp-proto）——receiver/排障时别按 protobuf 解。
+- tool span 起点近似（ADR-133 ③）真机无害：Read 时长偏短只影响该 span 自身。
+- subagent/fork 的遥测语义有单测与 host 级测试钉住，真机未单独验（成本，
+  非风险）。
+- 未验：DROP 型黑洞 endpoint 的 5s exporter 超时（单测覆盖 RST 快路径）。
