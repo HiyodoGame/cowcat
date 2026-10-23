@@ -11,6 +11,7 @@ import {
   BASH_MAX_TIMEOUT_MS,
   BASH_MIN_TIMEOUT_MS,
   NodeProcess,
+  SandboxRequestRefusedError,
   createBashTool,
   defaultSandboxProfile,
   nodePlatform,
@@ -27,8 +28,8 @@ import {
 } from '../src/index.js';
 
 const signal = new AbortController().signal;
-const approved: ToolGrant = { networkApproved: true };
-const notApproved: ToolGrant = { networkApproved: false };
+const approved: ToolGrant = { networkApproved: true, unsandboxedApproved: false };
+const notApproved: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 const shell = { kind: 'posix' as const, executable: '/bin/sh', baseArgs: [] as readonly string[], commandFlag: '-c' };
 const platform: PlatformPort = {
@@ -386,4 +387,36 @@ test('a bash call without a run context travels whole even when oversized', asyn
 
   assert.equal(result.ok, true);
   assert.equal(result.output, 'x'.repeat(60_000));
+});
+
+test('a sandbox refusal names itself and points at the appeal, and marks the result', async () => {
+  const refusing = new FakeProcess({}, new SandboxRequestRefusedError('network: on', 'test refusal', 'profile forbids the network', ['run without the network']));
+  const result = await tool(refusing).run({ command: 'npm install' }, signal, notApproved);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.sandboxRefused, true, 'the kernel only offers a waiver after a real refusal');
+  assert.match(result.output, /sandbox refused: sandbox "system" cannot satisfy network: on/);
+  assert.match(result.output, /Escalate/);
+  assert.doesNotMatch(result.output, /failed to start command/, 'a refusal must not masquerade as a start failure');
+});
+
+test('an approved waiver runs this once without the sandbox', async () => {
+  const process = new FakeProcess();
+  const waived: ToolGrant = { networkApproved: false, unsandboxedApproved: true };
+  const result = await tool(process).run({ command: 'npm install' }, signal, waived);
+
+  assert.equal(result.ok, true);
+  const [spec] = process.specs;
+  assert.ok(spec !== undefined);
+  assert.equal(spec.sandbox.mode, 'off');
+  assert.equal(spec.sandbox.backend, 'none');
+});
+
+test('no waiver, no change: the profile passes through untouched', async () => {
+  const process = new FakeProcess();
+  await tool(process).run({ command: 'npm install' }, signal, notApproved);
+
+  const [spec] = process.specs;
+  assert.ok(spec !== undefined);
+  assert.equal(spec.sandbox.mode, defaultSandboxProfile().mode);
 });

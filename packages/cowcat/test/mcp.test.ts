@@ -304,7 +304,7 @@ test('a tool-list change swaps only that server\'s tools in the live table', asy
     assert.equal(servers.table.has('mcp__fake__added'), false);
     const change = servers.table.get('mcp__fake__change');
     assert.ok(change !== undefined);
-    const result = await change.run({}, new AbortController().signal, { networkApproved: false });
+    const result = await change.run({}, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false });
     assert.equal(result.ok, true);
 
     await until('the new tool to appear', () => servers.table.has('mcp__fake__added'));

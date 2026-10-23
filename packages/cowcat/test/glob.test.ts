@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { GITIGNORE_LIMITATIONS, createGlobTool, globToRegExp, type ToolGrant, type ToolResult } from '../src/index.js';
 
 const signal = new AbortController().signal;
-const noGrant: ToolGrant = { networkApproved: false };
+const noGrant: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 /** Builds a real tree: the walker's contract is about the filesystem, so no fake. */
 function tree(files: Readonly<Record<string, string>>): string {

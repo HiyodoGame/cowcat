@@ -130,7 +130,16 @@ export interface ResultTable {
    * it never needs a second way to ask "what does the session look like now"
    * (ADR-059 ②: same log → same screen).
    */
-  readonly 'session.open': SessionSummary & { readonly replayed: number };
+  readonly 'session.open': SessionSummary & {
+    readonly replayed: number;
+    /** The session's summed usage, when the log has billed anything (ADR-131 ①). */
+    readonly usage?: {
+      readonly input: number;
+      readonly output: number;
+      readonly cacheRead: number;
+      readonly cacheCreation: number;
+    };
+  };
   readonly 'session.create': SessionSummary;
   /** The forked session's new id (ADR-127). */
   readonly 'session.fork': { readonly sessionId: string };

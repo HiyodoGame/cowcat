@@ -233,6 +233,7 @@ function stateWithTurnIn(state: TurnState): SessionState {
     messages: [],
     messageSeqs: [],
     lastUsage: null,
+    usageTotals: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     compactionOpen: false,
     planMode: false,
     instructionsSeq: null,
@@ -240,6 +241,9 @@ function stateWithTurnIn(state: TurnState): SessionState {
     skillsSeq: null,
     skillsCount: 0,
     grants: [],
+    refused: [],
+    escalations: [],
+    escalationsConsumed: [],
     readFiles: [],
     todos: [],
   };

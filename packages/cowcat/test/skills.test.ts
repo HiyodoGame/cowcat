@@ -292,7 +292,7 @@ test('a missing description falls back to the first body line', async () => {
 // ---------------------------------------------------------------------------
 
 const signal = new AbortController().signal;
-const grant = { networkApproved: false };
+const grant = { networkApproved: false, unsandboxedApproved: false };
 
 test('Skill returns the body and one level of bundled files', async () => {
   const { root, cleanup } = tree();

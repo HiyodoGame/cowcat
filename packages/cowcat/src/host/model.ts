@@ -139,6 +139,7 @@ function customToPreset(custom: NonNullable<ResolvedModelSettings['presets'][str
     // and a preset that says nothing is the common case.
     toolCalls: custom.toolCalls ?? true,
     ...(custom.efforts === undefined ? {} : { efforts: custom.efforts }),
+    ...(custom.price === undefined ? {} : { price: custom.price }),
   };
 }
 

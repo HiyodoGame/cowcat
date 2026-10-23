@@ -10,7 +10,7 @@ import { createReadTool, type Attachment, type ToolGrant, type ToolResult } from
  * become which attachment, with which metadata, and what is refused rather than guessed.
  * What the model then sees is the adapters' business, and T5's tests cover that split.
  */
-const noGrant: ToolGrant = { networkApproved: false };
+const noGrant: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 function tree(files: Readonly<Record<string, string | Buffer>>): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cowcat-read-binary-')));

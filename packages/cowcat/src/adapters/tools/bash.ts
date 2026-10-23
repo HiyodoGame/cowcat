@@ -1,12 +1,14 @@
 import { z } from 'zod';
-import type {
-  BackgroundTasksPort,
-  PlatformPort,
-  ProcessPort,
-  ProcessResult,
-  SandboxProfile,
-  ToolGrant,
-  ToolPort,
+import {
+  SandboxRequestRefusedError,
+  SandboxUnavailableError,
+  type BackgroundTasksPort,
+  type PlatformPort,
+  type ProcessPort,
+  type ProcessResult,
+  type SandboxProfile,
+  type ToolGrant,
+  type ToolPort,
 } from '../../ports/index.js';
 import { defineTool } from './define-tool.js';
 import type { SpillConfig } from '../spill.js';
@@ -99,6 +101,7 @@ export function createBashTool(options: BashToolOptions): ToolPort {
 
         const network = decideNetwork(options.sandbox, grant);
         if (typeof network === 'string') return { ok: false, output: network };
+        const sandbox = decideSandbox(network, grant);
 
         const shell = options.platform.resolveShell();
         const timeoutMs = clampBackgroundTimeout(input.timeout);
@@ -111,7 +114,7 @@ export function createBashTool(options: BashToolOptions): ToolPort {
             cwd: options.cwd,
             env: options.env ?? currentEnv(),
             timeoutMs,
-            sandbox: network,
+            sandbox,
           });
           return {
             ok: true,
@@ -128,6 +131,7 @@ export function createBashTool(options: BashToolOptions): ToolPort {
 
       const network = decideNetwork(options.sandbox, grant);
       if (typeof network === 'string') return { ok: false, output: network };
+      const sandbox = decideSandbox(network, grant);
 
       const shell = options.platform.resolveShell();
       const timeoutMs = clampTimeout(input.timeout);
@@ -140,7 +144,7 @@ export function createBashTool(options: BashToolOptions): ToolPort {
         env: options.env ?? currentEnv(),
         timeoutMs,
         outputCap,
-        sandbox: network,
+        sandbox,
       };
 
       let result: ProcessResult;
@@ -153,6 +157,21 @@ export function createBashTool(options: BashToolOptions): ToolPort {
           context?.onOutput === undefined ? undefined : { onOutput: context.onOutput },
         );
       } catch (error) {
+        // A sandbox refusal is its own fact (ADR-130 ①): it names the refusal, points
+        // at the one honest way past it, and marks the result so the kernel only ever
+        // offers a without-sandbox appeal after a real refusal. It must never read as
+        // a generic start failure — that is how refusals used to hide.
+        if (error instanceof SandboxRequestRefusedError || error instanceof SandboxUnavailableError) {
+          return {
+            ok: false,
+            output: [
+              `sandbox refused: ${error.message}`,
+              'The command did not run, and nothing silently degraded (ADR-016).',
+              'If this exact command genuinely needs to run, call Escalate with withoutSandbox: true and a justification; with an approval it runs without the sandbox — once.',
+            ].join(' '),
+            sandboxRefused: true,
+          };
+        }
         return { ok: false, output: `failed to start command: ${error instanceof Error ? error.message : String(error)}` };
       }
 
@@ -203,6 +222,19 @@ function decideNetwork(sandbox: SandboxProfile, grant: ToolGrant): SandboxProfil
     'refusing to run: the sandbox profile asks for network per approved command (network: "ask"), and this call carries no approval.',
     'Running it with the network silently switched off would be a downgrade you did not choose; set the sandbox network to "off" or "on", or let the command be approved when it is asked about.',
   ].join(' ');
+}
+
+/**
+ * The sandbox-waiver twin of `decideNetwork` (ADR-130 ②): an approved Escalate appeal
+ * lets THIS run go without the sandbox. `off` is the one mode whose contract is "run
+ * the command as-is" — the executor is skipped and env redaction stands down with it,
+ * which is exactly what the person approved. The kernel burns the `once` grant when
+ * it hands the grant out, so the waiver cannot stand twice; and nothing here ever
+ * degrades in the other direction — no waiver means the profile stands untouched.
+ */
+function decideSandbox(sandbox: SandboxProfile, grant: ToolGrant): SandboxProfile {
+  if (grant.unsandboxedApproved) return { ...sandbox, mode: 'off', backend: 'none' };
+  return sandbox;
 }
 
 function clampTimeout(requested: number | undefined): number {

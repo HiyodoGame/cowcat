@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { GREP_MAX_FILE_BYTES, createGrepTool, type ToolGrant, type ToolResult } from '../src/index.js';
 
 const signal = new AbortController().signal;
-const noGrant: ToolGrant = { networkApproved: false };
+const noGrant: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 function tree(files: Readonly<Record<string, string | Buffer>>): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cowcat-grep-')));

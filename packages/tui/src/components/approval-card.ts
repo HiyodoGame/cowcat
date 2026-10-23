@@ -1,6 +1,7 @@
 import type { ApprovalChoice, ApprovalView } from '../app/view.js';
 import { APPROVAL_CHOICES } from '../app/view.js';
 import { copyFor } from '../app/copy.js';
+import { stripControl } from '../app/meter.js';
 import { card, type CardBodyLine } from '../ui/card.js';
 import { line, type Line } from '../ui/line.js';
 import { wrap } from '../text/wrap.js';
@@ -31,13 +32,27 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
   const copy = copyFor('zh');
   const answered = approval.verdict !== null;
   const waitingLong = !answered && options.now - approval.askedAt > NUDGE_AFTER_MS;
+  // Everything a model wrote is scrubbed before it reaches the screen (security review
+  // P2-2): ESC and bidi controls can make the card show a different sentence than the
+  // one the grant key records, and the card and the key must be the same words.
+  const subject = stripControl(approval.command ?? approval.path ?? '');
   const body: CardBodyLine[] = [
     { text: answered ? describeVerdict(approval) : copy.approveQuip, token: answered ? 'textDim' : 'plan' },
-    { text: `规则：${approval.rule}`, token: 'textDim' },
+    // The exact subject comes FIRST (ADR-129 7): an answer grants this command or path,
+    // and a card that led with the model's own justification was asking for a blind
+    // click. The rule line stays for the plain ask questions, where it names the policy.
+    ...(subject === '' ? [] : [{ text: subject, token: 'text' as const }]),
+    { text: `规则：${stripControl(approval.rule)}`, token: 'textDim' },
   ];
-  if (approval.reason !== null) body.push({ text: `理由：${approval.reason}`, token: 'textDim' });
+  // What an approval would widen, in words a non-author of the config can act on
+  // (ADR-129 7, ADR-130 ②). Plain asks widen nothing and print nothing.
+  for (const dimension of approval.dimensions) {
+    if (dimension === 'deny-override') body.push({ text: '将放宽：放行这条被规则拒绝的操作（仅此命令/路径）', token: 'plan' });
+    if (dimension === 'unsandboxed') body.push({ text: '将放宽：本次脱离沙箱执行该命令', token: 'plan' });
+  }
+  if (approval.reason !== null) body.push({ text: `理由：${stripControl(approval.reason)}`, token: 'textDim' });
   // The only line on this card that is not dim: a warning is the reason to read it twice.
-  if (approval.warning !== null) body.push({ text: `注意：${approval.warning}`, token: 'alert' });
+  if (approval.warning !== null) body.push({ text: `注意：${stripControl(approval.warning)}`, token: 'alert' });
   if (!answered) {
     // The four answers as rows, because "remember to type always" is a memory test, not a
     // choice. The letters still work for anyone who has the habit (run.ts keeps them).
@@ -57,7 +72,7 @@ export function approvalCardLines(approval: ApprovalView, options: ApprovalCardO
   }
 
   return card({
-    title: `⚠ ${approval.name}`,
+    title: `⚠ ${stripControl(approval.name)}`,
     titleToken: 'plan',
     suffix: answered ? '[已答]' : '[待回答]',
     body,

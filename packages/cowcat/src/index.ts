@@ -6,7 +6,8 @@ export {
   SUPPORTED_SCHEMA_VERSIONS,
   UnsupportedSchemaVersionError,
 } from './kernel/schema-version.js';
-export { reduce, replay, initialState, type SessionState, type TurnView, type UsageAnchor } from './kernel/state.js';
+export { reduce, replay, initialState, escalationSlot, escalationStanding, type SessionState, type TurnView, type UsageAnchor } from './kernel/state.js';
+export { ESCALATE_SPEC, ESCALATE_TOOL_NAME, parseEscalateInput, type EscalateInput, type EscalationTurnContext } from './kernel/escalation.js';
 export {
   contextCeiling,
   contextUsage,
@@ -38,7 +39,7 @@ export { canTransition, isTerminal, IllegalTransitionError, type TurnState } fro
 export { formatAttachedFiles } from './kernel/events.js';
 export type { AttachedFile, KernelEvent, KernelEventType, EventInput, SessionUpdate, StreamDelta } from './kernel/events.js';
 export type { Message, ReasoningBlock, ToolCall } from './kernel/messages.js';
-export type { ModelLimits, ModelPreset, ModelProtocol } from './kernel/preset.js';
+export type { ModelLimits, ModelPreset, ModelProtocol, PriceTable } from './kernel/preset.js';
 export {
   decide,
   validateRules,
@@ -72,7 +73,7 @@ export {
   type SourcedRule,
 } from './policy/config.js';
 export { trustedRules, isTrusted, type TrustState } from './policy/trust.js';
-export { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from './policy/approval.js';
+export { approvalKey, legacyToolGrantKey, normalizeSubject, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from './policy/approval.js';
 export { assessCommand, type CommandRisk, type CommandWarning } from './policy/command-risk.js';
 export { AuditConsumer, type AuditSummary } from './policy/audit.js';
 export { JsonlAuditSink, type JsonlAuditSinkOptions } from './adapters/audit.js';

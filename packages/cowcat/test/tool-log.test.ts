@@ -181,7 +181,7 @@ test('the grant says whether this call was approved, and tools that ignore it st
   await run(approvedCalls, { tools: [speculative, legacy], approve: () => Promise.resolve('once') });
 
   assert.equal(seen.length, 1);
-  assert.deepEqual(seen[0], { networkApproved: true });
+  assert.deepEqual(seen[0], { networkApproved: true, unsandboxedApproved: false });
 });
 
 test('a call that never needed approval reports no grant', async () => {
@@ -197,7 +197,7 @@ test('a call that never needed approval reports no grant', async () => {
 
   // "No grant" is not "network is off": a tool whose profile asks for network has to
   // refuse and say so rather than quietly downgrade (ADR-051, ADR-016).
-  assert.deepEqual(seen, [{ networkApproved: false }]);
+  assert.deepEqual(seen, [{ networkApproved: false, unsandboxedApproved: false }]);
 });
 
 test('a standing always carries the grant to later calls in the same session', async () => {
@@ -219,5 +219,5 @@ test('a standing always carries the grant to later calls in the same session', a
     { tools: [runner], approve: answers },
   );
 
-  assert.deepEqual(seen, [{ networkApproved: true }, { networkApproved: true }]);
+  assert.deepEqual(seen, [{ networkApproved: true, unsandboxedApproved: false }, { networkApproved: true, unsandboxedApproved: false }]);
 });

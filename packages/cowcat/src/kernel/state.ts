@@ -2,6 +2,7 @@ import type { KernelEvent } from './events.js';
 import { formatAttachedFiles } from './events.js';
 import type { Message } from './messages.js';
 import type { TodoItem } from '../ports/index.js';
+import type { ModelUsage } from '../ports/model.js';
 import { canTransition, type TurnState } from './turn.js';
 
 export interface TurnView {
@@ -45,6 +46,12 @@ export interface SessionState {
    * session should not have to re-ask the provider to know how full it is.
    */
   readonly lastUsage: UsageAnchor | null;
+  /**
+   * Everything the session has been billed, summed per `model.usage` event (ADR-131 ①).
+   * Derived from the log like `grants`: a reopened session gets its totals back because
+   * it gets its events back, and the fork of a session inherits the parent's meter.
+   */
+  readonly usageTotals: ModelUsage;
   /**
    * Whether a compaction has started and not finished (ADR-072).
    *
@@ -93,6 +100,24 @@ export interface SessionState {
    */
   readonly grants: readonly string[];
   /**
+   * Subjects whose escalation appeal was explicitly rejected by the user (ADR-129 (5)),
+   * keyed like `grants`. Only a person's `reject` folds here — a timeout means nobody
+   * answered (asking again later is fair) and an unattended refusal means there was no
+   * one to ask. An ask or an Escalate for a refused key is answered `by: 'policy'`
+   * without bothering the person again, which is the second half of "retry once after
+   * widening": refused means it stays refused for this session.
+   */
+  readonly refused: readonly string[];
+  /**
+   * Escalation appeals a person approved (ADR-129): exact subjects allowed past a
+   * `deny`, with the dimension the approval widened. `once` entries burn on first use
+   * (see `escalationsConsumed`); `always` entries stand for the session. Kept apart
+   * from `grants` so an escalation can never auto-answer a plain `ask`.
+   */
+  readonly escalations: readonly { readonly key: string; readonly scope: 'once' | 'always'; readonly dimension: 'deny-override' | 'unsandboxed' }[];
+  /** `${dimension} NUL ${key}` pairs whose `once` grant has been spent (ADR-129 (4)). */
+  readonly escalationsConsumed: readonly string[];
+  /**
    * Canonical paths this session has read successfully (ADR-049), in the order they
    * were first read.
    *
@@ -119,6 +144,7 @@ export function initialState(sessionId: string): SessionState {
     messages: [],
     messageSeqs: [],
     lastUsage: null,
+    usageTotals: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     compactionOpen: false,
     planMode: false,
     instructionsSeq: null,
@@ -126,6 +152,9 @@ export function initialState(sessionId: string): SessionState {
     skillsSeq: null,
     skillsCount: 0,
     grants: [],
+    refused: [],
+    escalations: [],
+    escalationsConsumed: [],
     readFiles: [],
     todos: [],
   };
@@ -177,7 +206,9 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
     case 'model.usage':
       // The only thing folded from usage is the anchor (ADR-070): how full the next
       // request already is. What the call *cost* stays in the log for whoever reports or
-      // audits it (ADR-041); this is a different question, asked once per turn.
+      // audits it (ADR-041); this is a different question, asked once per turn. The
+      // totals ARE folded (ADR-131 ①): the meter is session state, and a reopened or
+      // forked session keeps counting where it left off.
       return {
         ...base,
         lastUsage: {
@@ -185,6 +216,12 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
           // The request ended at the model.message that this usage describes. Everything
           // after it (the tool results this turn produced) is added by the estimator.
           anchorSeq: state.lastSeq,
+        },
+        usageTotals: {
+          input: state.usageTotals.input + event.usage.input,
+          output: state.usageTotals.output + event.usage.output,
+          cacheRead: state.usageTotals.cacheRead + event.usage.cacheRead,
+          cacheCreation: state.usageTotals.cacheCreation + event.usage.cacheCreation,
         },
       };
     case 'context.compacted': {
@@ -324,9 +361,18 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       // Both standing answers are keys. `always` stores the exact action; `session`
       // stores the tool-level key it was emitted with (ADR-094), so a reopened session
       // gets the narrower grant back and not something wider.
-      return event.verdict === 'always' || event.verdict === 'session'
-        ? { ...base, grants: [...state.grants, event.key] }
+      if (event.verdict === 'always' || event.verdict === 'session') {
+        return { ...base, grants: [...state.grants, event.key] };
+      }
+      // A person's explicit reject folds into `refused`; timeouts and unattended
+      // refusals do not (ADR-129 ⑤ — nobody answering is not a person answering no).
+      return event.verdict === 'reject' && event.by === 'user'
+        ? { ...base, refused: [...state.refused, event.key] }
         : base;
+    case 'escalation.granted':
+      return { ...base, escalations: [...state.escalations, { key: event.key, scope: event.scope, dimension: event.dimension }] };
+    case 'escalation.consumed':
+      return { ...base, escalationsConsumed: [...state.escalationsConsumed, escalationSlot(event.key, event.dimension)] };
   }
 }
 
@@ -345,6 +391,33 @@ function registerRead(
   if (!event.ok || event.name !== READ_TOOL_NAME || event.path === null) return readFiles;
   if (readFiles.includes(event.path)) return readFiles;
   return [...readFiles, event.path];
+}
+
+/**
+ * The identity of one escalation grant slot, consumed or not. Dimension and key are
+ * NUL-joined for the same reason approvalKey joins its halves: neither can contain a
+ * NUL, so the pair cannot be forged by a crafted command or path.
+ */
+export function escalationSlot(key: string, dimension: 'deny-override' | 'unsandboxed'): string {
+  return `${dimension}\u0000${key}`;
+}
+
+/**
+ * Whether an escalation approval lets `key` through `dimension` right now (ADR-129).
+ * `'always'` stands for the session; `'once'` stands until spent. Pure read of the
+ * folded state, so replay and live sessions agree by construction.
+ */
+export function escalationStanding(
+  state: SessionState,
+  key: string,
+  dimension: 'deny-override' | 'unsandboxed',
+): 'once' | 'always' | null {
+  for (const entry of state.escalations) {
+    if (entry.key !== key || entry.dimension !== dimension) continue;
+    if (entry.scope === 'always') return 'always';
+    if (!state.escalationsConsumed.includes(escalationSlot(key, dimension))) return 'once';
+  }
+  return null;
 }
 
 export function replay(sessionId: string, events: readonly KernelEvent[]): SessionState {

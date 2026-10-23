@@ -131,6 +131,12 @@ export interface CustomPresetSettings {
    * uninterpreted: this layer does not know any vendor's vocabulary.
    */
   readonly efforts?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /**
+   * What this model costs, USD per 1M tokens (ADR-131 2). Optional: a preset without
+   * a price is a preset the meter will not price, tokens still count, cost stays
+   * silent rather than invented.
+   */
+  readonly price?: import('../kernel/preset.js').PriceTable;
 }
 
 export interface ModelSettings {

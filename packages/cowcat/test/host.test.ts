@@ -1595,3 +1595,173 @@ test('a send with @ files refuses before the model check leaves an orphan attach
     'no orphan attachment in the log',
   );
 });
+
+// ---------------------------------------------------------------------------
+// Escalate: deny -> appeal -> one retry (ADR-129), refusal stands (ADR-129 5)
+// ---------------------------------------------------------------------------
+
+const ESCALATE_RULES = {
+  model: { preset: PRESET },
+  rules: [{ name: 'no-blocked-echo', verdict: 'deny', when: { tool: 'Bash', command: 'echo blocked' } }],
+};
+
+test('a denied action can be escalated: approved once buys exactly one retry', async (t) => {
+  const home = tempDir(t, 'cowcat-esc-home-');
+  const cwd = tempDir(t, 'cowcat-esc-proj-');
+  writeUserConfig(home, ESCALATE_RULES);
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'tool_call', call: { callId: 'c2', name: 'Escalate', input: { name: 'Bash', command: 'echo blocked', justification: 'the test needs this exact echo' } } }],
+    [{ type: 'tool_call', call: { callId: 'c3', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'tool_call', call: { callId: 'c4', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_esc');
+  await fixture.client.openSession('sess_esc');
+  await fixture.client.sendTurn('sess_esc', 'run the blocked command');
+
+  await fixture.until('the escalation question', () => first(fixture.events(), 'approval.requested') !== undefined);
+  const requested = first(fixture.events(), 'approval.requested');
+  assert.equal(field(requested, 'rule'), 'escalation');
+  assert.equal(field(requested, 'command'), 'echo blocked', 'the card-carrying subject is the exact command');
+  assert.deepEqual(field(requested, 'dimensions'), ['deny-override']);
+  await fixture.client.respondApproval('sess_esc', field(requested, 'callId') as string, 'once');
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  const bash = fixture.events().filter((event) => event.type === 'tool.finished' && field(event, 'name') === 'Bash');
+  assert.equal(bash.length, 3);
+  assert.equal(field(bash[0], 'ok'), false, 'first attempt denied by the rule');
+  assert.match(String(field(bash[0], 'output')), /denied by no-blocked-echo/);
+  assert.equal(field(bash[1], 'ok'), true, 'the approved retry passes the deny');
+  assert.equal(field(bash[2], 'ok'), false, 'a once grant buys exactly one retry');
+  assert.match(String(field(bash[2], 'output')), /denied by no-blocked-echo/);
+
+  const granted = first(fixture.events(), 'escalation.granted');
+  assert.ok(granted !== undefined && field(granted, 'scope') === 'once');
+  assert.ok(first(fixture.events(), 'escalation.consumed') !== undefined, 'the once grant burned on the retry');
+});
+
+test('a rejected appeal stands: the retry is refused without a second question', async (t) => {
+  const home = tempDir(t, 'cowcat-escno-home-');
+  const cwd = tempDir(t, 'cowcat-escno-proj-');
+  writeUserConfig(home, ESCALATE_RULES);
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'tool_call', call: { callId: 'c2', name: 'Escalate', input: { name: 'Bash', command: 'echo blocked', justification: 'please' } } }],
+    [{ type: 'tool_call', call: { callId: 'c3', name: 'Bash', input: { command: 'echo blocked' } } }],
+    [{ type: 'tool_call', call: { callId: 'c4', name: 'Escalate', input: { name: 'Bash', command: 'echo blocked', justification: 'asking again' } } }],
+    [{ type: 'text', text: 'gave up' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_escno');
+  await fixture.client.openSession('sess_escno');
+  await fixture.client.sendTurn('sess_escno', 'try the blocked command');
+
+  await fixture.until('the escalation question', () => first(fixture.events(), 'approval.requested') !== undefined);
+  await fixture.client.respondApproval('sess_escno', field(first(fixture.events(), 'approval.requested'), 'callId') as string, 'reject');
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  assert.equal(
+    fixture.events().filter((event) => event.type === 'approval.requested').length,
+    1,
+    'the refusal stands: no second question, for the retry or the re-appeal',
+  );
+  const escalates = fixture.events().filter((event) => event.type === 'tool.finished' && field(event, 'name') === 'Escalate');
+  assert.equal(escalates.length, 2);
+  assert.equal(field(escalates[0], 'ok'), false);
+  assert.match(String(field(escalates[1], 'output')), /already refused/, 'the second appeal is answered from the log, not the user');
+});
+
+test('Escalate refuses to appeal an action that was never denied', async (t) => {
+  const home = tempDir(t, 'cowcat-escok-home-');
+  const cwd = tempDir(t, 'cowcat-escok-proj-');
+  writeUserConfig(home, ESCALATE_RULES);
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Escalate', input: { name: 'Bash', command: 'echo fine', justification: 'pre-authorizing' } } }],
+    [{ type: 'text', text: 'ok' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_escok');
+  await fixture.client.openSession('sess_escok');
+  await fixture.client.sendTurn('sess_escok', 'pre-authorize');
+
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  assert.equal(first(fixture.events(), 'approval.requested'), undefined, 'no question is asked for a non-denied action');
+  const finished = first(fixture.events(), 'tool.finished');
+  assert.match(String(field(finished, 'output')), /only for actions a rule denied/);
+});
+
+test('usage totals accumulate per turn and ride session.open; a fork inherits the meter', async (t) => {
+  const home = tempDir(t, 'cowcat-usage-home-');
+  const cwd = tempDir(t, 'cowcat-usage-proj-');
+  writeUserConfig(home, {
+    model: {
+      preset: PRESET,
+      presets: {
+        [PRESET]: {
+          protocol: 'anthropic',
+          model: 'claude-test',
+          price: { input: 3, output: 15, cacheRead: 0.3 },
+        },
+      },
+    },
+  });
+
+  const usageChunk = { type: 'usage' as const, usage: { input: 100, output: 20, cacheRead: 50, cacheCreation: 5 } };
+  const model = new ScriptedModel([
+    [{ type: 'text', text: 'one' }, usageChunk],
+    [{ type: 'text', text: 'two' }, usageChunk],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_usage');
+  await fixture.client.openSession('sess_usage');
+
+  await fixture.client.sendTurn('sess_usage', 'first');
+  await fixture.until('the first turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+
+  // The preset's price rides turn.opened for the meter (ADR-131 ②).
+  const opened = first(fixture.events(), 'turn.opened');
+  assert.deepEqual(field(opened, 'price'), { input: 3, output: 15, cacheRead: 0.3 });
+
+  const reopened = await fixture.client.openSession('sess_usage');
+  assert.deepEqual(reopened.usage, { input: 100, output: 20, cacheRead: 50, cacheCreation: 5 });
+
+  const before = fixture.events().length;
+  await fixture.client.sendTurn('sess_usage', 'second');
+  await fixture.until('the second turn to complete', () =>
+    fixture.events().slice(before).some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+  const afterTwo = await fixture.client.openSession('sess_usage');
+  assert.deepEqual(afterTwo.usage, { input: 200, output: 40, cacheRead: 100, cacheCreation: 10 }, 'the meter accumulates');
+
+  const forkedId = await fixture.client.forkSession('sess_usage');
+  const forked = await fixture.client.openSession(forkedId);
+  assert.deepEqual(forked.usage, afterTwo.usage, 'a fork inherits the parent meter through replay');
+});

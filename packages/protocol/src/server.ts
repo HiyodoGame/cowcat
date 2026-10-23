@@ -213,7 +213,12 @@ export function createServer(options: ServerOptions): ProtocolServer {
 
     // The reply precedes the replay so the client can register the session before the
     // first event of it arrives; both go through the same ordered transport.
-    reply(id, { sessionId: params.sessionId, lastSeq: session.lastSeq, replayed: session.replay.length });
+    reply(id, {
+      sessionId: params.sessionId,
+      lastSeq: session.lastSeq,
+      replayed: session.replay.length,
+      ...(session.usage === undefined ? {} : { usage: session.usage }),
+    });
     for (const update of session.replay) notify(update);
   }
 

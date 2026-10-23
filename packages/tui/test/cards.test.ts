@@ -253,6 +253,51 @@ test('a pending approval is a card with the quip, the rule and the keys; ten sec
   assert.match(statusLine(asked, { now: 11_001 }).text, /你还在吗/);
 });
 
+test('an escalation card leads with the exact subject and says what would widen', () => {
+  seq = 0;
+  const asked = viewOf([
+    event('turn.opened', { input: '跑一下被拒绝的命令' }),
+    event('approval.requested', {
+      callId: 'c8',
+      name: 'Bash',
+      rule: 'escalation',
+      reason: '构建需要这条命令',
+      command: 'npm run release',
+      dimensions: ['deny-override'],
+    }),
+  ]);
+
+  const dock = frameOf(asked, { width: WIDTH, now: 1_000 }).dock ?? [];
+  const text = dock.map((row) => row.text).join('\n');
+  // The subject leads (ADR-129 7): an answer grants THIS command, and the card must
+  // say so before the model's own justification gets a line.
+  const subjectAt = text.indexOf('npm run release');
+  const reasonAt = text.indexOf('构建需要这条命令');
+  const ruleAt = text.indexOf('规则：escalation');
+  assert.ok(subjectAt >= 0 && reasonAt > subjectAt && ruleAt > subjectAt, 'subject first, reason and rule after it');
+  assert.match(text, /将放宽：放行这条被规则拒绝的操作/);
+});
+
+test('an escalation card scrubs control characters out of model-written text', () => {
+  seq = 0;
+  const asked = viewOf([
+    event('turn.opened', { input: 'x' }),
+    event('approval.requested', {
+      callId: 'c9',
+      name: 'Bash',
+      rule: 'escalation',
+      reason: '看\u001B[31m起来无害',
+      command: 'echo hi',
+      dimensions: ['unsandboxed'],
+    }),
+  ]);
+
+  const dock = frameOf(asked, { width: WIDTH, now: 1_000 }).dock ?? [];
+  const text = dock.map((row) => row.text).join('\n');
+  assert.doesNotMatch(text, //);
+  assert.match(text, /看\[31m起来无害/);
+  assert.match(text, /本次脱离沙箱执行/);
+});
 test('a destructive command gets its own line, in the alert token', () => {
   seq = 0;
   const asked = viewOf([

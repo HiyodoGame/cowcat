@@ -21,6 +21,16 @@ export type ApprovalVerdict = 'once' | 'always' | 'session' | 'reject';
 export type ApprovalBy = 'user' | 'policy' | 'timeout' | 'unattended';
 
 /**
+ * Normalizes a subject before it keys a grant or a refusal (ADR-129, review P2-3):
+ * trimmed, interior whitespace runs collapsed to one space. Without it `npm test` and
+ * `npm  test` are two different keys, and a refused subject re-asks the moment a model
+ * varies its spacing.
+ */
+export function normalizeSubject(subject: string): string {
+  return subject.trim().replace(/\s+/g, ' ');
+}
+
+/**
  * The identity of "this same action" for an `always` answer.
  *
  * Precise on purpose. Keying on the tool name alone would mean that approving one
@@ -35,9 +45,12 @@ export type ApprovalBy = 'user' | 'policy' | 'timeout' | 'unattended';
  * The input fallback uses `JSON.stringify`, so two calls that differ only in key
  * order are two keys. That is conservative — a re-ordered call asks again rather
  * than being silently granted — and it is what the legacy code did too.
+ *
+ * Command subjects are normalized (see normalizeSubject), so a grant, a refusal, and
+ * the request that follows them all hash to the same key.
  */
 export function approvalKey(request: ActionRequest): string {
-  const subject = request.command ?? request.path ?? JSON.stringify(request.input ?? null);
+  const subject = request.command !== undefined ? normalizeSubject(request.command) : (request.path ?? JSON.stringify(request.input ?? null));
   // A NUL separator cannot occur in a tool name from a model, so the two halves
   // cannot be made to collide by naming a tool `a<something>b`.
   return `${request.name}\u0000${subject}`;
@@ -54,9 +67,21 @@ export function approvalKey(request: ActionRequest): string {
  * its own label, rather than by quietly redefining `always` and widening an existing
  * grant people had already given.
  *
- * The subject is `*` because a NUL cannot appear in a tool name and a subject that is
- * exactly `*` cannot be produced by a real command or path without being one.
+ * The subject is `"*"` — JSON-quoted, where the old bare `*` lived — because a bare
+ * `*` IS a real command (`bash -c '*'` is legal input), and the old bare form made
+ * approvalKey for that command identical to this grant: one odd approval became a
+ * whole-tool bypass (review of the ADR-129 security review, P1-4). The quoted form
+ * cannot be produced by a command or path subject, and NUL stays the separator.
  */
 export function toolGrantKey(name: string): string {
+  return `${name}\u0000"*"`;
+}
+
+/**
+ * The pre-ADR-129 tool-grant spelling (`name NUL *`). Session answers recorded before
+ * the fix replay into grants under this key, so the standing check must still honor
+ * it; nothing new is ever emitted with it.
+ */
+export function legacyToolGrantKey(name: string): string {
   return `${name}\u0000*`;
 }

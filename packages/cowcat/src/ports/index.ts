@@ -89,6 +89,14 @@ export interface ToolGrant {
    * rather than quietly treating `ask` as `off` (ADR-051, ADR-016).
    */
   readonly networkApproved: boolean;
+  /**
+   * True only when an approved Escalate appeal lets THIS call run without the sandbox
+   * (ADR-130). Once-only by construction: the kernel burns the `once` grant when it
+   * hands this grant out, so a tool never sees the same waiver twice. A tool that
+   * cannot run unsandboxed must refuse and say so — the same honesty rule
+   * `networkApproved` follows.
+   */
+  readonly unsandboxedApproved: boolean;
 }
 
 export interface ToolSpec {
@@ -126,6 +134,14 @@ export interface ToolResult {
    * `tool.background.started`; the task itself lives in the host's registry, not here.
    */
   readonly background?: BackgroundTaskRef;
+  /**
+   * True when the sandbox REFUSED this run (ADR-130 ①): the backend could not satisfy
+   * the request or is unavailable, and the tool reported it instead of degrading.
+   * The kernel keeps a without-sandbox appeal honest with it — Escalate is offered
+   * for a subject the sandbox actually refused. Absent on every older result: no
+   * opinion, exactly like `facts`.
+   */
+  readonly sandboxRefused?: boolean;
   /**
    * What the execution gateway actually did, when this tool ran a process
    * (ADR-033). Absent means the tool reported NOTHING — which an audit has to record

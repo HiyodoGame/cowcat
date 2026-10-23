@@ -205,6 +205,11 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // Same as instructions: attached file content is what the model was shown, not
         // something it said (ADR-128).
         break;
+      case 'escalation.granted':
+      case 'escalation.consumed':
+        // Same family as approval.answered: bookkeeping of what a person decided (or
+        // spent), never something the model said (ADR-129).
+        break;
       case 'plan.mode-changed':
         out.push(withoutVolatile(event));
         break;

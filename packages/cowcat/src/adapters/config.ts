@@ -98,6 +98,15 @@ const customPresetSchema = z.strictObject({
     .optional(),
   toolCalls: z.boolean().optional(),
   efforts: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  // USD per 1M tokens (ADR-131). Optional: no price, no cost line — never an invented one.
+  price: z
+    .object({
+      input: z.number().nonnegative(),
+      output: z.number().nonnegative(),
+      cacheRead: z.number().nonnegative().optional(),
+      cacheCreation: z.number().nonnegative().optional(),
+    })
+    .optional(),
 });
 
 const modelSchema = z.strictObject({
@@ -252,6 +261,16 @@ function toCustomPreset(input: z.infer<typeof customPresetSchema>): CustomPreset
     model: input.model,
     ...(input.toolCalls === undefined ? {} : { toolCalls: input.toolCalls }),
     ...(input.efforts === undefined ? {} : { efforts: input.efforts }),
+    ...(input.price === undefined
+      ? {}
+      : {
+          price: {
+            input: input.price.input,
+            output: input.price.output,
+            ...(input.price.cacheRead === undefined ? {} : { cacheRead: input.price.cacheRead }),
+            ...(input.price.cacheCreation === undefined ? {} : { cacheCreation: input.price.cacheCreation }),
+          },
+        }),
     limits: {
       ...(input.limits?.output === undefined ? {} : { output: input.limits.output }),
       ...(input.limits?.context === undefined ? {} : { context: input.limits.context }),
