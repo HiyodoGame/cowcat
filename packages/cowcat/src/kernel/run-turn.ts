@@ -151,6 +151,13 @@ export interface TurnDeps {
    * that there was no reader, which is the worst of the three outcomes.
    */
   readonly unattended?: string;
+  /**
+   * A caller-reserved turn id. Only the cron scheduler sets this (ADR-140 ②): its
+   * `cron.fired` event names the turn before it exists, and opening under any other
+   * name would break the audit link. Every other caller leaves it undefined and the
+   * session mints.
+   */
+  readonly reservedTurnId?: string;
 }
 
 /**
@@ -325,11 +332,15 @@ async function runTurnBody(
   // rules ahead of the request rather than after it (ADR-078 ①).
   await ensureInstructions(deps, (item) => note(item, null));
   await ensureSkills(deps, (item) => note(item, null));
-  await session.openTurn(input, {
-    model: deps.preset.model,
-    ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
-    ...(deps.preset.price === undefined ? {} : { price: deps.preset.price }),
-  });
+  await session.openTurn(
+    input,
+    {
+      model: deps.preset.model,
+      ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
+      ...(deps.preset.price === undefined ? {} : { price: deps.preset.price }),
+    },
+    deps.reservedTurnId,
+  );
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
   // One automatic compaction check per turn (ADR-073): the history only grows while the
@@ -440,6 +451,15 @@ async function runTurnBody(
         // ended before it started.
         if (result.ok && result.background !== undefined) {
           await session.backgroundStarted(call.callId, result.background.taskId, result.background.command);
+        }
+        // Same shape as the background handoff: the call succeeded first, then the job
+        // exists. `by` is 'model' on this path — a deletion by the user comes through
+        // the host and its own Session.cronDeleted call (ADR-140).
+        if (result.ok && result.cronCreated !== undefined) {
+          await session.cronCreated(result.cronCreated);
+        }
+        if (result.ok && result.cronDeleted !== undefined) {
+          await session.cronDeleted(result.cronDeleted.jobId, 'model', result.cronDeleted.deletedAt);
         }
         lastCallKey = callKey;
         lastCallOk = result.ok;

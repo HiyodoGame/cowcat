@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { EXIT } from './exit.js';
 import { flagValue } from './flags.js';
@@ -25,6 +26,13 @@ import { readVersion } from './version.js';
  * `cowcat serve` remains the headless entry (stdio, for editors and scripts). Connecting the
  * TUI *to* a running `serve` is a transport swap and nothing else — that is what ADR-055's
  * "protocol and transport are separate" was for, and it is not needed yet.
+ *
+ * ## Working directory (ADR-146)
+ *
+ * The host is built against `process.cwd()`, so this verb decides the cwd BEFORE building:
+ * a `--worktree` names a fresh checkout under the main repo (created, inherited into trust,
+ * and cleaned up on exit per ADR-144/145); resuming any session restores the directory its
+ * header recorded, warning — not failing — when that directory is gone.
  *
  * ## The Node floor check (ADR-065 ①)
  *
@@ -54,7 +62,31 @@ export async function startTui(context: CommandContext, sessionId: string | null
     return EXIT.failed;
   }
 
-  const host = await buildHost(context);
+  // --worktree: the session lives in a sibling checkout. Creation/adoption happens BEFORE
+  // the host is built — the worktree path becomes the cwd everything below resolves from.
+  // mainCwd is kept for the exit cleanup: a process cannot delete its own cwd on Windows,
+  // and cleanupWorktree needs the MAIN checkout as its git anchor anyway (review P1-3).
+  const worktreeName = flagValue(context.flags, 'worktree');
+  const mainCwd = process.cwd();
+  let worktree: { readonly path: string; readonly branch: string; readonly created: boolean; readonly mainGitDir: string } | null = null;
+  if (worktreeName !== null) {
+    const ensured = await ensureWorktreeForSession(context, worktreeName);
+    if (ensured === null) return EXIT.failed;
+    worktree = ensured;
+    process.chdir(worktree.path);
+    context.stderr(`worktree 会话：${worktree.path}（分支 ${worktree.branch}）`);
+  } else if (sessionId !== null) {
+    // Resuming restores the workspace the session was opened in (ADR-146); a missing
+    // directory downgrades to a warning, never a refusal — the session can still be read.
+    await restoreSessionCwd(context, sessionId);
+  }
+
+  const host = await buildHost(
+    context,
+    worktree === null
+      ? {}
+      : { extraPaths: { write: [worktree.mainGitDir], read: [worktree.mainGitDir] } },
+  );
   if (host === null) return EXIT.failed;
 
   const { createClient, createServer, memoryTransport } = await import('@corescense/cowcat-protocol');
@@ -78,5 +110,92 @@ export async function startTui(context: CommandContext, sessionId: string | null
       // pid … is gone but left its lock file behind".
       await host.close();
     }
+    // Exit cleanup runs after the host is down (its processes are done). Only a worktree
+    // created or adopted by THIS run is examined; the rules are ADR-144 ⑤. chdir back to
+    // the main checkout first: cleanup needs it as the git anchor, and a process cannot
+    // have its cwd deleted out from under it (Windows refuses the remove).
+    if (worktree !== null) {
+      process.chdir(mainCwd);
+      await cleanupWorktreeForSession(context, worktree);
+    }
   }
+}
+
+/** Build the worktree, or print the refusal. All of it goes through ProcessPort (ADR-014). */
+async function ensureWorktreeForSession(
+  context: CommandContext,
+  name: string,
+): Promise<{ readonly path: string; readonly branch: string; readonly created: boolean; readonly mainGitDir: string } | null> {
+  const core = await import('@corescense/cowcat-core');
+  const paths = (await import('./host.js')).stateDir();
+  const cowcatPaths = core.cowcatPaths({ cwd: process.cwd(), home: (await import('node:os')).homedir(), ...(paths === null ? {} : { dir: paths }) });
+  const fs = new core.NodeFs();
+  const platform = new core.NodePlatform({ env: process.env });
+  const processes = new core.NodeProcess({
+    platform,
+    sandboxCommand: core.createSandboxExecutor({ platform, fsProbe: core.fsProbeFrom(fs) }),
+  });
+  const result = await core.ensureWorktree(
+    {
+      process: processes,
+      fs,
+      trust: new core.FileTrustStore({ file: cowcatPaths.trustFile, fs }),
+      mainCwd: process.cwd(),
+    },
+    name,
+  );
+  if (result.ok) return result.worktree;
+  context.stderr(`cowcat --worktree: ${result.error}`);
+  return null;
+}
+
+/** ADR-144 ⑤: clean (and fully pushed) trees disappear with their branch; work is kept. */
+async function cleanupWorktreeForSession(
+  context: CommandContext,
+  worktree: { readonly path: string; readonly branch: string; readonly mainGitDir: string },
+): Promise<void> {
+  const core = await import('@corescense/cowcat-core');
+  const fs = new core.NodeFs();
+  const platform = new core.NodePlatform({ env: process.env });
+  const processes = new core.NodeProcess({
+    platform,
+    sandboxCommand: core.createSandboxExecutor({ platform, fsProbe: core.fsProbeFrom(fs) }),
+  });
+  const outcome = await core.cleanupWorktree(
+    {
+      process: processes,
+      fs,
+      // The cleanup path never writes the trust record; the load half is unused too.
+      trust: { load: () => Promise.resolve({ trusted: [], problem: null }), add: () => Promise.resolve() },
+      mainCwd: process.cwd(),
+    },
+    { path: worktree.path, branch: worktree.branch, created: true, mainGitDir: worktree.mainGitDir },
+  );
+  if (outcome === 'removed') {
+    context.stderr(`worktree 已清理：${worktree.path}（分支 ${worktree.branch} 已删除）`);
+  } else if (outcome === 'kept-dirty') {
+    context.stderr(`worktree 有未提交或未推送的改动，已保留：${worktree.path}（分支 ${worktree.branch}）`);
+  } else {
+    context.stderr(`worktree 状态无法核实，已保留：${worktree.path}（分支 ${worktree.branch}）`);
+  }
+}
+
+/**
+ * Resume restores the recorded workspace (ADR-146). The header's cwd is a fact about where
+ * the session lived; when the directory is gone the session continues in the launch
+ * directory with a warning — the log is append-only and the binding is never rewritten.
+ */
+async function restoreSessionCwd(context: CommandContext, sessionId: string): Promise<void> {
+  const core = await import('@corescense/cowcat-core');
+  const { statePaths } = await import('./host.js');
+  const paths = await statePaths();
+  const entries = await core.createSessionIndex(paths.sessionsDir).list();
+  const entry = entries.find((candidate) => candidate.sessionId === sessionId);
+  const cwd = entry?.cwd ?? null;
+  if (cwd === null) return;
+  if (!existsSync(cwd)) {
+    context.stderr(`会话的工作目录 ${cwd} 已不存在，在 ${process.cwd()} 继续（ADR-146）`);
+    return;
+  }
+  if (cwd !== process.cwd()) process.chdir(cwd);
 }

@@ -447,6 +447,43 @@ export type KernelEvent = EventBase &
       }
     | {
         /**
+         * A cron job was created (ADR-140). The job table is a projection of these
+         * events, not host state, so resume replays it for free — the structural fix
+         * for the legacy crons.json drift and cross-session misfires.
+         */
+        readonly type: 'cron.created';
+        readonly jobId: string;
+        readonly schedule: string;
+        readonly prompt: string;
+        readonly recurring: boolean;
+        readonly createdAt: number;
+        /** Recurring jobs expire (ADR-141 ⑤); `null` on one-shot jobs. */
+        readonly expiresAt: number | null;
+      }
+    | {
+        /**
+         * A cron job was deleted (ADR-140). `by` records who ended it: the user from
+         * the `/cron` panel, the model via CronDelete, or 'expiry' after the final
+         * fire of a recurring job's 7-day life (ADR-141 ⑤).
+         */
+        readonly type: 'cron.deleted';
+        readonly jobId: string;
+        readonly by: 'user' | 'model' | 'expiry';
+        readonly deletedAt: number;
+      }
+    | {
+        /**
+         * A cron job was handed to the scheduler (ADR-140 ②). Written when the turn
+         * is enqueued, with the turnId minted up front; a fired event whose turn
+         * never opened reads as "enqueued, not executed", never as silence.
+         */
+        readonly type: 'cron.fired';
+        readonly jobId: string;
+        readonly turnId: string;
+        readonly firedAt: number;
+      }
+    | {
+        /**
          * A delegated run started (ADR-079 ①).
          *
          * Written in the PARENT log, and before the child log is known to exist: the

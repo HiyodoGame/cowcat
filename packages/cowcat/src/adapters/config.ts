@@ -142,6 +142,13 @@ const otelSchema = z.strictObject({
   headersEnv: z.string().min(1).optional(),
 });
 
+const cronSchema = z.strictObject({
+  // Session-scoped scheduled tasks (ADR-143 ④). Default on; only the user layer may
+  // flip it — cron fires spend the user's model budget while they are away (same rule
+  // as otel/memory/vision above).
+  enabled: z.boolean().optional(),
+});
+
 const documentSchema = z.strictObject({
   rules: z.array(z.unknown()).optional(),
   sandbox: sandboxSchema.optional(),
@@ -151,6 +158,7 @@ const documentSchema = z.strictObject({
   hooks: z.record(z.string(), z.unknown()).optional(),
   otel: otelSchema.optional(),
   memory: memorySchema.optional(),
+  cron: cronSchema.optional(),
   // The preset id View bridges to (ADR-138). User layer only — see decodeSource.
   vision: z.string().min(1).optional(),
   mcp: z
@@ -291,6 +299,11 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
           : { memory: { ...(document.data.memory.reflect === undefined ? {} : { reflect: document.data.memory.reflect }) } }),
         // vision names an endpoint that costs real provider calls (ADR-138): user's call.
         ...(document.data.vision === undefined || source.kind !== 'user' ? {} : { vision: document.data.vision }),
+        // cron.enabled is resolved from the user layer for the same reason (ADR-143 ④):
+        // a workspace must not schedule unattended model spend for the user.
+        ...(document.data.cron === undefined || source.kind !== 'user'
+          ? {}
+          : { cron: { ...(document.data.cron.enabled === undefined ? {} : { enabled: document.data.cron.enabled }) } }),
       },
       warnings: [
         ...warnings,
@@ -305,6 +318,9 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
           : []),
         ...(document.data.vision !== undefined && source.kind !== 'user'
           ? [{ source: source.path, problem: 'vision: only read from the user config (ADR-138); this layer ignored it' }]
+          : []),
+        ...(document.data.cron !== undefined && source.kind !== 'user'
+          ? [{ source: source.path, problem: 'cron: only read from the user config (ADR-143); this layer ignored it' }]
           : []),
       ],
     },

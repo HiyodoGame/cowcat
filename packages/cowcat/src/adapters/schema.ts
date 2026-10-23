@@ -373,6 +373,32 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     truncated: z.boolean(),
     dropped: z.number().int().nonnegative(),
   }),
+  // ADR-140: the cron triple. The job table is a projection of these (see the
+  // events' own comments); no log predates them, so no absent-tolerance is needed.
+  z.object({
+    ...base,
+    type: z.literal('cron.created'),
+    jobId: z.string(),
+    schedule: z.string(),
+    prompt: z.string(),
+    recurring: z.boolean(),
+    createdAt: z.number(),
+    expiresAt: z.number().nullable(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('cron.deleted'),
+    jobId: z.string(),
+    by: z.enum(['user', 'model', 'expiry']),
+    deletedAt: z.number(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('cron.fired'),
+    jobId: z.string(),
+    turnId: z.string(),
+    firedAt: z.number(),
+  }),
   z.object({
     ...base,
     type: z.literal('subagent.started'),

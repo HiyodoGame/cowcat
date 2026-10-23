@@ -464,6 +464,63 @@ test('background tasks are projected from their events, and a replayed start is 
   assert.equal(closed.tasks[0]?.state, 'unknown');
 });
 
+test('cron jobs are projected from their events; a one-shot fires itself away (ADR-140/141)', () => {
+  seq = 0;
+  const created = project(
+    initialView(),
+    event('cron.created', {
+      jobId: 'job_a',
+      schedule: '*/5 * * * *',
+      prompt: 'poll',
+      recurring: true,
+      createdAt: 100,
+      expiresAt: 100 + 7 * 24 * 60 * 60 * 1000,
+    }),
+  );
+  assert.equal(created.cronJobs.length, 1);
+  const first = created.cronJobs[0];
+  assert.ok(first !== undefined);
+  assert.equal(first.jobId, 'job_a');
+  assert.equal(first.recurring, true);
+
+  const oneShot = project(
+    created,
+    event('cron.created', { jobId: 'job_b', schedule: '7 * * * *', prompt: 'remind', recurring: false, createdAt: 200, expiresAt: null }),
+  );
+  assert.equal(oneShot.cronJobs.length, 2);
+
+  // A recurring fire records lastFiredAt and keeps the job; a one-shot fire IS its end.
+  const fired = project(oneShot, event('cron.fired', { jobId: 'job_a', turnId: 'turn_9', firedAt: 300 }));
+  assert.equal(fired.cronJobs.find((job) => job.jobId === 'job_a')?.lastFiredAt, 300);
+  const oneShotFired = project(fired, event('cron.fired', { jobId: 'job_b', turnId: 'turn_10', firedAt: 400 }));
+  assert.equal(oneShotFired.cronJobs.some((job) => job.jobId === 'job_b'), false);
+
+  const deleted = project(oneShotFired, event('cron.deleted', { jobId: 'job_a', by: 'user', deletedAt: 500 }));
+  assert.equal(deleted.cronJobs.length, 0);
+});
+
+test('a cron-fired turn is marked, and only that turn (ADR-140 ② / ADR-142 ④)', () => {
+  seq = 0;
+  const fired = project(initialView(), event('cron.fired', { jobId: 'job_a', turnId: 'turn_9', firedAt: 100 }));
+  assert.deepEqual(fired.cronPendingTurns, ['turn_9']);
+
+  const opened = project(fired, event('turn.opened', { turnId: 'turn_9', input: 'poll the deploy' }));
+  assert.equal(opened.turn?.cronSourced, true);
+  assert.deepEqual(opened.cronPendingTurns, []);
+  assert.deepEqual(opened.cronTurnIds, ['turn_9']);
+  const userEntry = opened.entries.at(-1);
+  assert.equal(userEntry?.kind === 'user' && userEntry.cron, true, 'the user card carries the marker');
+
+  const answered = project(opened, event('turn.transitioned', { turnId: 'turn_9', from: 'streaming', to: 'completed', reason: null }));
+  assert.equal(answered.turn?.cronSourced, true);
+
+  // A turn the user opened is not marked, even with a pending id for a different turn.
+  const pending = project(initialView(), event('cron.fired', { jobId: 'job_b', turnId: 'turn_9', firedAt: 100 }));
+  const userOpened = project(pending, event('turn.opened', { turnId: 'turn_8', input: 'mine' }));
+  assert.equal(userOpened.turn?.cronSourced, false);
+  assert.deepEqual(userOpened.cronPendingTurns, ['turn_9'], 'another turn\'s pending marker survives');
+});
+
 test('markReplayedTasks only downgrades starts at or below the snapshot seq (ADR-113)', () => {
   const task = (taskId: string, startedSeq: number): TuiView['tasks'][number] => ({
     taskId,

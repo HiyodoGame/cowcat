@@ -78,6 +78,7 @@ export { assessCommand, type CommandRisk, type CommandWarning } from './policy/c
 export { AuditConsumer, type AuditSummary } from './policy/audit.js';
 export { JsonlAuditSink, type JsonlAuditSinkOptions } from './adapters/audit.js';
 export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';
+export { cleanupWorktree, ensureWorktree, type EnsureWorktreeResult, type WorktreeCleanup, type WorktreeDeps, type WorktreeInfo } from './adapters/worktree.js';
 export {
   GLOBAL_INSTRUCTION_FILENAME,
   INSTRUCTION_FILENAMES,
@@ -118,6 +119,17 @@ export {
   clearingSummary,
   type ToolClearingSummary,
 } from './policy/tool-clearing.js';
+export {
+  CRON_MAX_JOBS,
+  CRON_RECURRING_TTL_MS,
+  DUE_AHEAD_MS,
+  isDue,
+  nextFire,
+  parseSchedule,
+  type CronField,
+  type CronSpec,
+  type ParsedSchedule,
+} from './policy/cron.js';
 export { SPILL_HEAD_BYTES, SPILL_MAX_INLINE_BYTES, spillOutput, type SpillConfig, type SpillOutcome } from './adapters/spill.js';
 // The OTel adapter is deliberately NOT re-exported here: its module graph pulls in
 // the OTLP exporter (node:http transport), and the root surface is loaded even when
@@ -185,6 +197,11 @@ export {
   type BackgroundTask,
   type BackgroundTaskInfo,
   type BackgroundTasksPort,
+  type CronCreatedRef,
+  type CronCreateOutcome,
+  type CronCreateRequest,
+  type CronJobInfo,
+  type CronTasksPort,
   type ProcessPort,
   type ProcessHandle,
   type ProcessExit,

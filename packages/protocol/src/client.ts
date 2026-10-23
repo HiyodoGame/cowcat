@@ -6,7 +6,7 @@ import {
   type JsonRpcResponse,
   type RequestId,
 } from './jsonrpc.js';
-import type { AttachmentBytes, MethodName, Params, Result, ResultTable, SessionSummary } from './methods.js';
+import type { AttachmentBytes, CronJobSummary, MethodName, Params, Result, ResultTable, SessionSummary } from './methods.js';
 import { parseNotification, type NotificationName, type NotificationParams } from './notifications.js';
 import { PROTOCOL_VERSION } from './version.js';
 import type { Transport } from './transport.js';
@@ -47,6 +47,10 @@ export interface ProtocolClient {
   readAttachment(id: string, maxBytes?: number): Promise<AttachmentBytes>;
   /** Stop a background task this session started; false when it is already gone. */
   stopTask(sessionId: string, taskId: string): Promise<boolean>;
+  /** This session's scheduled jobs (ADR-143 ②); empty when cron is off in this build. */
+  listCronJobs(sessionId: string): Promise<readonly CronJobSummary[]>;
+  /** Remove one of this session's cron jobs; false when the id is not its live job. */
+  removeCronJob(sessionId: string, jobId: string): Promise<boolean>;
   shutdown(): Promise<void>;
   on<N extends NotificationName>(name: N, handler: (params: NotificationParams[N]) => void): () => void;
   /** Resolves when the transport closes, whoever closed it. */
@@ -194,6 +198,14 @@ export function createClient(options: ClientOptions): ProtocolClient {
     async stopTask(sessionId: string, taskId: string) {
       const result = await request('task.stop', { sessionId, taskId });
       return result.stopped;
+    },
+
+    async listCronJobs(sessionId: string) {
+      return (await request('cron.list', { sessionId })).jobs;
+    },
+
+    async removeCronJob(sessionId: string, jobId: string) {
+      return (await request('cron.remove', { sessionId, jobId })).removed;
     },
 
     async shutdown() {

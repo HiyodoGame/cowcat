@@ -1,4 +1,4 @@
-import type { BackgroundEndState, Clock, EventStore, ExecutionFacts, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort, TerminationReason, ToolOutputStream } from '../ports/index.js';
+import type { BackgroundEndState, Clock, CronCreatedRef, EventStore, ExecutionFacts, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort, TerminationReason, ToolOutputStream } from '../ports/index.js';
 import type { EventInput, KernelEvent, SessionParent, SessionUpdate } from './events.js';
 import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
 import type { PriceTable } from './preset.js';
@@ -217,13 +217,35 @@ export class Session {
     await this.emit({ type: 'tool.background.finished', turnId: null, ...input });
   }
 
+  /** A cron job was created by this turn's tool call (ADR-140); the host minted the fact. */
+  async cronCreated(ref: CronCreatedRef): Promise<void> {
+    const turnId = this.turnId;
+    if (turnId === null) throw new Error('cronCreated outside a turn');
+    await this.emit({ type: 'cron.created', turnId, ...ref });
+  }
+
+  /**
+   * A cron job was deleted (ADR-140). Reachable from both sides: the kernel, after a
+   * CronDelete tool call (`by: 'model'`), and the host, answering the `/cron` panel
+   * (`by: 'user'`). `by` is the audit's word for who ended the job.
+   */
+  async cronDeleted(jobId: string, by: 'user' | 'model' | 'expiry', deletedAt: number): Promise<void> {
+    await this.emit({ type: 'cron.deleted', turnId: null, jobId, by, deletedAt });
+  }
+
   async openTurn(
     input: string,
     opening: { readonly model?: string; readonly contextWindow?: number; readonly price?: PriceTable } = {},
+    /**
+     * A caller-reserved turn id. Only the cron scheduler uses this (ADR-140 ②): its
+     * `cron.fired` event names the turn before it exists, and the turn must open under
+     * that name or the audit link breaks. Every other caller lets the session mint.
+     */
+    reservedTurnId?: string,
   ): Promise<string> {
     const current = this.#state.turn?.state;
     if (current !== undefined && !isTerminal(current)) throw new Error('a turn is already open');
-    const turnId = this.#deps.ids.next('turn');
+    const turnId = reservedTurnId ?? this.#deps.ids.next('turn');
     await this.emit({
       type: 'turn.opened',
       turnId,

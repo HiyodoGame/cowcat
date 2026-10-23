@@ -164,6 +164,10 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return readAttachment(id, params as Params<'attachment.read'>);
       case 'task.stop':
         return stopTask(id, params as Params<'task.stop'>);
+      case 'cron.list':
+        return listCronJobs(id, params as Params<'cron.list'>);
+      case 'cron.remove':
+        return removeCronJob(id, params as Params<'cron.remove'>);
       case 'shutdown':
         shutdown(id);
         return;
@@ -265,6 +269,14 @@ export function createServer(options: ServerOptions): ProtocolServer {
 
   async function stopTask(id: RequestId, params: Params<'task.stop'>): Promise<void> {
     reply(id, { stopped: await host.stopTask(params.sessionId, params.taskId) });
+  }
+
+  async function listCronJobs(id: RequestId, params: Params<'cron.list'>): Promise<void> {
+    reply(id, { jobs: await host.listCronJobs(params.sessionId) });
+  }
+
+  async function removeCronJob(id: RequestId, params: Params<'cron.remove'>): Promise<void> {
+    reply(id, { removed: await host.removeCronJob(params.sessionId, params.jobId) });
   }
 
   function shutdown(id: RequestId): void {

@@ -40,6 +40,7 @@ export {
   isMethodName,
   type ApprovalVerdict,
   type AttachmentBytes,
+  type CronJobSummary,
   type MethodName,
   type Params,
   type Result,

@@ -45,7 +45,13 @@ export type Intent =
   /** Stop the task under the panel's cursor. */
   | { readonly kind: 'taskStop' }
   /** Close the background-task panel. */
-  | { readonly kind: 'tasksClose' };
+  | { readonly kind: 'tasksClose' }
+  /** Move the `/cron` panel's cursor (ADR-143 ③). */
+  | { readonly kind: 'cronMove'; readonly delta: number }
+  /** Delete the job under the panel's cursor via `cron.remove`. */
+  | { readonly kind: 'cronDelete' }
+  /** Close the `/cron` panel. */
+  | { readonly kind: 'cronsClose' };
 
 export function intentFor(key: KeyLike, view: TuiView): Intent | null {
   if (key.ctrl) {
@@ -74,6 +80,14 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
     if (key.name === 'down') return { kind: 'taskMove', delta: 1 };
     if (key.name === 'x') return { kind: 'taskStop' };
     if (key.name === 'escape') return { kind: 'tasksClose' };
+  }
+
+  // The `/cron` panel owns the same keys while open (ADR-143 ③), same reasoning.
+  if (view.cronPanel !== null) {
+    if (key.name === 'up') return { kind: 'cronMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'cronMove', delta: 1 };
+    if (key.name === 'x') return { kind: 'cronDelete' };
+    if (key.name === 'escape') return { kind: 'cronsClose' };
   }
 
   // Arrow keys and j/k only mean something while there is a list to move through. Letting

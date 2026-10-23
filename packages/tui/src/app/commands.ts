@@ -21,6 +21,8 @@ export type CommandEffect =
   | { readonly kind: 'sessions' }
   /** Open the background-task panel (ADR-113); the loop owns the stop call. */
   | { readonly kind: 'tasks' }
+  /** Open the `/cron` panel (ADR-143 ③); the loop owns the list and delete calls. */
+  | { readonly kind: 'cron' }
   /** Fork the current session (ADR-127); the loop calls `session.fork`. */
   | { readonly kind: 'fork' }
   /** Toggle plan mode (ADR-124 ⑥); the loop calls `plan.setMode` with the new state. */
@@ -64,6 +66,7 @@ export const COMMANDS: readonly TuiCommand[] = [  {
   },
   { name: 'sessions', summary: '列出会话与恢复命令', run: () => ({ kind: 'sessions' }) },
   { name: 'tasks', summary: '后台任务：查看与终止', run: () => ({ kind: 'tasks' }) },
+  { name: 'cron', summary: '定时任务：查看与删除（cron）', run: () => ({ kind: 'cron' }) },
   {
     name: 'skills',
     summary: '本次会话可用的技能',

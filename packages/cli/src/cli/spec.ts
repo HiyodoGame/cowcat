@@ -66,6 +66,11 @@ const sessionFlag: FlagSpec = {
   value: '<id>',
   summary: '继续一个已有会话，而不是新建一个',
 };
+const worktreeFlag: FlagSpec = {
+  name: '--worktree',
+  value: '<name>',
+  summary: '在 .cowcat/worktrees/<name> 的 git worktree 里开会话（复用同名则直接进入；退出时干净树自动清理）',
+};
 const allFlag: FlagSpec = {
   name: '--all',
   summary: '连子会话一起列出（默认只列顶层会话）',
@@ -120,8 +125,8 @@ export const COMMANDS: readonly CommandSpec[] = [
     name: 'tui',
     summary: '启动 TUI（无参数时的默认命令）',
     args: noArgs,
-    flags: [configFlag, sessionFlag],
-    usage: 'cowcat',
+    flags: [configFlag, sessionFlag, worktreeFlag],
+    usage: 'cowcat [--worktree <name>]',
     status: 'ready',
     run: runTui,
     isDefault: true,

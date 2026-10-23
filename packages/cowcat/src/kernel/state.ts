@@ -348,6 +348,13 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       // The registry owns the task; the log only records that it existed and how it ended.
       // A frontend derives its panel from these events, never from kernel state.
       return base;
+    case 'cron.created':
+    case 'cron.deleted':
+    case 'cron.fired':
+      // The job table is a projection of these events, kept by the host's scheduler
+      // and frontends — not by kernel state (ADR-140). The fired→turn link is for
+      // audit consumers; replay needs nothing derived here.
+      return base;
     case 'policy.decided':
       return base;
     case 'todo.updated':
