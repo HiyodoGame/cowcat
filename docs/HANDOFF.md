@@ -2,18 +2,18 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-23（P7 第八个模块记忆续篇·经验蒸馏全链路收尾）**。
-> 交接时仓库状态：**`main` = `62eb148`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
+> 最近一次更新：**2026-10-23（P7 第九个模块视觉工具全链路收尾）**。
+> 交接时仓库状态：**`main` = `f766277`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API 跑出的会话日志；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
-> **归属**：本会话产出 **#147~#194**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环、可观测性、记忆续篇·经验蒸馏八个 P7 模块全链路 + 收尾）。
+> **归属**：本会话产出 **#147~#200**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环、可观测性、记忆蒸馏、视觉工具九个 P7 模块全链路 + 收尾）。
 
 ---
 
 ## 1. 本次会话做了什么
 
-八个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
+九个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
 
 ### 已完成模块（概要）
 
@@ -47,7 +47,7 @@
 
 | 包 | 通过 | 说明 |
 |---|---|---|
-| cowcat | 860+ | 逐文件全绿（host 46、remember 10、observability 17、approval 13、escalation 4、bash 25、config 24、schema 14 等） |
+| cowcat | 870+ | 逐文件全绿（host 46、remember 10、view 7、observability 17、approval 13、model-openai 21、model-anthropic 19、bash 25、config 24、schema 14 等） |
 | protocol | 43 | |
 | tui | 119 | **必须 Node 26**（本机 Node 24 是 FFI 假失败） |
 | cli | 31 | |
@@ -74,9 +74,9 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
 
 ## 6. 下一步建议
 
-1. **P7 下一个模块，用户选**：视觉工具（D11）、Cron/Worktree；或八个已完成模块攒一批发 `beta.4`。
+1. **P7 下一个模块，用户选**：Cron/Worktree；R3~R8 远期清单（插件生态等，D12）；或九个已完成模块攒一批发 `beta.4`。
 2. **rewind**：立项前必须先答「截断后 always/session 授权归哪、锁怎么收、0 行 header 怎么办」。
-3. **发版**：八个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环/可观测性/记忆蒸馏）攒一批发 `beta.4` 由用户定。
+3. **发版**：九个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环/可观测性/记忆蒸馏/视觉工具）攒一批发 `beta.4` 由用户定。
 
 ## 7. 会话踩坑（新增）
 
@@ -93,6 +93,13 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
   - **后台蒸馏（ADR-137）**：`memory.reflect` 默认 off（user 层 only，跨层警告丢弃）；on 时用户回合 completed 后自动起受限反射回合（仅 Remember 工具、无 subagents/skills/hooks/planReview/escalation；reflecting 旗覆盖整个回合；完成监视器仅非 reflect 安装防重入）；unattended/plan mode/失败回合不反射；reflect 占用期间用户 sendTurn 吃**区分文案**的 busy 拒绝。
   - 审查 #193：1 P0（maybeReflect×@文件 sendTurn 竞态可致日志永久不可 replay——守卫+claim 同一把 turnStarting 旗）+ 4 P1（description YAML 注入面→JSON.stringify；reflect 占用文案；ADR-136 ④ 文档诚实化；Escalate 链与 always 宽放补测试）+ 6 P2（子代理 NEVER_GIVEN 加 Remember 等）全修。
   - T4 真机：glm 自主 Remember 落盘 `~/.cowcat/AGENTS.md`、审批卡 subject 真机可见、reflect 回合真机触发、**新会话 probe 命中沉淀经验**（写路闭环到读取侧全通）。
+- **视觉工具（#196~200）**：ADR-138~139——
+  - **View=给文本模型加眼**：{path, prompt?} 读本地图发给用户配置的 vision preset（默认 `zai/glm-4v-flash` 复用 ZHIPU_API_KEY），OCR/描述文本回会话；主模型有眼时直接用 Read（ADR-057 既有通路）。**类型闸在内容层**（sniffBuffer 魔数嗅探）——risk=read 在 reads-are-free 默认下免审批，改名 .png 的敏感文件曾经零干预出网（审查 #199 P1-3）。
+  - **ModelRequest.images** 直接调用通道：首条 user 消息内容部件；对话路径（tool 结果附件）不动；两适配器各映一次、物化复用 tryMaterializeAttachment；View 的 ToolResult 只带文本（日志继续零字节）。
+  - **vision 端点懒解析**：selectModel/createModelPort 错误在首次调用变拒绝（含 hint 指引），不拖死 createHost；显式 config.vision 启动即校验；vision 配置 user 层 only（跨层警告丢弃）；anthropic 协议 preset 带 limits.output 作 maxTokens。
+  - 审查 #199：3 P1（hint 字段错配/anthropic 必败/maxTokens、类型闸升级内容嗅探）+ 10 P2 全修。T3 真机：glm-5.3-flash 经 View 从 glm-4v 完整 OCR「HELLO COWCAT 42」；**首轮 FAIL 真机校准 catalogue（max_tokens 实测 [1,1024]）**。
+- **catalogue 数字必须实测**：glm-4v-flash 的 limits 是调研【推断】级，真机首轮即被端点拒（400 限 [1,1024]）——内置 preset 的限额一律以真实端点响应为准，勿凭文档填。
+- **decide 规范化按 process.cwd、工具按 options.cwd**（审查 #198 P2-6 登记，与 Read 同款的既有形态）：嵌入式宿主 cwd 不同时策略与工具看的不是同一文件——未来统一走 FsPort 时一并解决。
 - **reflect usage 与会话总额不可区分**（审查 P2-10 登记）：反射回合的 model.usage 混入 usageTotals，TUI 无法区分后台蒸馏花费——未来用 turn.noted 打标或按 turnId 归类。
 - **reflect 占用会话的未来选项**（审查 P1-3 评估记录）：用户回合到达即 abort reflect 曾被考虑后放弃（审批 promise 悬挂到超时）；若将来要做，需先解决 askApproval 的 abort 语义。
 - **configWarnings 通道无消费者**（#63 存量）：ADR-134 依赖它把「project/session 层 otel 被丢弃」送达用户，当前 CLI/TUI 均不读——下一模块顺手接上或开 issue。
