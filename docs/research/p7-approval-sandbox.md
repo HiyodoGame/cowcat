@@ -161,3 +161,29 @@ timeout/unattended 不折叠）。对问题 1 的答复：path/command 混淆不
   从磁盘清空（TUI/CLI/docs 幸存）。恢复 = git 还原到 #180 + npm ci +
   按会话记录重放内核侧修复（TUI 修复在盘上幸存）。教训：长会话的未提交
   改动是易失的，审查修复批次应尽快成 PR。
+## 10. T5 真机验收记录（2026-10-23）
+
+**结论：全链路真机通过**（glm-5.3-flash 真实 API，`cowcat serve` + 协议客户端，
+驱动 `cowcat-tui-accept/t5-as-accept.mjs`，#181 后内核，隔离 HOME + 自定义
+price 的 user 配置）。
+
+### 结果
+
+1. **deny → Escalate → once → 重试放行**：glm 收到 `denied by no-blocked-echo`
+   后**未加教学即自然调用 Escalate**（调研待验证 1  closure：spec description
+   作为申诉指引足够）；申诉事件 `rule=escalation`、`dimensions=[deny-override]`、
+   `command=echo blocked`（卡片诚实条款真机生效）；批准后重试 `fail -> ok`，
+   `escalation.granted`/`consumed` 均在日志。
+2. **用量仪表**：`turn.opened.price` 携带所配价目；`session.open.usage` 返回
+   真实累计（input 16937 / output 492 / cacheRead 16576——cache 命中率 ~97%，
+   与 T-A 验收的 glm 账单形态一致）；日志 approval pair 完整可审计。
+3. **成本显示**：价目为 input 0.11 / output 0.28（USD/1M）时本回合成本
+   ≈$0.002——`formatCost` 的 `<$0.01` 档真机有意义（避免 $0.00 读作免费）。
+
+### 观察 / 边界
+
+- 模型自然申诉率：本样本 1/1（小样本，不作推广依据）。
+- glm 的申诉 justification 质量可读（说明无副作用），卡片首行 subject +
+  理由的结构在真机日志里顺序正确。
+- withoutSandbox 链路的真机覆盖需要真沙箱（本机 Windows 无 bwrap/seatbelt），
+  由 FakeProcess 全链路测试钉住（#181），标注为「沙箱后端真机未验」。
