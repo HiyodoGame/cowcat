@@ -119,7 +119,10 @@ export {
   type ToolClearingSummary,
 } from './policy/tool-clearing.js';
 export { SPILL_HEAD_BYTES, SPILL_MAX_INLINE_BYTES, spillOutput, type SpillConfig, type SpillOutcome } from './adapters/spill.js';
-export { createSpanTranslator, createOtelSink, initTelemetry, type TelemetryHandle, type TelemetryInput, type SpanSink, type SpanKindName, type SpanAttributeValue, type SpanStatus, type StartedSpan, type TranslatorInput } from './adapters/otel/index.js';
+// The OTel adapter is deliberately NOT re-exported here: its module graph pulls in
+// the OTLP exporter (node:http transport), and the root surface is loaded even when
+// telemetry is off — "zero overhead by default" (ADR-134 ②) includes module load.
+// Consumers that need it (the host) import ../adapters/otel/index.js directly.
 export {
   EXIT_PLAN_SPEC,
   EXIT_PLAN_TOOL_NAME,

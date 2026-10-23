@@ -176,3 +176,32 @@ no-op）；导出走 BatchSpanProcessor 异步，host 关闭时 `shutdown()` 尽
 - span 起点近似（execute_tool 无 started 事件）造成时长偏短，已在 E2 标注；
   若后续需要精确时长，给内核加 `tool.started` 事件是干净路子（本期不做）。
 - BatchSpanProcessor 后台定时器在测试里要强制 flush，避免假阴性。
+
+## 8. #186 审查校准（2026-10-23，code-reviewer/k3）
+
+实现后审查：0 P0 + 3 P1 + 11 P2 全部处理。要点：
+
+- **P1-1（真断裂，测试假象掩盖）**：`gen_ai.provider.name`（semconv Required）
+  在生产中**永远不可能被设置**——`session.opened` 在 Session.create 时发出，
+  早于 tap 订阅；「迟到回填」测试用的事件顺序在宿主中不可能出现（全绿恰是
+  假象）。修复：EventStore 端口加 `readHeader()`（一次有界读，不重放全日志），
+  host 在 adopt 后 prime 该事件；补真实 createHost 集成测试钉住。
+- **P1-2**：畸形 endpoint（`localhost:4318` 缺 scheme）让 initTelemetry 同步
+  throw 拖死 createHost。修复：URL 协议白名单校验（WHATWG 会把 `localhost:`
+  当合法 scheme，必须白名单不能只 parse）+ 构造 try/catch → null；
+  config schema 同步加 `^https?://` refine 把笔误变成带键名的配置错误。
+- **P1-3**：subagent 子会话完全不进遥测（其 token 是真实供应商花费）。
+  修复：spawnSubagent 订阅 tap + prime header，finally 退订并 forget。
+- **P2 全处理**：finish 的 1s 预算只对 promise 成立（定时器 unref+clear，
+  exporter timeoutMillis 5s 防 DROP 黑洞拖住 event loop）；close() 加 finally
+  （session close 抛错不再跳过 flush）；遥测初始化挪到组合根末尾（半途失败
+  不泄漏 provider）；translator 加 `forget(sessionId)`（serve 长驻不泄漏）；
+  遥测订阅先于 delivery（delivery 抛错不带走 span 视图）；开新 chat 前防御
+  性结束旧 span（防未来内核轮次重试泄漏）；toolsSinceMs 用后归零；空串
+  headers 回退 headersEnv；`/model` 预设不再导出空 provider；otel 模块退出
+  index.ts 根导出（避免遥测关闭也加载 node:http 传输图）。
+- **登记未修**：configWarnings 通道无消费者（#63 存量，ADR-134 的警告承诺
+  暂不可见，记入 HANDOFF）。
+- **新测试 +7**：交错双会话独立成树、dangling turn 放弃、forget 重收养、
+  畸形 endpoint 双路径、真实 createHost provider.name 集成、subagent 独立
+  conversation 树、（既有）迟到回填改为真实顺序。

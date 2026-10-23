@@ -119,8 +119,14 @@ const modelSchema = z.strictObject({
 const otelSchema = z.strictObject({
   // OTLP/HTTP endpoint, e.g. http://localhost:4318/v1/traces. Absent (here and in
   // OTEL_EXPORTER_OTLP_ENDPOINT) means telemetry stays off — zero overhead is the
-  // default (ADR-134).
-  endpoint: z.string().min(1).optional(),
+  // default (ADR-134). The scheme check turns the classic `localhost:4318` typo
+  // into a named config error instead of a silent telemetry-off (the env var is
+  // covered by initTelemetry's try/catch, which cannot reach the schema).
+  endpoint: z
+    .string()
+    .min(1)
+    .refine((value) => /^https?:\/\//.test(value), 'must start with http:// or https://')
+    .optional(),
   // Name of an env var holding `k=v,k=v` headers. The secret travels only through
   // the environment; the config names the variable, it never holds the value.
   headersEnv: z.string().min(1).optional(),

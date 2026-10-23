@@ -20,7 +20,7 @@ import { createTodoWriteTool } from '../adapters/tools/todo.js';
 import { createWriteTool } from '../adapters/tools/write.js';
 import { NodeBackgroundTasks } from '../adapters/background.js';
 import { AttachmentUnavailableError, materializeAttachment } from '../adapters/attachments.js';
-import { createSpanTranslator, initTelemetry } from '../adapters/otel/index.js';
+import { createSpanTranslator, initTelemetry, type TelemetryHandle } from '../adapters/otel/index.js';
 import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
 import { NodeFs } from '../adapters/fs.js';
 import { NodePlatform } from '../adapters/platform.js';
@@ -127,6 +127,11 @@ export interface CreateHostOptions {
   readonly fs?: FsPort;
   /** Injected so a test can describe skills without a real home directory (ADR-114). */
   readonly skills?: SkillPort;
+  /**
+   * Overrides telemetry construction (ADR-132/134); a test hook, not a product
+   * surface. `null` forces telemetry off, a handle supplies the sink.
+   */
+  readonly telemetry?: TelemetryHandle | null;
   readonly platform?: PlatformPort;
   readonly process?: ProcessPort;
   readonly store?: EventStore;
@@ -228,18 +233,6 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const config = loaded.config;
   const fs = options.fs ?? new NodeFs();
   const version = options.version ?? '0.0.0';
-
-  // Telemetry is a pure view over the live event stream (ADR-132): the tap subscribes
-  // alongside the delivery subscription in adopt(), and absent an endpoint (config
-  // or the standard env var) initTelemetry returns null and the host behaves exactly
-  // as it always has — zero overhead is the default (ADR-134).
-  const telemetry = initTelemetry({
-    env: options.env,
-    endpoint: config.otel?.endpoint,
-    headersEnv: config.otel?.headersEnv,
-    serviceVersion: version,
-  });
-  const spanTap = telemetry === null ? null : createSpanTranslator(telemetry.sink, { agentVersion: version });
 
   // Trust is a statement about the workspace (ADR-028), so it is read here and applied
   // to the rules: without this, a repository's own `cowcat.json` could hand itself
@@ -405,6 +398,11 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     const child = await Session.create(sessionDeps, request.sessionId, {
       parent: { sessionId: request.parentSessionId, role: request.role },
     });
+    // The child's tokens are real provider spend (its usage is summed into the
+    // parent's outcome) — it gets its own span tree under its own conversation id,
+    // same as any session (ADR-132 ③).
+    const unsubscribeTelemetry = spanTap === null ? null : child.subscribe(spanTap.observe);
+    await primeTelemetry(request.sessionId);
     try {
       const childDeps: TurnDeps = {
         session: child,
@@ -439,6 +437,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         reason: outcome.reason,
       };
     } finally {
+      if (unsubscribeTelemetry !== null) {
+        unsubscribeTelemetry();
+        spanTap?.forget(request.sessionId);
+      }
       // The child's lock lives for its whole life (ADR-010); leaving it held would make the
       // session unopenable from another process.
       await child.close();
@@ -567,22 +569,39 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       turnStarting: false,
       turnEnded: true,
     };
-    rec.unsubscribe = session.subscribe((update) => {
+    // Telemetry subscribes FIRST: Session notifies listeners in order and a throwing
+    // delivery listener must not take the span view down with it (ADR-132 ④).
+    const unsubscribeTelemetry = spanTap === null ? null : session.subscribe(spanTap.observe);
+    const unsubscribeDelivery = session.subscribe((update) => {
       deliver(rec, update);
     });
-    // The telemetry tap is its own subscription: it must die with the record even
-    // though its translator is host-scoped (the translator keys conversations by
-    // sessionId, so a re-adopted session is safe — stale state is overwritten by
-    // the new turn.opened).
-    const unsubscribeTelemetry = spanTap === null ? null : session.subscribe(spanTap.observe);
-    if (unsubscribeTelemetry !== null) {
-      const unsubscribeDelivery = rec.unsubscribe;
-      rec.unsubscribe = () => {
-        unsubscribeDelivery();
-        unsubscribeTelemetry();
-      };
-    }
+    rec.unsubscribe = () => {
+      unsubscribeDelivery();
+      if (unsubscribeTelemetry !== null) unsubscribeTelemetry();
+      // The translator keys conversations by sessionId and is host-scoped; a closed
+      // session's bookkeeping must not outlive it (long-lived serve processes adopt
+      // many short sessions).
+      if (spanTap !== null) spanTap.forget(session.state.sessionId);
+    };
     return rec;
+  }
+
+  /**
+   * Feed the session header to the telemetry tap. `session.opened` is emitted at
+   * Session.create/open, BEFORE this host could subscribe, so the tap never sees it
+   * on the wire — and the header is the only place the creating preset id (hence
+   * `gen_ai.provider.name`, a semconv Required attribute) appears. One bounded read
+   * (EventStore.readHeader), not a replay: replayed history must not enter
+   * telemetry (ADR-132 ②).
+   */
+  async function primeTelemetry(sessionId: string): Promise<void> {
+    if (spanTap === null) return;
+    try {
+      const header = await store.readHeader(sessionId);
+      if (header !== null && header.type === 'session.opened') spanTap.observe(header);
+    } catch {
+      // Telemetry primes itself best-effort, like everything else it does.
+    }
   }
 
   function lockedError(sessionId: string, error: LockHeldError): ProtocolHostError {
@@ -599,6 +618,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     try {
       const rec = adopt(await Session.open(sessionDeps, sessionId));
       sessions.set(sessionId, rec);
+      await primeTelemetry(sessionId);
       return rec;
     } catch (error) {
       if (error instanceof LockHeldError) throw lockedError(sessionId, error);
@@ -701,6 +721,24 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     return { turnId };
   }
 
+  // Telemetry is initialized LAST (ADR-134): everything above can throw, and a
+  // provider created before a failing step would leak its BatchSpanProcessor.
+  // It is a pure view over the live event stream (ADR-132): the tap subscribes in
+  // adopt(), and absent an endpoint (config or the standard env var) initTelemetry
+  // returns null and the host behaves exactly as it always has — zero overhead is
+  // the default. `options.telemetry` overrides the decision entirely; it exists so
+  // tests can hand in an in-memory sink without an exporter.
+  const telemetry =
+    options.telemetry !== undefined
+      ? options.telemetry
+      : initTelemetry({
+          env: options.env,
+          endpoint: config.otel?.endpoint,
+          headersEnv: config.otel?.headersEnv,
+          serviceVersion: version,
+        });
+  const spanTap = telemetry === null ? null : createSpanTranslator(telemetry.sink, { agentVersion: version });
+
   return {
     serverVersion: version,
     paths,
@@ -744,6 +782,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       }
       const rec = adopt(session);
       sessions.set(id, rec);
+      await primeTelemetry(id);
       // SessionStart (ADR-122 ①): fires once per session creation — resume reopens a
       // log and fires nothing, matching the log's own shape (session.opened exists,
       // re-open does not). Failure cannot reject creation: a broken start hook must
@@ -1059,32 +1098,37 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     },
 
     async close(): Promise<void> {
-      mcpLifetime.abort();
-      await mcp.close();
-      // Abort the turns first: a turn stopped between `tool.finished` and
-      // `tool.background.started` still has a start to record, and its task's exit is
-      // waiting for that record. Only then stop the tasks and drain the writes.
-      for (const rec of sessions.values()) {
-        rec.running?.controller.abort();
-        await rec.running?.done;
+      try {
+        mcpLifetime.abort();
+        await mcp.close();
+        // Abort the turns first: a turn stopped between `tool.finished` and
+        // `tool.background.started` still has a start to record, and its task's exit is
+        // waiting for that record. Only then stop the tasks and drain the writes.
+        for (const rec of sessions.values()) {
+          rec.running?.controller.abort();
+          await rec.running?.done;
+        }
+        await background.stopAll();
+        // A loop, not one pass: flushing a buffered exit adds a write, and that write may be
+        // followed by another task's exit. `stopAll` guarantees the writers are finite.
+        while (backgroundWrites.size > 0) {
+          await Promise.allSettled([...backgroundWrites]);
+        }
+        for (const rec of sessions.values()) {
+          rec.unsubscribe();
+          await rec.session.close();
+        }
+        sessions.clear();
+        pendingBackgroundExits.clear();
+        startedBackground.clear();
+      } finally {
+        // Abandon open spans first (so their end timestamps precede the exporter
+        // flush), then best-effort flush — the 1s budget lives in the handle. This
+        // runs even when a session close threw above: a teardown failure must not
+        // leak the provider or leave spans unended.
+        if (spanTap !== null) spanTap.finish(Date.now());
+        if (telemetry !== null) await telemetry.finish();
       }
-      await background.stopAll();
-      // A loop, not one pass: flushing a buffered exit adds a write, and that write may be
-      // followed by another task's exit. `stopAll` guarantees the writers are finite.
-      while (backgroundWrites.size > 0) {
-        await Promise.allSettled([...backgroundWrites]);
-      }
-      for (const rec of sessions.values()) {
-        rec.unsubscribe();
-        await rec.session.close();
-      }
-      sessions.clear();
-      pendingBackgroundExits.clear();
-      startedBackground.clear();
-      // Abandon open spans first (so their end timestamps precede the exporter
-      // flush), then best-effort flush — the 1s budget lives in the handle.
-      if (spanTap !== null) spanTap.finish(Date.now());
-      if (telemetry !== null) await telemetry.finish();
     },
   };
 }
