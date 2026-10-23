@@ -1480,7 +1480,7 @@ test('turn.send carries @ files into the log ahead of the prompt; a bad file ref
   const attached = first(fixture.events(), 'prompt.attached');
   assert.ok(attached !== undefined);
   const filesField = field(attached, 'files') as readonly { readonly name?: unknown }[] | undefined;
-  assert.equal(filesField?.[0]?.name, 'notes.md');
+  assert.equal(filesField?.[0]?.name, notes, 'the name is the path as given, so同名文件可区分');
   const opened = first(fixture.events(), 'turn.opened');
   assert.ok(attached.seq < (opened?.seq ?? 0), 'attachment lands ahead of the prompt');
   const request = model.requests[0];
@@ -1545,4 +1545,53 @@ test('fork refuses while a turn is running', async (t) => {
   );
   const forkedId = await fixture.client.forkSession('sess_busy');
   assert.match(forkedId, /^sess_/);
+});
+
+test('a fork inherits plan mode and the header facts of its source', async (t) => {
+  const home = tempDir(t, 'cowcat-forkmode-home-');
+  const cwd = tempDir(t, 'cowcat-forkmode-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_forkmode');
+  await fixture.client.openSession('sess_forkmode');
+  await fixture.client.setPlanMode('sess_forkmode', true);
+
+  const forkedId = await fixture.client.forkSession('sess_forkmode');
+  const log = readFileSync(join(home, '.cowcat', 'sessions', `${forkedId}.jsonl`), 'utf8');
+  const types = log.split('\n').filter((line) => line.length > 0).map((line) => (JSON.parse(line) as { type: string }).type);
+  // The mode change replays into the fork: planMode is folded state, so the fork
+  // opens still in plan mode — that is inheritance, not coincidence.
+  assert.ok(types.includes('plan.mode-changed'));
+  const header = JSON.parse(log.split('\n')[0] ?? '{}') as { cwd?: string; model?: string };
+  assert.equal(header.cwd, cwd, 'fork header inherits the source cwd');
+  assert.equal(header.model, PRESET, 'fork header inherits the source model');
+});
+
+test('a send with @ files refuses before the model check leaves an orphan attachment', async (t) => {
+  const home = tempDir(t, 'cowcat-atorphan-home-');
+  const cwd = tempDir(t, 'cowcat-atorphan-proj-');
+  // No model configured: currentModel refuses. The refusal must happen BEFORE any
+  // prompt.attached is emitted, or the log holds an orphan attachment (review P1-2).
+  const notes = join(cwd, 'notes.md');
+  writeFileSync(notes, 'hello\n');
+
+  const model = new ScriptedModel([[{ type: 'text', text: 'unreachable' }]]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_orphan');
+  await fixture.client.openSession('sess_orphan');
+
+  await assert.rejects(fixture.client.sendTurn('sess_orphan', 'hi', [notes]));
+  assert.equal(
+    fixture.events().some((event) => event.type === 'prompt.attached'),
+    false,
+    'no orphan attachment in the log',
+  );
 });

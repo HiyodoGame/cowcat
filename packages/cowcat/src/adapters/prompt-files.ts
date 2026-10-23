@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { basename, isAbsolute } from 'node:path';
+import { isAbsolute } from 'node:path';
 import type { AttachedFile } from '../kernel/events.js';
 
 /**
@@ -31,7 +31,9 @@ export async function readPromptFile(path: string): Promise<AttachedFile> {
     throw new PromptFileError(`${String(raw.length)} 字节，超出 ${String(PROMPT_FILE_MAX_BYTES)} 字节上限`);
   }
   try {
-    return { name: basename(path), content: new TextDecoder('utf-8', { fatal: true }).decode(raw) };
+    // The name is the path as given, not basename: two same-named files from different
+    // directories must stay distinguishable in the model's context (review of #173, P2-12).
+    return { name: path, content: new TextDecoder('utf-8', { fatal: true }).decode(raw) };
   } catch {
     throw new PromptFileError('不是 UTF-8 文本');
   }

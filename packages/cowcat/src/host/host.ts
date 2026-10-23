@@ -32,7 +32,7 @@ import { FileTrustStore } from '../adapters/trust.js';
 import { FileInstructionSource } from '../adapters/instructions.js';
 import { FileSkills } from '../adapters/skills.js';
 import { createHooksPort, loadHookSources } from '../adapters/hooks.js';
-import { PromptFileError, readPromptFile } from '../adapters/prompt-files.js';
+import { PROMPT_FILE_MAX_COUNT, PromptFileError, readPromptFile } from '../adapters/prompt-files.js';
 import { createSkillTool } from '../adapters/tools/skill.js';
 import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
 import { projectRootOf } from '../adapters/instructions.js';
@@ -196,6 +196,19 @@ interface SessionRecord {
   /** The plan-review twin of `earlyApprovals`: a fast answer must not be lost to the seam. */
   readonly earlyPlanReplies: Map<string, PlanChoice>;
   running: { readonly controller: AbortController; readonly done: Promise<void> } | null;
+  /**
+   * True from the running-check until the turn is handed to `startTurn`: brackets the
+   * `await`s of `@` file reading so a second concurrent `sendTurn` cannot slip through
+   * (review of #173, P1-3).
+   */
+  turnStarting: boolean;
+  /**
+   * Settled-flag twin of `running`: the terminal transition reaches a client before the
+   * cleanup microtask clears `running`, so "the last state is terminal" alone cannot
+   * prove idleness — a NEW turn's hooks run before its `turn.opened` (review of #173,
+   * P1-4). Only `turnEnded === true` means this record's turn is actually done.
+   */
+  turnEnded: boolean;
 }
 
 export async function createHost(options: CreateHostOptions): Promise<CowcatHost> {
@@ -454,6 +467,19 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       const waiters = rec.turnWaiters;
       rec.turnWaiters = [];
       for (const waiter of waiters) waiter(turnId);
+    } else if (update.type === 'turn.transitioned' && isTerminal(update.to)) {
+      // The record is cleaned at EVENT time, synchronously inside emit — before any
+      // transport delivery — so by the moment a client can observe the terminal state,
+      // `rec.running` is already null. A flag cleared in a later microtask reintroduced
+      // exactly the race the fork grace tried to paper over (review of #173, P1-4).
+      rec.running = null;
+      rec.turnEnded = true;
+      rec.pendingApproval = null;
+      rec.pendingPlan = null;
+      // An answer for a call that never reached the bridge must not outlive the turn.
+      rec.earlyApprovals.clear();
+      rec.earlyPlanReplies.clear();
+      rec.turnWaiters = [];
     } else if (update.type === 'tool.finished' && update.attachments !== null) {
       for (const attachment of update.attachments) attachments.set(attachment.path, attachment);
     } else if (update.type === 'tool.background.started') {
@@ -525,6 +551,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       pendingPlan: null,
       earlyPlanReplies: new Map(),
       running: null,
+      turnStarting: false,
+      turnEnded: true,
     };
     rec.unsubscribe = session.subscribe((update) => {
       deliver(rec, update);
@@ -563,6 +591,86 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     const rec = sessions.get(sessionId);
     if (rec === undefined) throw new NoSuchSessionError(sessionId);
     return rec;
+  }
+
+  /**
+   * The turn body, split from `sendTurn` so the check-and-claim flag can bracket the
+   * file-reading awaits above. Everything from here to `rec.running` is synchronous,
+   * which is what keeps the hand-off race-free.
+   */
+  async function startTurn(
+    rec: SessionRecord,
+    configured: { readonly port: ModelPort; readonly selection: ModelSelection },
+    input: string,
+    controller: AbortController,
+  ): Promise<{ turnId: string }> {
+    const deps: TurnDeps = {
+      session: rec.session,
+      model: configured.port,
+      preset: configured.selection.preset,
+      ...(configured.selection.effort === null ? {} : { effort: configured.selection.effort }),
+      tools,
+      rules,
+      fs,
+      approve: (request: ActionRequest) => askApproval(rec, request),
+      ...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
+      ids: sessionDeps.ids,
+      // The chain is read per turn but injected once (ADR-078): the fold decides
+      // whether it is still in `messages`, so a compaction puts it back.
+      instructions: {
+        port: new FileInstructionSource({ fs }),
+        cwd: options.cwd,
+        trust: { trusted: workspaceTrusted },
+        global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
+      },
+      // Skills are top-level only for the same reason delegation is: a child gets a
+      // narrowed tool subset, and a catalog naming a tool it cannot call is a lie.
+      // The snapshot comes from the host's own discovery, so the catalog and the
+      // Skill tool always describe the same set (no hot reload, ADR-114 ⑥).
+      skills: {
+        skills: skillDiscovery.skills,
+        trust: { trusted: workspaceTrusted },
+        ...(configured.selection.preset.limits.context === undefined
+          ? {}
+          : { window: configured.selection.preset.limits.context }),
+      },
+      // Delegation is available to a top-level session only: the child's deps are built
+      // without this field, which is what makes depth 0 the default (ADR-081 ④).
+      subagents: { port: { spawn: spawnSubagent } },
+      // Hooks ride top-level turns for the same reason delegation does (ADR-121).
+      hooks: { port: hooksPort, cwd: options.cwd },
+      // Plan review is top-level only: a child session's deps omit this, which keeps
+      // ExitPlan off its wire and its calls reading as unknown tools (ADR-124 ⑥).
+      planReview: (callId) => askPlanReview(rec, callId),
+    };
+
+    let failure: unknown = null;
+    const done = runTurn(deps, input, controller.signal).then(
+      () => undefined,
+      (error: unknown) => {
+        failure = error;
+      },
+    );
+    const settled = done.then(() => undefined);
+    rec.turnEnded = false;
+    rec.running = { controller, done: settled };
+    // RACE, not all: the reply has to go out while the turn is still running, and the
+    // answer is the id the session reported when it opened the turn. If the turn ends
+    // first the id is still there — a session keeps its last turn — so a turn that
+    // opens and completes in one go answers correctly too.
+    const opened = new Promise<string>((resolve) => {
+      rec.turnWaiters.push(resolve);
+    });
+    await Promise.race([settled, opened]);
+    const turnId = rec.session.turnId;
+    if (turnId === null) {
+      throw new ProtocolHostError(
+        `the turn ended before it opened: ${message(failure ?? new Error('no turn was opened'))}`,
+        ERROR_CODES.hostRefused,
+        { sessionId: rec.session.state.sessionId },
+      );
+    }
+    return { turnId };
   }
 
   return {
@@ -642,11 +750,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
      * append-only store forbids itself to do.
      */
     async forkSession(sessionId: string): Promise<{ readonly sessionId: string }> {
-      const rec = open(sessionId);
+      const rec = await record(sessionId);
       if (rec.running !== null) {
-        // The terminal transition reaches a client a beat before the host's cleanup
-        // microtask clears this flag; a turn that already ended is not running.
-        if (rec.session.state.turn !== null && isTerminal(rec.session.state.turn.state)) {
+        // The terminal transition reaches a client a beat before the cleanup microtask
+        // clears `running`, and a NEW turn's hooks run before its `turn.opened` — so
+        // "the last state is terminal" cannot prove idleness. Only this record's own
+        // settled flag does (review of #173, P1-4).
+        if (rec.turnEnded) {
           rec.running = null;
         } else {
           throw new ProtocolHostError(
@@ -657,39 +767,49 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         }
       }
       const newId = sessionDeps.ids.next('sess');
+      const source = await sessionDeps.store.readAll(sessionId);
+      const sourceHeader = source[0];
+      // The fork's header inherits the SOURCE's where/who (ADR-126 semantics): a fork
+      // taken in another directory is still the same conversation (review of #173, P2-7).
+      const inheritedCwd = sourceHeader?.type === 'session.opened' ? sourceHeader.cwd : undefined;
+      const inheritedModel = sourceHeader?.type === 'session.opened' ? sourceHeader.model : undefined;
       let forked: Session;
       try {
         forked = await Session.create(sessionDeps, newId, {
-          cwd: options.cwd,
-          ...(config.model.preset === null ? {} : { model: config.model.preset }),
+          ...(inheritedCwd === undefined ? {} : { cwd: inheritedCwd }),
+          ...(inheritedModel === undefined ? {} : { model: inheritedModel }),
           parent: { sessionId, role: 'fork' },
         });
       } catch (error) {
         if (error instanceof LockHeldError) throw lockedError(newId, error);
         throw new ProtocolHostError(`${newId}: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId: newId });
       }
+      // Registered before the replay so host.close() cleans the lock and the session
+      // even if the replay dies halfway (review of #173, P1-5).
+      const forkRec = adopt(forked);
+      sessions.set(newId, forkRec);
       try {
-        const source = await sessionDeps.store.readAll(sessionId);
         for (const event of source) {
           if (event.type === 'session.opened') continue;
           await forked.emit(stripEventIds(event));
         }
       } catch (error) {
         await forked.close();
+        sessions.delete(newId);
+        // A half-replayed log would list as a healthy session; the half-born fork is
+        // deleted, never resumed (ADR-127).
+        await sessionDeps.store.remove?.(newId);
         throw new ProtocolHostError(`fork failed: ${message(error)}`, ERROR_CODES.hostRefused, { sessionId });
       }
-      const forkRec = adopt(forked);
-      sessions.set(newId, forkRec);
       return { sessionId: newId };
     },
-
     async attach(sessionId: string): Promise<AttachedSession> {
       const rec = await record(sessionId);
       // Subscribe BEFORE reading the log, and hold what arrives until the server has sent
       // the replay: a host that reads first leaves a gap no client can detect, and one
       // that forwards immediately would put a later event before the replay it is part
-      // of. The buffer closes the gap; the microtask keeps the order (the server sends
-      // its reply and the replay in the same synchronous block, before this runs).
+      // of. The buffer closes the gap; `subscribe` flushes it synchronously before going
+      // live, so a fast event can never overtake the queue (review of #173).
       const buffered: SessionUpdate[] = [];
       let live: ((update: unknown) => void) | null = null;
       const onUpdate = (update: unknown): void => {
@@ -720,14 +840,15 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
             return update.seq > lastSeq;
           });
           buffered.length = 0;
+          // Flush SYNCHRONOUSLY, before `live` is set: an event arriving after
+          // `live = listener` but before a deferred flush would overtake the whole
+          // buffered queue (observed as [1,3,2] in the seam test once turn-start
+          // timing shifted — review of #173). The server calls `subscribe` after its
+          // reply and replay are already written, so eager flushing keeps that order
+          // instead of racing it.
+          for (const update of queued) listener(update);
           live = listener;
-          let subscribed = true;
-          queueMicrotask(() => {
-            if (!subscribed) return;
-            for (const update of queued) listener(update);
-          });
           return () => {
-            subscribed = false;
             live = null;
             rec.listeners.delete(onUpdate);
           };
@@ -737,110 +858,63 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
 
     async sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string }> {
       const rec = await record(sessionId);
-      if (rec.running !== null) {
+      // The check-and-claim must bracket every await below: with `@` files in play,
+      // reading and emitting are real I/O, and two concurrent sends could otherwise
+      // both pass the check and interleave attachments (review of #173, P1-3).
+      if (rec.running !== null || rec.turnStarting) {
         throw new ProtocolHostError(`session ${sessionId} already has a turn running`, ERROR_CODES.hostRefused, {
           sessionId,
         });
       }
-      // `@` references (ADR-128): read and validated here — the kernel touches no host
-      // runtime and the FsPort has no read. Any bad file refuses the WHOLE send: a log
-      // must never hold half a prompt. The event lands before `turn.opened`, so the
-      // model reads the files ahead of the instruction that references them.
-      if (files !== undefined && files.length > 0) {
-        const attached: AttachedFile[] = [];
-        for (const path of files) {
+      rec.turnStarting = true;
+      try {
+        // Before anything is opened: an unconfigured model is a refusal with a hint, not a
+        // turn that starts and fails a moment later. This check runs BEFORE any file is
+        // read or emitted, so a refusal leaves no orphan `prompt.attached` in the log
+        // (review of #173, P1-2).
+        const configured = currentModel();
+        // `@` references (ADR-128): read and validated here — the kernel touches no host
+        // runtime and the FsPort has no read. Any bad file refuses the WHOLE send: a log
+        // must never hold half a prompt. The event lands before `turn.opened`, so the
+        // model reads the files ahead of the instruction that references them.
+        if (files !== undefined && files.length > 0) {
+          if (files.length > PROMPT_FILE_MAX_COUNT) {
+            throw new ProtocolHostError(
+              `too many @ files: ${String(files.length)} (at most ${String(PROMPT_FILE_MAX_COUNT)})`,
+              ERROR_CODES.hostRefused,
+              { sessionId },
+            );
+          }
+          const attached: AttachedFile[] = [];
+          const seen = new Set<string>();
+          for (const path of files) {
+            if (seen.has(path)) continue;
+            seen.add(path);
+            try {
+              attached.push(await readPromptFile(path));
+            } catch (error) {
+              // A bad file refuses the WHOLE send (ADR-128): the log must never hold
+              // half a prompt. The path is in the message — it is the only question a
+              // person has at that moment.
+              const why = error instanceof PromptFileError ? error.message : String(error);
+              throw new ProtocolHostError(`@文件 ${path}：${why}`, ERROR_CODES.hostRefused);
+            }
+          }
           try {
-            attached.push(await readPromptFile(path));
+            await rec.session.emit({ type: 'prompt.attached', turnId: null, files: attached });
           } catch (error) {
-            // A bad file refuses the WHOLE send (ADR-128): the log must never hold
-            // half a prompt. The path is in the message — it is the only question a
-            // person has at that moment.
-            const why = error instanceof PromptFileError ? error.message : String(error);
-            throw new ProtocolHostError(`@文件 ${path}：${why}`, ERROR_CODES.hostRefused);
+            throw new ProtocolHostError(
+              `cannot attach files: ${error instanceof Error ? error.message : String(error)}`,
+              ERROR_CODES.hostRefused,
+              { sessionId },
+            );
           }
         }
-        await rec.session.emit({ type: 'prompt.attached', turnId: null, files: attached });
+        const controller = new AbortController();
+        return await startTurn(rec, configured, input, controller);
+      } finally {
+        rec.turnStarting = false;
       }
-      // Before anything is opened: an unconfigured model is a refusal with a hint, not a
-      // turn that starts and fails a moment later.
-      const configured = currentModel();
-      const controller = new AbortController();
-      const opened = new Promise<string>((resolve) => {
-        rec.turnWaiters.push(resolve);
-      });
-
-      const deps: TurnDeps = {
-        session: rec.session,
-        model: configured.port,
-        preset: configured.selection.preset,
-        ...(configured.selection.effort === null ? {} : { effort: configured.selection.effort }),
-        tools,
-        rules,
-        fs,
-        approve: (request: ActionRequest) => askApproval(rec, request),
-        ...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
-        ids: sessionDeps.ids,
-        // The chain is read per turn but injected once (ADR-078): the fold decides
-        // whether it is still in `messages`, so a compaction puts it back.
-        instructions: {
-          port: new FileInstructionSource({ fs }),
-          cwd: options.cwd,
-          trust: { trusted: workspaceTrusted },
-          global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
-        },
-        // Skills are top-level only for the same reason delegation is: a child gets a
-        // narrowed tool subset, and a catalog naming a tool it cannot call is a lie.
-        // The snapshot comes from the host's own discovery, so the catalog and the
-        // Skill tool always describe the same set (no hot reload, ADR-114 ⑥).
-        skills: {
-          skills: skillDiscovery.skills,
-          trust: { trusted: workspaceTrusted },
-          ...(configured.selection.preset.limits.context === undefined
-            ? {}
-            : { window: configured.selection.preset.limits.context }),
-        },
-        // Delegation is available to a top-level session only: the child's deps are built
-        // without this field, which is what makes depth 0 the default (ADR-081 ④).
-        subagents: { port: { spawn: spawnSubagent } },
-        // Hooks ride top-level turns for the same reason delegation does (ADR-121).
-        hooks: { port: hooksPort, cwd: options.cwd },
-        // Plan review is top-level only: a child session's deps omit this, which keeps
-        // ExitPlan off its wire and its calls reading as unknown tools (ADR-124 ⑥).
-        planReview: (callId) => askPlanReview(rec, callId),
-      };
-
-      let failure: unknown = null;
-      const done = runTurn(deps, input, controller.signal).then(
-        () => undefined,
-        (error: unknown) => {
-          failure = error;
-        },
-      );
-      const settled = done.then(() => undefined);
-      rec.running = { controller, done: settled };
-      void settled.then(() => {
-        rec.running = null;
-        rec.pendingApproval = null;
-        rec.pendingPlan = null;
-        // An answer for a call that never reached the bridge must not outlive the turn.
-        rec.earlyApprovals.clear();
-        rec.earlyPlanReplies.clear();
-        rec.turnWaiters = [];
-      });
-      // RACE, not all: the reply has to go out while the turn is still running, and the
-      // answer is the id the session reported when it opened the turn. If the turn ends
-      // first the id is still there — a session keeps its last turn — so a turn that
-      // opens and completes in one go answers correctly too.
-      await Promise.race([settled, opened]);
-      const turnId = rec.session.turnId;
-      if (turnId === null) {
-        throw new ProtocolHostError(
-          `the turn ended before it opened: ${message(failure ?? new Error('no turn was opened'))}`,
-          ERROR_CODES.hostRefused,
-          { sessionId },
-        );
-      }
-      return { turnId };
     },
 
     async cancelTurn(sessionId: string): Promise<void> {

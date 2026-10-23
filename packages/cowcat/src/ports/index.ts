@@ -276,6 +276,12 @@ export interface ModelPort {
 export interface EventStore {
   append(event: KernelEvent): Promise<void>;
   readAll(sessionId: string): Promise<readonly KernelEvent[]>;
+  /**
+   * Best-effort log removal; exists for the fork cleanup path (ADR-127). Optional
+   * because the port's contract is append/read — a store without it simply leaves
+   * a half-born fork on disk, loud at open time rather than silent.
+   */
+  remove?(sessionId: string): Promise<void>;
 }
 
 export interface Clock {

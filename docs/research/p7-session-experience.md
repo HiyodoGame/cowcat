@@ -90,3 +90,26 @@ header 可选字段不 bump（parent 先例）；快照新字段「必填+失败
 2. **标题截断的 CJK 宽度**【推断】：按字符数还是显示宽度截断（wcwidth 已有先例 `text/width.ts`）；倾向按字符数 40 + 省略号，真机看列表可读性再调。【须实测】
 3. **`@` 文件的二进制误判面**【推断】：UTF-8 拒收会让 .zip/.png 直接失败——这是语义（文本引用）不是缺陷；提示文案说清「文本文件」。【须实测】
 4. **fork 后子会话折叠**：`sessions list` 按 parentSessionId 折叠会把 fork 也折进源——语义可辩护（同族会话）但用户可能找不到 fork；T2 前定：折叠保留 + 列表标注 `(fork)`。【须裁决】
+
+## 9. #173 审查校准（2026-10-23）
+
+code-reviewer/k3 审查：1 P0 + 5 P1 + 7 P2（#174 全部处理）。要点：
+
+- **P0**：fork 会话被 `sessions list` 默认过滤（parentSessionId 折叠）——fork 完找不到。
+  修复：折叠排除 parentRole==='fork'。
+- **P1**：① prompt.attached 在 currentModel 检查**之前** emit——模型未配置时日志留孤儿
+  附件，修复为检查先行；② 并发 sendTurn 可双双穿过 running 检查（files 读盘是真实
+  IO 窗口）——`turnStarting` 检查-占位标志 bracket 全部 await；③ `isTerminal` 宽容
+  有误判窗口（新回合 hooks 先于 turn.opened）——`rec.running` 清理改为**终态事件
+  送达时同步完成**（deliver 内），flag 语义彻底消失；④ fork 重放失败留半截日志
+  （index 不验完整性会被列出可 resume）——失败路径 close+摘除+删除日志，且先注册
+  后重放（host.close 也能清理）；⑤ @token 误伤面（email/npm scope/中文标点）——
+  新 `parseAtRefs`：词边界+路径字符+**存在性过滤**，不存在的 @token 留在文本。
+- **P2**：fork header 继承源 cwd/model；index 的 parentRole 白名单；host 补 8 个上限
+  复查；forkSession 用 record()；name 用所给路径 + host 去重；emit 失败包
+  ProtocolHostError；ADR-127/128 随修复修订。
+- **捎带修的真 bug**：attach/subscribe 接缝的 buffer flush 原为 queueMicrotask——
+  subscribe 后微任务前到达的事件会**超车**缓冲队列（本次表现为 [1,3,2] 乱序，
+  时序偏移后被确定性触发）。改为 subscribe 内同步 flush。该竞态一直存在。
+- **本机环境噪声**：两个外部 `du` 进程造成磁盘 IO 竞争，全量并行的计时敏感测试
+  （background/bash/process 等）本地随机 flake、逐文件全绿；以 CI 为权威。
