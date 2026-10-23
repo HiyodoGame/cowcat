@@ -129,3 +129,14 @@ OS 级截屏需要 `PlatformPort` 新能力（三方库或平台 API），超出
 - `images` 与工具结果附件同时出现时的顺序（对话里 View 的结果无附件，
   两通道暂不交汇）——ADR-139 写明「本期唯一消费者是 View」。
 - vision 端点的流式应答收集：View 取全部文本块拼接，usage 丢弃（见 E6）。
+
+## 8. #198 审查校准（2026-10-23，code-reviewer/k3）
+
+实现后审查：0 P0 + 3 P1 + 10 P2，全部处理或登记。要点：
+
+- **P1-1（字段错配，测试钉住假契约）**：拒绝输出读 `error.guidance`，而 ModelConfigError 的真实字段是 `hint`——生产路径的指引（export ZHIPU_API_KEY 等）被静默吞掉，旧测试用 Object.assign 造了不存在的字段反而钉成「通过」。修复并改用真实 ModelConfigError 测试。
+- **P1-2（anthropic 协议必败）**：View 请求不带 maxTokens，而 anthropicModel 对它直接 throw——ADR-138② 承诺的「任意 vision preset」有一整个协议族 100% 失败（默认 openai 恰好掩盖）。修复：visionEndpoint 带回 preset.limits.output 作 maxTokens。
+- **P1-3（安全闸缺口，最值钱）**：类型闸只看扩展名 + reads-are-free 免审批 + 字节出网第三方——改名 .png 的敏感文件会在零人工干预下出网。修复：读字节后 sniffBuffer 魔数嗅探（imageinfo 同款纪律）、isFile 检查、5MB 对实读字节执行（TOCTOU 窗口收窄）。bmp 从白名单消失（Anthropic media_type 联合不含它，与 Read 对齐）。
+- **P2 处理**：abort 不再吞成 ok:false（signal.aborted 重抛，run-turn 惯例）；images 通道的 document 两适配器都点名不丢；显式 effort:null 不继承主模型 effort；显式 config.vision 启动即校验（typo 早响）；makeAttachment 取代三 null 字面量；截断 break 的流清理（generator finally）有测试钉住。
+- **P2 登记**：decide 规范化按 process.cwd 而 View 按 options.cwd——与 Read 同款的既有形态，非本模块引入，记入 HANDOFF；doctor 标「有眼模型」未做（拒绝文案已指向 doctor 列 preset id，足够）。
+- **测试净 +4**（view 7：改名伪装/目录拒绝/maxTokens/abort 重抛+清理/截断清理/真实 ModelConfigError）。

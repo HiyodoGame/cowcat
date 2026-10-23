@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { anthropicModel } from '../src/adapters/model-anthropic.js';
@@ -11,6 +11,7 @@ import { openAIModel } from '../src/adapters/model-openai.js';
 import { createViewTool } from '../src/adapters/tools/view.js';
 import {
   makeAttachment,
+  ModelConfigError,
   type Attachment,
   type ModelChunk,
   type ModelPort,
@@ -90,7 +91,22 @@ test('View passes a custom prompt through and refuses the gates loudly', async (
   writeFileSync(textFile, 'hello');
   const wrongType = await tool.run({ path: 'notes.txt' }, signal, grant);
   assert.equal(wrongType.ok, false);
-  assert.match(wrongType.output, /not a supported image/);
+  assert.match(wrongType.output, /is text by its bytes/);
+  assert.match(wrongType.output, /rename-to-\.png does not make a file an image/);
+
+  // The magic decides, not the name: a text file wearing a .png name is refused.
+  const liar = join(cwd, 'liar.png');
+  writeFileSync(liar, 'definitely not an image');
+  const lying = await tool.run({ path: 'liar.png' }, signal, grant);
+  assert.equal(lying.ok, false);
+  assert.match(lying.output, /the name says \.png, the content decides/);
+
+  // A directory wearing a .png name is not a regular file either.
+  const dirPng = join(cwd, 'folder.png');
+  mkdirSync(dirPng);
+  const dirResult = await tool.run({ path: 'folder.png' }, signal, grant);
+  assert.equal(dirResult.ok, false);
+  assert.match(dirResult.output, /not a regular file/);
 
   const big = join(cwd, 'big.png');
   writeFileSync(big, Buffer.alloc(5 * 1024 * 1024 + 1));
@@ -114,14 +130,15 @@ test('View passes a custom prompt through and refuses the gates loudly', async (
   assert.equal(custom.text, 'what color dominates?');
 });
 
-test('a throwing vision resolver becomes a refusal with guidance, not a crash', async () => {
+test('a throwing vision resolver becomes a refusal with the real hint, not a crash', async () => {
   const cwd = dir();
   writeFileSync(join(cwd, 'ok.png'), PNG);
-  const error = Object.assign(new Error('ZHIPU_API_KEY is not set'), { guidance: 'export ZHIPU_API_KEY=...' });
+  // The real error class, with its real `hint` field (review of #198, P1-1: the
+  // tool must read the field the model layer actually throws).
   const tool = createViewTool({
     cwd,
     vision: () => {
-      throw error;
+      throw new ModelConfigError('missing-api-key', 'ZHIPU_API_KEY is not set', 'export ZHIPU_API_KEY=... (the key is read from the environment)');
     },
   });
   const result = await tool.run({ path: 'ok.png' }, new AbortController().signal, grant);
@@ -129,6 +146,81 @@ test('a throwing vision resolver becomes a refusal with guidance, not a crash', 
   assert.match(result.output, /ZHIPU_API_KEY is not set/);
   assert.match(result.output, /export ZHIPU_API_KEY/);
   assert.match(result.output, /cowcat doctor/);
+});
+
+test('the vision request carries the preset maxTokens and aborts rethrow', async () => {
+  const cwd = dir();
+  writeFileSync(join(cwd, 'ok.png'), PNG);
+  const seen = (): ModelRequest | null => seenRequest;
+  let seenRequest: ModelRequest | null = null;
+  const port: ModelPort = {
+    async *stream(request: ModelRequest): AsyncIterable<ModelChunk> {
+      seenRequest = request;
+      yield { type: 'text', text: 'ok' };
+    },
+  };
+  const tool = createViewTool({ cwd, vision: () => ({ port, model: 'claude-vision', maxTokens: 4096 }) });
+  const good = await tool.run({ path: 'ok.png' }, new AbortController().signal, grant);
+  assert.equal(good.ok, true);
+  assert.equal(seen()?.maxTokens, 4096, 'anthropic-protocol vision presets need max_tokens (review of #198, P1-2)');
+
+  // A cancellation is not a tool failure: it rethrows instead of logging ok:false.
+  let cancelled = false;
+  const aborting: ModelPort = {
+    async *stream(_request: ModelRequest, signal?: AbortSignal): AsyncIterable<ModelChunk> {
+      try {
+        yield { type: 'text', text: 'partial' };
+        // Mirrors the SDK's behaviour: an abort rejects the in-flight read.
+        if (signal?.aborted !== true) {
+          await new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener(
+              'abort',
+              () => {
+                reject(new Error('aborted'));
+              },
+              { once: true },
+            );
+          });
+        }
+        throw new Error('aborted');
+      } finally {
+        cancelled = true;
+      }
+    },
+  };
+  const abortTool = createViewTool({ cwd, vision: () => ({ port: aborting, model: 'm' }) });
+  const controller = new AbortController();
+  const pendingCall = abortTool.run({ path: 'ok.png' }, controller.signal, grant);
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, 50);
+  await assert.rejects(pendingCall);
+  clearTimeout(timer);
+  assert.equal(cancelled, true, 'the generator was cleaned up on the way out');
+});
+
+test('a truncated long answer still cleans the vision stream up', async () => {
+  const cwd = dir();
+  writeFileSync(join(cwd, 'ok.png'), PNG);
+  let finished = false;
+  const chatty: ModelPort = {
+    async *stream(): AsyncIterable<ModelChunk> {
+      try {
+        for (;;) {
+          yield { type: 'text', text: 'x'.repeat(2000) };
+        }
+      } finally {
+        finished = true;
+      }
+    },
+  };
+  const tool = createViewTool({ cwd, vision: () => ({ port: chatty, model: 'm' }) });
+  const result = await tool.run({ path: 'ok.png' }, new AbortController().signal, grant);
+  assert.equal(result.ok, true);
+  assert.ok(result.truncation);
+  assert.equal(result.truncation.truncated, true);
+  assert.match(result.output, /truncated/);
+  assert.equal(finished, true, 'breaking out of the for-await ran the generator finally');
 });
 
 test('ModelRequest.images maps onto the first user message on the OpenAI wire', async () => {
@@ -201,21 +293,3 @@ test('ModelRequest.images maps onto the first user message on the Anthropic wire
   assert.equal(source.data, PNG.toString('base64'));
 });
 
-test('View caps long vision answers instead of flooding the conversation', async () => {
-  const cwd = dir();
-  writeFileSync(join(cwd, 'ok.png'), PNG);
-  let yielded = 0;
-  const chatty: ModelPort = {
-    async *stream(): AsyncIterable<ModelChunk> {
-      while (yielded < 20) {
-        yielded += 1;
-        yield { type: 'text', text: 'x'.repeat(2000) };
-      }
-    },
-  };
-  const tool = createViewTool({ cwd, vision: () => ({ port: chatty, model: 'm' }) });
-  const result = await tool.run({ path: 'ok.png' }, new AbortController().signal, grant);
-  assert.equal(result.ok, true);
-  assert.equal(result.truncation?.truncated, true);
-  assert.match(result.output, /truncated/);
-});

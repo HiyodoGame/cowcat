@@ -327,14 +327,28 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   // createModelPort fail on a missing key or unknown preset, and that failure belongs
   // to the first View call (a refusal the model can relay), never to createHost —
   // the otel malformed-endpoint lesson, same shape. Only successes are cached.
+  // An EXPLICIT user config is validated eagerly, though: a typo'd preset id is a
+  // config error and should be loud at startup, not at first use. The main model's
+  // effort is explicitly NOT inherited: the vision preset's own limits govern.
   const visionPresetId = config.vision ?? 'zai/glm-4v-flash';
-  let visionCache: { readonly port: ModelPort; readonly model: string } | null = null;
-  const visionEndpoint = (): { readonly port: ModelPort; readonly model: string } => {
+  if (config.vision !== undefined) {
+    try {
+      selectModel({ ...config.model, preset: visionPresetId, effort: null });
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  let visionCache: { readonly port: ModelPort; readonly model: string; readonly maxTokens?: number } | null = null;
+  const visionEndpoint = (): { readonly port: ModelPort; readonly model: string; readonly maxTokens?: number } => {
     if (visionCache === null) {
-      const selection = selectModel({ ...config.model, preset: visionPresetId });
+      const selection = selectModel({ ...config.model, preset: visionPresetId, effort: null });
       visionCache = {
         port: createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch }),
         model: selection.preset.model,
+        // Anthropic-protocol presets refuse a request without max_tokens
+        // (model-anthropic.ts); the vision preset's declared output limit is the
+        // honest value (review of #198, P1-2).
+        ...(selection.preset.limits.output === undefined ? {} : { maxTokens: selection.preset.limits.output }),
       };
     }
     return visionCache;
