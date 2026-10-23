@@ -40,12 +40,15 @@ export interface CronToolsOptions {
   /** The host's job table. `undefined` means this build does not offer cron — the
    * factory returns no tools, so the model cannot call what does not exist. */
   readonly cron: CronTasksPort | undefined;
+  /** The clock behind `cronDeleted.deletedAt`; defaults to Date.now (tests inject). */
+  readonly now?: () => number;
 }
 
 /** The three tools as one factory so the host adds none or all of them (ADR-143 ④). */
 export function createCronTools(options: CronToolsOptions): readonly ToolPort[] {
   const cron = options.cron;
   if (cron === undefined) return [];
+  const now = options.now ?? Date.now;
 
   return [
     defineTool(
@@ -137,7 +140,7 @@ export function createCronTools(options: CronToolsOptions): readonly ToolPort[] 
         return {
           ok: true,
           output: `deleted job ${input.jobId}`,
-          cronDeleted: { jobId: input.jobId, deletedAt: Date.now() },
+          cronDeleted: { jobId: input.jobId, deletedAt: now() },
         };
       },
     ),

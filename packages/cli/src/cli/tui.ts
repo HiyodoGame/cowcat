@@ -64,7 +64,10 @@ export async function startTui(context: CommandContext, sessionId: string | null
 
   // --worktree: the session lives in a sibling checkout. Creation/adoption happens BEFORE
   // the host is built — the worktree path becomes the cwd everything below resolves from.
+  // mainCwd is kept for the exit cleanup: a process cannot delete its own cwd on Windows,
+  // and cleanupWorktree needs the MAIN checkout as its git anchor anyway (review P1-3).
   const worktreeName = flagValue(context.flags, 'worktree');
+  const mainCwd = process.cwd();
   let worktree: { readonly path: string; readonly branch: string; readonly created: boolean; readonly mainGitDir: string } | null = null;
   if (worktreeName !== null) {
     const ensured = await ensureWorktreeForSession(context, worktreeName);
@@ -108,8 +111,11 @@ export async function startTui(context: CommandContext, sessionId: string | null
       await host.close();
     }
     // Exit cleanup runs after the host is down (its processes are done). Only a worktree
-    // created or adopted by THIS run is examined; the rules are ADR-144 ⑤.
+    // created or adopted by THIS run is examined; the rules are ADR-144 ⑤. chdir back to
+    // the main checkout first: cleanup needs it as the git anchor, and a process cannot
+    // have its cwd deleted out from under it (Windows refuses the remove).
     if (worktree !== null) {
+      process.chdir(mainCwd);
       await cleanupWorktreeForSession(context, worktree);
     }
   }

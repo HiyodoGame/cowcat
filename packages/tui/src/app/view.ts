@@ -488,16 +488,19 @@ export function moveSlash(view: TuiView, delta: number, count: number): TuiView 
   return next === view.slashIndex ? view : { ...view, slashIndex: next };
 }
 
-/** Open the `/tasks` panel (ADR-113); nothing to show means nothing opens. */
+/** Open the `/tasks` panel (ADR-113); nothing to show means nothing opens. The two
+ *  dock panels are mutually exclusive: both open would stack lists and let one panel's
+ *  keys shadow the other's (review P2-4). */
 export function openTaskPanel(view: TuiView): TuiView {
   if (view.tasks.length === 0) return view;
-  return { ...view, taskPanel: { index: 0 } };
+  return { ...view, taskPanel: { index: 0 }, cronPanel: null };
 }
 
 // ── /cron panel (ADR-143 ③) ──────────────────────────────────────────────────────
 
 export function openCronPanel(view: TuiView): TuiView {
-  return { ...view, cronPanel: { index: 0 } };
+  // Mutual exclusion with the task panel, same reasoning as openTaskPanel.
+  return { ...view, cronPanel: { index: 0 }, taskPanel: null };
 }
 
 export function closeCronPanel(view: TuiView): TuiView {

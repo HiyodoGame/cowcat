@@ -44,6 +44,14 @@ test('extended syntax is refused with a reason, not half-understood', () => {
   assert.match(named.error, /unsupported syntax/);
 });
 
+test('empty atoms are refused, not silently read as 0 (review P2-3)', () => {
+  // Number('') is 0: without an explicit guard these would parse as "on the hour".
+  for (const bad of ['5, * * * *', ',, * * * *', '/5 * * * *', '1- * * * *', '*/ * * * *']) {
+    const parsed = parseSchedule(bad);
+    assert.equal(parsed.ok, false, JSON.stringify(bad));
+  }
+});
+
 test('out-of-range values are refused per field', () => {
   for (const bad of ['60 * * * *', '* 24 * * *', '* * 0 * *', '* * * 13 *', '* * * * 8', '5-2 * * * *', '*/0 * * * *']) {
     const parsed = parseSchedule(bad);

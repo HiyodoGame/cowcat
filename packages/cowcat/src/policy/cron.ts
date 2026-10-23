@@ -147,6 +147,9 @@ function parseAtom(
   const stepText = parts[1];
   const extra = parts[2];
   if (extra !== undefined) return { error: `${name}: '${text}' has more than one step` };
+  // 空原子（',,'、'5,'、'/5'）是笔误不是通配：Number('') 是 0，静默放行会让一个
+  // 写错的调度表变成"整点触发"——带理由拒绝。
+  if (rangeText === '') return { error: `${name}: '${text}' has an empty field part` };
   let lo = min;
   let hi = max;
   if (rangeText !== '*') {

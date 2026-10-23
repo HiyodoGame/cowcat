@@ -399,6 +399,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   }
 
   const cronTables = new Map<string, Map<string, CronJobEntry>>();
+  /**
+   * Live cron.* events that arrived while a session's table was being materialized
+   * (readAll in flight). deliver() cannot fold into a table that does not exist yet;
+   * buffering here and draining after the read closes the window. Double-folding a
+   * drained event is harmless — every fold branch is idempotent by jobId.
+   */
+  const cronBuffers = new Map<string, KernelEvent[]>();
 
   function foldCronEvent(table: Map<string, CronJobEntry>, event: KernelEvent): void {
     if (event.type === 'cron.created') {
@@ -428,7 +435,15 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         table.delete(event.jobId);
         return;
       }
-      table.set(event.jobId, { ...entry, lastFiredAt: event.firedAt });
+      // Anchor at the SCHEDULED SLOT, not the actual fire instant: a */5 job legitimately
+      // fires 15s early (ADR-141 ⑥), and anchoring at 10:04:45 would leave 10:05:00 due
+      // for a second fire of the same slot. A slot far in the past means the fire was
+      // delayed by a long turn — anchor at the fact then, so missed slots are not caught
+      // up in a burst (ADR-141 ① "错过不补").
+      const after = entry.lastFiredAt ?? entry.createdAt;
+      const slot = entry.spec === null ? null : nextFire(entry.spec, after);
+      const anchored = slot !== null && slot > event.firedAt - 60_000 ? slot : event.firedAt;
+      table.set(event.jobId, { ...entry, lastFiredAt: anchored });
     }
   }
 
@@ -437,8 +452,22 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     if (existing !== undefined) return existing;
     const table = new Map<string, CronJobEntry>();
     for (const event of await store.readAll(sessionId)) foldCronEvent(table, event);
+    // Drain whatever arrived during the read: those events are newer than the log
+    // snapshot, and the deliver() branch could not fold them (no table yet).
+    const buffered = cronBuffers.get(sessionId);
+    if (buffered !== undefined) {
+      for (const event of buffered) foldCronEvent(table, event);
+      cronBuffers.delete(sessionId);
+    }
     cronTables.set(sessionId, table);
     return table;
+  }
+
+  /** Ensure the scheduler sees a session's jobs (ADR-140: resume replays them for free —
+   *  but only if the projection is actually built; the tick only walks materialized tables). */
+  function materializeCronTable(sessionId: string): void {
+    if (!cronEnabled) return;
+    void cronTableFor(sessionId).catch(() => undefined);
   }
 
   /**
@@ -518,6 +547,11 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   }
 
   async function fireCronJob(rec: SessionRecord, job: CronJobEntry, now: number): Promise<void> {
+    // Re-check idleness in THIS scope: cronTick's guard ran before the expired-loop's
+    // awaits, and a user send (or a reflect turn) may have claimed the record since.
+    // Firing into a busy record would open a second turn on one session — startTurn
+    // throws, the fire is consumed, and an orphan `cron.fired` is left (review P1-1).
+    if (rec.running !== null || rec.turnStarting || rec.reflecting) return;
     // Claim BEFORE any await, the same bracket sendTurn uses: a user send landing in
     // the gap would otherwise open a second turn on one session and interleave the log.
     rec.turnStarting = true;
@@ -534,9 +568,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         await rec.session.cronDeleted(job.jobId, 'expiry', clockNow());
       }
     } catch {
-      // A failed fire (e.g. the model is unconfigured) leaves the job due; the next
-      // heartbeat retries. Nothing here is user-visible: the fired event, if written,
-      // already says the enqueue happened.
+      // The fired event is written before the turn opens, so a failure here (an
+      // unconfigured model, a turn that refuses to open) CONSUMES the fire: the fold
+      // anchors lastFiredAt and the job is not retried. That matches ADR-141 ①/②
+      // ("错过不补"; the event records the enqueue). A one-shot's only shot is spent.
     } finally {
       rec.turnStarting = false;
     }
@@ -555,7 +590,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       );
       for (const job of expired) {
         // Expired with no due moment left: delete without a fire. The opposite order
-        // (fire, then delete) is fireCronJob's expiry branch.
+        // (fire, then delete) is fireCronJob's expiry branch. The await opens a window
+        // in which a user send can claim the record — the idle re-check below covers it.
         await rec.session.cronDeleted(job.jobId, 'expiry', now).catch(() => undefined);
       }
       const due = cronDueJobs(table, now);
@@ -563,7 +599,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // At most one cron turn per HEARTBEAT, globally (ADR-141 ①): several sessions'
       // */5 jobs align on the same minute boundary, and firing them all in one tick is
       // the local version of the thundering herd the upstream jitter exists to break.
-      // A backlog drains one fire per second, each re-checked against idleness.
+      // A backlog drains one fire per second; the idle re-check lives inside
+      // fireCronJob (fresh scope — the expired-loop's awaits may have let a turn start).
       void fireCronJob(rec, due[0] as CronJobEntry, now);
       break;
     }
@@ -580,6 +617,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     background,
     allowBackground: options.unattended !== true,
     cron: cronPort,
+    now: clockNow,
     skills: availableSkills,
     spill: { rootDir: paths.sessionsDir },
     home: options.home,
@@ -796,8 +834,17 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       }
     } else if (update.type === 'cron.created' || update.type === 'cron.deleted' || update.type === 'cron.fired') {
       // Keep a materialized table in step with the log it was folded from (ADR-140).
+      // No table yet (first materialization still reading) → buffer; cronTableFor
+      // drains after its read. Double-folding a drained event is harmless: every fold
+      // branch is idempotent by jobId.
       const table = cronTables.get(update.sessionId);
-      if (table !== undefined) foldCronEvent(table, update);
+      if (table !== undefined) {
+        foldCronEvent(table, update);
+      } else {
+        const buffered = cronBuffers.get(update.sessionId);
+        if (buffered === undefined) cronBuffers.set(update.sessionId, [update]);
+        else buffered.push(update);
+      }
     }
     for (const listener of rec.listeners) listener(update);
   }
@@ -913,6 +960,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       const rec = adopt(await Session.open(sessionDeps, sessionId));
       sessions.set(sessionId, rec);
       await primeTelemetry(sessionId);
+      // resume/打开即物化作业表：调度器只遍历已物化的表，不物化就等于「resume 后
+      // 周期作业静默停摆」——ADR-140 的免费恢复在调度链路上也要兑现（review P0-2）。
+      materializeCronTable(sessionId);
       return rec;
     } catch (error) {
       if (error instanceof LockHeldError) throw lockedError(sessionId, error);
@@ -1616,6 +1666,8 @@ function createTools(options: {
   /** The host's job table (ADR-140). `undefined` means cron is off in this build — the
    *  tools refuse by their absence, exactly the background precedent (ADR-143 ④). */
   readonly cron: CronTasksPort | undefined;
+  /** The clock CronDelete stamps deletions with (tests fake it via options.clock). */
+  readonly now: () => number;
   /** Trusted, visible skills; empty means no `Skill` tool is offered at all (ADR-117 ①). */
   readonly skills: readonly SkillFile[];
   /** User-level memory targets live under `~/.cowcat` (ADR-135). */
@@ -1646,7 +1698,7 @@ function createTools(options: {
     createViewTool({ cwd: options.cwd, vision: options.vision }),
     // No cron port, no cron tools: "this build has no scheduled tasks" is a capability
     // statement, and the absence keeps the model from calling what does not exist.
-    ...createCronTools({ cron: options.cron }),
+    ...createCronTools({ cron: options.cron, now: options.now }),
     // No skills, no tool: an empty `Skill` would only tell the model what is not there.
     ...(options.skills.length === 0 ? [] : [createSkillTool({ skills: options.skills })]),
   ];

@@ -122,10 +122,18 @@ export async function ensureWorktree(deps: WorktreeDeps, name: string): Promise<
   }
 
   if (deps.fs.exists(path)) {
+    // Reuse does not re-add the trust record (ADR-145: a revoked record stays revoked).
+    // We also do not verify the directory is a checkout of THIS repository on the assumed
+    // branch: cleanup walks git itself, and any mismatch lands on the kept-* safe side.
     const gitDir = await mainGitDir(deps, main);
     if (gitDir === null) return { ok: false, error: `cannot resolve the main checkout's git dir in ${main}` };
     return { ok: true, worktree: { path: spelled, branch, created: false, mainGitDir: gitDir } };
   }
+
+  // The main checkout's git dir is needed by the SESSION (ADR-147), not by the add:
+  // resolve it BEFORE creating anything, so a failure here leaves nothing behind.
+  const gitDir = await mainGitDir(deps, main);
+  if (gitDir === null) return { ok: false, error: `cannot resolve the main checkout's git dir in ${main}` };
 
   const add = await git(deps, ['worktree', 'add', path, '-b', branch], main);
   let created = add.ok;
@@ -148,11 +156,19 @@ export async function ensureWorktree(deps: WorktreeDeps, name: string): Promise<
     }
   }
 
-  // Inheritance is a record, not a derivation (ADR-145): the worktree joins the same
-  // trust list the main checkout is on, and the addition is auditable in the trust file.
-  await deps.trust.add(spelled);
-  const gitDir = await mainGitDir(deps, main);
-  if (gitDir === null) return { ok: false, error: `cannot resolve the main checkout's git dir in ${main}` };
+  // Inheritance is a record, not a derivation (ADR-145). A failure here must not look
+  // like success: the directory and branch EXIST but the session in it would run
+  // untrusted — report the residue and how to clear it, instead of returning ok and
+  // letting the mismatch surface three frames later (review P1-4).
+  try {
+    await deps.trust.add(spelled);
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      error: `the worktree was created at ${spelled} but inheriting trust failed (${why}); remove it with "git worktree remove ${spelled}" and delete the ${branch} branch before retrying`,
+    };
+  }
   return { ok: true, worktree: { path: spelled, branch, created, mainGitDir: gitDir } };
 }
 
