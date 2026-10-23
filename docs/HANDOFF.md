@@ -2,18 +2,18 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-23（P7 第六个模块审批与沙箱闭环全链路收尾）**。
-> 交接时仓库状态：**`main` = `701beea`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
+> 最近一次更新：**2026-10-23（P7 第七个模块可观测性全链路收尾）**。
+> 交接时仓库状态：**`main` = `42695d9`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API 跑出的会话日志；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
-> **归属**：本会话产出 **#147~#182**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环六个 P7 模块全链路 + 收尾）。
+> **归属**：本会话产出 **#147~#188**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环、可观测性七个 P7 模块全链路 + 收尾）。
 
 ---
 
 ## 1. 本次会话做了什么
 
-六个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
+七个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
 
 ### 已完成模块（概要）
 
@@ -36,12 +36,18 @@
   - **审批卡诚实（安全评审 P0-1）**：approval.requested 带 command/path/dimensions，卡片 subject 首行 + wrap 不截断 + stripControl（C0/C1/bidi）。
   - **实现前 security-reviewer 评审**（10 条全部落实）；**实现后 code-reviewer 抓到 2 P0**（EscalationTurnContext 轮级建导致 withoutSandbox 链路不可达；Escalate path 未 canonical）——全部修复（#181）。
   - T5 真机：glm **未加教学自然申诉** 1/1、once 重试放行、price/usage 全字段真机可见（cache 命中 ~97%）。
+- **可观测性（#184~188）**：ADR-132~134——
+  - **边界**：span 是事件流的纯派生视图（`adapters/otel/` 翻译器 + OTel 绑定），内核/policy/ports 零改动；host 组合根挂 subscribe tap（**遥测订阅先于 delivery**）；重放安全（subscribe 只接 live emit）；**fork 如实双计**（与供应商计费现实一致）；翻译器永不 throw、关闭 flush ≤1s 吞错。
+  - **语义子集**：`invoke_agent`(回合)/`chat {model}`(每轮 CLIENT，usage 四字段直映 ModelUsage、finish_reasons 协议词映射)/`execute_tool`(每调用)；内容属性默认不导出（上游 Opt-In + PII）。
+  - **审查抓到 3 P1**（#187）：provider.name 生产死代码（`session.opened` 早于订阅 → EventStore 端口加 `readHeader()` 有界读、adopt 后 prime——**Required 属性原本永远缺席，测试假象掩盖**）；畸形 endpoint 拖死 createHost（协议白名单——WHATWG 把 `localhost:` 当合法 scheme）；subagent 子会话不进遥测（其 token 是真实花费）。
+  - **配置**：user config `otel` 块（endpoint/headersEnv，schema 带 `^https?://`）；project/session 层携带显式警告并丢弃；env `OTEL_EXPORTER_OTLP_ENDPOINT` 优先；**密钥只走 env**；otel 不进 index 根导出（不加载 node:http 传输图）。
+  - T4 真机：span 树完整到达 OTLP receiver、provider.name/conversation.id 全字段在场、**span 级 usage 与 usageTotals 对账一致**（glm cache ~99.6%）；观察：otlp-http exporter 默认发 **application/json** 不是 protobuf。
 
 ## 2. 测试基线
 
 | 包 | 通过 | 说明 |
 |---|---|---|
-| cowcat | 810+ | 逐文件全绿（host 35、approval 13、escalation 4、bash 25、config 24、schema 14 等） |
+| cowcat | 840+ | 逐文件全绿（host 37、observability 17、approval 13、escalation 4、bash 25、config 24、schema 14 等） |
 | protocol | 43 | |
 | tui | 119 | **必须 Node 26**（本机 Node 24 是 FFI 假失败） |
 | cli | 31 | |
@@ -50,7 +56,7 @@
 
 ## 3. 新增 ADR（本会话）
 
-ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hooks、124~125 Plan、126 会话头与标题、127 session.fork、128 @ 文件引用）· **129 Escalate 与 grant 精确语义**（覆盖 deny、refused 折叠、once 消耗语义、审批卡 subject、维度分离）· **130 沙箱闭环**（拒绝识别、unsandboxedApproved 只随 once）· **131 用量累计与成本**（usageTotals、price 可选、成本现算不存事件）——126~128 已按 #174 审查修订，129/131 已按 #180/#181 审查修订。
+ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hooks、124~125 Plan、126 会话头与标题、127 session.fork、128 @ 文件引用）· **129~131 审批沙箱（129 Escalate 与 grant 精确语义**（覆盖 deny、refused 折叠、once 消耗语义、审批卡 subject、维度分离）· **130 沙箱闭环**（拒绝识别、unsandboxedApproved 只随 once）· **131 用量累计与成本**（usageTotals、price 可选、成本现算不存事件）——126~128 已按 #174 审查修订，129/131 已按 #180/#181 审查修订。
 
 ## 4. 未验证 / 风险
 
@@ -68,9 +74,9 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
 
 ## 6. 下一步建议
 
-1. **P7 下一个模块，用户选**：可观测性（D9，OTel GenAI 适配器）、记忆续篇·经验蒸馏（D10）、视觉工具（D11）、Cron/Worktree。
+1. **P7 下一个模块，用户选**：记忆续篇·经验蒸馏（D10）、视觉工具（D11）、Cron/Worktree。
 2. **rewind**：立项前必须先答「截断后 always/session 授权归哪、锁怎么收、0 行 header 怎么办」。
-3. **发版**：六个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环）攒一批发 `beta.4` 由用户定。
+3. **发版**：七个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环/可观测性）攒一批发 `beta.4` 由用户定。
 
 ## 7. 会话踩坑（新增）
 
@@ -80,6 +86,8 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
 - **本机外部 `du` 进程**让全量测试 10 倍慢、计时测试随机 flake——逐文件绿即代码绿，CI 是权威。
 - PowerShell here-string 不转义 `''`；带 CRLF 的文件做 .NET Replace 前先确认匹配；改完必须 `git branch --show-current`。
 - **环境重启会清空含 junction 的 node_modules 树**（本会话 packages/cowcat 与 protocol 整包被清空，TUI/CLI 幸存）：恢复 = `git checkout -- <pkg>` + `npm ci` + 按依赖序重建 dist（protocol → cowcat → tui → cli）；未提交的审查修复按会话记录重放。教训：审查修复批次应尽快成 PR，别把大改留在工作区过夜。
+- **configWarnings 通道无消费者**（#63 存量）：ADR-134 依赖它把「project/session 层 otel 被丢弃」送达用户，当前 CLI/TUI 均不读——下一模块顺手接上或开 issue。
+- **OTel JS 依赖线**：api/core/resources/sdk-trace-base 锁 1.30.x + exporter-trace-otlp-http 0.57.x（peer 对齐）；**该 http exporter 发 application/json 不是 protobuf**；3.x core 与 sdk-trace-base 2.x peer 冲突勿混升。
 - **真机驱动要当「橡皮图章用户」**：回合会停在 awaiting_approval 直到每个问题被回答——驱动循环里自动 respondApproval，别只等 completed。
 - **exec ask 与申诉会问两次**：维度分离的设计结果（waiver 不豁免 exec 风险询问），真机已观察；不是 bug，但写验收驱动时要预期到。
 - **`tsc`/`npm test` 必须在包目录里跑**：从仓库根 `npx tsc` 会命中 npm 的 tsc 占位包（"This is not the tsc command you are looking for"）。
