@@ -97,6 +97,8 @@ const customPresetSchema = z.strictObject({
     })
     .optional(),
   toolCalls: z.boolean().optional(),
+  // Whether the model can see images (ADR-138); absent means text-only.
+  vision: z.boolean().optional(),
   efforts: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
   // USD per 1M tokens (ADR-131). Optional: no price, no cost line — never an invented one.
   price: z
@@ -149,6 +151,8 @@ const documentSchema = z.strictObject({
   hooks: z.record(z.string(), z.unknown()).optional(),
   otel: otelSchema.optional(),
   memory: memorySchema.optional(),
+  // The preset id View bridges to (ADR-138). User layer only — see decodeSource.
+  vision: z.string().min(1).optional(),
   mcp: z
     .strictObject({
       servers: z
@@ -285,17 +289,22 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
         ...(document.data.memory === undefined || source.kind !== 'user'
           ? {}
           : { memory: { ...(document.data.memory.reflect === undefined ? {} : { reflect: document.data.memory.reflect }) } }),
+        // vision names an endpoint that costs real provider calls (ADR-138): user's call.
+        ...(document.data.vision === undefined || source.kind !== 'user' ? {} : { vision: document.data.vision }),
       },
       warnings: [
         ...warnings,
         // User-only keys, one warning each when another layer tried to set them
-        // (ADR-134 otel / ADR-137 memory): silently dropping a known key is the
-        // exact class of bug ADR-025 decision 5 exists to prevent.
+        // (ADR-134 otel / ADR-137 memory / ADR-138 vision): silently dropping a known
+        // key is the exact class of bug ADR-025 decision 5 exists to prevent.
         ...(document.data.otel !== undefined && source.kind !== 'user'
           ? [{ source: source.path, problem: 'otel: only read from the user config (ADR-134); this layer ignored it' }]
           : []),
         ...(document.data.memory !== undefined && source.kind !== 'user'
           ? [{ source: source.path, problem: 'memory: only read from the user config (ADR-137); this layer ignored it' }]
+          : []),
+        ...(document.data.vision !== undefined && source.kind !== 'user'
+          ? [{ source: source.path, problem: 'vision: only read from the user config (ADR-138); this layer ignored it' }]
           : []),
       ],
     },
@@ -309,6 +318,7 @@ function toCustomPreset(input: z.infer<typeof customPresetSchema>): CustomPreset
     protocol: input.protocol,
     model: input.model,
     ...(input.toolCalls === undefined ? {} : { toolCalls: input.toolCalls }),
+    ...(input.vision === undefined ? {} : { vision: input.vision }),
     ...(input.efforts === undefined ? {} : { efforts: input.efforts }),
     ...(input.price === undefined
       ? {}

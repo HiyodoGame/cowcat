@@ -127,6 +127,11 @@ export interface CustomPresetSettings {
    */
   readonly toolCalls?: boolean;
   /**
+   * Whether the model can see images (ADR-138); absent means false — text-only.
+   * The View tool bridges text models to a preset that declares this.
+   */
+  readonly vision?: boolean;
+  /**
    * Wire parameters behind each reasoning level (ADR-046 decision ④). Deliberately
    * uninterpreted: this layer does not know any vendor's vocabulary.
    */
@@ -250,6 +255,12 @@ export interface ConfigLayer {
   readonly mcp?: McpSettings;
   readonly otel?: OtelSettings;
   readonly memory?: MemorySettings;
+  /**
+   * The preset id the View tool bridges to for image content (ADR-138). User layer
+   * only: a vision call is real provider spend, and the workspace must not pick the
+   * endpoint for the user.
+   */
+  readonly vision?: string;
 }
 
 /**
@@ -303,6 +314,7 @@ export interface CowcatConfig {
   readonly mcp: ResolvedMcpSettings;
   readonly otel: OtelSettings | undefined;
   readonly memory: MemorySettings | undefined;
+  readonly vision: string | undefined;
 }
 
 /** Layer 0. Not a file, and not overridable by omission. */
@@ -313,6 +325,7 @@ export const DEFAULT_CONFIG: CowcatConfig = {
   mcp: DEFAULT_MCP_SETTINGS,
   otel: undefined,
   memory: undefined,
+  vision: undefined,
 };
 
 export interface ConfigLayers {
@@ -361,6 +374,8 @@ export function resolveConfig(layers: ConfigLayers): CowcatConfig {
     otel: layers.user?.otel,
     // Same rule for background distillation (ADR-137): a cost switch is user-layer only.
     memory: layers.user?.memory,
+    // And for the vision bridge endpoint (ADR-138): same reason, same rule.
+    vision: layers.user?.vision,
   };
 }
 

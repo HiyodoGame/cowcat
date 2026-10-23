@@ -263,6 +263,13 @@ export interface ModelRequest {
   readonly messages: readonly Message[];
   readonly tools: readonly ToolSpec[];
   /**
+   * Images that ride the FIRST user message as content parts — the direct-call
+   * channel (ADR-139). The conversation path does not use this: there, images travel
+   * as tool-result attachments and the adapters materialize them (ADR-057). The two
+   * channels do not meet in today's consumers; View is the first and only caller.
+   */
+  readonly images?: readonly Attachment[];
+  /**
    * Which model to call. The kernel knows it, because "which model" is a decision the
    * session made, not something an adapter may guess (ADR-035).
    */
