@@ -243,7 +243,7 @@ interface Fixture {
 async function start(
   options: { readonly cwd: string; readonly home: string; readonly model: ModelPort; readonly env?: Readonly<Record<string, string>> } & Pick<
     CreateHostOptions,
-    'platform' | 'process' | 'store' | 'approvalTimeoutMs' | 'telemetry'
+    'platform' | 'process' | 'store' | 'approvalTimeoutMs' | 'telemetry' | 'unattended'
   >,
 ): Promise<Fixture> {
   const host = await createHost({
@@ -257,6 +257,7 @@ async function start(
     ...(options.process === undefined ? {} : { process: options.process }),
     ...(options.store === undefined ? {} : { store: options.store }),
     ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
+    ...(options.unattended === undefined ? {} : { unattended: options.unattended }),
   });
 
   const pair = memoryTransport();
@@ -2032,4 +2033,165 @@ test('a subagent turn produces its own conversation span tree (ADR-132 ③)', as
     (s) => s.attributes['gen_ai.conversation.id'] === 'sess_otel_sub' && s.name === 'execute_tool Task',
   );
   assert.ok(taskSpan, 'the delegation itself is a tool span on the parent');
+});
+// ---------------------------------------------------------------------------
+// Memory distillation (ADR-135~137)
+// ---------------------------------------------------------------------------
+
+test('memory.reflect=on runs one restricted reflect turn after a completed turn', async (t) => {
+  const home = tempDir(t, 'cowcat-mem-home-');
+  const cwd = tempDir(t, 'cowcat-mem-proj-');
+  writeUserConfig(home, { model: { preset: PRESET }, memory: { reflect: 'on' } });
+
+  const model = new ScriptedModel([
+    [{ type: 'text', text: 'task finished' }],
+    [{ type: 'text', text: 'nothing worth persisting' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_reflect');
+  await fixture.client.openSession('sess_reflect');
+  await fixture.client.sendTurn('sess_reflect', 'do the task');
+  await fixture.until('both turns to complete', () =>
+    fixture.events().filter((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed').length >= 2,
+  );
+
+  assert.equal(model.requests.length, 2, 'the reflect turn made exactly one model request');
+  const reflectRequest = model.requests[1];
+  assert.ok(reflectRequest);
+  assert.equal(reflectRequest.tools.length, 1);
+  const onlyTool = reflectRequest.tools[0];
+  assert.ok(onlyTool);
+  assert.equal((onlyTool as { readonly name: string }).name, 'Remember', 'the reflect turn sees only Remember');
+  // The template reaches the model as an ordinary user message; stringify the tail
+  // rather than narrowing the message union — the assertion is about the text.
+  assert.match(JSON.stringify(reflectRequest.messages), /Reflect on this session/);
+});
+
+test('memory.reflect defaults to off: no second model request after the turn', async (t) => {
+  const home = tempDir(t, 'cowcat-memoff-home-');
+  const cwd = tempDir(t, 'cowcat-memoff-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_memoff');
+  await fixture.client.openSession('sess_memoff');
+  await fixture.client.sendTurn('sess_memoff', 'hi');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(model.requests.length, 1, 'default off means zero background model calls');
+});
+
+test('unattended sessions never reflect (an approval nobody can answer must not hang)', async (t) => {
+  const home = tempDir(t, 'cowcat-memun-home-');
+  const cwd = tempDir(t, 'cowcat-memun-proj-');
+  writeUserConfig(home, { model: { preset: PRESET }, memory: { reflect: 'on' } });
+
+  const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
+  const fixture = await start({ cwd, home, model, unattended: true });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_memun');
+  await fixture.client.openSession('sess_memun');
+  await fixture.client.sendTurn('sess_memun', 'run');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(model.requests.length, 1);
+});
+
+test('Remember writes through the real approval bridge in a trusted workspace', async (t) => {
+  const home = tempDir(t, 'cowcat-remhome-');
+  const cwd = tempDir(t, 'cowcat-remproj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  writeJson(join(home, '.cowcat', 'trust.json'), { trusted: [cwd] });
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_remember', name: 'Remember', input: { target: 'instructions-project', content: '- run the lint gate before every commit' } } }],
+    [{ type: 'text', text: 'remembered' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_remember');
+  await fixture.client.openSession('sess_remember');
+  await fixture.client.sendTurn('sess_remember', 'distill that lesson');
+  await fixture.until('the write approval', () =>
+    fixture.events().some((e) => e.type === 'approval.requested' && field(e, 'name') === 'Remember'),
+  );
+  const ask = first(fixture.events(), 'approval.requested');
+  assert.equal(field(ask, 'name'), 'Remember');
+  await fixture.client.respondApproval('sess_remember', field(ask, 'callId') as string, 'once');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+
+  const written = readFileSync(join(cwd, 'AGENTS.md'), 'utf8');
+  assert.match(written, /run the lint gate before every commit/);
+  const finished = fixture.events().find((e) => e.type === 'tool.finished' && field(e, 'name') === 'Remember');
+  assert.equal(field(finished, 'ok'), true);
+});
+
+test('an untrusted workspace refuses project memory without ever asking', async (t) => {
+  const home = tempDir(t, 'cowcat-remref-home-');
+  const cwd = tempDir(t, 'cowcat-remref-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'call_remember', name: 'Remember', input: { target: 'instructions-project', content: 'sneaky instruction' } } }],
+    [{ type: 'text', text: 'it refused' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_remref');
+  await fixture.client.openSession('sess_remref');
+  await fixture.client.sendTurn('sess_remref', 'try to remember this');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+
+  assert.equal(
+    fixture.events().some((e) => e.type === 'approval.requested' && field(e, 'name') === 'Remember'),
+    false,
+    'the trust gate fires before the approval bridge',
+  );
+  const finished = fixture.events().find((e) => e.type === 'tool.finished' && field(e, 'name') === 'Remember');
+  assert.equal(field(finished, 'ok'), false);
+  assert.match(String(field(finished, 'output')), /not trusted/);
+  assert.equal(existsSync(join(cwd, 'AGENTS.md')), false, 'nothing lands on disk');
+});
+
+test('a project config cannot turn reflection on (cost is the user layer decision)', async (t) => {
+  const home = tempDir(t, 'cowcat-memlay-home-');
+  const cwd = tempDir(t, 'cowcat-memlay-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  writeJson(join(cwd, 'cowcat.json'), { memory: { reflect: 'on' } });
+
+  const model = new ScriptedModel([[{ type: 'text', text: 'done' }]]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  assert.ok(fixture.host.configWarnings.some((w) => w.includes('memory') && w.includes('ADR-137')));
+  await fixture.client.createSession('sess_memlay');
+  await fixture.client.openSession('sess_memlay');
+  await fixture.client.sendTurn('sess_memlay', 'hi');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(model.requests.length, 1, 'the project layer was ignored');
 });
