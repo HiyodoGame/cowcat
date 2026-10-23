@@ -116,6 +116,14 @@ const modelSchema = z.strictObject({
   providers: z.record(z.string(), providerSettingsSchema).optional(),
 });
 
+const memorySchema = z.strictObject({
+  // Background distillation (ADR-137): after a completed user turn, run one
+  // reflect turn whose only tool is Remember. Costs real model calls, so the
+  // default is off and only the user layer may turn it on — a workspace must not
+  // spend the user's model budget (same rule as otel, ADR-134).
+  reflect: z.enum(['off', 'on']).optional(),
+});
+
 const otelSchema = z.strictObject({
   // OTLP/HTTP endpoint, e.g. http://localhost:4318/v1/traces. Absent (here and in
   // OTEL_EXPORTER_OTLP_ENDPOINT) means telemetry stays off — zero overhead is the
@@ -140,6 +148,7 @@ const documentSchema = z.strictObject({
   // resolved into kernel config — the file layer only has to let the key through.
   hooks: z.record(z.string(), z.unknown()).optional(),
   otel: otelSchema.optional(),
+  memory: memorySchema.optional(),
   mcp: z
     .strictObject({
       servers: z
@@ -271,11 +280,24 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
         ...(document.data.otel === undefined || source.kind !== 'user'
           ? {}
           : { otel: { ...(document.data.otel.endpoint === undefined ? {} : { endpoint: document.data.otel.endpoint }), ...(document.data.otel.headersEnv === undefined ? {} : { headersEnv: document.data.otel.headersEnv }) } }),
+        // memory.reflect is resolved from the user layer for the same reason otel is
+        // (ADR-137 ①, pointing at ADR-134's rule): a cost switch is the user's call.
+        ...(document.data.memory === undefined || source.kind !== 'user'
+          ? {}
+          : { memory: { ...(document.data.memory.reflect === undefined ? {} : { reflect: document.data.memory.reflect }) } }),
       },
-      warnings:
-        document.data.otel === undefined || source.kind === 'user'
-          ? warnings
-          : [...warnings, { source: source.path, problem: 'otel: only read from the user config (ADR-134); this layer ignored it' }],
+      warnings: [
+        ...warnings,
+        // User-only keys, one warning each when another layer tried to set them
+        // (ADR-134 otel / ADR-137 memory): silently dropping a known key is the
+        // exact class of bug ADR-025 decision 5 exists to prevent.
+        ...(document.data.otel !== undefined && source.kind !== 'user'
+          ? [{ source: source.path, problem: 'otel: only read from the user config (ADR-134); this layer ignored it' }]
+          : []),
+        ...(document.data.memory !== undefined && source.kind !== 'user'
+          ? [{ source: source.path, problem: 'memory: only read from the user config (ADR-137); this layer ignored it' }]
+          : []),
+      ],
     },
   };
 }

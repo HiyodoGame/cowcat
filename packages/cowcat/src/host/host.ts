@@ -17,6 +17,7 @@ import { createGlobTool } from '../adapters/tools/glob.js';
 import { createGrepTool } from '../adapters/tools/grep.js';
 import { createReadTool } from '../adapters/tools/read.js';
 import { createTodoWriteTool } from '../adapters/tools/todo.js';
+import { createRememberTool } from '../adapters/tools/remember.js';
 import { createWriteTool } from '../adapters/tools/write.js';
 import { NodeBackgroundTasks } from '../adapters/background.js';
 import { AttachmentUnavailableError, materializeAttachment } from '../adapters/attachments.js';
@@ -202,6 +203,8 @@ interface SessionRecord {
   /** The plan-review twin of `earlyApprovals`: a fast answer must not be lost to the seam. */
   readonly earlyPlanReplies: Map<string, PlanChoice>;
   running: { readonly controller: AbortController; readonly done: Promise<void> } | null;
+  /** Set while a reflect turn owns the record (ADR-137 ③ re-entry guard). */
+  reflecting: boolean;
   /**
    * True from the running-check until the turn is handed to `startTurn`: brackets the
    * `await`s of `@` file reading so a second concurrent `sendTurn` cannot slip through
@@ -243,7 +246,34 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   // Whether this workspace is trusted gates two things: its own rules (ADR-028) and
   // whether its instructions are injected at all (ADR-030/077).
   const workspaceTrusted = isTrusted(trust.trusted, options.cwd, fs);
-  const rules = withHostRules(trustedRules(config, { trusted: workspaceTrusted }));
+  const rules = withHostRules([
+    ...trustedRules(config, { trusted: workspaceTrusted }),
+    // ADR-136 ②, the pre-ask half of the trust mirror. Without these, the write-ask
+    // rule would prompt for a project-memory write that the tool then refuses —
+    // training the user to approve writes that cannot succeed. Deny beats ask
+    // regardless of position (decide's precedence). An Escalate appeal can override
+    // the deny, which is why the tool ALSO refuses: untrusted stays untrusted.
+    // `command` matches the input's target field — Remember borrows commandInput to
+    // expose its destination, which also makes approvalKey name+target (ADR-136 ⑤).
+    ...(workspaceTrusted
+      ? []
+      : [
+          {
+            name: 'remember-instructions-project-needs-trust',
+            verdict: 'deny' as const,
+            reason:
+              'this workspace is not trusted, so CowCat will not write project memory from it (ADR-136); trust the workspace and start a new session',
+            when: { tool: 'Remember', command: 'instructions-project' },
+          },
+          {
+            name: 'remember-skill-project-needs-trust',
+            verdict: 'deny' as const,
+            reason:
+              'this workspace is not trusted, so CowCat will not write project memory from it (ADR-136); trust the workspace and start a new session',
+            when: { tool: 'Remember', command: 'skill-project' },
+          },
+        ]),
+  ]);
 
   const platform = options.platform ?? new NodePlatform({ env: options.env });
   const sandbox = resolveSandboxProfile(config.sandbox, { cwd: options.cwd, home: options.home, fs });
@@ -301,6 +331,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     allowBackground: options.unattended !== true,
     skills: availableSkills,
     spill: { rootDir: paths.sessionsDir },
+    home: options.home,
+    workspaceTrusted,
   });
 
   // MCP servers (ADR-083~087). Project entries are executable entry points, so the same
@@ -340,6 +372,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     }),
   );
   const store = options.store ?? new JsonlEventStore(paths.sessionsDir);
+  // The reflect turn's only door (ADR-137 ②): no delegation, no skills, nothing but
+  // Remember. Built a filter, not a lookup assertion, so a future build without the
+  // tool still type-checks and simply offers no doors.
+  const reflectTools: ReadonlyMap<string, ToolPort> = new Map([...tools].filter(([name]) => name === 'Remember'));
   const sessionDeps: SessionDeps = {
     store,
     clock: options.clock ?? systemClock,
@@ -568,6 +604,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       running: null,
       turnStarting: false,
       turnEnded: true,
+      reflecting: false,
     };
     // Telemetry subscribes FIRST: Session notifies listeners in order and a throwing
     // delivery listener must not take the span view down with it (ADR-132 ④).
@@ -648,13 +685,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     configured: { readonly port: ModelPort; readonly selection: ModelSelection },
     input: string,
     controller: AbortController,
+    reflect = false,
   ): Promise<{ turnId: string }> {
     const deps: TurnDeps = {
       session: rec.session,
       model: configured.port,
       preset: configured.selection.preset,
       ...(configured.selection.effort === null ? {} : { effort: configured.selection.effort }),
-      tools,
+      // A reflect turn gets exactly one door: Remember (ADR-137 ②). No delegation, no
+      // plan review, no escalation appeals, no skill catalog, no hooks — an
+      // unobserved loop (hook → prompt → turn) is exactly what a background turn
+      // must not create.
+      tools: reflect ? reflectTools : tools,
       rules,
       fs,
       approve: (request: ActionRequest) => askApproval(rec, request),
@@ -672,24 +714,28 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // narrowed tool subset, and a catalog naming a tool it cannot call is a lie.
       // The snapshot comes from the host's own discovery, so the catalog and the
       // Skill tool always describe the same set (no hot reload, ADR-114 ⑥).
-      skills: {
-        skills: skillDiscovery.skills,
-        trust: { trusted: workspaceTrusted },
-        ...(configured.selection.preset.limits.context === undefined
-          ? {}
-          : { window: configured.selection.preset.limits.context }),
-      },
+      ...(reflect
+        ? {}
+        : {
+            skills: {
+              skills: skillDiscovery.skills,
+              trust: { trusted: workspaceTrusted },
+              ...(configured.selection.preset.limits.context === undefined
+                ? {}
+                : { window: configured.selection.preset.limits.context }),
+            },
+          }),
       // Delegation is available to a top-level session only: the child's deps are built
       // without this field, which is what makes depth 0 the default (ADR-081 ④).
-      subagents: { port: { spawn: spawnSubagent } },
+      ...(reflect ? {} : { subagents: { port: { spawn: spawnSubagent } } }),
       // Hooks ride top-level turns for the same reason delegation does (ADR-121).
-      hooks: { port: hooksPort, cwd: options.cwd },
+      ...(reflect ? {} : { hooks: { port: hooksPort, cwd: options.cwd } }),
       // Plan review is top-level only: a child session's deps omit this, which keeps
       // ExitPlan off its wire and its calls reading as unknown tools (ADR-124 ⑥).
-      planReview: (callId) => askPlanReview(rec, callId),
+      ...(reflect ? {} : { planReview: (callId: string) => askPlanReview(rec, callId) }),
       // Escalate appeals are top-level only: children omit the flag, keeping the tool
       // off their wire (ADR-129 — the Task/ExitPlan gating precedent).
-      escalation: true,
+      ...(reflect ? {} : { escalation: true }),
     };
 
     let failure: unknown = null;
@@ -718,7 +764,50 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         { sessionId: rec.session.state.sessionId },
       );
     }
+    if (!reflect) {
+      // ADR-137: a completed USER turn optionally triggers background distillation.
+      // Fire-and-forget — the reply already went out — and never for the reflect
+      // turn itself (that is the re-entry guard; the flag alone would race the
+      // finally block that clears it).
+      void settled.then(() => {
+        void maybeReflect(rec);
+      });
+    }
     return { turnId };
+  }
+
+  const reflectEnabled = config.memory?.reflect === 'on';
+
+  const REFLECT_PROMPT = [
+    'Reflect on this session, in the background, after the task above completed.',
+    '',
+    'If the conversation produced genuinely reusable experience — conventions discovered, pitfalls hit, workflows that worked — use the Remember tool to distill it into memory (an AGENTS.md paragraph, or a skill when it is a repeatable procedure). Prefer one strong memory over several weak ones.',
+    'If nothing is worth persisting, answer with one sentence saying so and call no tools.',
+    'Do not restate task state or one-off facts: memory is for future sessions, not this one.',
+  ].join('\n');
+
+  /**
+   * ADR-137: the background half of memory distillation. Runs only when the user
+   * explicitly turned it on (cost is the user's decision), the session is attended
+   * (an approval nobody can answer must not hang a background turn), and the user
+   * turn just completed cleanly. Everything it does is swallowed: distillation is
+   * opportunistic, never a session event the user did not ask for.
+   */
+  async function maybeReflect(rec: SessionRecord): Promise<void> {
+    if (!reflectEnabled || rec.reflecting) return;
+    if (options.unattended === true) return;
+    if (rec.running !== null) return;
+    const turn = rec.session.state.turn;
+    if (turn === null || turn.state !== 'completed') return;
+    if (rec.session.state.planMode) return;
+    rec.reflecting = true;
+    try {
+      await startTurn(rec, currentModel(), REFLECT_PROMPT, new AbortController(), true);
+    } catch {
+      // See the doc comment: never surface.
+    } finally {
+      rec.reflecting = false;
+    }
   }
 
   // Telemetry is initialized LAST (ADR-134): everything above can throw, and a
@@ -1206,6 +1295,10 @@ function createTools(options: {
   readonly spill: SpillConfig;
   /** Trusted, visible skills; empty means no `Skill` tool is offered at all (ADR-117 ①). */
   readonly skills: readonly SkillFile[];
+  /** User-level memory targets live under `~/.cowcat` (ADR-135). */
+  readonly home: string;
+  /** The startup trust snapshot; gates *-project Remember targets (ADR-136 ②). */
+  readonly workspaceTrusted: boolean;
 }): ReadonlyMap<string, ToolPort> {
   const tools: readonly ToolPort[] = [
     createReadTool({ cwd: options.cwd, spill: options.spill }),
@@ -1224,6 +1317,7 @@ function createTools(options: {
       spill: options.spill,
     }),
     createTodoWriteTool(),
+    createRememberTool({ cwd: options.cwd, home: options.home, trusted: options.workspaceTrusted }),
     // No skills, no tool: an empty `Skill` would only tell the model what is not there.
     ...(options.skills.length === 0 ? [] : [createSkillTool({ skills: options.skills })]),
   ];

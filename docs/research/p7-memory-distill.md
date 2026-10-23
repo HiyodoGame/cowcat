@@ -160,3 +160,10 @@ input `{target, content, mode?, name?, description?}`：
 - skill-project 写入会在 workspace 出现 `.cowcat/skills/` 新目录——与
   `.gitignore` 的关系不处理（用户版本控制自治），ADR 注明。
 - 已有日志兼容性：零新事件，无 schemaVersion 问题。
+
+## 8. 实现期校准（T1~T2，随实现 PR 落）
+
+- **信任门位置（对调研 E2 的修正）**：调研草案把信任门放在工具内——但 risk=write 的 ask 先于 execute，未信任工作区会先弹一个必然失败的审批。修订为**两层**：host 在未信任时注入条件 deny 规则（`when: {tool: 'Remember', command: '<target>'}`，deny 优先于 ask 且与位置无关），ask 之前拒绝、输出含原因与信任指引；工具内信任门保留，兜住 Escalate 申诉推翻 deny 后的重试（不可申诉）。ADR-136 ② 已按此修订。
+- **approvalKey 载体（对 E4/ADR-136 ⑤ 的修正）**：ADR-027 规定工具声明保持 data-only（pathInput/commandInput 是字段名），为给 approvalKey 一个 name+目标 粒度而加内核 preflight 钩子违背该决定。修订为借用 `commandInput: 'target'`——目标枚举本来就是要展示给用户的 subject，approvalKey 退化为 name+target（对某目标 always = 该目标后续写入不再问），卡面 subject = 目标。ADR-136 ④⑤ 已按此修订。
+- **反射回合的完成监视器**：挂在 startTurn 的 settled 上、仅在非 reflect 时安装——用安装与否而非 flag 时序做重入防护（flag 的 finally 与 settled.then 存在微任务竞态）。reflect 变体收窄：tools=仅 Remember，无 subagents/skills/hooks/planReview/escalation（不留「hook→prompt→turn」无人观察环路）。
+- 新增测试 13 个（remember 6 单测 + host 6 集成 + config 层警告覆盖在 host 用例）。

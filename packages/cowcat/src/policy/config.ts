@@ -249,6 +249,7 @@ export interface ConfigLayer {
   readonly model?: ModelSettings;
   readonly mcp?: McpSettings;
   readonly otel?: OtelSettings;
+  readonly memory?: MemorySettings;
 }
 
 /**
@@ -259,6 +260,15 @@ export interface ConfigLayer {
 export interface OtelSettings {
   readonly endpoint?: string;
   readonly headersEnv?: string;
+}
+
+/**
+ * Memory/distillation settings (ADR-137). User layer only — the loader warns and
+ * drops it anywhere else. Absent `reflect` means 'off': background model calls are
+ * a cost decision that belongs to the user.
+ */
+export interface MemorySettings {
+  readonly reflect?: 'off' | 'on';
 }
 
 // Three layers, lowest first. The legacy implementation had seven, one of which —
@@ -292,6 +302,7 @@ export interface CowcatConfig {
   readonly model: ResolvedModelSettings;
   readonly mcp: ResolvedMcpSettings;
   readonly otel: OtelSettings | undefined;
+  readonly memory: MemorySettings | undefined;
 }
 
 /** Layer 0. Not a file, and not overridable by omission. */
@@ -301,6 +312,7 @@ export const DEFAULT_CONFIG: CowcatConfig = {
   model: DEFAULT_MODEL_SETTINGS,
   mcp: DEFAULT_MCP_SETTINGS,
   otel: undefined,
+  memory: undefined,
 };
 
 export interface ConfigLayers {
@@ -347,6 +359,8 @@ export function resolveConfig(layers: ConfigLayers): CowcatConfig {
     // Not merged, not layered: the user layer either named it or telemetry stays off
     // (ADR-134). Nothing below can widen, move, or switch it on.
     otel: layers.user?.otel,
+    // Same rule for background distillation (ADR-137): a cost switch is user-layer only.
+    memory: layers.user?.memory,
   };
 }
 
