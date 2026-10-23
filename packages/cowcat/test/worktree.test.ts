@@ -10,6 +10,9 @@ import { NodeFs, type ProcessPort, type ProcessResult, type ProcessSpec } from '
 import type { TrustSnapshot } from '../src/ports/index.js';
 import { cleanupWorktree, ensureWorktree, type WorktreeDeps } from '../src/adapters/worktree.js';
 
+/** Shared FsPort: `samePath` is the only correct way to compare identities (ADR-017). */
+const fs = new NodeFs();
+
 function tempDir(t: { after(fn: () => void): void }, prefix: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   t.after(() => {
@@ -75,7 +78,7 @@ function memoryTrust(seed: readonly string[] = []) {
 }
 
 function deps(t: { after(fn: () => void): void }, main: string, process: ProcessPort, trust: ReturnType<typeof memoryTrust>): WorktreeDeps {
-  return { process, fs: new NodeFs(), trust, mainCwd: main };
+  return { process, fs, trust, mainCwd: main };
 }
 
 test('an untrusted main checkout is refused before anything is created (ADR-145)', async (t) => {
@@ -98,10 +101,12 @@ test('a trusted main checkout gets a worktree, a branch, and an inherited trust 
   const trust = memoryTrust([main]);
   const result = await ensureWorktree(deps(t, main, git.process, trust), 'feature-x');
   assert.equal(result.ok, true);
-  assert.equal(result.worktree.path, join(main, '.cowcat', 'worktrees', 'feature-x'));
+  // 身份比较而非拼写比较：不同 realpath 变体（Windows 8.3 短名 vs 长名）会同指一目
+  // （CI runner 实测），产品的 canonical 只承诺身份一致，不承诺拼写。
+  assert.ok(fs.samePath(result.worktree.path, join(main, '.cowcat', 'worktrees', 'feature-x')));
   assert.equal(result.worktree.branch, 'worktree-feature-x');
   assert.equal(result.worktree.created, true);
-  assert.equal(result.worktree.mainGitDir, join(main, '.git'));
+  assert.ok(fs.samePath(result.worktree.mainGitDir, join(main, '.git')));
   assert.deepEqual(trust.trusted(), [main, result.worktree.path], 'inheritance is an explicit record (ADR-145)');
   const add = git.calls.find((argv) => argv[1] === 'worktree' && argv[2] === 'add');
   assert.ok(add !== undefined);
