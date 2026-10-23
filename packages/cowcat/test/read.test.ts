@@ -17,7 +17,7 @@ import {
 import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './support.js';
 
 const signal = new AbortController().signal;
-const noGrant: ToolGrant = { networkApproved: false };
+const noGrant: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 function tree(files: Readonly<Record<string, string | Buffer>>): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'cowcat-read-')));

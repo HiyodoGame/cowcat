@@ -5,7 +5,7 @@ import { Session, defineTool, runTurn, type KernelEvent, type ToolGrant, type To
 import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './support.js';
 
 const signal = new AbortController().signal;
-const noGrant: ToolGrant = { networkApproved: false };
+const noGrant: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   assert.ok(typeof value === 'object' && value !== null, 'expected an object schema');
@@ -177,7 +177,7 @@ test('the grant and the signal reach the implementation unchanged', async () => 
     return { ok: true, output: '' };
   });
 
-  const grant: ToolGrant = { networkApproved: true };
+  const grant: ToolGrant = { networkApproved: true, unsandboxedApproved: false };
   await tool.run({}, signal, grant);
 
   assert.equal(seen.length, 1);

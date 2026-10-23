@@ -5,6 +5,7 @@ import type { SubagentRole, SubagentState } from '../ports/subagent.js';
 import type { ExecutionFacts } from '../ports/process.js';
 import type { SessionShell } from '../ports/platform.js';
 import type { ToolCall, ReasoningBlock } from './messages.js';
+import type { PriceTable } from './preset.js';
 import type { CompactionTrigger } from './context.js';
 import type { TurnState } from './turn.js';
 
@@ -75,6 +76,12 @@ export type KernelEvent = EventBase &
          * local can say how full the context is.
          */
         readonly contextWindow?: number | undefined;
+        /**
+         * What the running preset costs (ADR-131 ②), for the meter to price the turn.
+         * Optional: a preset may declare no price, and every log written before this
+         * field existed is still honest about what it does not know.
+         */
+        readonly price?: PriceTable | undefined;
       }
     | { readonly type: 'turn.transitioned'; readonly from: TurnState; readonly to: TurnState; readonly reason: string | null }
     | {
@@ -239,6 +246,21 @@ export type KernelEvent = EventBase &
          * written before this field existed simply has no opinion to record.
          */
         readonly warning?: string | undefined;
+        /**
+         * The exact subject under review (ADR-129 (7)): the command text or canonical
+         * path the grant key is computed from — the SAME value, so the card renders
+         * precisely what an answer grants. Absent on every log written before
+         * ADR-129, and on questions (like TodoWrite) that have neither.
+         */
+        readonly command?: string | undefined;
+        readonly path?: string | undefined;
+        /**
+         * What this approval would widen, listed for the card (ADR-129 (7)): a
+         * `deny-override` lets this exact action through its rule's deny; `unsandboxed`
+         * runs this one command without the sandbox (ADR-130). Absent = the plain ask
+         * question, which widens nothing by itself.
+         */
+        readonly dimensions?: readonly ('deny-override' | 'unsandboxed')[] | undefined;
       }
     | {
         // `key` is what an `always` answer grants, and it is recorded on the ANSWER
@@ -250,6 +272,28 @@ export type KernelEvent = EventBase &
         readonly key: string;
         readonly verdict: ApprovalVerdict;
         readonly by: ApprovalBy;
+      }
+    | {
+        /**
+         * An Escalate appeal a user approved (ADR-129): the right to retry one exact
+         * subject past a `deny` (`deny-override`) or without the sandbox (`unsandboxed`).
+         * Kept apart from `grants` on purpose: grants feed the `ask` path, and letting an
+         * escalation once-grant auto-answer an unrelated `ask` would widen it silently.
+         * `scope: 'once'` burns on first use (`escalation.consumed`); `'always'` stands
+         * for the session, exact subject only.
+         */
+        readonly type: 'escalation.granted';
+        readonly callId: string;
+        readonly key: string;
+        readonly scope: 'once' | 'always';
+        readonly dimension: 'deny-override' | 'unsandboxed';
+      }
+    | {
+        /** A `once` escalation grant was exercised; the retry it bought is spent (ADR-129 (4)). */
+        readonly type: 'escalation.consumed';
+        readonly callId: string;
+        readonly key: string;
+        readonly dimension: 'deny-override' | 'unsandboxed';
       }
     | {
         readonly type: 'tool.finished';

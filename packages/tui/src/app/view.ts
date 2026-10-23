@@ -75,6 +75,15 @@ export interface ApprovalView {
   readonly reason: string | null;
   /** What the command would cost if it went wrong (ADR-095), already worded. */
   readonly warning: string | null;
+  /**
+   * The exact subject under review (ADR-129 ⑦): the command or path an answer grants,
+   * in the same words the grant key is computed from. Both `null` on older logs and
+   * questions (like TodoWrite) that have neither.
+   */
+  readonly command: string | null;
+  readonly path: string | null;
+  /** What the answer would widen: `deny-override` and/or `unsandboxed`. */
+  readonly dimensions: readonly string[];
   /** The event's `ts`. A clock is what turns "waiting" into the brand's nudge after 10s. */
   readonly askedAt: number;
   /** `null` while the question is open; the verdict afterwards. */
@@ -322,6 +331,27 @@ export interface TuiView {
     readonly cacheCreation: number;
   } | null;
   /**
+   * Everything the session has been billed, summed from the log's `model.usage` events
+   * (ADR-131 ①). The fold lives in the kernel; a renderer only sees the events, so the
+   * total is accumulated here, and replaying the same log reproduces it exactly.
+   */
+  readonly usageTotals: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheCreation: number;
+  };
+  /**
+   * What the running preset costs (ADR-131 ②), from `turn.opened`. `null` = no price
+   * declared: the meter shows tokens, never an invented price.
+   */
+  readonly price: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead?: number | undefined;
+    readonly cacheCreation?: number | undefined;
+  } | null;
+  /**
    * Event types this build does not know, first sighting only.
    *
    * Collected rather than ignored so "the frontend showed nothing for that" is a fact the
@@ -387,6 +417,8 @@ export function initialView(): TuiView {
     palette: null,
     todos: [],
     usage: null,
+    usageTotals: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+    price: null,
     unsupported: [],
     lastSeq: 0,
     toolOutput: {},

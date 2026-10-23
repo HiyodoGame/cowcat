@@ -1,6 +1,7 @@
 import type { BackgroundEndState, Clock, EventStore, ExecutionFacts, IdSource, LockPort, SessionLock, SessionSnapshot, SessionShell, SnapshotPort, TerminationReason, ToolOutputStream } from '../ports/index.js';
 import type { EventInput, KernelEvent, SessionParent, SessionUpdate } from './events.js';
 import { assertSupportedSchemaVersion, isSupportedSchemaVersion, SCHEMA_VERSION } from './schema-version.js';
+import type { PriceTable } from './preset.js';
 import { initialState, reduce, replay, type SessionState } from './state.js';
 import { canTransition, IllegalTransitionError, isTerminal, type TurnState } from './turn.js';
 
@@ -218,7 +219,7 @@ export class Session {
 
   async openTurn(
     input: string,
-    opening: { readonly model?: string; readonly contextWindow?: number } = {},
+    opening: { readonly model?: string; readonly contextWindow?: number; readonly price?: PriceTable } = {},
   ): Promise<string> {
     const current = this.#state.turn?.state;
     if (current !== undefined && !isTerminal(current)) throw new Error('a turn is already open');
@@ -233,6 +234,7 @@ export class Session {
       ...(opening.contextWindow === undefined || opening.contextWindow <= 0
         ? {}
         : { contextWindow: opening.contextWindow }),
+      ...(opening.price === undefined ? {} : { price: opening.price }),
     });
     await this.transition('requesting');
     return turnId;

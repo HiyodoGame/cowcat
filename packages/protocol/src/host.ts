@@ -32,6 +32,18 @@ export interface AttachedSession {
    * promise (ADR-059 ②) fails quietly if it is broken.
    */
   subscribe(listener: (update: unknown) => void): () => void;
+  /**
+   * Everything the session has been billed, summed (ADR-131 ①). Derived from the log's
+   * `model.usage` events, never stored: a client that ignores it loses a meter, not a
+   * fact — replaying the log recomputes it exactly. Absent when every usage field is
+   * zero is unnecessary: zero totals are honest for a fresh session.
+   */
+  readonly usage?: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheCreation: number;
+  };
 }
 
 export interface ProtocolHost {

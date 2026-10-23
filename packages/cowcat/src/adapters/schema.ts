@@ -170,6 +170,15 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // ADR-105: the window the turn ran under, when the preset declares one. Absent is the
     // shape of every log written before this field existed.
     contextWindow: z.number().int().positive().optional(),
+    // The meter's price source (ADR-131). Optional: no price, no cost line.
+    price: z
+      .object({
+        input: z.number().nonnegative(),
+        output: z.number().nonnegative(),
+        cacheRead: z.number().nonnegative().optional(),
+        cacheCreation: z.number().nonnegative().optional(),
+      })
+      .optional(),
   }),
   z.object({
     ...base,
@@ -254,6 +263,11 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     reason: z.string().nullable(),
     // Optional, not nullable: a log written before ADR-095 has no opinion to record.
     warning: z.string().optional(),
+    // The exact subject under review (ADR-129 7). Optional for the same reason: older
+    // logs asked without recording it.
+    command: z.string().optional(),
+    path: z.string().optional(),
+    dimensions: z.readonly(z.array(z.enum(['deny-override', 'unsandboxed']))).optional(),
   }),
   z.object({
     ...base,
@@ -262,6 +276,21 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     key: z.string(),
     verdict: approvalVerdictSchema,
     by: approvalBySchema,
+  }),
+  z.object({
+    ...base,
+    type: z.literal('escalation.granted'),
+    callId: z.string(),
+    key: z.string(),
+    scope: z.enum(['once', 'always']),
+    dimension: z.enum(['deny-override', 'unsandboxed']),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('escalation.consumed'),
+    callId: z.string(),
+    key: z.string(),
+    dimension: z.enum(['deny-override', 'unsandboxed']),
   }),
   z.object({
     ...base,
@@ -406,6 +435,12 @@ const sessionStateSchema = z.object({
   lastUsage: z
     .object({ tokens: z.number().int().nonnegative(), anchorSeq: z.number().int().nonnegative() })
     .nullable(),
+  usageTotals: z.object({
+    input: z.number().int().nonnegative(),
+    output: z.number().int().nonnegative(),
+    cacheRead: z.number().int().nonnegative(),
+    cacheCreation: z.number().int().nonnegative(),
+  }),
   // The compaction lock (ADR-072). A snapshot written mid-compaction keeps it open, which
   // is exactly what the log says too.
   compactionOpen: z.boolean(),
@@ -424,6 +459,16 @@ const sessionStateSchema = z.object({
   // table, so a snapshot that dropped them would silently re-ask questions the user
   // already answered.
   grants: z.readonly(z.array(z.string())),
+  // Refusals that stand for the session (ADR-129 5), approved appeals and the `once`
+  // grants already spent. Same lifecycle as `grants`: a snapshot written before these
+  // fields existed fails validation and the caller replays instead (ADR-013) — which is
+  // the documented answer to a snapshot we cannot fully understand, and re-deriving
+  // from the log is exactly what replay does.
+  refused: z.readonly(z.array(z.string())),
+  escalations: z.readonly(
+    z.array(z.object({ key: z.string(), scope: z.enum(['once', 'always']), dimension: z.enum(['deny-override', 'unsandboxed']) })),
+  ),
+  escalationsConsumed: z.readonly(z.array(z.string())),
   // Derived from `tool.finished` (ADR-049). A snapshot is an accelerator: one written
   // before this field existed fails validation and the caller replays instead, which is
   // the documented answer to "a snapshot we cannot fully understand" (ADR-013).

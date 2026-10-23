@@ -1,4 +1,4 @@
-import { approvalKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
+import { approvalKey, legacyToolGrantKey, toolGrantKey, type ApprovalBy, type ApprovalVerdict } from '../policy/approval.js';
 import { assessCommand } from '../policy/command-risk.js';
 import { decide, type ActionRequest, type Decision, type Rule } from '../policy/decide.js';
 import type { FsPort, HookEventInput, HookRunReport, HooksPort, IdSource, ModelPort, ModelRequest, StopReason, SubagentOutcome, SubagentPort, ToolGrant, ToolPort, ToolResult, ToolRisk, ToolSpec } from '../ports/index.js';
@@ -8,6 +8,14 @@ import { decideSkills, describeSkillSkip, skillCatalogBudget } from '../policy/s
 import { clearedToolView } from '../policy/tool-clearing.js';
 import { TASK_SPEC, TASK_TOOL_NAME, clipReport, formatTaskResult, parseTaskInput, type TaskInput } from './subagent.js';
 import { EXIT_PLAN_SPEC, EXIT_PLAN_TOOL_NAME, formatPlanResult, parseExitPlanInput, type PlanChoice, type PlanOption } from './plan.js';
+import {
+  ESCALATE_PER_TURN_LIMIT,
+  ESCALATE_SPEC,
+  ESCALATE_TOOL_NAME,
+  parseEscalateInput,
+  type EscalationTurnContext,
+} from './escalation.js';
+import { escalationStanding } from './state.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
 import { contextCeiling, contextUsage } from './context.js';
@@ -122,6 +130,12 @@ export interface TurnDeps {
    * `TurnDeps` simply has no port (ADR-081 ④).
    */
   readonly subagents?: { readonly port: SubagentPort };
+  /**
+   * Escalate appeals are available (ADR-129). Present on top-level turns only; a
+   * child's deps omit it, which keeps `Escalate` off its wire (a stray call reads as
+   * an unknown tool, the Task/ExitPlan precedent). The appeal itself reuses `approve`.
+   */
+  readonly escalation?: true;
   /**
    * Answers plan reviews (ADR-125). Omitted means the session has no plan reviewer:
    * `ExitPlan` stays off the wire, and a stray call reads as an unknown tool. Like
@@ -296,6 +310,7 @@ async function runTurnBody(
       await session.openTurn(input, {
         model: deps.preset.model,
         ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
+        ...(deps.preset.price === undefined ? {} : { price: deps.preset.price }),
       });
       const deniedTurnId = session.turnId;
       if (deniedTurnId === null) throw new Error('the session did not open a turn');
@@ -313,6 +328,7 @@ async function runTurnBody(
   await session.openTurn(input, {
     model: deps.preset.model,
     ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
+    ...(deps.preset.price === undefined ? {} : { price: deps.preset.price }),
   });
   const turnId = session.turnId;
   if (turnId === null) throw new Error('the session did not open a turn');
@@ -378,13 +394,17 @@ async function runTurnBody(
       // Hook context rides the same batching rule as reminders (ADR-120 ②): a user
       // message between two tool results would break the wire pairing.
       const pendingHookContexts: string[] = [];
+      // Escalate policing, turn-scoped (ADR-129/130): how many appeals reached the
+      // user, and which exact subjects the sandbox refused in this turn. Memory, not
+      // log facts — a replayed turn must not re-ask anyone anything.
+      const escalation: EscalationTurnContext = { asked: 0, sandboxRefusedKeys: new Set() };
       for (const call of calls) {
         // `normalizeCall` has already JSON-round-tripped the input, so equal arguments
         // stringify equal — key order included, which is fine for detecting literal loops.
         const callKey = `${call.name}\n${JSON.stringify(call.input)}`;
         const matched = callKey === lastCallKey;
         repeatCount = matched ? repeatCount + 1 : 1;
-        const { result, path, hookContexts } = await runCall(deps, call, signal);
+        const { result, path, hookContexts } = await runCall(deps, call, signal, escalation);
         if (hookContexts !== undefined) pendingHookContexts.push(...hookContexts);
         // Before `tool.finished` on purpose (ADR-054): two appends are never atomic, and
         // the two directions are not equal — a crash here leaves the list recorded, while
@@ -643,7 +663,8 @@ function wireTools(deps: TurnDeps): readonly ToolSpec[] {
   // plan mode — the tool's contract (present your plans, the user picks) is only true
   // while the read-only constraint is on (ADR-124 ⑥/ADR-125 ①).
   const withTask = deps.subagents === undefined ? specs : [...specs, TASK_SPEC];
-  return deps.planReview === undefined || !deps.session.state.planMode ? withTask : [...withTask, EXIT_PLAN_SPEC];
+  const withEscalate = deps.escalation === true ? [...withTask, ESCALATE_SPEC] : withTask;
+  return deps.planReview === undefined || !deps.session.state.planMode ? withEscalate : [...withEscalate, EXIT_PLAN_SPEC];
 }
 
 // The log is JSON, and the log is the source of truth: a fact that cannot survive a
@@ -794,11 +815,13 @@ async function askForApproval(
   }
 }
 
-async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Promise<CompletedCall> {
+async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, escalation: EscalationTurnContext): Promise<CompletedCall> {
   const { session } = deps;
   const turnId = session.turnId;
   const isExitPlan = deps.planReview !== undefined && session.state.planMode && call.name === EXIT_PLAN_TOOL_NAME;
   if (isExitPlan) return await runExitPlanCall(deps, call, signal);
+  const isEscalate = deps.escalation === true && call.name === ESCALATE_TOOL_NAME;
+  if (isEscalate) return await runEscalateCall(deps, call, signal, escalation);
   const isTask = deps.subagents !== undefined && call.name === TASK_TOOL_NAME;
   // A malformed delegation is refused before policy: there is no action to adjudicate,
   // and asking a person about a call that cannot run is theatre.
@@ -836,8 +859,33 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   const decision = decide(request, deps.rules);
   await session.emit({ type: 'policy.decided', turnId, callId: call.callId, decision });
 
+  // Whether THIS call was granted by a person — the only thing `ToolGrant.networkApproved`
+  // reports (ADR-051). A `deny` or a `reject` never reaches the tool at all; an `allow`
+  // verdict means no question was asked, so nothing was granted either.
+  let approved = false;
+
   if (decision.verdict === 'deny') {
-    return { result: { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` }, path };
+    // An approved Escalate appeal overrides a rule's deny for one exact subject
+    // (ADR-129 ③) — the person's click outranks the config file for this session.
+    // Plan mode (checked below) and unattended sessions (no Escalate on the wire)
+    // are not reachable here, so they stay unoverridable by construction.
+    const key = approvalKey(request);
+    const standing = deps.escalation === true ? escalationStanding(session.state, key, 'deny-override') : null;
+    if (standing === null) {
+      return { result: { ok: false, output: `denied by ${decision.rule}: ${decision.reason ?? 'no reason given'}` }, path };
+    }
+    await session.emit({
+      type: 'approval.answered',
+      turnId,
+      callId: call.callId,
+      key,
+      verdict: standing,
+      by: 'policy',
+    });
+    if (standing === 'once') {
+      await session.emit({ type: 'escalation.consumed', turnId, callId: call.callId, key, dimension: 'deny-override' });
+    }
+    approved = true;
   }
 
   // Plan mode (ADR-124): a host-enforced read-only constraint. It downgrades ask/allow
@@ -864,36 +912,50 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
   const unread = unreadTarget(deps, spec, path);
   if (unread !== null) return { result: { ok: false, output: unread }, path };
 
-  // Whether THIS call was granted by a person — the only thing `ToolGrant.networkApproved`
-  // reports (ADR-051). A `deny` or a `reject` never reaches the tool at all; an `allow`
-  // verdict means no question was asked, so nothing was granted either.
-  let approved = false;
-
   if (decision.verdict === 'ask') {
     const key = approvalKey(request);
     const toolKey = toolGrantKey(request.name);
     // Recorded with the question (ADR-095): a warning that only lives in the frontend
     // cannot be replayed, and the log is where "what was the user told?" is answered.
     const warning = assessCommand(request.command)?.message ?? null;
-    const standing: ApprovalVerdict | null = session.state.grants.includes(key)
-      ? 'always'
+    // Pre-ADR-129 logs may hold the bare-* tool grant; honoring it keeps a reopened
+    // session's standing answers (nothing new is ever emitted with the legacy key).
+    const legacyToolKey = legacyToolGrantKey(request.name);
+    const matched: { verdict: 'always' | 'session'; key: string } | null = session.state.grants.includes(key)
+      ? { verdict: 'always', key }
       : session.state.grants.includes(toolKey)
-        ? 'session'
-        : null;
-    if (standing !== null) {
+        ? { verdict: 'session', key: toolKey }
+        : session.state.grants.includes(legacyToolKey)
+          ? { verdict: 'session', key: legacyToolKey }
+          : null;
+    if (matched !== null) {
       // A standing answer from earlier in this session (ADR-031 decision 3, ADR-094).
-      // No question is asked — it was already answered, and asking again is theatre —
-      // but the answer IS recorded, with `by: 'policy'`, so the log does not show an
-      // `ask` that was somehow ignored. The `key` is the link back to that question.
+      // No question is asked: it was already answered, and asking again is theatre.
+      // The answer IS recorded, with by: 'policy', so the log does not show an ask
+      // that was somehow ignored. The recorded key is the one that matched, so replay
+      // folds exactly what the live check found.
       await session.emit({
         type: 'approval.answered',
         turnId,
         callId: call.callId,
-        key: standing === 'always' ? key : toolKey,
-        verdict: standing,
+        key: matched.key,
+        verdict: matched.verdict,
         by: 'policy',
       });
       approved = true;
+    } else if (session.state.refused.includes(key)) {
+      // The user already rejected this exact action, and that refusal stands for the
+      // session (ADR-129 5). Answered without asking: a repeat question is harassment,
+      // and the log stays honest about who, a person earlier in the log, said no.
+      await session.emit({
+        type: 'approval.answered',
+        turnId,
+        callId: call.callId,
+        key,
+        verdict: 'reject',
+        by: 'policy',
+      });
+      return { result: { ok: false, output: 'rejected: this action was refused earlier in the session' }, path };
     } else if (deps.unattended !== undefined) {
       // Nobody can answer here (ADR-081 ③). The question and the refusal are both
       // written: a log that shows only the refusal would look like the kernel made the
@@ -979,7 +1041,15 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
     if (report.outcome.effect === 'context') hookContexts.push(report.outcome.text);
   }
 
-  const grant: ToolGrant = { networkApproved: approved };
+  // An unsandboxed appeal approved for this exact subject lets THIS run go without the
+  // sandbox (ADR-130 ②). A `once` grant burns here, before the run: the retry is the
+  // grant, whatever the command's exit code turns out to be.
+  const unsandboxedKey = approvalKey(request);
+  const unsandboxedStanding = escalationStanding(session.state, unsandboxedKey, 'unsandboxed');
+  if (unsandboxedStanding === 'once') {
+    await session.emit({ type: 'escalation.consumed', turnId, callId: call.callId, key: unsandboxedKey, dimension: 'unsandboxed' });
+  }
+  const grant: ToolGrant = { networkApproved: approved, unsandboxedApproved: unsandboxedStanding !== null };
   try {
     // The call id is closed over here so the tool never sees a session (ADR-108). A tool
     // with nothing to stream ignores the fourth parameter.
@@ -990,6 +1060,11 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal): Pro
         session.toolOutput(call.callId, stream, text);
       },
     });
+    // A sandbox refusal is what makes a without-sandbox appeal honest (ADR-130 ③):
+    // remember the exact subject for this turn so Escalate can demand the precedent.
+    if (result.sandboxRefused === true) {
+      escalation.sandboxRefusedKeys.add(approvalKey(request));
+    }
     // PostToolUse (ADR-122): fires on success, mirrors CC (failures have their own event
     // there, which v1 does not subscribe). A rewrite replaces what the model sees, and
     // `tool.finished.output` below records exactly that — the log holds the model's view.
@@ -1100,6 +1175,167 @@ async function runExitPlanCall(deps: TurnDeps, call: ToolCall, signal: AbortSign
   return { result: { ok: true, output: formatPlanResult(choice, plans) }, path: null };
 }
 
+/**
+ * The Escalate appeal (ADR-129). Asks the person to let ONE exact action through its
+ * rule's deny (or, after a sandbox refusal, to run it without the sandbox, ADR-130) —
+ * it never runs anything itself, and it reuses the approval bridge and card wholesale.
+ *
+ * What the answer means is recorded separately from a plain ask: `escalation.granted`
+ * folds into `state.escalations` (kept apart from `grants` so an appeal can never
+ * auto-answer an unrelated question), and a `once` scope burns on the single retry via
+ * `escalation.consumed`. A rejected appeal folds into `state.refused`, which silences
+ * every later ask or appeal for the same subject without bothering the person again.
+ */
+async function runEscalateCall(
+  deps: TurnDeps,
+  call: ToolCall,
+  signal: AbortSignal,
+  escalation: EscalationTurnContext,
+): Promise<CompletedCall> {
+  const session = deps.session;
+  const parsed = parseEscalateInput(call.input);
+  if (!parsed.ok) {
+    return { result: { ok: false, output: `invalid Escalate input (${parsed.reason}): ${parsed.message}` }, path: null };
+  }
+  const input = parsed.value;
+  const tool = deps.tools.get(input.name);
+  if (tool === undefined) {
+    return { result: { ok: false, output: `unknown tool: ${input.name}` }, path: null };
+  }
+  const request: ActionRequest = {
+    kind: 'tool',
+    callId: call.callId,
+    name: input.name,
+    risk: tool.spec.risk,
+    ...(input.command === null ? {} : { command: input.command }),
+    ...(input.path === null ? {} : { path: input.path }),
+  };
+  const key = approvalKey(request);
+  const dimension = input.withoutSandbox ? 'unsandboxed' : 'deny-override';
+
+  // The appeal must be about a refusal that actually happened (review P2-4): a plain
+  // deny for the deny-override dimension, and a live sandbox refusal of this exact
+  // subject for the unsandboxed dimension. No pre-authorization, no bypassing the
+  // normal ask path.
+  const decision = decide(request, deps.rules);
+  if (!input.withoutSandbox && decision.verdict !== 'deny') {
+    return {
+      result: {
+        ok: false,
+        output: `Escalate is only for actions a rule denied; "${input.name}" currently reads "${decision.verdict}" (${decision.rule}). Retry the action normally, or change it.`,
+      },
+      path: null,
+    };
+  }
+  if (input.withoutSandbox) {
+    if (decision.verdict === 'deny') {
+      return {
+        result: { ok: false, output: 'this action is denied by a rule; appeal the deny first (Escalate without withoutSandbox)' },
+        path: null,
+      };
+    }
+    if (!escalation.sandboxRefusedKeys.has(key)) {
+      return {
+        result: {
+          ok: false,
+          output: 'the sandbox has not refused this exact command in this turn; a without-sandbox appeal is only available right after a sandbox refusal',
+        },
+        path: null,
+      };
+    }
+  }
+
+  const standing = escalationStanding(session.state, key, dimension);
+  if (standing !== null) {
+    return {
+      result: {
+        ok: true,
+        output: standing === 'always'
+          ? 'this appeal was already approved for the rest of the session; retry the exact action unchanged.'
+          : 'this appeal was approved once and its retry is still available; retry the exact action unchanged now.',
+      },
+      path: null,
+    };
+  }
+  if (session.state.refused.includes(key)) {
+    return {
+      result: { ok: false, output: 'this action was already refused earlier in the session, and that refusal stands. Do not ask again; find another way.' },
+      path: null,
+    };
+  }
+  if (escalation.asked >= ESCALATE_PER_TURN_LIMIT) {
+    return {
+      result: {
+        ok: false,
+        output: `Escalate reaches the user at most ${String(ESCALATE_PER_TURN_LIMIT)} times per turn; the remaining refusals stand this turn.`,
+      },
+      path: null,
+    };
+  }
+  escalation.asked += 1;
+
+  // The question carries the exact subject (ADR-129 7): the command or path shown is
+  // the same value the grant key is computed from, so approving means what it says.
+  const warning = input.command === null ? null : (assessCommand(input.command)?.message ?? null);
+  await session.transition('awaiting_approval', 'escalation');
+  try {
+    await session.emit({
+      type: 'approval.requested',
+      turnId: session.turnId,
+      callId: call.callId,
+      name: input.name,
+      rule: 'escalation',
+      reason: input.justification,
+      ...(input.command === null ? {} : { command: input.command }),
+      ...(input.path === null ? {} : { path: input.path }),
+      dimensions: [dimension],
+      ...(warning === null ? {} : { warning }),
+    });
+    const outcome = await askForApproval(deps, request, { verdict: 'deny', rule: 'escalation', reason: input.justification }, signal);
+    await session.emit({
+      type: 'approval.answered',
+      turnId: session.turnId,
+      callId: call.callId,
+      key,
+      verdict: outcome.verdict,
+      by: outcome.by,
+    });
+    if (outcome.verdict === 'reject') {
+      return {
+        result: {
+          ok: false,
+          output: outcome.by === 'timeout'
+            ? REJECTED_BY_TIMEOUT
+            : 'the user rejected the appeal; the refusal stands for this session. Do not ask again for this action.',
+        },
+        path: null,
+      };
+    }
+    // `session` answers are not offered for appeals (review P1-2); a client that sends
+    // one anyway gets the narrowest scope. Sandbox-free approval is once-only (P1-5).
+    const scope = outcome.verdict === 'always' && !input.withoutSandbox ? 'always' : 'once';
+    await session.emit({ type: 'escalation.granted', turnId: session.turnId, callId: call.callId, key, scope, dimension });
+    if (dimension === 'unsandboxed') {
+      return {
+        result: { ok: true, output: 'approved: retry the exact command now and it runs WITHOUT the sandbox, this once.' },
+        path: null,
+      };
+    }
+    return {
+      result: {
+        ok: true,
+        output: scope === 'always'
+          ? 'approved for the rest of this session for this exact action; retry it unchanged whenever needed.'
+          : 'approved once; retry the exact action unchanged now — the approval buys exactly that one retry.',
+      },
+      path: null,
+    };
+  } finally {
+    // Back to the tool loop whether the answer arrived, timed out, or was aborted: a
+    // parked state must never outlive the wait that parked it (the runExitPlanCall rule).
+    await session.transition('awaiting_tools');
+  }
+}
 async function askPlanReview(
   deps: TurnDeps,
   callId: string,

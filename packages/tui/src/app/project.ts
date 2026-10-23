@@ -1,7 +1,7 @@
 import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { graphemes } from '../text/width.js';
 import { copyFor } from './copy.js';
-import { flag, number, read, record, records, text, updateSeq, updateType } from './fields.js';
+import { flag, number, read, record, records, text, texts, updateSeq, updateType } from './fields.js';
 import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type Entry, type PlanCardOption, type PlanView, type TodoView, type ToolCallView, type TuiView } from './view.js';
 import { noteBelow } from './view.js';
 
@@ -45,6 +45,21 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         // window). A live host builds its preset once, so a session cannot change windows
         // mid-flight; if that ever changes, this line has to stop inheriting.
         contextWindow: number(event, 'contextWindow') ?? base.contextWindow,
+        // The meter's price source (ADR-131 2): absent on older logs and unpriced
+        // presets, and then the bar shows tokens without a cost line.
+        price: ((): TuiView['price'] => {
+          const price = record(event, 'price');
+          if (price === null) return base.price;
+          const cacheRead = number(price, 'cacheRead');
+          const cacheCreation = number(price, 'cacheCreation');
+          const table: TuiView['price'] = {
+            input: number(price, 'input') ?? 0,
+            output: number(price, 'output') ?? 0,
+            ...(cacheRead === null ? {} : { cacheRead }),
+            ...(cacheCreation === null ? {} : { cacheCreation }),
+          };
+          return table;
+        })(),
         turnStartedAt: number(event, 'ts') ?? base.turnStartedAt,
         slashIndex: 0,
         // A new turn cannot have output from the previous one attached to it.
@@ -133,15 +148,22 @@ export function project(view: TuiView, event: WireEvent): TuiView {
     case 'model.usage': {
       const usage = record(event, 'usage');
       if (usage === null) return base;
+      const round = {
+        input: number(usage, 'input') ?? 0,
+        output: number(usage, 'output') ?? 0,
+        cacheRead: number(usage, 'cacheRead') ?? 0,
+        cacheCreation: number(usage, 'cacheCreation') ?? 0,
+      };
       return {
         ...base,
-        usage: {
-          input: number(usage, 'input') ?? 0,
-          output: number(usage, 'output') ?? 0,
-          // Cache reads are prompt the provider billed at a discount, not prompt that left
-          // the context: the status bar counts them (ADR-105 ②).
-          cacheRead: number(usage, 'cacheRead') ?? 0,
-          cacheCreation: number(usage, 'cacheCreation') ?? 0,
+        usage: round,
+        // The session meter (ADR-131 1): accumulated from the same events the kernel
+        // folds, so renderer and kernel can never disagree about the bill.
+        usageTotals: {
+          input: base.usageTotals.input + round.input,
+          output: base.usageTotals.output + round.output,
+          cacheRead: base.usageTotals.cacheRead + round.cacheRead,
+          cacheCreation: base.usageTotals.cacheCreation + round.cacheCreation,
         },
       };
     }
@@ -183,6 +205,11 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         rule: text(event, 'rule') ?? '(unnamed rule)',
         reason: text(event, 'reason'),
         warning: text(event, 'warning'),
+        // The exact subject under review (ADR-129 7): what an answer grants, in the
+        // same words the grant key is computed from. Older logs asked without it.
+        command: text(event, 'command'),
+        path: text(event, 'path'),
+        dimensions: texts(event, 'dimensions'),
         askedAt: number(event, 'ts') ?? 0,
         verdict: null,
         by: null,

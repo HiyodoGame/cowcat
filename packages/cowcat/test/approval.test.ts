@@ -248,8 +248,10 @@ test('a `session` answer covers the whole tool for the rest of the session', asy
   assert.ok(second !== undefined);
   assert.equal(second.by, 'policy');
   assert.equal(second.verdict, 'session');
-  // The grant is tool-level, not action-level: that is what makes it reusable.
-  assert.equal(second.key, 'write_file\u0000*');
+  // The grant is tool-level, not action-level: that is what makes it reusable. The
+  // subject is quoted since ADR-129 (review P1-4): a bare `*` is a real command, and
+  // the old spelling collided with it.
+  assert.equal(second.key, 'write_file\u0000"*"');
 });
 
 test('grants come back when the session is replayed', async () => {

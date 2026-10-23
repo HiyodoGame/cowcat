@@ -1,4 +1,5 @@
 import { copyFor, type Copy } from '../app/copy.js';
+import { costOf, formatCost } from '../app/meter.js';
 import { runningAgents, type TuiView } from '../app/view.js';
 import { line, type Line } from '../ui/line.js';
 import { truncate, stringWidth } from '../text/width.js';
@@ -58,6 +59,13 @@ export function statusLine(view: TuiView, options: StatusOptions = { now: 0 }): 
       parts.push(`ctx ${String(Math.round((used / window) * 100))}%`);
     }
     parts.push(`↑${String(view.usage.input)} ↓${String(view.usage.output)}`);
+    // The session meter (ADR-131 1/2): the total across every turn, priced only when
+    // the preset declared a price. Renders with the first usage, never before — a
+    // meter that shows zeros for a log that never billed anything is inventing a fact.
+    parts.push(`Σ↑${String(view.usageTotals.input)} ↓${String(view.usageTotals.output)}`);
+    if (view.price !== null) {
+      parts.push(`≈${formatCost(costOf(view.usageTotals, view.price))}`);
+    }
   }
   if (view.closed) parts.push('连接已断开');
   const text = parts.join(' · ');

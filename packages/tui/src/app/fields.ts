@@ -46,6 +46,13 @@ export function records(update: unknown, name: string): readonly Record<string, 
   return value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null);
 }
 
+/** A string array field (e.g. an approval's dimensions), empty when absent or not one. */
+export function texts(update: unknown, name: string): readonly string[] {
+  const value = read(update, name);
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
 /** The event envelope's type, which every event has. */
 export function updateType(update: unknown): string | null {
   return text(update, 'type');

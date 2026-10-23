@@ -42,4 +42,21 @@ export interface ModelPreset {
    * not sent, and the turn reports it.
    */
   readonly efforts?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /**
+   * What this model costs, in USD per 1M tokens (ADR-131 ②). Declared by the person
+   * who declared the preset — no vendor price list is hard-coded here. Absent means
+   * "no opinion": the status bar shows tokens, never an invented price.
+   */
+  readonly price?: PriceTable;
+}
+
+/**
+ * USD per 1M tokens. Rates a table does not declare are treated as zero, which is
+ * "the cost report is partial" said in the only way a number can say it.
+ */
+export interface PriceTable {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead?: number | undefined;
+  readonly cacheCreation?: number | undefined;
 }

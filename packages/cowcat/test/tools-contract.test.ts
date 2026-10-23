@@ -22,7 +22,7 @@ import {
 } from '../src/index.js';
 
 const signal = new AbortController().signal;
-const noGrant: ToolGrant = { networkApproved: false };
+const noGrant: ToolGrant = { networkApproved: false, unsandboxedApproved: false };
 
 /** Never reached in this file: every call here is either invalid or answered with `ok`. */
 class UnreachableProcess implements ProcessPort {

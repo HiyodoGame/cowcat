@@ -642,6 +642,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // Plan review is top-level only: a child session's deps omit this, which keeps
       // ExitPlan off its wire and its calls reading as unknown tools (ADR-124 ⑥).
       planReview: (callId) => askPlanReview(rec, callId),
+      // Escalate appeals are top-level only: children omit the flag, keeping the tool
+      // off their wire (ADR-129 — the Task/ExitPlan gating precedent).
+      escalation: true,
     };
 
     let failure: unknown = null;
@@ -832,6 +835,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       return {
         lastSeq,
         replay,
+        // The meter (ADR-131 ①): derived from the same replay the client is about to
+        // receive, so the two can never disagree about what has been billed.
+        usage: { ...rec.session.state.usageTotals },
         subscribe: (listener: (update: unknown) => void) => {
           const queued = buffered.filter((update) => {
             if (update.type === 'model.delta' || update.type === 'reasoning.delta' || update.type === 'tool.output.delta') {
