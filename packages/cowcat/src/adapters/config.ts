@@ -116,6 +116,16 @@ const modelSchema = z.strictObject({
   providers: z.record(z.string(), providerSettingsSchema).optional(),
 });
 
+const otelSchema = z.strictObject({
+  // OTLP/HTTP endpoint, e.g. http://localhost:4318/v1/traces. Absent (here and in
+  // OTEL_EXPORTER_OTLP_ENDPOINT) means telemetry stays off — zero overhead is the
+  // default (ADR-134).
+  endpoint: z.string().min(1).optional(),
+  // Name of an env var holding `k=v,k=v` headers. The secret travels only through
+  // the environment; the config names the variable, it never holds the value.
+  headersEnv: z.string().min(1).optional(),
+});
+
 const documentSchema = z.strictObject({
   rules: z.array(z.unknown()).optional(),
   sandbox: sandboxSchema.optional(),
@@ -123,6 +133,7 @@ const documentSchema = z.strictObject({
   // The hooks section is validated and executed by the hooks adapter (ADR-123 ③), not
   // resolved into kernel config — the file layer only has to let the key through.
   hooks: z.record(z.string(), z.unknown()).optional(),
+  otel: otelSchema.optional(),
   mcp: z
     .strictObject({
       servers: z
@@ -247,8 +258,18 @@ function decodeSource(source: ConfigSource): { readonly ok: true; readonly value
         ...(document.data.sandbox === undefined ? {} : { sandbox: toSandbox(document.data.sandbox) }),
         ...(document.data.model === undefined ? {} : { model: toModel(document.data.model) }),
         ...(document.data.mcp === undefined ? {} : { mcp: toMcp(document.data.mcp) }),
+        // otel is resolved from the user layer only (ADR-134): a project or session
+        // document must not be able to turn telemetry on, pick an endpoint, or name
+        // an env var for a workspace the user has not vetted. Syntactically valid
+        // here (one schema), loudly ignored there.
+        ...(document.data.otel === undefined || source.kind !== 'user'
+          ? {}
+          : { otel: { ...(document.data.otel.endpoint === undefined ? {} : { endpoint: document.data.otel.endpoint }), ...(document.data.otel.headersEnv === undefined ? {} : { headersEnv: document.data.otel.headersEnv }) } }),
       },
-      warnings,
+      warnings:
+        document.data.otel === undefined || source.kind === 'user'
+          ? warnings
+          : [...warnings, { source: source.path, problem: 'otel: only read from the user config (ADR-134); this layer ignored it' }],
     },
   };
 }

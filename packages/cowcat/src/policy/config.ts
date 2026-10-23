@@ -248,6 +248,17 @@ export interface ConfigLayer {
   readonly sandbox?: SandboxSettings;
   readonly model?: ModelSettings;
   readonly mcp?: McpSettings;
+  readonly otel?: OtelSettings;
+}
+
+/**
+ * OTel export settings (ADR-134). Resolved from the USER layer only — the loader
+ * warns and drops it anywhere else. Both fields optional; absent endpoint (here
+ * and in env) keeps telemetry off.
+ */
+export interface OtelSettings {
+  readonly endpoint?: string;
+  readonly headersEnv?: string;
 }
 
 // Three layers, lowest first. The legacy implementation had seven, one of which —
@@ -280,6 +291,7 @@ export interface CowcatConfig {
   readonly sandbox: ResolvedSandboxSettings;
   readonly model: ResolvedModelSettings;
   readonly mcp: ResolvedMcpSettings;
+  readonly otel: OtelSettings | undefined;
 }
 
 /** Layer 0. Not a file, and not overridable by omission. */
@@ -288,6 +300,7 @@ export const DEFAULT_CONFIG: CowcatConfig = {
   sandbox: DEFAULT_SANDBOX_SETTINGS,
   model: DEFAULT_MODEL_SETTINGS,
   mcp: DEFAULT_MCP_SETTINGS,
+  otel: undefined,
 };
 
 export interface ConfigLayers {
@@ -331,6 +344,9 @@ export function resolveConfig(layers: ConfigLayers): CowcatConfig {
       [layers.project, 'project'],
       [layers.session, 'session'],
     ]),
+    // Not merged, not layered: the user layer either named it or telemetry stays off
+    // (ADR-134). Nothing below can widen, move, or switch it on.
+    otel: layers.user?.otel,
   };
 }
 
