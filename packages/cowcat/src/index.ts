@@ -78,6 +78,7 @@ export { assessCommand, type CommandRisk, type CommandWarning } from './policy/c
 export { AuditConsumer, type AuditSummary } from './policy/audit.js';
 export { JsonlAuditSink, type JsonlAuditSinkOptions } from './adapters/audit.js';
 export { FileTrustStore, extractTrusted, type FileTrustStoreOptions } from './adapters/trust.js';
+export { cleanupWorktree, ensureWorktree, type EnsureWorktreeResult, type WorktreeCleanup, type WorktreeDeps, type WorktreeInfo } from './adapters/worktree.js';
 export {
   GLOBAL_INSTRUCTION_FILENAME,
   INSTRUCTION_FILENAMES,

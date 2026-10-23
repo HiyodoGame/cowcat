@@ -159,6 +159,15 @@ export interface CreateHostOptions {
    */
   readonly unattended?: boolean;
   readonly approvalTimeoutMs?: number;
+  /**
+   * Facts about the workspace the profile must admit but a config file cannot name
+   * honestly (ADR-147): the CLI's worktree flow passes the main checkout's git dir so
+   * `git commit` works from inside a worktree session. Appended to the config's
+   * allow lists BEFORE resolution, so every entry is canonicalized by the same
+   * `resolveEntries` path (ADR-017); they are the host's facts, never new verdict types.
+   */
+  readonly extraWritePaths?: readonly string[];
+  readonly extraReadPaths?: readonly string[];
 }
 
 /**
@@ -283,7 +292,20 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   ]);
 
   const platform = options.platform ?? new NodePlatform({ env: options.env });
-  const sandbox = resolveSandboxProfile(config.sandbox, { cwd: options.cwd, home: options.home, fs });
+  const sandbox = resolveSandboxProfile(
+    {
+      ...config.sandbox,
+      write: {
+        ...config.sandbox.write,
+        allow: [...(options.extraWritePaths ?? []), ...config.sandbox.write.allow],
+      },
+      read: {
+        ...config.sandbox.read,
+        allow: [...(options.extraReadPaths ?? []), ...config.sandbox.read.allow],
+      },
+    },
+    { cwd: options.cwd, home: options.home, fs },
+  );
   const processes =
     options.process ??
     new NodeProcess({

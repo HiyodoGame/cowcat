@@ -39,7 +39,7 @@ export async function statePaths(): Promise<CowcatPaths> {
  */
 export async function buildHost(
   context: CommandContext,
-  options: { readonly unattended?: boolean } = {},
+  options: { readonly unattended?: boolean; readonly extraPaths?: { readonly write: readonly string[]; readonly read: readonly string[] } } = {},
 ): Promise<CowcatHost | null> {
   const { createHost, HostConfigError } = await import('@corescense/cowcat-core');
   const configPath = flagValue(context.flags, 'config');
@@ -52,6 +52,14 @@ export async function buildHost(
       paths: await statePaths(),
       ...(configPath === null ? {} : { configPath }),
       ...(options.unattended === true ? { unattended: true } : {}),
+      // ADR-147: the worktree flow grants the main checkout's git dir — the host's fact
+      // about the workspace, canonicalized by the profile resolution like any allow entry.
+      ...(options.extraPaths === undefined
+        ? {}
+        : {
+            extraWritePaths: options.extraPaths.write,
+            extraReadPaths: options.extraPaths.read,
+          }),
     });
   } catch (error) {
     if (error instanceof HostConfigError) {
