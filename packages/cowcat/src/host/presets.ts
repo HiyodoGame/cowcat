@@ -106,6 +106,16 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
     limits: { output: 131072, context: 1000000 },
     toolCalls: true,
   },
+  // The vision bridge for text models (ADR-138): GLM's free vision tier on the same zai
+  // provider — a user with ZHIPU_API_KEY gets View working with zero extra setup. It
+  // answers image questions; it never joins a conversation's tool loop.
+  'zai/glm-4v-flash': {
+    protocol: 'openai',
+    model: 'glm-4v-flash',
+    limits: { output: 4096, context: 8192 },
+    toolCalls: false,
+    vision: true,
+  },
   // The Flash tier: same limits, cheaper. Included because "the small one" is what most
   // smoke tests and first runs actually want (catalog: cost 0.15/0.5 per Mtok).
   'zai/glm-5.3-flash': {

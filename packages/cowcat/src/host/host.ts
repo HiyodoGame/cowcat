@@ -18,6 +18,7 @@ import { createGrepTool } from '../adapters/tools/grep.js';
 import { createReadTool } from '../adapters/tools/read.js';
 import { createTodoWriteTool } from '../adapters/tools/todo.js';
 import { createRememberTool } from '../adapters/tools/remember.js';
+import { createViewTool } from '../adapters/tools/view.js';
 import { createWriteTool } from '../adapters/tools/write.js';
 import { NodeBackgroundTasks } from '../adapters/background.js';
 import { AttachmentUnavailableError, materializeAttachment } from '../adapters/attachments.js';
@@ -322,6 +323,23 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     sessionsDir: paths.sessionsDir,
   });
 
+  // The vision endpoint for the View tool (ADR-138 ③): LAZY. selectModel and
+  // createModelPort fail on a missing key or unknown preset, and that failure belongs
+  // to the first View call (a refusal the model can relay), never to createHost —
+  // the otel malformed-endpoint lesson, same shape. Only successes are cached.
+  const visionPresetId = config.vision ?? 'zai/glm-4v-flash';
+  let visionCache: { readonly port: ModelPort; readonly model: string } | null = null;
+  const visionEndpoint = (): { readonly port: ModelPort; readonly model: string } => {
+    if (visionCache === null) {
+      const selection = selectModel({ ...config.model, preset: visionPresetId });
+      visionCache = {
+        port: createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch }),
+        model: selection.preset.model,
+      };
+    }
+    return visionCache;
+  };
+
   const builtinTools = createTools({
     cwd: options.cwd,
     platform,
@@ -333,6 +351,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     spill: { rootDir: paths.sessionsDir },
     home: options.home,
     workspaceTrusted,
+    vision: visionEndpoint,
   });
 
   // MCP servers (ADR-083~087). Project entries are executable entry points, so the same
@@ -1323,6 +1342,8 @@ function createTools(options: {
   readonly home: string;
   /** The startup trust snapshot; gates *-project Remember targets (ADR-136 ②). */
   readonly workspaceTrusted: boolean;
+  /** Lazy vision endpoint for the View tool (ADR-138 ③); throwing is the contract. */
+  readonly vision: () => { readonly port: ModelPort; readonly model: string };
 }): ReadonlyMap<string, ToolPort> {
   const tools: readonly ToolPort[] = [
     createReadTool({ cwd: options.cwd, spill: options.spill }),
@@ -1342,6 +1363,7 @@ function createTools(options: {
     }),
     createTodoWriteTool(),
     createRememberTool({ cwd: options.cwd, home: options.home, trusted: options.workspaceTrusted }),
+    createViewTool({ cwd: options.cwd, vision: options.vision }),
     // No skills, no tool: an empty `Skill` would only tell the model what is not there.
     ...(options.skills.length === 0 ? [] : [createSkillTool({ skills: options.skills })]),
   ];

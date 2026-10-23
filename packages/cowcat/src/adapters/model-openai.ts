@@ -207,7 +207,40 @@ function toWireMessages(
   const wire: OpenAI.Chat.ChatCompletionMessageParam[] = [];
   if (request.system !== undefined) wire.push({ role: 'system', content: request.system });
   for (const message of request.messages) wire.push(...toWireMessagesFor(message, reasoningReplayField));
+  // The direct-call channel (ADR-139): images join the FIRST user message as content
+  // parts, after its text. Unlike the conversation path (ADR-069), a missing file here
+  // is still named-not-dropped: the note rides the same message.
+  if (request.images !== undefined && request.images.length > 0) {
+    const parts = directImageParts(request.images);
+    const firstUser = wire.find((message) => message.role === 'user');
+    if (firstUser !== undefined) {
+      // Narrowed to the user variant by the find predicate; content is string or parts.
+      const user = firstUser as { content: string | OpenAI.Chat.ChatCompletionContentPart[] | undefined };
+      user.content =
+        typeof user.content === 'string' ? [{ type: 'text', text: user.content }, ...parts] : [...(user.content ?? []), ...parts];
+    } else {
+      wire.push({ role: 'user', content: parts });
+    }
+  }
   return wire;
+}
+
+/** Materialize direct-call images into content parts (ADR-139). */
+function directImageParts(images: readonly Attachment[]): OpenAI.Chat.ChatCompletionContentPart[] {
+  const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
+  for (const image of images) {
+    if (image.type !== 'image') continue;
+    const materialized = tryMaterializeAttachment(image);
+    if (!materialized.ok) {
+      parts.push({ type: 'text', text: unavailableAttachmentNote(image, materialized.error.reason) });
+      continue;
+    }
+    parts.push({
+      type: 'image_url',
+      image_url: { url: `data:${materialized.value.mediaType};base64,${materialized.value.base64}` },
+    });
+  }
+  return parts;
 }
 
 /**

@@ -61,7 +61,7 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
             {
               model: request.model,
               max_tokens: maxTokens,
-              messages: toWireMessages(request.messages, carryReasoning),
+              messages: toWireMessages(request.messages, request.images, carryReasoning),
               stream: true,
               ...(request.system === undefined ? {} : { system: request.system }),
               ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
@@ -235,8 +235,13 @@ type PendingBlock =
 // into the single user turn that must carry them** — this protocol pairs results with
 // their calls through that one message, and a `role: 'tool'` per result is an OpenAI
 // shape it does not have.
-function toWireMessages(messages: readonly Message[], carryReasoning: boolean): Anthropic.MessageParam[] {
+function toWireMessages(messages: readonly Message[], images: readonly Attachment[] | undefined, carryReasoning: boolean): Anthropic.MessageParam[] {
   const wire: Anthropic.MessageParam[] = [];
+  // The direct-call channel (ADR-139): images join the FIRST user message after its
+  // text, using the same block builder as tool-result attachments.
+  const directImages =
+    images === undefined || images.length === 0 ? [] : images.filter((image) => image.type === 'image').map(toAttachmentBlock);
+  let imagesPlaced = directImages.length === 0;
   for (const message of messages) {
     if (message.role === 'tool') {
       const previous = wire[wire.length - 1];
@@ -260,7 +265,14 @@ function toWireMessages(messages: readonly Message[], carryReasoning: boolean): 
       continue;
     }
     if (message.role === 'user') {
-      wire.push({ role: 'user', content: [{ type: 'text', text: message.text }] });
+      wire.push({
+        role: 'user',
+        content:
+          imagesPlaced || directImages.length === 0
+            ? [{ type: 'text', text: message.text }]
+            : [{ type: 'text', text: message.text }, ...directImages],
+      });
+      imagesPlaced = true;
       continue;
     }
     const blocks: Anthropic.ContentBlockParam[] = [];
@@ -285,6 +297,10 @@ function toWireMessages(messages: readonly Message[], carryReasoning: boolean): 
     // An assistant turn with neither text nor calls cannot be represented, and cannot
     // occur: `model.message` always carries at least one of them.
     if (blocks.length > 0) wire.push({ role: 'assistant', content: blocks });
+  }
+  // Images with no user message anywhere: they still go out, in their own user turn.
+  if (!imagesPlaced && directImages.length > 0) {
+    wire.push({ role: 'user', content: [...directImages] });
   }
   return wire;
 }

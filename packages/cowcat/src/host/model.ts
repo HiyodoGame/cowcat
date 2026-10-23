@@ -138,6 +138,8 @@ function customToPreset(custom: NonNullable<ResolvedModelSettings['presets'][str
     // Absent means "it can call tools": the built-in table is for tool-calling models,
     // and a preset that says nothing is the common case.
     toolCalls: custom.toolCalls ?? true,
+    // Absent means "text-only" (ADR-138): vision is declared, never assumed.
+    ...(custom.vision === undefined ? {} : { vision: custom.vision }),
     ...(custom.efforts === undefined ? {} : { efforts: custom.efforts }),
     ...(custom.price === undefined ? {} : { price: custom.price }),
   };

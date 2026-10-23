@@ -31,6 +31,12 @@ export interface ModelPreset {
    */
   readonly toolCalls: boolean;
   /**
+   * Whether the model can see images at all (ADR-138). Absent/false means "text-only":
+   * a text-only model that needs image content goes through the View tool, which
+   * bridges to a vision-capable preset. Declared as data, like `toolCalls` (ADR-046).
+   */
+  readonly vision?: boolean;
+  /**
    * The wire parameters behind each reasoning level, declared as data (ADR-046
    * decision ④) — for instance `{ high: { reasoning_effort: 'high' },
    * min: { thinking: { type: 'enabled', budget_tokens: 4096 } } }`.
