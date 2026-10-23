@@ -10,7 +10,7 @@
 //      mirror of ADR-030's read gate: an untrusted workspace must not write back
 //      into files it will later be trusted to inject (ADR-136 ②).
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { ToolPort } from '../../ports/index.js';
@@ -63,7 +63,7 @@ const inputSchema = z
     content: z.string().min(1).describe('The memory: a markdown paragraph, or the skill body (frontmatter is built for you)'),
     mode: z.enum(['append', 'rewrite-cowcat-section']).optional().describe('Instructions targets only; default append'),
     name: z.string().optional().describe('Skill targets only: directory/name of the skill'),
-    description: z.string().optional().describe('Skill targets only: one-line pitch, ≤1024 chars'),
+    description: z.string().min(1).optional().describe('Skill targets only: one-line pitch, ≤1024 chars'),
   })
   .strict();
 
@@ -90,36 +90,46 @@ function destination(options: RememberToolOptions, target: Target, name: string 
 
 function readExisting(path: string): string | null {
   if (!existsSync(path)) return null;
-  const content = readFileSync(path, 'utf8');
-  if (content.length > FILE_SURVEY_MAX_CHARS) {
-    throw new Error(`memory file is ${String(content.length)} chars, past the ${String(FILE_SURVEY_MAX_CHARS)} the tool will survey; edit it by hand`);
+  // Size first, read second: a 1 GB memory file must fail BEFORE it is in memory,
+  // not after (review of #192, P2-8).
+  if (statSync(path).size > FILE_SURVEY_MAX_CHARS) {
+    throw new Error(`memory file is past the ${String(FILE_SURVEY_MAX_CHARS)} chars the tool will survey; edit it by hand`);
   }
-  return content;
+  return readFileSync(path, 'utf8');
 }
 
 function applyInstructions(existing: string | null, content: string, mode: 'append' | 'rewrite-cowcat-section'): string {
-  if (existing === null) {
+  // An empty file is a file with nothing in it: same handling as absent, not the
+  // leading blank lines the regex path would produce (review of #192, P2-7).
+  const base = existing === '' ? null : existing;
+  if (base === null) {
     return mode === 'rewrite-cowcat-section' ? `${SECTION_BEGIN}\n${content}\n${SECTION_END}\n` : `${content}\n`;
   }
   if (mode === 'append') {
-    return `${existing.replace(/\n*$/, '\n')}\n${content}\n`;
+    return `${base.replace(/\n*$/, '\n')}\n${content}\n`;
   }
-  const begin = existing.indexOf(SECTION_BEGIN);
-  const end = existing.indexOf(SECTION_END);
+  // More than one marked section means a hand-edit duplicated the markers; replacing
+  // "the" section would silently leave a stale twin behind. Refuse loudly instead.
+  if (base.split(SECTION_BEGIN).length > 2) {
+    throw new Error(`found more than one ${SECTION_BEGIN} section; merge them by hand, then retry`);
+  }
+  const begin = base.indexOf(SECTION_BEGIN);
+  const end = base.indexOf(SECTION_END);
   const section = `${SECTION_BEGIN}\n${content}\n${SECTION_END}`;
   if (begin >= 0 && end >= begin) {
-    return `${existing.slice(0, begin)}${section}${existing.slice(end + SECTION_END.length)}`;
+    return `${base.slice(0, begin)}${section}${base.slice(end + SECTION_END.length)}`;
   }
-  return `${existing.replace(/\n*$/, '\n')}\n${section}\n`;
+  return `${base.replace(/\n*$/, '\n')}\n${section}\n`;
 }
 
 function applySkill(name: string, description: string, body: string): string {
   // Frontmatter carries exactly the two honoured keys (ADR-135 ⑤): anything else a
   // model tries to smuggle in is dropped here and reported by doctor if hand-added
-  // later (ADR-115). No quote-dodging: description is YAML-escaped by quoting, and a
-  // quote in it is an authoring error the writer sees immediately.
-  const safeDescription = description.includes('"') || description.includes('\n') ? description.replace(/"/g, "'").replace(/\n/g, ' ') : description;
-  return `---\nname: ${name}\ndescription: "${safeDescription}"\n---\n\n${body.replace(/^\n+/, '')}\n`;
+  // later (ADR-115). The description goes through JSON.stringify, not by-hand
+  // quoting: a JSON string is a valid YAML double-quoted scalar, and it covers the
+  // whole escape surface (quotes, backslashes like C:\paths, tabs, CR) that
+  // conditional replacing keeps missing (review of #192, P1-2).
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${body.replace(/^\n+/, '')}\n`;
 }
 
 export function createRememberTool(options: RememberToolOptions): ToolPort {
@@ -168,6 +178,8 @@ export function createRememberTool(options: RememberToolOptions): ToolPort {
         if (target.startsWith('instructions-')) {
           const existing = readExisting(dest);
           const mode = input.mode ?? 'append';
+          // Parent may legitimately be missing on a fresh home; cheap to ensure.
+          mkdirSync(dirname(dest), { recursive: true });
           writeFileSync(dest, applyInstructions(existing, input.content, mode));
           return {
             ok: true,
@@ -178,7 +190,12 @@ export function createRememberTool(options: RememberToolOptions): ToolPort {
         const name = input.name as string;
         const description = input.description as string;
         mkdirSync(dirname(dest), { recursive: true });
-        writeFileSync(dest, applySkill(name, description, input.content));
+        // Whole-file skill writes go through temp + rename: a crash mid-write must not
+        // leave a half-born SKILL.md that discovery then reads as gospel
+        // (review of #192, P2-8; instructions use read-modify-write and stay best-effort).
+        const temp = `${dest}.tmp-${String(process.pid)}`;
+        writeFileSync(temp, applySkill(name, description, input.content));
+        renameSync(temp, dest);
         return {
           ok: true,
           output: `remembered → ${dest} (${String(input.content.length)} chars, skill ${JSON.stringify(name)})`,

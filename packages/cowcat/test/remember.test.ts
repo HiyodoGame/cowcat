@@ -1,4 +1,4 @@
-﻿// D10 T1 (ADR-135/136): the Remember memory-write tool 鈥?four targets, two write
+// D10 T1 (ADR-135/136): the Remember memory-write tool —four targets, two write
 // shapes, trust symmetry, caps. These tests hit the real filesystem under temp dirs
 // (the tool is a disk writer; mocking fs would test the mock).
 
@@ -104,7 +104,7 @@ test('skill targets write a whole SKILL.md with exactly the two honoured frontma
   const v2 = readFileSync(join(cwd, '.cowcat', 'skills', 'release-checklist', 'SKILL.md'), 'utf8');
   assert.match(v2, /description: "v2"/);
   assert.equal(v2.includes('only the body remains'), true);
-  assert.equal(v2.includes('# Release'), false, 'the previous body is gone 鈥?whole-file write');
+  assert.equal(v2.includes('# Release'), false, 'the previous body is gone —whole-file write');
 });
 
 test('caps and required fields refuse loudly, not silently', async () => {
@@ -131,4 +131,52 @@ test('caps and required fields refuse loudly, not silently', async () => {
     content: 'body',
   });
   assert.equal(longDesc.ok, false);
+});
+
+test('an empty existing file appends cleanly (no leading blank lines)', async () => {
+  const { cwd, tool } = fixture(true);
+  const path = join(cwd, 'AGENTS.md');
+  writeFileSync(path, '');
+  const result = await run(tool, { target: 'instructions-project', content: 'only lesson' });
+  assert.equal(result.ok, true);
+  assert.equal(readFileSync(path, 'utf8'), 'only lesson\n');
+});
+
+test('duplicate marked sections refuse loudly instead of rewriting one and leaving a twin', async () => {
+  const { cwd, tool } = fixture(true);
+  const path = join(cwd, 'AGENTS.md');
+  writeFileSync(
+    path,
+    '<!-- cowcat:memory -->\nold a\n<!-- /cowcat:memory -->\n\n<!-- cowcat:memory -->\nold b\n<!-- /cowcat:memory -->\n',
+  );
+  const result = await run(tool, { target: 'instructions-project', mode: 'rewrite-cowcat-section', content: 'new' });
+  assert.equal(result.ok, false);
+  assert.match(result.output, /more than one/);
+  assert.match(readFileSync(path, 'utf8'), /old a/, 'nothing was rewritten');
+});
+
+test('descriptions with backslashes, tabs, and quotes round-trip as valid YAML scalars', async () => {
+  const { home, tool } = fixture(true);
+  const tricky = 'uses C:\\tools\\nightly\tand "quoted" paths';
+  const result = await run(tool, {
+    target: 'skill-user',
+    name: 'tricky-desc',
+    description: tricky,
+    content: 'body',
+  });
+  assert.equal(result.ok, true);
+  const text = readFileSync(join(home, '.cowcat', 'skills', 'tricky-desc', 'SKILL.md'), 'utf8');
+  // JSON.stringify is a valid YAML double-quoted scalar: the written description
+  // line must be exactly the JSON encoding, which escapes every YAML metachar.
+  assert.ok(text.includes(`description: ${JSON.stringify(tricky)}`));
+  assert.doesNotThrow(() => {
+    const line = text.split('\n').find((l) => l.startsWith('description: '));
+    if (line === undefined) throw new Error('no description line');
+  });
+});
+
+test('an empty description is refused (a skill with no pitch never surfaces)', async () => {
+  const { tool } = fixture(true);
+  const result = await run(tool, { target: 'skill-user', name: 'n', description: '', content: 'body' });
+  assert.equal(result.ok, false);
 });

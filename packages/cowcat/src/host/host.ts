@@ -794,18 +794,33 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
    * opportunistic, never a session event the user did not ask for.
    */
   async function maybeReflect(rec: SessionRecord): Promise<void> {
-    if (!reflectEnabled || rec.reflecting) return;
+    if (!reflectEnabled || rec.reflecting || rec.turnStarting) return;
     if (options.unattended === true) return;
     if (rec.running !== null) return;
     const turn = rec.session.state.turn;
     if (turn === null || turn.state !== 'completed') return;
     if (rec.session.state.planMode) return;
     rec.reflecting = true;
+    // Claim the same check-and-claim flag sendTurn brackets: without this, a
+    // sendTurn that passed its busy check and is awaiting an @-file read (turnStarting
+    // true, running still null) lets the reflect turn start underneath it — two
+    // concurrent runTurns on one Session, and an interleaved event log that stops
+    // replaying (review of #192, P0-1).
+    rec.turnStarting = true;
     try {
       await startTurn(rec, currentModel(), REFLECT_PROMPT, new AbortController(), true);
+      // The flag means "a reflect turn owns this session", not "one is starting":
+      // startTurn answers as soon as the turn OPENS, so hold it until the reflect
+      // turn actually settles — the busy message and the re-entry guard both key
+      // off the whole turn, and no other turn can start meanwhile (busy check).
+      // The getter call is load-bearing: TS narrowed `rec.running` to null at the
+      // guard above and keeps that narrowing across the awaits.
+      const running = ((): SessionRecord['running'] => rec.running)();
+      await running?.done;
     } catch {
       // See the doc comment: never surface.
     } finally {
+      rec.turnStarting = false;
       rec.reflecting = false;
     }
   }
@@ -1021,9 +1036,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // reading and emitting are real I/O, and two concurrent sends could otherwise
       // both pass the check and interleave attachments (review of #173, P1-3).
       if (rec.running !== null || rec.turnStarting) {
-        throw new ProtocolHostError(`session ${sessionId} already has a turn running`, ERROR_CODES.hostRefused, {
-          sessionId,
-        });
+        // A reflect turn holds the session exactly like a user turn does (runTurn is
+        // per-session serialized), but it is opportunistic: the message says so
+        // rather than letting the user believe their own turn is stuck
+        // (review of #192, P1-3 — aborting it instead was rejected: an approval the
+        // reflect turn is parked on would dangle until the timeout).
+        throw new ProtocolHostError(
+          rec.reflecting
+            ? `session ${sessionId} is running a background memory reflect turn; it will clear on its own (or when its approval is answered)`
+            : `session ${sessionId} already has a turn running`,
+          ERROR_CODES.hostRefused,
+          { sessionId },
+        );
       }
       rec.turnStarting = true;
       try {

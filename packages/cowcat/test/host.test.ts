@@ -2195,3 +2195,116 @@ test('a project config cannot turn reflection on (cost is the user layer decisio
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(model.requests.length, 1, 'the project layer was ignored');
 });
+test('an Escalate appeal cannot smuggle project memory past the trust gate (ADR-136 ②)', async (t) => {
+  const home = tempDir(t, 'cowcat-memesc-home-');
+  const cwd = tempDir(t, 'cowcat-memesc-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c_denied', name: 'Remember', input: { target: 'instructions-project', content: 'sneaky one' } } }],
+    [{ type: 'tool_call', call: { callId: 'c_escalate', name: 'Escalate', input: { name: 'Remember', command: 'instructions-project', justification: 'the task genuinely needs this write' } } }],
+    [{ type: 'tool_call', call: { callId: 'c_retry', name: 'Remember', input: { target: 'instructions-project', content: 'sneaky one' } } }],
+    [{ type: 'text', text: 'the gate held' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_memesc');
+  await fixture.client.openSession('sess_memesc');
+  await fixture.client.sendTurn('sess_memesc', 'try hard to remember this');
+  await fixture.until('the escalation approval', () =>
+    fixture.events().some((e) => e.type === 'approval.requested' && field(e, 'rule') === 'escalation'),
+  );
+  const ask = fixture.events().find((e) => e.type === 'approval.requested' && field(e, 'rule') === 'escalation');
+  await fixture.client.respondApproval('sess_memesc', field(ask, 'callId') as string, 'once');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+
+  const retry = fixture.events().find((e) => e.type === 'tool.finished' && field(e, 'callId') === 'c_retry');
+  assert.ok(retry, 'the escalate grant did let the retry reach the tool');
+  assert.equal(field(retry, 'ok'), false, 'and the in-tool trust gate refused it');
+  assert.match(String(field(retry, 'output')), /not trusted/);
+  assert.equal(existsSync(join(cwd, 'AGENTS.md')), false, 'untrusted stays untrusted');
+});
+
+test('an always answer on a target covers that targets later writes (approvalKey name+target)', async (t) => {
+  const home = tempDir(t, 'cowcat-memalw-home-');
+  const cwd = tempDir(t, 'cowcat-memalw-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  writeJson(join(home, '.cowcat', 'trust.json'), { trusted: [cwd] });
+
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c_first', name: 'Remember', input: { target: 'instructions-project', content: 'first lesson' } } }],
+    [{ type: 'tool_call', call: { callId: 'c_second', name: 'Remember', input: { target: 'instructions-project', content: 'second lesson' } } }],
+    [{ type: 'text', text: 'both remembered' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_memalw');
+  await fixture.client.openSession('sess_memalw');
+  await fixture.client.sendTurn('sess_memalw', 'distill two lessons');
+  await fixture.until('the first write approval', () =>
+    fixture.events().some((e) => e.type === 'approval.requested' && field(e, 'name') === 'Remember'),
+  );
+  const ask = first(fixture.events(), 'approval.requested');
+  await fixture.client.respondApproval('sess_memalw', field(ask, 'callId') as string, 'always');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed'),
+  );
+
+  assert.equal(
+    fixture.events().filter((e) => e.type === 'approval.requested' && field(e, 'name') === 'Remember').length,
+    1,
+    'the second write to the same target was covered by the grant',
+  );
+  const written = readFileSync(join(cwd, 'AGENTS.md'), 'utf8');
+  assert.match(written, /first lesson/);
+  assert.match(written, /second lesson/);
+});
+
+test('a user turn arriving while the reflect turn runs gets a distinct, honest refusal', async (t) => {
+  const home = tempDir(t, 'cowcat-membusy-home-');
+  const cwd = tempDir(t, 'cowcat-membusy-proj-');
+  writeUserConfig(home, { model: { preset: PRESET }, memory: { reflect: 'on' } });
+
+  // Turn 1 completes; the reflect turn then calls Remember (user target needs no
+  // trust) and parks on the approval — that is the window the user send arrives in.
+  const model = new ScriptedModel([
+    [{ type: 'text', text: 'task finished' }],
+    [{ type: 'tool_call', call: { callId: 'c_refmem', name: 'Remember', input: { target: 'instructions-user', content: 'reflect lesson' } } }],
+    [{ type: 'text', text: 'reflected' }],
+    [{ type: 'text', text: 'user turn two answer' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_membusy');
+  await fixture.client.openSession('sess_membusy');
+  await fixture.client.sendTurn('sess_membusy', 'do the task');
+  await fixture.until('the reflect turns write approval', () =>
+    fixture.events().some((e) => e.type === 'approval.requested' && field(e, 'name') === 'Remember'),
+  );
+
+  await assert.rejects(fixture.client.sendTurn('sess_membusy', 'second user turn'), /background memory reflect/);
+
+  const ask = first(fixture.events(), 'approval.requested');
+  await fixture.client.respondApproval('sess_membusy', field(ask, 'callId') as string, 'once');
+  await fixture.until('the reflect turn to complete', () =>
+    fixture.events().filter((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed').length >= 2,
+  );
+  // The reflect flag clears a tick after the terminal transition (it awaits the turn's
+  // settled promise); let that land before probing the session is free again.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  // And the session is usable again afterwards.
+  await fixture.client.sendTurn('sess_membusy', 'second user turn');
+  await fixture.until('the second user turn to complete', () =>
+    fixture.events().filter((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed').length >= 3,
+  );
+  assert.match(readFileSync(join(home, '.cowcat', 'AGENTS.md'), 'utf8'), /reflect lesson/);
+});
