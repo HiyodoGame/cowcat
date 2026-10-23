@@ -1,0 +1,162 @@
+# P7 专项调研：记忆续篇·经验蒸馏（D10，写路闭环）
+
+> 状态：调研 PR（只出决定草案与 ADR 清单，不改 ADR 表、不改源码）。
+> 日期：2026-10-23。依据：
+> - dev-plan-v2 P7 模块表：「任务后后台蒸馏回写 AGENTS.md / skills（**写入闸门**（与信任模型的交互）；衔接 ADR-075~078（D10 页）」；
+> - frontier-survey §4.5/§5（D10 行）：「ACE 的 Reflector/Curator 回路；**写入必须过信任闸门**（把 ADR-030 的『未信任不注入』对称扩成『未信任不回写』，回应 prompt injection」。
+
+## 证据分级
+
+沿用仓库纪律：**【源码】**给 `文件:行`；**【上游】**官方文档；**【推断】**未实测，不作决策依据。
+
+## 1. 结论先行
+
+D10 交付**一条对称的写路闭环**：新工具 `Remember` 让模型把经验沉淀为
+AGENTS.md 段落或 skill 文件，写入前经过与读取侧镜像的信任闸门
+（未信任不回写）+ 既有审批桥（ask 时展示目标与内容预览）。
+**内核零改动、零新事件**——审计链完全复用 `approval.requested/answered` +
+`tool.finished`。后台蒸馏（reflect turn）以 user config 显式 opt-in 提供，
+默认关（成本是用户的决定）。
+
+## 2. 现状盘点【源码】
+
+| 资产 | 位置 | 状态 |
+|---|---|---|
+| 指令读取链 | `ports/instructions.ts` `InstructionSource.chain(cwd, {userGlobal})`；user-global = `~/.cowcat/AGENTS.md`（ADR-075） | 只读 |
+| 读取侧信任闸 | `decideInstruction` → `skipped-untrusted` + `describeInstructionSkip`（ADR-030） | 只影响读 |
+| skills 读取 | `ports/skills.ts`：layers `user`/`project`（**trust 只适用 project**，ADR-114），origins `cowcat`/`claude` | 只读 |
+| 审批桥 | askApproval（`host.ts`）；`approval.requested` 带 `reason`/`command`/`path`/`dimensions`（ADR-129 ⑦） | 复用 |
+| unattended 语义 | ask 在 unattended 自动 refuse（ADR-129 ⑤） | 写路天然安全 |
+| 路径身份 | ADR-017：路径身份只在 FsPort 里算 | 束缚地基 |
+| hooks | v1 子集：`stop`/`session-start`/`pre-compact` 等（ADR-121~123），无 session-end | 外部反射可用 `stop` |
+| turn.noted | 内核现成 note 事件（note kind + message） | 备用 |
+| skill frontmatter | 未承认键由 `doctor` 报告（ADR-115） | 防特权走私现成 |
+
+**写路现状：零。** 没有任何组件能写 AGENTS.md / skills——这正是
+「未写尾注」的落点。
+
+## 3. 决定草案
+
+### E1 写入面：`Remember` 工具，四个目标
+
+input `{target, content, mode?, name?, description?}`：
+
+| target | 落点 | mode |
+|---|---|---|
+| `instructions-user` | `~/.cowcat/AGENTS.md` | `append`（默认）/ `rewrite-cowcat-section`（`<!-- cowcat:memory -->` 标记段，有则换无则加） |
+| `instructions-project` | `<cwd>/AGENTS.md` | 同上 |
+| `skill-user` | `~/.cowcat/skills/<name>/SKILL.md` | 整文件写（建或换），frontmatter 仅 `name`/`description` |
+| `skill-project` | `<cwd>/.cowcat/skills/<name>/SKILL.md` | 同上 |
+
+- 单次 caps：指令内容 ≤ 8KB，skill ≤ 32KB，`description` ≤ 1024
+  （沿用 skills spec 天花板【源码 ports/skills.ts:24】）。
+- 模型侧工具描述必须写明「写入会进入未来会话的 prompt——只沉淀真正的
+  经验，不要写临时状态」（写路的产品语义）。
+- **不做的**：任意路径写（不是 Write 的替代品）、删除/移动（v1 不做破坏性
+  操作，纠错靠 `rewrite-cowcat-section` 与整文件替换）、会话层 memory
+  （session 层是易失配置层，不是记忆载体）。
+
+### E2 闸门：risk='write' 审批 + 信任对称
+
+1. **规则通路**：`Remember` 是普通工具，risk `write`（path = 目标文件），
+   走 decide() 的 deny/ask/allow 规则——用户可对整个工具 deny
+   （`{"name":"Remember","verdict":"deny"}`），workspace 可 scoped allow。
+2. **信任对称（ADR-030 镜像）**：`*-project` 目标额外要求 workspace 已信任；
+   未信任 → **工具返回 ok:false 专属输出**（原因 + 「`/act` 信任后可重试」），
+   照 ADR-130 拒绝可见的成例，不静默、不伪造成功。user 目标不受此限
+   （写的是用户自己的家目录）。
+3. **unattended**：ask 自动 refuse（ADR-129 ⑤ 现成语义）→ 无人值守时写路
+   自然关闭，模型收到拒绝并可向用户解释。
+4. **审批展示**：approval.requested 的 `path` = 目标文件、`reason` = 模型说明
+   + 内容预览（截 ~1500 字符）。完整 content 已在 `model.message` 的
+   toolCalls 里进日志【源码】——审计链不缺字节。
+
+### E3 通路形状：adapter 工具 + host 组合根，内核零改动
+
+- `adapters/tools/remember.ts`：纯工具实现，构造时注入
+  `{fs, paths, trust: () => boolean}`——信任谓词由 host 从 FileTrustStore
+  快照给出（host.ts 已有 `trustStore` 与 trust 应用逻辑，ADR-028）。
+- 审批交互**不在工具里**：工具在 `execute` 里做目标解析/信任检查/尺寸检查，
+  信任不过直接返回拒绝输出；信任过了就真正写文件——**risk write + path
+  已由 run-turn 的 decide() 在 execute 之前拦下 ask**（与 Write/Bash 同构）。
+- 零新事件：`approval.requested/answered`（ask 通路自动产生）+
+  `tool.finished`（ok/output 完整记录写入结果）已是全链事实。
+- 依赖方向干净：工具只经 FsPort 写（ADR-017 身份归 FsPort；`..` 逃逸被
+  目标枚举天然消掉——没有自由路径参数）。
+
+### E4 prompt injection 回应（frontier-survey D10 行的核心关切）
+
+1. **读闸的镜像即写闸**：ADR-030 说「未信任不注入，因为 AGENTS.md 是命令
+   执行入口」；D10 补对称句「**未信任不回写**」——同一文件的两端受同一
+   信任模型保护。注入者想让模型把恶意指令写进 `AGENTS.md`，必须先过
+   workspace 信任 + 用户审批两道。
+2. **写入内容永久视为不可信内容**：它进入未来 prompt 时仍受 ADR-030
+   读取闸保护（未信任的 workspace 里，沉淀的段落同样不注入）。
+3. **frontmatter 特权走私无效**：skill 只承认 `name`/`description`，
+   其余键 doctor 报告不承认（ADR-115 现成）。
+4. **审批不可批量豁免**：`always` grant 只认精确 approvalKey
+   （ADR-129 ③）——用户对一次写入点 always，不会静默放行后续不同内容
+   的写入？⚠️ 注意：approvalKey 按 name+path 计算（toolGrantKey 精确化后），
+   对 Remember 意味着「同一路径的后续写入不再询问」——这是 grant 的既有
+   语义，写路与之一致，但要在 ADR 里**显式写出**（写路 always 的宽放程度
+   由用户规则控制，默认 ask）。
+
+### E5 后台蒸馏：reflect turn，显式 opt-in
+
+- user config 加 `memory: { reflect: 'off' | 'on' }`，**默认 off**。
+  project/session 层携带 → 警告并丢弃（照 ADR-134 otel 的成例：成本开关
+  是用户的决定，工作区不得替用户花模型钱）。
+- `on` 时：一个用户回合完成（terminal completed）后，host 自动起一个
+  **受限反射回合**——输入为固定模板（「回顾本会话已完成的工作，若有可复用
+  经验，用 Remember 沉淀；没有就直说没有」），工具集收窄为仅 `Remember`
+  （与 subagent 按 role 收窄工具同一机制【源码 host.ts】），模型照常走
+  写路闸门（ask → 用户审批）。反射回合是日志里的一次正常 turn（诚实入史）。
+- **不反射的条件**：unattended（审批无人答，反射必失败）、plan mode、
+  会话已关闭、上一个 turn 失败/取消。连续回合防重入（一次一个反射回合）。
+- 实现注记【推断】：host.startTurn 是公开 API（input 来自客户端）；反射
+  回合走内部 runTurn 路径，工具收窄需要与 `spawnSubagent` 同款手段，
+  实现时确认 startTurn 内部能否覆盖 tools——若需小改 host 内部编排则接受
+  （不动内核）。
+- 为什么默认 off：后台模型调用是真实花费；且无人值守时审批无意义。
+  `stop` hook（ADR-122）已给外部 reflector 留口——想接自己的蒸馏
+  pipeline 的用户不需要等本产品做自动机。
+
+### E6 TUI/CLI 面
+
+- 审批卡：现有卡渲染 subject/justification（ADR-129 ⑦ + #180 审查的
+  C0/C1 剥离）——Remember 的 path/reason 天然落位，预期零改动；
+  T2 时实测验证【推断→待实测】。
+- doctor：可选新增「skills 里有 cowcat 沉淀的 skill」计数——不做，
+  scope 控制。
+- CLI：无新子命令。配置即入口。
+
+## 4. ADR 清单（待落表）
+
+- **ADR-135 Remember 写入面**：四目标/mode/caps/整文件 skill 写/不做清单
+  （无自由路径、无删除、无会话层 memory）。
+- **ADR-136 信任对称与审批语义**：project 写需 trust（拒绝输出形态照
+  ADR-130）；unattended 关闭写路；approvalKey/always 在写路的宽放语义
+  显式化；注入回应四条款。
+- **ADR-137 后台蒸馏（reflect turn）**：config `memory.reflect`（user 层
+  only，默认 off）；触发条件与不反射条件；受限回合的形状；成本归属。
+
+## 5. T 计划
+
+| 任务 | 内容 | 验收 |
+|---|---|---|
+| T1 | `adapters/tools/remember.ts` + 构造注入 + caps + 信任拒绝输出 + config schema `memory` 块 | 单测：四目标写入/rewrite 段/拒绝未信任/尺寸拒绝/逃逸消于目标枚举；config 层警告 |
+| T2 | host 接线（tools 表 + trust 谓词）+ reflect turn（config on 时）+ host 级测试 | ask 走真审批桥（ScriptedModel 全程）；unattended 不反射；project 未信任拒绝 |
+| T3 | 审批卡渲染实测 | TUI 测试或真机截图确认 path/reason/预览在位 |
+| T4 | 真机验收：glm 交互一轮引导其 Remember 一次 + 橡皮图章审批 + 验证文件落盘 + 新会话注入可见 | 验收记录入 §8 |
+
+## 6. 风险与待验证
+
+- **【推断】** approvalKey 对 Remember 的计算形状（name+path）要在 T2 用
+  测试钉住，尤其 `always` 后对同路径不同内容的宽放——ADR-136 写明确认。
+- **【推断】** reflect turn 的工具收窄若要求 startTurn 内部签名变化，评估
+  对 protocol/TUI 的影响面后再动。
+- **【推断】** TUI 卡对 `reason` 长文本（预览截 1500 字符）的换行/截断——
+  80 列约束下过长的预览可能被截得没意义；T3 实测后定预览上限。
+- skill-project 写入会在 workspace 出现 `.cowcat/skills/` 新目录——与
+  `.gitignore` 的关系不处理（用户版本控制自治），ADR 注明。
+- 已有日志兼容性：零新事件，无 schemaVersion 问题。
