@@ -57,14 +57,17 @@ export interface CronTasksPort {
   /**
    * Validates (schedule syntax, live-job cap) and mints the identity. `ok: false` means
    * NOTHING was scheduled — the tool reports the error to the model, no event is written.
+   * The port writes no events at all: the kernel logs `cron.created` from the tool
+   * result, so there is exactly one writer (ADR-140).
    */
-  create(request: CronCreateRequest): Promise<CronCreateOutcome>;
+  create(sessionId: string, request: CronCreateRequest): Promise<CronCreateOutcome>;
   /**
-   * Deletes by id. False when the id is not live in THIS session — the same ownership
-   * rule `BackgroundTasksPort.stop` follows: one session's tooling must not reach into
-   * another session's job table.
+   * Ownership/existence check for a delete. False when the id is not live in THIS
+   * session — one session's tooling must not reach into another session's job table.
+   * Writes nothing: the event is the caller's job (the kernel for a model's CronDelete,
+   * the host for a `/cron` panel removal), keeping one writer per fact.
    */
-  remove(jobId: string): Promise<boolean>;
-  /** The live projection: everything the log says is scheduled, with next-fire computed. */
-  list(): Promise<readonly CronJobInfo[]>;
+  remove(sessionId: string, jobId: string): Promise<boolean>;
+  /** The live projection for one session: everything its log says is scheduled. */
+  list(sessionId: string): Promise<readonly CronJobInfo[]>;
 }

@@ -7,7 +7,7 @@ import { MemoryEventStore, ScriptedModel, sessionDeps, turnDeps } from './suppor
 // A fake job table with just enough truth for the tools: create refuses above the cap,
 // remove is ownership-checked, list projects what was created minus what was removed.
 
-function fakeCron(existing = 0): { port: CronTasksPort; jobs: CronJobInfo[]; removed: string[] } {
+function fakeCron(existing = 0): { port: CronTasksPort; jobs: CronJobInfo[]; removed: string[]; sessionsTouched: string[] } {
   const jobs: CronJobInfo[] = Array.from({ length: existing }, (_, i) => ({
     jobId: `job_existing_${String(i)}`,
     schedule: '0 9 * * *',
@@ -19,9 +19,11 @@ function fakeCron(existing = 0): { port: CronTasksPort; jobs: CronJobInfo[]; rem
     lastFiredAt: null,
   }));
   const removed: string[] = [];
+  const sessionsTouched: string[] = [];
   let next = 0;
   const port: CronTasksPort = {
-    async create(request) {
+    async create(sessionId, request) {
+      sessionsTouched.push(sessionId);
       if (jobs.length >= 50) return { ok: false, error: 'this session already has 50 live jobs; delete some with CronDelete first' };
       const job: CronJobInfo = {
         jobId: `job_${String(++next)}`,
@@ -36,18 +38,20 @@ function fakeCron(existing = 0): { port: CronTasksPort; jobs: CronJobInfo[]; rem
       jobs.push(job);
       return { ok: true, job, nextRun: null };
     },
-    async remove(jobId) {
+    async remove(sessionId, jobId) {
+      sessionsTouched.push(sessionId);
       const index = jobs.findIndex((job) => job.jobId === jobId);
       if (index === -1) return false;
       jobs.splice(index, 1);
       removed.push(jobId);
       return true;
     },
-    async list() {
+    async list(sessionId) {
+      sessionsTouched.push(sessionId);
       return jobs;
     },
   };
-  return { port, jobs, removed };
+  return { port, jobs, removed, sessionsTouched };
 }
 
 function toolByName(tools: readonly ToolPort[], name: string): ToolPort {
@@ -57,7 +61,7 @@ function toolByName(tools: readonly ToolPort[], name: string): ToolPort {
 }
 
 test('no cron port means no cron tools (ADR-143 ④: absence, not a refusing fake)', () => {
-  assert.deepEqual(createCronTools({}), []);
+  assert.deepEqual(createCronTools({ cron: undefined }), []);
 });
 
 test('CronCreate refuses a malformed schedule without touching the port', async () => {
@@ -67,6 +71,7 @@ test('CronCreate refuses a malformed schedule without touching the port', async 
     { schedule: '0 9 * * MON', prompt: 'check', recurring: false },
     new AbortController().signal,
     { networkApproved: false, unsandboxedApproved: false },
+    { sessionId: 's1', callId: 'cx' },
   );
   assert.equal(result.ok, false);
   assert.match(result.output, /unsupported syntax/);
@@ -80,6 +85,7 @@ test('CronCreate reports the port refusal (the 50-job cap) as an ordinary failur
     { schedule: '*/5 * * * *', prompt: 'poll', recurring: true },
     new AbortController().signal,
     { networkApproved: false, unsandboxedApproved: false },
+    { sessionId: 's1', callId: 'cx' },
   );
   assert.equal(result.ok, false);
   assert.match(result.output, /50 live jobs/);
@@ -92,6 +98,7 @@ test('CronCreate success carries the created fact for the kernel to log (ADR-140
     { schedule: '*/5 * * * *', prompt: 'check the deploy', recurring: true },
     new AbortController().signal,
     { networkApproved: false, unsandboxedApproved: false },
+    { sessionId: 's1', callId: 'cx' },
   );
   assert.equal(result.ok, true);
   const created = result.cronCreated;
@@ -107,7 +114,7 @@ test('CronList answers with the live jobs, empty when there are none', async () 
   const fake = fakeCron();
   const tools = createCronTools({ cron: fake.port });
   const list = toolByName(tools, 'CronList');
-  const empty = await list.run({}, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false });
+  const empty = await list.run({}, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false }, { sessionId: 's1', callId: 'cx' });
   assert.equal(empty.ok, true);
   assert.match(empty.output, /No scheduled jobs/);
 
@@ -115,8 +122,9 @@ test('CronList answers with the live jobs, empty when there are none', async () 
     { schedule: '0 9 * * *', prompt: 'morning check', recurring: false },
     new AbortController().signal,
     { networkApproved: false, unsandboxedApproved: false },
+    { sessionId: 's1', callId: 'cx' },
   );
-  const listed = await list.run({}, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false });
+  const listed = await list.run({}, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false }, { sessionId: 's1', callId: 'cx' });
   assert.equal(listed.ok, true);
   assert.match(listed.output, /job_1/);
   assert.match(listed.output, /one-shot/);
@@ -127,15 +135,16 @@ test('CronDelete: unknown id fails, known id carries the deleted fact', async ()
   const fake = fakeCron();
   const tools = createCronTools({ cron: fake.port });
   const del = toolByName(tools, 'CronDelete');
-  const missing = await del.run({ jobId: 'job_nope' }, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false });
+  const missing = await del.run({ jobId: 'job_nope' }, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false }, { sessionId: 's1', callId: 'cx' });
   assert.equal(missing.ok, false);
 
   await toolByName(tools, 'CronCreate').run(
     { schedule: '0 9 * * *', prompt: 'x', recurring: false },
     new AbortController().signal,
     { networkApproved: false, unsandboxedApproved: false },
+    { sessionId: 's1', callId: 'cx' },
   );
-  const hit = await del.run({ jobId: 'job_1' }, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false });
+  const hit = await del.run({ jobId: 'job_1' }, new AbortController().signal, { networkApproved: false, unsandboxedApproved: false }, { sessionId: 's1', callId: 'cx' });
   assert.equal(hit.ok, true);
   const deleted = hit.cronDeleted;
   assert.ok(deleted !== undefined);

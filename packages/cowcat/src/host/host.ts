@@ -37,9 +37,11 @@ import { FileSkills } from '../adapters/skills.js';
 import { createHooksPort, loadHookSources } from '../adapters/hooks.js';
 import { PROMPT_FILE_MAX_COUNT, PromptFileError, readPromptFile } from '../adapters/prompt-files.js';
 import { createSkillTool } from '../adapters/tools/skill.js';
+import { createCronTools } from '../adapters/tools/cron.js';
 import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
 import { projectRootOf } from '../adapters/instructions.js';
 import { decideSkills } from '../policy/skills.js';
+import { CRON_MAX_JOBS, CRON_RECURRING_TTL_MS, isDue, nextFire, parseSchedule, type CronSpec } from '../policy/cron.js';
 import { Session, type SessionDeps } from '../kernel/session.js';
 import { isTerminal } from '../kernel/turn.js';
 import type { PlanChoice } from '../kernel/plan.js';
@@ -56,6 +58,9 @@ import {
   type Clock,
   type BackgroundExit,
   type BackgroundTasksPort,
+  type CronCreatedRef,
+  type CronJobInfo,
+  type CronTasksPort,
   type EventStore,
   type FsPort,
   type IdSource,
@@ -354,6 +359,196 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     return visionCache;
   };
 
+  // ---- Cron job tables (ADR-140~142). A table is a fold of one session's cron.* events —
+  // built lazily from the store, then kept current by the live-event branch in deliver().
+  // The scheduler and the CronTasksPort both read these tables; neither invents state.
+
+  interface CronJobEntry {
+    readonly jobId: string;
+    readonly schedule: string;
+    readonly prompt: string;
+    readonly recurring: boolean;
+    readonly createdAt: number;
+    readonly expiresAt: number | null;
+    readonly lastFiredAt: number | null;
+    /** A schedule the folder could not parse never fires; it stays listed, nextRun null. */
+    readonly spec: CronSpec | null;
+  }
+
+  const cronTables = new Map<string, Map<string, CronJobEntry>>();
+
+  function foldCronEvent(table: Map<string, CronJobEntry>, event: KernelEvent): void {
+    if (event.type === 'cron.created') {
+      const parsed = parseSchedule(event.schedule);
+      table.set(event.jobId, {
+        jobId: event.jobId,
+        schedule: event.schedule,
+        prompt: event.prompt,
+        recurring: event.recurring,
+        createdAt: event.createdAt,
+        expiresAt: event.expiresAt,
+        lastFiredAt: null,
+        spec: parsed.ok ? parsed.spec : null,
+      });
+      return;
+    }
+    if (event.type === 'cron.deleted') {
+      table.delete(event.jobId);
+      return;
+    }
+    if (event.type === 'cron.fired') {
+      const entry = table.get(event.jobId);
+      if (entry === undefined) return;
+      // A one-shot fired its single shot: the projection drops it without a deleted
+      // event (ADR-141 ④ — fired IS its terminal state).
+      if (!entry.recurring) {
+        table.delete(event.jobId);
+        return;
+      }
+      table.set(event.jobId, { ...entry, lastFiredAt: event.firedAt });
+    }
+  }
+
+  async function cronTableFor(sessionId: string): Promise<Map<string, CronJobEntry>> {
+    const existing = cronTables.get(sessionId);
+    if (existing !== undefined) return existing;
+    const table = new Map<string, CronJobEntry>();
+    for (const event of await store.readAll(sessionId)) foldCronEvent(table, event);
+    cronTables.set(sessionId, table);
+    return table;
+  }
+
+  /**
+   * The cron scheduler (ADR-140~142). A 1-second heartbeat walks every session's job
+   * table, fires at most one due job per session per tick, and hands the turn the
+   * unattended narrowing — a cron fire by definition has no reader, so asks refuse
+   * immediately instead of waiting out the approval timeout.
+   *
+   * Off in unattended hosts for the same reason background tasks are (ADR-112): a
+   * `cowcat run` process is one-shot, and jobs firing into it would spend model budget
+   * on results nobody reads. The tools are absent there too — the port is undefined.
+   */
+  const cronEnabled = config.cron?.enabled !== false && options.unattended !== true;
+  let hostClosed = false;
+  // The scheduler reasons in the injected clock's time: a test that fakes the clock can
+  // then decide due-ness without waiting out a real minute (session event timestamps use
+  // the same clock via sessionDeps).
+  const clock = options.clock ?? systemClock;
+  const clockNow = (): number => clock.now();
+
+  const cronPort: CronTasksPort | undefined = cronEnabled
+    ? {
+        async create(sessionId, request) {
+          // The tool parsed already; a port that trusts its caller's parse can be handed
+          // a lie, so the schedule is parsed again here — the answer, not the question.
+          const parsed = parseSchedule(request.schedule);
+          if (!parsed.ok) return { ok: false, error: parsed.error };
+          const table = await cronTableFor(sessionId);
+          if (table.size >= CRON_MAX_JOBS) {
+            return { ok: false, error: `this session already has ${String(CRON_MAX_JOBS)} live jobs; delete some with CronDelete first` };
+          }
+          const createdAt = clockNow();
+          const ref: CronCreatedRef = {
+            jobId: sessionDeps.ids.next('job'),
+            schedule: request.schedule,
+            prompt: request.prompt,
+            recurring: request.recurring,
+            createdAt,
+            expiresAt: request.recurring ? createdAt + CRON_RECURRING_TTL_MS : null,
+          };
+          // The table learns about this job from its cron.created event (deliver folds
+          // it), keeping the port a reader of the log like everything else here.
+          return { ok: true, job: ref, nextRun: nextFire(parsed.spec, createdAt) };
+        },
+        async remove(sessionId, jobId) {
+          const table = await cronTableFor(sessionId);
+          return table.has(jobId);
+        },
+        async list(sessionId) {
+          const table = await cronTableFor(sessionId);
+          const jobs: CronJobInfo[] = [];
+          for (const entry of table.values()) {
+            jobs.push({
+              jobId: entry.jobId,
+              schedule: entry.schedule,
+              prompt: entry.prompt,
+              recurring: entry.recurring,
+              createdAt: entry.createdAt,
+              expiresAt: entry.expiresAt,
+              nextRun: entry.spec === null ? null : nextFire(entry.spec, entry.lastFiredAt ?? entry.createdAt),
+              lastFiredAt: entry.lastFiredAt,
+            });
+          }
+          return jobs;
+        },
+      }
+    : undefined;
+
+  function cronDueJobs(table: Map<string, CronJobEntry>, now: number): CronJobEntry[] {
+    const due: { entry: CronJobEntry; next: number }[] = [];
+    for (const entry of table.values()) {
+      if (entry.spec === null) continue;
+      const after = entry.lastFiredAt ?? entry.createdAt;
+      if (isDue(entry.spec, after, now)) due.push({ entry, next: nextFire(entry.spec, after) ?? Number.POSITIVE_INFINITY });
+    }
+    return due.sort((a, b) => a.next - b.next).map((item) => item.entry);
+  }
+
+  async function fireCronJob(rec: SessionRecord, job: CronJobEntry, now: number): Promise<void> {
+    // Claim BEFORE any await, the same bracket sendTurn uses: a user send landing in
+    // the gap would otherwise open a second turn on one session and interleave the log.
+    rec.turnStarting = true;
+    try {
+      const configured = currentModel();
+      // The fired event names the turn before it exists (ADR-140 ②); the turn opens
+      // under that reserved name so the audit link cannot break.
+      const turnId = sessionDeps.ids.next('turn');
+      await rec.session.emit({ type: 'cron.fired', turnId, jobId: job.jobId, firedAt: now });
+      await startTurn(rec, configured, job.prompt, new AbortController(), 'cron', turnId);
+      // A recurring job that has reached its expiry fires once more (this fire), then
+      // deletes itself — a bounded end, not a silent disappearance (ADR-141 ⑤).
+      if (job.recurring && job.expiresAt !== null && now >= job.expiresAt) {
+        await rec.session.cronDeleted(job.jobId, 'expiry', clockNow());
+      }
+    } catch {
+      // A failed fire (e.g. the model is unconfigured) leaves the job due; the next
+      // heartbeat retries. Nothing here is user-visible: the fired event, if written,
+      // already says the enqueue happened.
+    } finally {
+      rec.turnStarting = false;
+    }
+  }
+
+  async function cronTick(): Promise<void> {
+    if (hostClosed) return;
+    const now = clockNow();
+    for (const [sessionId, table] of cronTables) {
+      const rec = sessions.get(sessionId);
+      // The same triple maybeReflect guards on: a running turn, a turn being claimed,
+      // or a reflect turn all mean "not idle". Cron fires between turns only (ADR-141 ①).
+      if (rec === undefined || rec.running !== null || rec.turnStarting || rec.reflecting) continue;
+      const expired = [...table.values()].filter(
+        (entry) => entry.recurring && entry.expiresAt !== null && now > entry.expiresAt && entry.spec !== null && !isDue(entry.spec, entry.lastFiredAt ?? entry.createdAt, now),
+      );
+      for (const job of expired) {
+        // Expired with no due moment left: delete without a fire. The opposite order
+        // (fire, then delete) is fireCronJob's expiry branch.
+        await rec.session.cronDeleted(job.jobId, 'expiry', now).catch(() => undefined);
+      }
+      const due = cronDueJobs(table, now);
+      if (due.length === 0) continue;
+      // At most one cron turn per HEARTBEAT, globally (ADR-141 ①): several sessions'
+      // */5 jobs align on the same minute boundary, and firing them all in one tick is
+      // the local version of the thundering herd the upstream jitter exists to break.
+      // A backlog drains one fire per second, each re-checked against idleness.
+      void fireCronJob(rec, due[0] as CronJobEntry, now);
+      break;
+    }
+  }
+
+  const cronTimer = cronEnabled ? setInterval(() => void cronTick(), 1000) : null;
+  if (cronTimer !== null && typeof cronTimer.unref === 'function') cronTimer.unref();
+
   const builtinTools = createTools({
     cwd: options.cwd,
     platform,
@@ -361,6 +556,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     sandbox: sandbox.profile,
     background,
     allowBackground: options.unattended !== true,
+    cron: cronPort,
     skills: availableSkills,
     spill: { rootDir: paths.sessionsDir },
     home: options.home,
@@ -430,6 +626,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const backgroundWrites = new Set<Promise<void>>();
   /** Every attachment this host has seen in a log, by path (ADR-057: `id` is the path). */
   const attachments = new Map<string, Attachment>();
+
 
   let selection: ModelSelection | null = null;
   let model: ModelPort | null = options.model ?? null;
@@ -574,6 +771,10 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         startedBackground.delete(update.taskId);
         queueBackgroundFinish(rec, buffered);
       }
+    } else if (update.type === 'cron.created' || update.type === 'cron.deleted' || update.type === 'cron.fired') {
+      // Keep a materialized table in step with the log it was folded from (ADR-140).
+      const table = cronTables.get(update.sessionId);
+      if (table !== undefined) foldCronEvent(table, update);
     }
     for (const listener of rec.listeners) listener(update);
   }
@@ -712,13 +913,21 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
    * The turn body, split from `sendTurn` so the check-and-claim flag can bracket the
    * file-reading awaits above. Everything from here to `rec.running` is synchronous,
    * which is what keeps the hand-off race-free.
+   *
+   * `kind`: 'user' turns get the full surface; 'reflect' turns get the narrowed
+   * reflect tool set (ADR-137 ②); 'cron' turns get the full surface minus plan review
+   * and Escalate, plus the unattended narrowing (ADR-142 — nobody can answer a
+   * question in a fired turn, so the tools that ask are kept off the wire instead of
+   * being offered to fail). `reservedTurnId` is only the cron scheduler's (the fired
+   * event named it first, ADR-140 ②).
    */
   async function startTurn(
     rec: SessionRecord,
     configured: { readonly port: ModelPort; readonly selection: ModelSelection },
     input: string,
     controller: AbortController,
-    reflect = false,
+    kind: 'user' | 'reflect' | 'cron' = 'user',
+    reservedTurnId?: string,
   ): Promise<{ turnId: string }> {
     const deps: TurnDeps = {
       session: rec.session,
@@ -729,12 +938,18 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // plan review, no escalation appeals, no skill catalog, no hooks — an
       // unobserved loop (hook → prompt → turn) is exactly what a background turn
       // must not create.
-      tools: reflect ? reflectTools : tools,
+      tools: kind === 'reflect' ? reflectTools : tools,
       rules,
       fs,
       approve: (request: ActionRequest) => askApproval(rec, request),
       ...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
+      // A fired cron turn refuses asks before any bridge is reached — the reason names
+      // the situation so the model reports what it needed instead (ADR-142).
+      ...(kind === 'cron' ? { unattended: 'cron turns cannot ask a human; report what you needed instead' } : {}),
       ids: sessionDeps.ids,
+      // The cron scheduler reserved the turn's name in its fired event (ADR-140 ②);
+      // opening under any other id would break the audit link.
+      ...(reservedTurnId === undefined ? {} : { reservedTurnId }),
       // The chain is read per turn but injected once (ADR-078): the fold decides
       // whether it is still in `messages`, so a compaction puts it back.
       instructions: {
@@ -747,7 +962,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // narrowed tool subset, and a catalog naming a tool it cannot call is a lie.
       // The snapshot comes from the host's own discovery, so the catalog and the
       // Skill tool always describe the same set (no hot reload, ADR-114 ⑥).
-      ...(reflect
+      ...(kind === 'reflect'
         ? {}
         : {
             skills: {
@@ -760,15 +975,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
           }),
       // Delegation is available to a top-level session only: the child's deps are built
       // without this field, which is what makes depth 0 the default (ADR-081 ④).
-      ...(reflect ? {} : { subagents: { port: { spawn: spawnSubagent } } }),
+      ...(kind === 'reflect' ? {} : { subagents: { port: { spawn: spawnSubagent } } }),
       // Hooks ride top-level turns for the same reason delegation does (ADR-121).
-      ...(reflect ? {} : { hooks: { port: hooksPort, cwd: options.cwd } }),
-      // Plan review is top-level only: a child session's deps omit this, which keeps
-      // ExitPlan off its wire and its calls reading as unknown tools (ADR-124 ⑥).
-      ...(reflect ? {} : { planReview: (callId: string) => askPlanReview(rec, callId) }),
-      // Escalate appeals are top-level only: children omit the flag, keeping the tool
-      // off their wire (ADR-129 — the Task/ExitPlan gating precedent).
-      ...(reflect ? {} : { escalation: true }),
+      ...(kind === 'reflect' ? {} : { hooks: { port: hooksPort, cwd: options.cwd } }),
+      // Plan review is top-level and attended only: cron turns are unattended by
+      // definition (ADR-142) and children never review (ADR-124 ⑥). Omitting the field
+      // keeps ExitPlan off the wire instead of offering a call that can only fail.
+      ...(kind === 'user' ? { planReview: (callId: string) => askPlanReview(rec, callId) } : {}),
+      // Escalate appeals are top-level, attended turns only: an appeal needs a reader,
+      // and a cron turn has none (ADR-129/142 — the Task/ExitPlan gating precedent).
+      ...(kind === 'user' ? { escalation: true } : {}),
     };
 
     let failure: unknown = null;
@@ -797,7 +1013,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         { sessionId: rec.session.state.sessionId },
       );
     }
-    if (!reflect) {
+    if (kind === 'user') {
       // ADR-137: a completed USER turn optionally triggers background distillation.
       // Fire-and-forget — the reply already went out — and never for the reflect
       // turn itself (that is the re-entry guard; the flag alone would race the
@@ -841,7 +1057,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     // replaying (review of #192, P0-1).
     rec.turnStarting = true;
     try {
-      await startTurn(rec, currentModel(), REFLECT_PROMPT, new AbortController(), true);
+      await startTurn(rec, currentModel(), REFLECT_PROMPT, new AbortController(), 'reflect');
       // The flag means "a reflect turn owns this session", not "one is starting":
       // startTurn answers as soon as the turn OPENS, so hold it until the reflect
       // turn actually settles — the busy message and the re-entry guard both key
@@ -857,6 +1073,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       rec.reflecting = false;
     }
   }
+
 
   // Telemetry is initialized LAST (ADR-134): everything above can throw, and a
   // provider created before a failing step would leak its BatchSpanProcessor.
@@ -1245,6 +1462,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
 
     async close(): Promise<void> {
       try {
+        hostClosed = true;
+        if (cronTimer !== null) clearInterval(cronTimer);
         mcpLifetime.abort();
         await mcp.close();
         // Abort the turns first: a turn stopped between `tool.finished` and
@@ -1350,6 +1569,9 @@ function createTools(options: {
   readonly allowBackground: boolean;
   /** Where oversized tool results spill (ADR-119). */
   readonly spill: SpillConfig;
+  /** The host's job table (ADR-140). `undefined` means cron is off in this build — the
+   *  tools refuse by their absence, exactly the background precedent (ADR-143 ④). */
+  readonly cron: CronTasksPort | undefined;
   /** Trusted, visible skills; empty means no `Skill` tool is offered at all (ADR-117 ①). */
   readonly skills: readonly SkillFile[];
   /** User-level memory targets live under `~/.cowcat` (ADR-135). */
@@ -1378,6 +1600,9 @@ function createTools(options: {
     createTodoWriteTool(),
     createRememberTool({ cwd: options.cwd, home: options.home, trusted: options.workspaceTrusted }),
     createViewTool({ cwd: options.cwd, vision: options.vision }),
+    // No cron port, no cron tools: "this build has no scheduled tasks" is a capability
+    // statement, and the absence keeps the model from calling what does not exist.
+    ...createCronTools({ cron: options.cron }),
     // No skills, no tool: an empty `Skill` would only tell the model what is not there.
     ...(options.skills.length === 0 ? [] : [createSkillTool({ skills: options.skills })]),
   ];

@@ -37,8 +37,9 @@ const DELETE_DESCRIPTION = [
 ].join('\n');
 
 export interface CronToolsOptions {
-  /** The host's job table. Absent means this build does not offer cron (tools refuse). */
-  readonly cron?: CronTasksPort;
+  /** The host's job table. `undefined` means this build does not offer cron — the
+   * factory returns no tools, so the model cannot call what does not exist. */
+  readonly cron: CronTasksPort | undefined;
 }
 
 /** The three tools as one factory so the host adds none or all of them (ADR-143 ④). */
@@ -61,12 +62,15 @@ export function createCronTools(options: CronToolsOptions): readonly ToolPort[] 
           recurring: z.boolean().describe('true = repeat on the schedule until it expires; false = fire once'),
         }),
       },
-      async (input) => {
+      async (input, _signal, _grant, context) => {
+        if (context === undefined) {
+          return { ok: false, output: 'cron tools need a host context: the command was not run.' };
+        }
         const parsed = parseSchedule(input.schedule);
         if (!parsed.ok) {
           return { ok: false, output: `refused: ${parsed.error}` };
         }
-        const outcome = await cron.create({
+        const outcome = await cron.create(context.sessionId, {
           schedule: input.schedule.trim(),
           prompt: input.prompt,
           recurring: input.recurring,
@@ -95,8 +99,11 @@ export function createCronTools(options: CronToolsOptions): readonly ToolPort[] 
         risk: 'read',
         input: z.object({}),
       },
-      async () => {
-        const jobs = await cron.list();
+      async (_input, _signal, _grant, context) => {
+        if (context === undefined) {
+          return { ok: false, output: 'cron tools need a host context: the command was not run.' };
+        }
+        const jobs = await cron.list(context.sessionId);
         if (jobs.length === 0) {
           return { ok: true, output: 'No scheduled jobs in this session.' };
         }
@@ -119,8 +126,11 @@ export function createCronTools(options: CronToolsOptions): readonly ToolPort[] 
         risk: 'write',
         input: z.object({ jobId: z.string().min(1).describe('Job id from CronList') }),
       },
-      async (input) => {
-        const removed = await cron.remove(input.jobId);
+      async (input, _signal, _grant, context) => {
+        if (context === undefined) {
+          return { ok: false, output: 'cron tools need a host context: the command was not run.' };
+        }
+        const removed = await cron.remove(context.sessionId, input.jobId);
         if (!removed) {
           return { ok: false, output: `no live job "${input.jobId}" in this session. List jobs with CronList first.` };
         }
