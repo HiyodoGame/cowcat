@@ -2,18 +2,18 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-23（P7 第五个模块会话体验全链路收尾）**。
-> 交接时仓库状态：**`main` = `27884be`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
+> 最近一次更新：**2026-10-23（P7 第六个模块审批与沙箱闭环全链路收尾）**。
+> 交接时仓库状态：**`main` = `701beea`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API 跑出的会话日志；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
-> **归属**：本会话产出 **#153~#175**（工具结果治理、Hooks、Plan 模式、会话体验四个 P7 模块全链路 + 收尾；Skills #147~152 同属本会话前半）。
+> **归属**：本会话产出 **#147~#182**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环六个 P7 模块全链路 + 收尾）。
 
 ---
 
 ## 1. 本次会话做了什么
 
-五个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
+六个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
 
 ### 已完成模块（概要）
 
@@ -28,21 +28,29 @@
   - **审查捎带修的真竞态**：attach/subscribe 的 buffer flush 由 queueMicrotask 改同步——原实现里 subscribe 后微任务前到达的事件会超车缓冲队列（表现为 [1,3,2] 乱序），该竞态自接缝诞生即存在。
   - **rewind 明确不做**（grants/锁/header 三重坑，后续立项条件 = 先答「截断后授权归哪」）。
   - T5 真机：@ 注入作答、fork 重放继承实证（fork 新回合无附件即答出源上下文）、标题/cwd/模型全字段可见。
+- **审批与沙箱闭环（#178~182）**：ADR-129~131——
+  - **Escalate 申诉**：内核虚拟工具（顶层门控）复用审批桥；仅 decide=deny 才受理；选项无 session；escalations 与 grants 完全分离（专用事件对 + 折叠，once 消费即焚=「加宽后只重试一次」的可重放形式）；reject 折叠 refused（被拒不再打扰）；每回合 3 次上限；subject 拒 `*`/NUL（修 P1-4 潜伏碰撞）。
+  - **grants 覆盖 deny**：同会话人工批准可覆盖配置 deny（只认精确 key；plan mode/unattended 不可覆盖）；deny 覆盖不附赠 network/沙箱维度（各维度在自己的行上被批准）。
+  - **沙箱闭环**：两类沙箱拒绝不再伪装成启动失败（专属文案 + Escalate 指引）；ToolGrant.unsandboxedApproved 只随 once，照 decideNetwork 先例 decideSandbox。
+  - **用量仪表**：state.usageTotals 折叠（fork 继承）；session.open 应答携带 usage；turn.opened 带 preset price（可选）；成本现算不存事件、无 price 不显示。
+  - **审批卡诚实（安全评审 P0-1）**：approval.requested 带 command/path/dimensions，卡片 subject 首行 + wrap 不截断 + stripControl（C0/C1/bidi）。
+  - **实现前 security-reviewer 评审**（10 条全部落实）；**实现后 code-reviewer 抓到 2 P0**（EscalationTurnContext 轮级建导致 withoutSandbox 链路不可达；Escalate path 未 canonical）——全部修复（#181）。
+  - T5 真机：glm **未加教学自然申诉** 1/1、once 重试放行、price/usage 全字段真机可见（cache 命中 ~97%）。
 
 ## 2. 测试基线
 
 | 包 | 通过 | 说明 |
 |---|---|---|
-| cowcat | 799+ | 逐文件全绿（host 28、session-experience 4 等） |
+| cowcat | 810+ | 逐文件全绿（host 35、approval 13、escalation 4、bash 25、config 24、schema 14 等） |
 | protocol | 43 | |
-| tui | 114 | **必须 Node 26**（本机 Node 24 是 FFI 假失败） |
+| tui | 119 | **必须 Node 26**（本机 Node 24 是 FFI 假失败） |
 | cli | 31 | |
 
 **本机环境注意**：有两个外部 `du` 进程长期跑满磁盘 IO，全量并行的计时敏感测试（background/bash/process）本地随机 flake、**逐文件全绿**；CI 为权威门（三平台绿）。改完跑 `npm test`（含 lint），别只 `npm run build`。
 
 ## 3. 新增 ADR（本会话）
 
-ADR-114~125（前四模块）· **126 会话头与标题推导** · **127 session.fork 事件重放（rewind 不做的理由）** · **128 @ 文件引用（校验注入、拒整个 send、@token 收窄语义）**——127/128 已按 #174 审查修订。
+ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hooks、124~125 Plan、126 会话头与标题、127 session.fork、128 @ 文件引用）· **129 Escalate 与 grant 精确语义**（覆盖 deny、refused 折叠、once 消耗语义、审批卡 subject、维度分离）· **130 沙箱闭环**（拒绝识别、unsandboxedApproved 只随 once）· **131 用量累计与成本**（usageTotals、price 可选、成本现算不存事件）——126~128 已按 #174 审查修订，129/131 已按 #180/#181 审查修订。
 
 ## 4. 未验证 / 风险
 
@@ -52,6 +60,7 @@ ADR-114~125（前四模块）· **126 会话头与标题推导** · **127 sessio
 - **T-A 遗留**：clearing 保留窗口三档对比、大会话缓存对照。
 - **approval 桥语义变更**（#168）：超时后同回合下一次 ask 现在替换陈旧 pending 而非拒绝——行为变更，无已知外部依赖。
 - **attach 语义变更**（#174）：subscribe 同步 flush——对服务端调用顺序的约束不变（server 先回复+重放再 subscribe），但自定义 host 消费者若依赖微任务延迟需知。
+- **审批与沙箱闭环**：withoutSandbox 的真沙箱后端真机未验（本机无 bwrap/seatbelt，FakeProcess 全链路钉住）；Escalate 自然申诉率样本 1/1；成本只 USD；network/沙箱维度各问各的（exec ask + 申诉同回合会问到两次——真机已观察，属维度分离的设计结果）。
 
 ## 5. 开放 issue
 
@@ -59,9 +68,9 @@ ADR-114~125（前四模块）· **126 会话头与标题推导** · **127 sessio
 
 ## 6. 下一步建议
 
-1. **P7 下一个模块，用户选**：可观测性（D9，OTel GenAI 适配器）、审批与沙箱闭环（D7）、记忆续篇·经验蒸馏（D10）、视觉工具（D11）、Cron/Worktree。
+1. **P7 下一个模块，用户选**：可观测性（D9，OTel GenAI 适配器）、记忆续篇·经验蒸馏（D10）、视觉工具（D11）、Cron/Worktree。
 2. **rewind**：立项前必须先答「截断后 always/session 授权归哪、锁怎么收、0 行 header 怎么办」。
-3. **发版**：五个模块（Skills/T-A/Hooks/Plan/会话体验）攒一批发 `beta.4` 由用户定。
+3. **发版**：六个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环）攒一批发 `beta.4` 由用户定。
 
 ## 7. 会话踩坑（新增）
 
@@ -70,6 +79,10 @@ ADR-114~125（前四模块）· **126 会话头与标题推导** · **127 sessio
 - **微任务 flush 是竞态温床**：「subscribe 后 queueMicrotask flush」会被期间到达的事件超车；要保序就同步 flush。
 - **本机外部 `du` 进程**让全量测试 10 倍慢、计时测试随机 flake——逐文件绿即代码绿，CI 是权威。
 - PowerShell here-string 不转义 `''`；带 CRLF 的文件做 .NET Replace 前先确认匹配；改完必须 `git branch --show-current`。
+- **环境重启会清空含 junction 的 node_modules 树**（本会话 packages/cowcat 与 protocol 整包被清空，TUI/CLI 幸存）：恢复 = `git checkout -- <pkg>` + `npm ci` + 按依赖序重建 dist（protocol → cowcat → tui → cli）；未提交的审查修复按会话记录重放。教训：审查修复批次应尽快成 PR，别把大改留在工作区过夜。
+- **真机驱动要当「橡皮图章用户」**：回合会停在 awaiting_approval 直到每个问题被回答——驱动循环里自动 respondApproval，别只等 completed。
+- **exec ask 与申诉会问两次**：维度分离的设计结果（waiver 不豁免 exec 风险询问），真机已观察；不是 bug，但写验收驱动时要预期到。
+- **`tsc`/`npm test` 必须在包目录里跑**：从仓库根 `npx tsc` 会命中 npm 的 tsc 占位包（"This is not the tsc command you are looking for"）。
 
 ## 8. 构建与测试（不变）
 
