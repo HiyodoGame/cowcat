@@ -140,3 +140,28 @@ OS 级截屏需要 `PlatformPort` 新能力（三方库或平台 API），超出
 - **P2 处理**：abort 不再吞成 ok:false（signal.aborted 重抛，run-turn 惯例）；images 通道的 document 两适配器都点名不丢；显式 effort:null 不继承主模型 effort；显式 config.vision 启动即校验（typo 早响）；makeAttachment 取代三 null 字面量；截断 break 的流清理（generator finally）有测试钉住。
 - **P2 登记**：decide 规范化按 process.cwd 而 View 按 options.cwd——与 Read 同款的既有形态，非本模块引入，记入 HANDOFF；doctor 标「有眼模型」未做（拒绝文案已指向 doctor 列 preset id，足够）。
 - **测试净 +4**（view 7：改名伪装/目录拒绝/maxTokens/abort 重抛+清理/截断清理/真实 ModelConfigError）。
+
+## 9. T3 真机验收记录（2026-10-23）
+
+**结论：全链路真机通过**（glm-5.3-flash 文本模型 + View → zai/glm-4v-flash；
+驱动 `cowcat-tui-accept/t6-vision-accept.mjs`，ACCEPTANCE PASS，exit=0）。
+
+- 测试图为程序化渲染的 5×7 位图字体 PNG（「HELLO COWCAT 42」，白字黑底，纯
+  Node zlib 生成，零外部依赖、完全确定）。
+- glm-5.3-flash 主动调用 View；glm-4v-flash 完整 OCR 出 **HELLO COWCAT 42**
+  （连「像素风格字体」都描述了）；文本模型如实带回会话。
+
+### 首轮 FAIL 的排障价值（真机抓到 catalogue 失准）
+
+首轮验收 FAIL：glm-4v 端点拒绝 `max_tokens=4096`（catalogue 推断值），报
+「400 The max_tokens parameter is illegal.：限制数值范围[1,1024]」。glm 模型
+两次尝试均如实报告「没拿到内容，不编造」——行为可嘉，也暴露了 catalogue
+数字是【推断】级。修复：catalogue 条目标注实测口径 `limits.output: 1024`。
+这正是 D 系列每个模块真机验收的意义：**默认值必须经真实端点校准**。
+
+### 边界与未验
+
+- 自定义 `vision` preset（custom/anthropic 协议）的单测覆盖在 #199 修复；
+  真机只验了默认 zai 链路。
+- vision 调用的 usage 不进会话总额（ADR-139④ 登记）。
+- 多模态主模型直接 Read 图像是 P6 既有链路，不在本验收重复。

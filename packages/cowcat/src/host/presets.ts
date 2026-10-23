@@ -112,7 +112,9 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
   'zai/glm-4v-flash': {
     protocol: 'openai',
     model: 'glm-4v-flash',
-    limits: { output: 4096, context: 8192 },
+    // The endpoint refuses max_tokens above 1024 ("限制数值范围[1,1024]") —
+    // verified against the live z.ai API in the D11 acceptance run.
+    limits: { output: 1024, context: 8192 },
     toolCalls: false,
     vision: true,
   },
