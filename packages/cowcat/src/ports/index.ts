@@ -3,6 +3,7 @@ import type { Message, ReasoningBlock, ToolCall } from '../kernel/messages.js';
 import type { SessionState } from '../kernel/state.js';
 import type { Attachment } from './attachments.js';
 import type { BackgroundTaskRef } from './background.js';
+import type { CronCreatedRef } from './cron.js';
 import type { ModelUsage, StopReason } from './model.js';
 import type { ExecutionFacts } from './process.js';
 
@@ -12,6 +13,7 @@ import type { ExecutionFacts } from './process.js';
 export * from './attachments.js';
 export * from './audit.js';
 export * from './background.js';
+export * from './cron.js';
 export * from './fs.js';
 export * from './hooks.js';
 export * from './instructions.js';
@@ -134,6 +136,18 @@ export interface ToolResult {
    * `tool.background.started`; the task itself lives in the host's registry, not here.
    */
   readonly background?: BackgroundTaskRef;
+  /**
+   * Set when this call created a cron job (ADR-140). The kernel turns it into
+   * `cron.created`; the job table is the host's projection of those events, not
+   * something this result carries. Same direction as `background`.
+   */
+  readonly cronCreated?: CronCreatedRef;
+  /**
+   * Set when this call deleted a cron job (ADR-140). The kernel turns it into
+   * `cron.deleted` with `by: 'model'`; the host's own deletions (the `/cron` panel)
+   * go through `Session.cronDeleted` directly.
+   */
+  readonly cronDeleted?: { readonly jobId: string; readonly deletedAt: number };
   /**
    * True when the sandbox REFUSED this run (ADR-130 ①): the backend could not satisfy
    * the request or is unavailable, and the tool reported it instead of degrading.

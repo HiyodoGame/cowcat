@@ -255,6 +255,7 @@ export interface ConfigLayer {
   readonly mcp?: McpSettings;
   readonly otel?: OtelSettings;
   readonly memory?: MemorySettings;
+  readonly cron?: CronSettings;
   /**
    * The preset id the View tool bridges to for image content (ADR-138). User layer
    * only: a vision call is real provider spend, and the workspace must not pick the
@@ -280,6 +281,16 @@ export interface OtelSettings {
  */
 export interface MemorySettings {
   readonly reflect?: 'off' | 'on';
+}
+
+/**
+ * Session-scoped scheduled tasks (ADR-143 ④). User layer only — the loader warns
+ * and drops it anywhere else (same rule as otel/memory/vision): cron fires spend
+ * the user's model budget while they are away, so the switch belongs to the user.
+ * Absent `enabled` means on.
+ */
+export interface CronSettings {
+  readonly enabled?: boolean;
 }
 
 // Three layers, lowest first. The legacy implementation had seven, one of which —
@@ -315,6 +326,7 @@ export interface CowcatConfig {
   readonly otel: OtelSettings | undefined;
   readonly memory: MemorySettings | undefined;
   readonly vision: string | undefined;
+  readonly cron: CronSettings | undefined;
 }
 
 /** Layer 0. Not a file, and not overridable by omission. */
@@ -326,6 +338,7 @@ export const DEFAULT_CONFIG: CowcatConfig = {
   otel: undefined,
   memory: undefined,
   vision: undefined,
+  cron: undefined,
 };
 
 export interface ConfigLayers {
@@ -376,6 +389,9 @@ export function resolveConfig(layers: ConfigLayers): CowcatConfig {
     memory: layers.user?.memory,
     // And for the vision bridge endpoint (ADR-138): same reason, same rule.
     vision: layers.user?.vision,
+    // And for session-scoped cron (ADR-143 ④): cron fires spend the user's budget while
+    // they are away, so the switch is user-layer only, same rule as the three above.
+    cron: layers.user?.cron,
   };
 }
 

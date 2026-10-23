@@ -441,6 +441,15 @@ async function runTurnBody(
         if (result.ok && result.background !== undefined) {
           await session.backgroundStarted(call.callId, result.background.taskId, result.background.command);
         }
+        // Same shape as the background handoff: the call succeeded first, then the job
+        // exists. `by` is 'model' on this path — a deletion by the user comes through
+        // the host and its own Session.cronDeleted call (ADR-140).
+        if (result.ok && result.cronCreated !== undefined) {
+          await session.cronCreated(result.cronCreated);
+        }
+        if (result.ok && result.cronDeleted !== undefined) {
+          await session.cronDeleted(result.cronDeleted.jobId, 'model', result.cronDeleted.deletedAt);
+        }
         lastCallKey = callKey;
         lastCallOk = result.ok;
       }
