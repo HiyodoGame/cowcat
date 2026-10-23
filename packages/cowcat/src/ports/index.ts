@@ -293,6 +293,13 @@ export interface EventStore {
   append(event: KernelEvent): Promise<void>;
   readAll(sessionId: string): Promise<readonly KernelEvent[]>;
   /**
+   * The first event of a log, or null when the log is absent or empty. Exists so a
+   * consumer can read the session header (ADR-126) without paying for the whole log:
+   * the telemetry tap primes the provider name from it at adopt time, and open needs
+   * the header anyway — a second full read per adoption would double open's IO.
+   */
+  readHeader(sessionId: string): Promise<KernelEvent | null>;
+  /**
    * Best-effort log removal; exists for the fork cleanup path (ADR-127). Optional
    * because the port's contract is append/read — a store without it simply leaves
    * a half-born fork on disk, loud at open time rather than silent.

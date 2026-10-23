@@ -8,19 +8,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { InMemorySpanExporter, SimpleSpanProcessor, BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
+import { loadConfig, type ConfigSource, type KernelEvent } from '../src/index.js';
 import {
   createOtelSink,
   createSpanTranslator,
   initTelemetry,
-  loadConfig,
-  type ConfigSource,
-  type KernelEvent,
   type SpanAttributeValue,
   type SpanKindName,
   type SpanSink,
   type SpanStatus,
   type StartedSpan,
-} from '../src/index.js';
+} from '../src/adapters/otel/index.js';
 
 // A span as recorded by the fake sink: everything the translator promised, and the
 // parent link the sink was asked to honour.
@@ -364,4 +362,71 @@ test('user config otel block resolves; other layers are warned and dropped (ADR-
   assert.ok(sessionLayer.ok);
   assert.equal(sessionLayer.config.otel, undefined);
   assert.ok(sessionLayer.warnings.some((w) => w.problem.includes('otel')));
+});
+
+test('interleaved sessions keep independent span trees', () => {
+  const { sink, spans } = recordingSink();
+  const tap = createSpanTranslator(sink);
+  const a = fullTurnEvents('sess_a');
+  const b = fullTurnEvents('sess_b');
+  // Interleave: first half of A, first half of B, rest of A, rest of B.
+  const half = Math.ceil(a.length / 2);
+  for (let i = 0; i < half; i += 1) {
+    tap.observe(a[i] as KernelEvent);
+    tap.observe(b[i] as KernelEvent);
+  }
+  for (let i = half; i < a.length; i += 1) {
+    tap.observe(a[i] as KernelEvent);
+    tap.observe(b[i] as KernelEvent);
+  }
+  const turnA = spans.filter((s) => s.attributes['gen_ai.conversation.id'] === 'sess_a');
+  const turnB = spans.filter((s) => s.attributes['gen_ai.conversation.id'] === 'sess_b');
+  assert.equal(turnA.length, 4);
+  assert.equal(turnB.length, 4);
+  for (const span of turnA) {
+    assert.equal(span.parent === null || span.parent.attributes['gen_ai.conversation.id'] === 'sess_a', true);
+  }
+});
+
+test('a second turn.opened with the first still open abandons it rather than leaking', () => {
+  const { sink, spans } = recordingSink();
+  const tap = createSpanTranslator(sink);
+  tap.observe(ev(SESSION, 'session.opened', T0, { schemaVersion: 3, cowcatVersion: '1', shell: 'interactive' }));
+  tap.observe(ev(SESSION, 'turn.opened', T0 + 1, { input: 'one', model: 'm' }));
+  tap.observe(ev(SESSION, 'turn.transitioned', T0 + 2, { from: 'idle', to: 'requesting', reason: null }));
+  tap.observe(ev(SESSION, 'turn.opened', T0 + 3, { input: 'two', model: 'm' }));
+  tap.observe(ev(SESSION, 'turn.transitioned', T0 + 4, { from: 'idle', to: 'completed', reason: null }));
+
+  const turns = spans.filter((s) => s.name === 'invoke_agent cowcat');
+  assert.equal(turns.length, 2);
+  const [first, second] = turns;
+  assert.ok(first);
+  assert.ok(second);
+  assert.equal(first.status, 'error');
+  assert.equal(first.errorType, 'turn_abandoned');
+  assert.equal(second.status, 'unset');
+});
+
+test('forget drops a conversation so re-adoption starts clean', () => {
+  const { sink, spans } = recordingSink();
+  const tap = createSpanTranslator(sink);
+  for (const event of fullTurnEvents()) tap.observe(event);
+  tap.forget(SESSION);
+  // Re-adopted: the same session id builds a fresh tree (no dangling parents).
+  for (const event of fullTurnEvents()) tap.observe(event);
+  const turns = spans.filter((s) => s.name === 'invoke_agent cowcat');
+  assert.equal(turns.length, 2);
+  const reAdopted = turns[1];
+  assert.ok(reAdopted);
+  assert.equal(reAdopted.parent, null, 'a re-adopted session does not parent onto forgotten state');
+});
+
+test('a malformed endpoint resolves to telemetry-off, not a thrown host', () => {
+  // Config-typo shape (missing scheme): the env path cannot reach the zod schema,
+  // so initTelemetry itself must swallow the construction error (ADR-132 ④).
+  assert.equal(initTelemetry({ env: {}, endpoint: 'localhost:4318' }), null);
+  // The config schema names the bad key properly for the file layer.
+  const result = loadConfig([src('user', { otel: { endpoint: 'localhost:4318' } })]);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.problem.includes('otel.endpoint')));
 });

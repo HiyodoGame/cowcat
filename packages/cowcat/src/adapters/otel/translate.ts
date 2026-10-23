@@ -76,7 +76,11 @@ function finishReasons(kind: 'end' | 'toolCalls' | 'maxTokens' | 'other'): strin
 export function createSpanTranslator(
   sink: SpanSink,
   input: TranslatorInput = {},
-): { readonly observe: (update: SessionUpdate) => void; readonly finish: (abandonMs: number) => void } {
+): {
+  readonly observe: (update: SessionUpdate) => void;
+  readonly finish: (abandonMs: number) => void;
+  readonly forget: (sessionId: string) => void;
+} {
   const agentName = input.agentName ?? 'cowcat';
 
   // Per-conversation state, keyed by sessionId so interleaved sessions coexist.
@@ -120,7 +124,8 @@ export function createSpanTranslator(
       // rather than initializes. Old logs without the field simply never set the
       // attribute: semconv says only what is readily available.
       if (event.type === 'session.opened' && event.model !== undefined && event.model.includes('/')) {
-        c.provider = event.model.split('/')[0] ?? null;
+        const provider = event.model.split('/')[0] ?? '';
+        c.provider = provider === '' ? null : provider;
         // Backfill the spans that started before the provider was known — an
         // attribute that corrects itself beats one that is wrong forever.
         if (c.provider !== null) {
@@ -155,6 +160,10 @@ export function createSpanTranslator(
         }
         case 'turn.transitioned': {
           if (event.to === 'requesting' && event.from !== 'requesting') {
+            // Defensive: if a future kernel transition restarts a round without the
+            // leaving transition that ends the chat span (a retry path, say), the old
+            // span would leak — close it as abandoned before opening the next one.
+            endChat(c, event.ts, 'error', 'round_restart');
             // A new round. The previous chat span (if any) was already ended by the
             // leaving transition; not ending it here is what keeps one chat span per
             // round instead of one nesting disaster.
@@ -233,6 +242,9 @@ export function createSpanTranslator(
             attributes,
             ...(c.turn === null ? {} : { parent: c.turn }),
           });
+          // The approximation is consumed by the first tool of the batch; a stale
+          // value must not leak into a tool that had no awaiting_tools at all.
+          c.toolsSinceMs = null;
           span.end(event.ts, event.ok ? 'unset' : 'error', undefined, event.ok ? undefined : 'tool_error');
           break;
         }
@@ -281,5 +293,14 @@ export function createSpanTranslator(
     }
   };
 
-  return { observe, finish };
+  /**
+   * Drop a conversation's state (ADR-132: a closed session's bookkeeping must not
+   * outlive it — a long-lived serve process adopts many short sessions). Span state
+   * is keyed by sessionId, so a later re-adoption simply starts over.
+   */
+  const forget = (sessionId: string): void => {
+    conversations.delete(sessionId);
+  };
+
+  return { observe, finish, forget };
 }

@@ -46,6 +46,8 @@ import {
   type SkillFile,
 } from '../src/index.js';
 import { MemoryEventStore, ScriptedModel } from './support.js';
+import { InMemorySpanExporter, SimpleSpanProcessor, BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
+import { createOtelSink } from '../src/adapters/otel/index.js';
 
 const PRESET = 'anthropic/claude-sonnet-5-5';
 const MCP_SERVER = fileURLToPath(new URL('./fixtures/fake-mcp-server.js', import.meta.url));
@@ -241,7 +243,7 @@ interface Fixture {
 async function start(
   options: { readonly cwd: string; readonly home: string; readonly model: ModelPort; readonly env?: Readonly<Record<string, string>> } & Pick<
     CreateHostOptions,
-    'platform' | 'process' | 'store' | 'approvalTimeoutMs'
+    'platform' | 'process' | 'store' | 'approvalTimeoutMs' | 'telemetry'
   >,
 ): Promise<Fixture> {
   const host = await createHost({
@@ -254,6 +256,7 @@ async function start(
     ...(options.platform === undefined ? {} : { platform: options.platform }),
     ...(options.process === undefined ? {} : { process: options.process }),
     ...(options.store === undefined ? {} : { store: options.store }),
+    ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
   });
 
   const pair = memoryTransport();
@@ -951,6 +954,7 @@ test('attach spans the read/subscribe seam with no gap and no duplicate', async 
   const memory = new MemoryEventStore();
   const store = {
     append: (event: Parameters<MemoryEventStore['append']>[0]) => memory.append(event),
+    readHeader: (sessionId: string) => memory.readHeader(sessionId),
     readAll: async (sessionId: string) => {
       const events = await memory.readAll(sessionId);
       await new Promise<void>((resolve) => {
@@ -1940,4 +1944,92 @@ test('a plan-mode block does not burn the escalation grant', async (t) => {
   assert.match(String(field(bash[1], 'output')), /plan mode/);
   assert.equal(field(bash[2], 'ok'), false, 'plan mode still refuses the retry; the grant is untouched, not spent');
   assert.ok(first(fixture.events(), 'escalation.granted') !== undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Telemetry (ADR-132~134), through the composed host
+// ---------------------------------------------------------------------------
+
+/** An in-memory telemetry handle: SimpleSpanProcessor exports synchronously on span end. */
+function memoryTelemetry() {
+  const exporter = new InMemorySpanExporter();
+  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+  return {
+    handle: { sink: createOtelSink(provider, 'cowcat', '0.0.0-test'), finish: async () => undefined },
+    spans: () => exporter.getFinishedSpans(),
+  };
+}
+
+test('telemetry spans carry the provider name primed from the session header at adopt', async (t) => {
+  const home = tempDir(t, 'cowcat-otel-home-');
+  const cwd = tempDir(t, 'cowcat-otel-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const telemetry = memoryTelemetry();
+  const model = new ScriptedModel([[{ type: 'text', text: 'hello' }]]);
+  const fixture = await start({ cwd, home, model, telemetry: telemetry.handle });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_otel');
+  await fixture.client.openSession('sess_otel');
+  await fixture.client.sendTurn('sess_otel', 'hi');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+  await fixture.close();
+
+  const spans = telemetry.spans();
+  const turn = spans.find((s) => s.name === 'invoke_agent cowcat');
+  assert.ok(turn);
+  // The review of #186 caught this as dead code: session.opened goes by BEFORE the
+  // tap subscribes, so priming from the log header is the only way this Required
+  // semconv attribute ever gets set.
+  assert.equal(turn.attributes['gen_ai.provider.name'], 'anthropic');
+  assert.equal(turn.attributes['gen_ai.conversation.id'], 'sess_otel');
+  const chat = spans.find((s) => s.name.startsWith('chat '));
+  assert.ok(chat);
+  assert.equal(chat.attributes['gen_ai.provider.name'], 'anthropic');
+  assert.equal(chat.attributes['gen_ai.operation.name'], 'chat');
+});
+
+test('a subagent turn produces its own conversation span tree (ADR-132 ③)', async (t) => {
+  const home = tempDir(t, 'cowcat-otel-sub-home-');
+  const cwd = tempDir(t, 'cowcat-otel-sub-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+
+  const telemetry = memoryTelemetry();
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c1', name: 'Task', input: { description: 'look around', prompt: 'list the files' } } }],
+    [{ type: 'text', text: 'child report' }],
+    [{ type: 'text', text: 'parent done' }],
+  ]);
+  const fixture = await start({ cwd, home, model, telemetry: telemetry.handle });
+  t.after(() => fixture.close());
+
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_otel_sub');
+  await fixture.client.openSession('sess_otel_sub');
+  await fixture.client.sendTurn('sess_otel_sub', 'delegate');
+  await fixture.until('the turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'),
+  );
+  await fixture.close();
+
+  const childId = field(first(fixture.events(), 'subagent.started'), 'childSessionId');
+  const spans = telemetry.spans();
+  const childTurn = spans.find((s) => s.attributes['gen_ai.conversation.id'] === childId && s.name === 'invoke_agent cowcat');
+  assert.ok(childTurn, 'the child session gets its own turn span under its own conversation id');
+  const childChat = spans.find(
+    (s) => s.attributes['gen_ai.conversation.id'] === childId && s.name.startsWith('chat '),
+  );
+  assert.ok(childChat, 'the child model round is metered too');
+  const parentTurn = spans.find(
+    (s) => s.attributes['gen_ai.conversation.id'] === 'sess_otel_sub' && s.name === 'invoke_agent cowcat',
+  );
+  assert.ok(parentTurn);
+  const taskSpan = spans.find(
+    (s) => s.attributes['gen_ai.conversation.id'] === 'sess_otel_sub' && s.name === 'execute_tool Task',
+  );
+  assert.ok(taskSpan, 'the delegation itself is a tool span on the parent');
 });

@@ -56,6 +56,32 @@ export class JsonlEventStore implements EventStore {
     await appendFile(this.#file(event.sessionId), `${JSON.stringify(event)}\n`, 'utf8');
   }
 
+  /**
+   * First line only. The header is small and always line 1 (append-only log,
+   * ADR-012), so one bounded read answers it; readAll would pay for the whole log
+   * to say the same thing.
+   */
+  async readHeader(sessionId: string): Promise<KernelEvent | null> {
+    let handle: FileHandle;
+    try {
+      handle = await open(this.#file(sessionId), 'r');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+    try {
+      const buffer = Buffer.alloc(65_536);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      if (bytesRead === 0) return null;
+      const chunk = buffer.toString('utf8', 0, bytesRead);
+      const newline = chunk.indexOf('\n');
+      const line = newline >= 0 ? chunk.slice(0, newline) : chunk;
+      return decodeEventLine(line, `${sessionId}.jsonl at line 1`);
+    } finally {
+      await handle.close();
+    }
+  }
+
   async readAll(sessionId: string): Promise<readonly KernelEvent[]> {
     let raw: string;
     try {
