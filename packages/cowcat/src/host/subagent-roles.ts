@@ -18,9 +18,12 @@ const EXPLORE_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep'];
  * todo list would overwrite the parent's (ADR-054). `Skill` is withheld because skills
  * are top-level only: a child receives no catalog, and a tool whose description says "use
  * the list you were given" is a lie without that list (the review of #149 caught the
- * general role shipping it anyway).
+ * general role shipping it anyway). `Remember` joins them (review of #192, P2-9):
+ * distillation is a top-level, end-of-turn act (ADR-137), not something a child
+ * delegates — a child that could write memory would need the trust snapshot and the
+ * approval wiring explained for a session nobody is watching.
  */
-const NEVER_GIVEN: readonly string[] = ['Task', 'TodoWrite', 'Skill'];
+const NEVER_GIVEN: readonly string[] = ['Task', 'TodoWrite', 'Skill', 'Remember'];
 
 /**
  * The tools one child may use.

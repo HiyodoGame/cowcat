@@ -167,3 +167,16 @@ input `{target, content, mode?, name?, description?}`：
 - **approvalKey 载体（对 E4/ADR-136 ⑤ 的修正）**：ADR-027 规定工具声明保持 data-only（pathInput/commandInput 是字段名），为给 approvalKey 一个 name+目标 粒度而加内核 preflight 钩子违背该决定。修订为借用 `commandInput: 'target'`——目标枚举本来就是要展示给用户的 subject，approvalKey 退化为 name+target（对某目标 always = 该目标后续写入不再问），卡面 subject = 目标。ADR-136 ④⑤ 已按此修订。
 - **反射回合的完成监视器**：挂在 startTurn 的 settled 上、仅在非 reflect 时安装——用安装与否而非 flag 时序做重入防护（flag 的 finally 与 settled.then 存在微任务竞态）。reflect 变体收窄：tools=仅 Remember，无 subagents/skills/hooks/planReview/escalation（不留「hook→prompt→turn」无人观察环路）。
 - 新增测试 13 个（remember 6 单测 + host 6 集成 + config 层警告覆盖在 host 用例）。
+
+## 9. #192 审查校准（2026-10-23，code-reviewer/k3）
+
+实现后审查：1 P0 + 4 P1 + 6 P2 全部处理。要点：
+
+- **P0-1（竞态可毁日志，最值钱的一条）**：maybeReflect 未检查 `turnStarting`——带 @ 文件的 sendTurn 通过 busy 检查后、await 读文件期间，reflect 回合可插入启动，同一 Session 两个并发 runTurn，交错事件让日志**永久不可 replay**。修复：守卫加 `turnStarting` 且 reflect 启动期间同步 claim 同一把旗。
+- **P1-2**：description 的 YAML 清洗不完备（反斜杠/控制字符是活注入面，手搓 quoting 不是 escaping）→ 改 `JSON.stringify`（JSON 字符串=合法 YAML 双引号标量，转义面全覆盖）。
+- **P1-3**：reflect 回合占用会话，用户 sendTurn 吃通用 busy 报错。本期选**区分报错文案**（说明是后台反射、会自行解除）；评估过「用户回合到达即 abort reflect」——放弃：reflect 停在审批上时 abort 会让审批 promise 悬挂到超时。记入 HANDOFF 作未来选项。
+- **P1-4（文档诚实）**：ADR-136 ④ 声称卡面有内容预览——实现没有（reason=规则原因）。修订为如实描述（无预览；内容在 toolCalls 进日志；always=该目标后续内容免展示，显式接受的产品语义）。
+- **P1-5**：Escalate 兜底链与 always 宽放无语义钉。补两个集成测试：未信任 Escalate 申诉获批 → 重试 → 工具门拒、磁盘无字；trusted always 后同目标第二次写无 ask、两次内容都落盘。
+- **P2 全处理**：测试文件 BOM/乱码/EOF 换行清理；空文件 append 前导空行；双标记段拒绝重写（不留孪生段）；statSync 先于读（内存尖峰防护）；skill 写 temp+rename 原子化；description min(1)（空 pitch 的 skill 永不出现）；**子代理 NEVER_GIVEN 加 Remember**（蒸馏是顶层行为，ADR-137 语义）。
+- **登记未修**：reflect 回合的 usage 混入会话总额、TUI 不可区分（P2-10）——记入 HANDOFF；instructions 的 read-modify-write 不做原子化（skill 已原子）。
+- **测试 +7**（host 46、remember 10）：P0 守卫伴随用例（reflect 占用时用户回合的区分拒绝 + 会话恢复可用）、Escalate 链、always 宽放、空文件、双段拒绝、description 转义、空 description。
