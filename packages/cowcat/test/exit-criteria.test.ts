@@ -233,6 +233,12 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // Background tasks are the host registry's business; their events are for the
         // panel and the audit, not for the messages the model sees (ADR-111).
         break;
+      case 'cron.created':
+      case 'cron.deleted':
+      case 'cron.fired':
+        // Same family as background tasks: the scheduler's bookkeeping, visible to the
+        // panel and the audit, never something the model said (ADR-140).
+        break;
       default: {
         const unhandled: never = event;
         throw new Error(`the projection does not cover this event: ${JSON.stringify(unhandled)}`);

@@ -212,6 +212,62 @@ test('background events survive a JSON round trip, and an invented state is refu
   assert.equal(kernelEventSchema.safeParse({ ...finished, state: 'zombie' }).success, false);
 });
 
+test('cron events survive a JSON round trip, and an unknown deleter is refused (ADR-140)', () => {
+  const created: KernelEvent = {
+    seq: 30,
+    ts: 30,
+    sessionId: 'sess',
+    turnId: null,
+    type: 'cron.created',
+    jobId: 'job_a',
+    schedule: '*/5 * * * *',
+    prompt: 'check the deploy',
+    recurring: true,
+    createdAt: 30,
+    expiresAt: 30 + 7 * 24 * 60 * 60 * 1000,
+  };
+  const parsedCreated = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(created)) as unknown);
+  if (!parsedCreated.success) assert.fail(describeIssues(parsedCreated.error));
+  if (parsedCreated.data.type !== 'cron.created') assert.fail('expected a created event');
+  assert.equal(parsedCreated.data.jobId, 'job_a');
+  assert.equal(parsedCreated.data.recurring, true);
+
+  const oneShot: KernelEvent = { ...created, seq: 31, type: 'cron.created', recurring: false, expiresAt: null };
+  const parsedOneShot = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(oneShot)) as unknown);
+  if (!parsedOneShot.success) assert.fail(describeIssues(parsedOneShot.error));
+
+  const deleted: KernelEvent = {
+    seq: 32,
+    ts: 32,
+    sessionId: 'sess',
+    turnId: null,
+    type: 'cron.deleted',
+    jobId: 'job_a',
+    by: 'expiry',
+    deletedAt: 32,
+  };
+  const parsedDeleted = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(deleted)) as unknown);
+  if (!parsedDeleted.success) assert.fail(describeIssues(parsedDeleted.error));
+  if (parsedDeleted.data.type !== 'cron.deleted') assert.fail('expected a deleted event');
+
+  const fired: KernelEvent = {
+    seq: 33,
+    ts: 33,
+    sessionId: 'sess',
+    turnId: 'turn_9',
+    type: 'cron.fired',
+    jobId: 'job_a',
+    firedAt: 33,
+  };
+  const parsedFired = kernelEventSchema.safeParse(JSON.parse(JSON.stringify(fired)) as unknown);
+  if (!parsedFired.success) assert.fail(describeIssues(parsedFired.error));
+  if (parsedFired.data.type !== 'cron.fired') assert.fail('expected a fired event');
+  assert.equal(parsedFired.data.turnId, 'turn_9');
+
+  // `by` is a closed vocabulary: nothing else may delete a job in a replayed log.
+  assert.equal(kernelEventSchema.safeParse({ ...deleted, by: 'admin' }).success, false);
+});
+
 test('a todo.updated event survives a JSON round trip with its statuses', () => {
   const event: KernelEvent = {
     seq: 10,

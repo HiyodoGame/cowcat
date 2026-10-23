@@ -118,6 +118,17 @@ export {
   clearingSummary,
   type ToolClearingSummary,
 } from './policy/tool-clearing.js';
+export {
+  CRON_MAX_JOBS,
+  CRON_RECURRING_TTL_MS,
+  DUE_AHEAD_MS,
+  isDue,
+  nextFire,
+  parseSchedule,
+  type CronField,
+  type CronSpec,
+  type ParsedSchedule,
+} from './policy/cron.js';
 export { SPILL_HEAD_BYTES, SPILL_MAX_INLINE_BYTES, spillOutput, type SpillConfig, type SpillOutcome } from './adapters/spill.js';
 // The OTel adapter is deliberately NOT re-exported here: its module graph pulls in
 // the OTLP exporter (node:http transport), and the root surface is loaded even when
