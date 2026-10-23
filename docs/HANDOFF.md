@@ -2,18 +2,18 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-23（P7 第七个模块可观测性全链路收尾）**。
-> 交接时仓库状态：**`main` = `42695d9`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
+> 最近一次更新：**2026-10-23（P7 第八个模块记忆续篇·经验蒸馏全链路收尾）**。
+> 交接时仓库状态：**`main` = `62eb148`，工作区干净；最新发布仍为 `v1.0.0-beta.3`（本批次未发版）。**
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API 跑出的会话日志；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
-> **归属**：本会话产出 **#147~#188**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环、可观测性七个 P7 模块全链路 + 收尾）。
+> **归属**：本会话产出 **#147~#194**（Skills、工具结果治理、Hooks、Plan 模式、会话体验、审批与沙箱闭环、可观测性、记忆续篇·经验蒸馏八个 P7 模块全链路 + 收尾）。
 
 ---
 
 ## 1. 本次会话做了什么
 
-七个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
+八个 P7 模块，各自走完整链路「专项调研 → ADR → 实现 → post-merge 审查修复 → 真机验收」：
 
 ### 已完成模块（概要）
 
@@ -47,7 +47,7 @@
 
 | 包 | 通过 | 说明 |
 |---|---|---|
-| cowcat | 840+ | 逐文件全绿（host 37、observability 17、approval 13、escalation 4、bash 25、config 24、schema 14 等） |
+| cowcat | 860+ | 逐文件全绿（host 46、remember 10、observability 17、approval 13、escalation 4、bash 25、config 24、schema 14 等） |
 | protocol | 43 | |
 | tui | 119 | **必须 Node 26**（本机 Node 24 是 FFI 假失败） |
 | cli | 31 | |
@@ -74,9 +74,9 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
 
 ## 6. 下一步建议
 
-1. **P7 下一个模块，用户选**：记忆续篇·经验蒸馏（D10）、视觉工具（D11）、Cron/Worktree。
+1. **P7 下一个模块，用户选**：视觉工具（D11）、Cron/Worktree；或八个已完成模块攒一批发 `beta.4`。
 2. **rewind**：立项前必须先答「截断后 always/session 授权归哪、锁怎么收、0 行 header 怎么办」。
-3. **发版**：七个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环/可观测性）攒一批发 `beta.4` 由用户定。
+3. **发版**：八个模块（Skills/T-A/Hooks/Plan/会话体验/审批沙箱闭环/可观测性/记忆蒸馏）攒一批发 `beta.4` 由用户定。
 
 ## 7. 会话踩坑（新增）
 
@@ -86,6 +86,15 @@ ADR-114~128（前五模块：114~117 Skills、118~120 工具治理、121~123 Hoo
 - **本机外部 `du` 进程**让全量测试 10 倍慢、计时测试随机 flake——逐文件绿即代码绿，CI 是权威。
 - PowerShell here-string 不转义 `''`；带 CRLF 的文件做 .NET Replace 前先确认匹配；改完必须 `git branch --show-current`。
 - **环境重启会清空含 junction 的 node_modules 树**（本会话 packages/cowcat 与 protocol 整包被清空，TUI/CLI 幸存）：恢复 = `git checkout -- <pkg>` + `npm ci` + 按依赖序重建 dist（protocol → cowcat → tui → cli）；未提交的审查修复按会话记录重放。教训：审查修复批次应尽快成 PR，别把大改留在工作区过夜。
+- **记忆续篇·经验蒸馏（#190~194）**：ADR-135~137——
+  - **写路闭环**：`Remember` 工具是记忆写路唯一门（四目标 instructions/skill × user/project；指令 append 或 `rewrite-cowcat-section` 标记段；skill 整文件写、frontmatter 仅 name/description；caps 8K/32K/1024）；**无自由路径参数**（枚举目标，逃逸构造上不可能）；**内核零改动、零新事件**（approval.* + tool.finished 全审计）。
+  - **信任镜像（ADR-136 ② 两层）**：未信任 workspace 时 host 注入条件 deny 规则（`when: {tool: 'Remember', command: '<target>'}`）**在 ask 之前**拒绝（不问必然失败的写）；Escalate 申诉可推翻 deny → **工具内信任门兜底**拒绝重试（不可申诉）——「未信任不回写」是 ADR-030 的对称句。
+  - **approvalKey 载体**：`commandInput: 'target'` 借道（ADR-027 data-only 声明不动内核）——approvalKey = name+目标；对某目标 always = 该目标后续写入免展示免问（显式接受的产品语义，卡面**无内容预览**，要更紧用规则 scoped ask/deny）。
+  - **后台蒸馏（ADR-137）**：`memory.reflect` 默认 off（user 层 only，跨层警告丢弃）；on 时用户回合 completed 后自动起受限反射回合（仅 Remember 工具、无 subagents/skills/hooks/planReview/escalation；reflecting 旗覆盖整个回合；完成监视器仅非 reflect 安装防重入）；unattended/plan mode/失败回合不反射；reflect 占用期间用户 sendTurn 吃**区分文案**的 busy 拒绝。
+  - 审查 #193：1 P0（maybeReflect×@文件 sendTurn 竞态可致日志永久不可 replay——守卫+claim 同一把 turnStarting 旗）+ 4 P1（description YAML 注入面→JSON.stringify；reflect 占用文案；ADR-136 ④ 文档诚实化；Escalate 链与 always 宽放补测试）+ 6 P2（子代理 NEVER_GIVEN 加 Remember 等）全修。
+  - T4 真机：glm 自主 Remember 落盘 `~/.cowcat/AGENTS.md`、审批卡 subject 真机可见、reflect 回合真机触发、**新会话 probe 命中沉淀经验**（写路闭环到读取侧全通）。
+- **reflect usage 与会话总额不可区分**（审查 P2-10 登记）：反射回合的 model.usage 混入 usageTotals，TUI 无法区分后台蒸馏花费——未来用 turn.noted 打标或按 turnId 归类。
+- **reflect 占用会话的未来选项**（审查 P1-3 评估记录）：用户回合到达即 abort reflect 曾被考虑后放弃（审批 promise 悬挂到超时）；若将来要做，需先解决 askApproval 的 abort 语义。
 - **configWarnings 通道无消费者**（#63 存量）：ADR-134 依赖它把「project/session 层 otel 被丢弃」送达用户，当前 CLI/TUI 均不读——下一模块顺手接上或开 issue。
 - **OTel JS 依赖线**：api/core/resources/sdk-trace-base 锁 1.30.x + exporter-trace-otlp-http 0.57.x（peer 对齐）；**该 http exporter 发 application/json 不是 protobuf**；3.x core 与 sdk-trace-base 2.x peer 冲突勿混升。
 - **真机驱动要当「橡皮图章用户」**：回合会停在 awaiting_approval 直到每个问题被回答——驱动循环里自动 respondApproval，别只等 completed。
