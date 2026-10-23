@@ -180,3 +180,27 @@ input `{target, content, mode?, name?, description?}`：
 - **P2 全处理**：测试文件 BOM/乱码/EOF 换行清理；空文件 append 前导空行；双标记段拒绝重写（不留孪生段）；statSync 先于读（内存尖峰防护）；skill 写 temp+rename 原子化；description min(1)（空 pitch 的 skill 永不出现）；**子代理 NEVER_GIVEN 加 Remember**（蒸馏是顶层行为，ADR-137 语义）。
 - **登记未修**：reflect 回合的 usage 混入会话总额、TUI 不可区分（P2-10）——记入 HANDOFF；instructions 的 read-modify-write 不做原子化（skill 已原子）。
 - **测试 +7**（host 46、remember 10）：P0 守卫伴随用例（reflect 占用时用户回合的区分拒绝 + 会话恢复可用）、Escalate 链、always 宽放、空文件、双段拒绝、description 转义、空 description。
+
+## 10. T4 真机验收记录（2026-10-23）
+
+**结论：全链路真机通过**（glm-5.3-flash 真实 API，`cowcat serve`，user config
+`memory.reflect=on` + `zai-coding-plan/glm-5.3-flash`；驱动
+`cowcat-tui-accept/t5-memory-accept.mjs`，ACCEPTANCE PASS，exit=0）。
+
+### 结果
+
+- glm 被引导调用 `Remember`（target=instructions-user）——**未给写入内容**，
+  段落由模型自己组织；审批卡 subject 真机显示 `instructions-user`
+  （commandInput 借道在真实链路可见）。
+- 完成 2 个回合：用户回合 + **reflect 回合**（memory.reflect=on 后台蒸馏
+  真机触发，未弹多余审批——反射模型判断没有更多可沉淀的）。
+- `~/.cowcat/AGENTS.md` 落盘，内容为模型自组织的经验（「提交任何代码前必须
+  先运行完整测试…」）。
+- **新会话注入可见**：第二个会话只问「提交前要做什么」，glm 答出沉淀的
+  经验——写路闭环到读取侧全通。
+
+### 边界与未验
+
+- 未信任闸门的拒绝路径有 host 集成测试钉住，真机未单独演（非风险）。
+- reflect 回合的花费混入会话 usage（审查 P2-10 登记，未来 turn.noted 打标）。
+- 真机未验 skill 目标写入（单测覆盖写形；frontmatter 由工具生成）。
