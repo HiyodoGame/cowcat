@@ -298,3 +298,40 @@ test('an unattended host offers no cron tools (ADR-112 同款纪律)', async (t)
   await new Promise((resolve) => setTimeout(resolve, 2_100));
   assert.equal(fx.events().some((event) => event.type === 'cron.fired'), false);
 });
+
+test('the /cron panel path: list, remove, and the deletion is the user log fact (ADR-143 ②)', async (t) => {
+  const time = fakeClock(T0);
+  const model = new ScriptedModel([
+    [cronCreate('c1', 'panel job')],
+    [{ type: 'text', text: 'scheduled' }],
+  ]);
+  const fx = await start(t, { model, clock: time.clock });
+  t.after(() => fx.close());
+  await fx.client.initialize();
+  await fx.client.createSession('sess_cron_panel');
+  await fx.client.openSession('sess_cron_panel');
+
+  const answered = new Set<string>();
+  const send = fx.client.sendTurn('sess_cron_panel', 'make a job');
+  await fx.until('the CronCreate approval', () => fx.events().some((event) => event.type === 'approval.requested'));
+  autoApprove(fx, 'sess_cron_panel', answered);
+  await send;
+  // The send reply can outrun the turn itself: wait until the job is a log fact before
+  // asking the panel to list it (same race as the clock-advance tests above).
+  await fx.until('the job to exist', () => fx.events().some((event) => event.type === 'cron.created'));
+
+  const jobs = await fx.client.listCronJobs('sess_cron_panel');
+  assert.equal(jobs.length, 1);
+  const job = jobs[0];
+  assert.ok(job !== undefined);
+  assert.equal(job.schedule, '* * * * *');
+  assert.equal(job.prompt, 'panel job');
+
+  assert.equal(await fx.client.removeCronJob('sess_cron_panel', job.jobId), true);
+  assert.equal(await fx.client.removeCronJob('sess_cron_panel', 'job_ghost'), false);
+
+  await fx.until('the user deletion in the log', () => fx.events().some((event) => event.type === 'cron.deleted'));
+  const deleted = fx.events().find((event) => event.type === 'cron.deleted');
+  assert.equal(field(deleted, 'by'), 'user');
+  assert.deepEqual(await fx.client.listCronJobs('sess_cron_panel'), []);
+});

@@ -8,6 +8,7 @@ import {
   type AttachmentBytes,
   type AttachedSession,
   type ApprovalVerdict,
+  type CronJobSummary,
   type Defer,
   type ProtocolClient,
   type ProtocolHost,
@@ -118,6 +119,23 @@ export class ScriptedHost implements ProtocolHost {
     this.stoppedTasks.push({ sessionId, taskId });
     if (!this.sessions.has(sessionId)) throw new NoSuchSessionError(sessionId);
     return Promise.resolve(this.runningTasks.delete(taskId));
+  }
+
+  readonly cronJobs = new Map<string, readonly CronJobSummary[]>();
+  readonly removedCronJobs: { readonly sessionId: string; readonly jobId: string }[] = [];
+
+  listCronJobs(sessionId: string): Promise<readonly CronJobSummary[]> {
+    if (!this.sessions.has(sessionId)) throw new NoSuchSessionError(sessionId);
+    return Promise.resolve(this.cronJobs.get(sessionId) ?? []);
+  }
+
+  removeCronJob(sessionId: string, jobId: string): Promise<boolean> {
+    this.removedCronJobs.push({ sessionId, jobId });
+    if (!this.sessions.has(sessionId)) throw new NoSuchSessionError(sessionId);
+    const jobs = this.cronJobs.get(sessionId) ?? [];
+    const found = jobs.some((job) => job.jobId === jobId);
+    if (found) this.cronJobs.set(sessionId, jobs.filter((job) => job.jobId !== jobId));
+    return Promise.resolve(found);
   }
 
   /** Push a durable fact or a streamed delta to whoever attached this session. */

@@ -21,6 +21,10 @@ export const METHODS = [
   'plan.reply',
   'attachment.read',
   'task.stop',
+  /** The `/cron` panel's read side (ADR-143 ②): the live job projection with next runs. */
+  'cron.list',
+  /** The `/cron` panel's delete side: false when the id is not this session's live job. */
+  'cron.remove',
   'shutdown',
 ] as const;
 
@@ -82,6 +86,10 @@ export const PARAMS = {
   // host refuses ids that belong to another session rather than letting one client kill
   // another's work.
   'task.stop': z.strictObject({ sessionId: z.string().min(1), taskId: z.string().min(1) }),
+  // Cron jobs are session-scoped exactly like background tasks (ADR-140): a client may
+  // only read or remove ids its own session owns.
+  'cron.list': z.strictObject({ sessionId: z.string().min(1) }),
+  'cron.remove': z.strictObject({ sessionId: z.string().min(1), jobId: z.string().min(1) }),
   shutdown: noParams,
 } satisfies Record<MethodName, z.ZodType>;
 
@@ -152,7 +160,24 @@ export interface ResultTable {
   readonly 'attachment.read': AttachmentBytes;
   /** False when the task is already gone (finished, or never belonged to this session). */
   readonly 'task.stop': { readonly stopped: boolean };
+  /** One scheduled job as the `/cron` panel needs it (ADR-143 ②). */
+  readonly 'cron.list': { readonly jobs: readonly CronJobSummary[] };
+  /** False when the id is not this session's live job; the deletion event is the truth. */
+  readonly 'cron.remove': { readonly removed: boolean };
   readonly shutdown: { readonly closing: true };
+}
+
+/** A cron job as it crosses the wire: the log's facts plus the derived next fire. */
+export interface CronJobSummary {
+  readonly jobId: string;
+  readonly schedule: string;
+  readonly prompt: string;
+  readonly recurring: boolean;
+  readonly createdAt: number;
+  readonly expiresAt: number | null;
+  /** Next SCHEDULED fire in ms — a long turn delays the actual run (ADR-141 ⑦). */
+  readonly nextRun: number | null;
+  readonly lastFiredAt: number | null;
 }
 
 export type Result<M extends MethodName> = ResultTable[M];

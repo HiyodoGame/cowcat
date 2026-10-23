@@ -6,6 +6,7 @@ import {
   type ApprovalVerdict,
   type AttachedSession,
   type AttachmentBytes,
+  type CronJobSummary,
   type ProtocolHost,
   type SessionSummary,
 } from '@corescense/cowcat-protocol';
@@ -1366,6 +1367,27 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       const task = background.list().find((info) => info.taskId === taskId);
       if (task === undefined || task.sessionId !== sessionId) return false;
       return background.stop(taskId);
+    },
+
+    async listCronJobs(sessionId: string): Promise<readonly CronJobSummary[]> {
+      open(sessionId);
+      // Cron off in this build (disabled config, unattended host): an empty list is the
+      // honest answer — there IS nothing scheduled here, because there is no scheduler.
+      if (cronPort === undefined) return [];
+      return cronPort.list(sessionId);
+    },
+
+    async removeCronJob(sessionId: string, jobId: string): Promise<boolean> {
+      const rec = open(sessionId);
+      if (cronPort === undefined) return false;
+      // Ownership is the projection's word, not the caller's (the task.stop precedent):
+      // a false answer means "not this session's live job", never a silent success.
+      const owned = await cronPort.remove(sessionId, jobId);
+      if (!owned) return false;
+      // The deletion is a log fact with by: 'user' — the panel's answer is not the
+      // record; the event is (ADR-140).
+      await rec.session.cronDeleted(jobId, 'user', clockNow());
+      return true;
     },
 
     respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void> {

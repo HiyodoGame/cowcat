@@ -1,5 +1,5 @@
 import { ERROR_CODES, type ErrorCode } from './jsonrpc.js';
-import type { AttachmentBytes, ApprovalVerdict, SessionSummary } from './methods.js';
+import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, SessionSummary } from './methods.js';
 
 /**
  * What the frontend needs from whatever holds sessions. T3/T4 implement this over the
@@ -76,6 +76,14 @@ export interface ProtocolHost {
    * gone or does not belong to this session — never a silent success.
    */
   stopTask(sessionId: string, taskId: string): Promise<boolean>;
+  /** The session's scheduled jobs, newest facts included (ADR-143 ②). Empty when cron is off in this build. */
+  listCronJobs(sessionId: string): Promise<readonly CronJobSummary[]>;
+  /**
+   * Remove one of the session's cron jobs (the `/cron` panel's delete). False when the
+   * id is not this session's live job — never a silent success. The removal lands in
+   * the log as `cron.deleted by: 'user'`, so replay and other clients see it.
+   */
+  removeCronJob(sessionId: string, jobId: string): Promise<boolean>;
 }
 
 /**

@@ -144,6 +144,42 @@ test('task.stop reports whether the task was stopped, and stopping twice is fals
   ]);
 });
 
+test('cron.list and cron.remove round trip; a foreign session gets nothing (ADR-143 ②)', async () => {
+  const host = new ScriptedHost([newScriptedSession('s1'), newScriptedSession('s2')]);
+  host.cronJobs.set('s1', [
+    {
+      jobId: 'job_a',
+      schedule: '*/5 * * * *',
+      prompt: 'check the deploy',
+      recurring: true,
+      createdAt: 100,
+      expiresAt: 100 + 7 * 24 * 60 * 60 * 1000,
+      nextRun: 200,
+      lastFiredAt: null,
+    },
+  ]);
+  const { client } = wire(host);
+  await client.initialize();
+  await client.openSession('s1');
+  await client.openSession('s2');
+
+  const jobs = await client.listCronJobs('s1');
+  assert.equal(jobs.length, 1);
+  const job = jobs[0];
+  assert.ok(job !== undefined);
+  assert.equal(job.jobId, 'job_a');
+  assert.equal(job.nextRun, 200);
+  assert.deepEqual(await client.listCronJobs('s2'), [], 'a session lists only its own jobs');
+
+  assert.equal(await client.removeCronJob('s1', 'job_a'), true);
+  assert.equal(await client.removeCronJob('s1', 'job_a'), false, 'a removed job is not a failure');
+  assert.deepEqual(await client.listCronJobs('s1'), []);
+  assert.deepEqual(host.removedCronJobs, [
+    { sessionId: 's1', jobId: 'job_a' },
+    { sessionId: 's1', jobId: 'job_a' },
+  ]);
+});
+
 test('parseIncoming separates requests, notifications and junk', () => {
   assert.equal(parseIncoming('{"jsonrpc":"2.0","id":1,"method":"session.list"}').kind, 'request');
   assert.equal(parseIncoming('{"jsonrpc":"2.0","method":"session.list"}').kind, 'notification');
