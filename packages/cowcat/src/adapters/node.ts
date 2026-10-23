@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, open, readFile, rename, unlink, writeFile, type FileHandle } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rename, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { KernelEvent } from '../kernel/events.js';
@@ -35,6 +35,20 @@ export class JsonlEventStore implements EventStore {
   #file(sessionId: string): string {
     if (!SESSION_ID.test(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
     return join(this.#dir, `${sessionId}.jsonl`);
+  }
+
+  /**
+   * Remove a session's log, best effort. Exists for the fork cleanup path (ADR-127):
+   * a replay that fails partway leaves a headered-but-truncated log that the index
+   * would list as a healthy session, so the half-born fork is deleted, never resumed.
+   * Swallows errors: "already gone" is the goal, and a leftover is loud at open time.
+   */
+  async remove(sessionId: string): Promise<void> {
+    try {
+      await rm(this.#file(sessionId), { force: true });
+    } catch {
+      // Best effort, never the reason a fork call fails.
+    }
   }
 
   async append(event: KernelEvent): Promise<void> {

@@ -1,6 +1,6 @@
 import { createCliRenderer, type CliRenderer } from '@opentui/core';
-import { isAbsolute, resolve } from 'node:path';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
+import { parseAtRefs } from './app/atrefs.js';
 import { COMMANDS, lastToolCallId, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
 import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
@@ -681,11 +681,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       screen.clearInput();
       view.current = rememberInput(resetScroll(withLangFrom(view.current, trimmed)), trimmed);
       draw();
-      // `@` file references (ADR-128): bare tokens, resolved against the TUI's cwd. The
-      // tokens stay in the text — they are the user's words — and the resolved paths
-      // ride the send; the host validates, reads, and injects them ahead of the prompt.
-      const atRefs = [...trimmed.matchAll(/@(\S+)/g)].map((match) => match[1] ?? '');
-      const files = atRefs.map((path) => (isAbsolute(path) ? path : resolve(process.cwd(), path)));
+      // `@` file references (ADR-128): only tokens that resolve to existing files are
+      // sent; everything else (emails, npm scopes, trailing punctuation) stays text.
+      // Relative paths resolve against the TUI's cwd — resume keeps the shell's cwd,
+      // so a session created elsewhere reads @refs from where you are (ADR-128 ⑤).
+      const files = parseAtRefs(trimmed, process.cwd());
       options.client.sendTurn(sessionId, trimmed, files.length === 0 ? undefined : files).catch((error: unknown) => {
         // The host refuses with a sentence a user can act on ("no model is configured …",
         // "already has a turn running"); showing it verbatim is the point of that work.

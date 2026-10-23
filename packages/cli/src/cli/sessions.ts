@@ -37,7 +37,9 @@ export async function runSessions(context: CommandContext): Promise<number> {
   // otherwise bury the sessions that person actually started.
   const shown = flagOn(context.flags, 'all')
     ? sessions
-    : sessions.filter((session) => session.parentSessionId === null);
+    : // Children are folded away (ADR-079), but forks are something a person opens by
+      // hand — hiding them would make `/fork` 的产出找不到（#173 审查 P0-1）。
+      sessions.filter((session) => session.parentSessionId === null || session.parentRole === 'fork');
 
   if (shown.length === 0) {
     context.stdout(`没有会话（${paths.sessionsDir}）`);

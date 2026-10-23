@@ -97,7 +97,11 @@ function headerOf(firstLine: string | undefined): {
     if (!isRecord(parsed)) return empty;
     const parent = parsed.parent;
     const parentId = isRecord(parent) && typeof parent.sessionId === 'string' ? parent.sessionId : null;
-    const parentRole = isRecord(parent) && typeof parent.role === 'string' ? parent.role : null;
+    // Role is whitelisted, not merely string-checked: this hand-rolled parse never runs
+    // the schema, and an unknown role would otherwise ride the summary as garbage
+    // (review of #173, P2-8).
+    const rawRole = isRecord(parent) && typeof parent.role === 'string' ? parent.role : null;
+    const parentRole = rawRole === 'explore' || rawRole === 'general' || rawRole === 'fork' ? rawRole : null;
     return {
       parentSessionId: parentId !== '' ? parentId : null,
       parentRole,
