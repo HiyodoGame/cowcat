@@ -1,5 +1,21 @@
 # CowCat changelog
 
+## 1.0.0-beta.4（2026-10-24）—— 十个 P7 功能模块：Cron/Worktree、视觉、记忆蒸馏、可观测性等
+
+> beta.3 之后的全部改动进入可安装产物：十个 P7 模块，各自走「专项调研 → ADR 落表 → 实现 → code-review 修复 → 真机验收」全链路（#147~#205，ADR-114~147）。测试基数：cowcat 913 / protocol 44 / tui 121 / cli 31。
+
+- **Cron 定时任务（#202/#204/#205，ADR-140~143）**：作业即事件——`cron.*` 三事件落会话日志，调度器 = 日志投影 + 宿主 1s 心跳，resume 免费恢复；模型用 CronCreate/CronList/CronDelete 管理，TUI `/cron` 面板经 `cron.list`/`cron.remove` 删写审计；cron 回合 turn-scoped 无人值守收窄（不能问审批，做不了会报告）；空闲才触发、错过不补、50 上限、7 天过期、`*/5` 提前 15s 保缓存；`cron.enabled`（user 层）；`cowcat run` 等无人值守宿主不提供 cron。真机：模型自然建任务→fired→无人值守拒绝留审计全过。
+- **Worktree 并行会话（#204，ADR-144~147）**：`cowcat tui --worktree <name>` 在 `.cowcat/worktrees/<name>` 开隔离会话（git worktree、HEAD 基点）；主检出受信才允许创建，信任显式继承可审计；退出时干净树自动清理；`sessions resume` 恢复会话的工作目录；worktree 内 `git commit` 沙箱放行主检出 `.git`。兑现 P2 登记的接口债。
+- **视觉工具 View（#196~#200，ADR-138/139）**：给文本模型加眼——本地图经用户配置的 vision preset（默认 `zai/glm-4v-flash`）拿回 OCR/描述文本；类型闸在内容层（魔数嗅探），防改名文件免审批出网；真机 OCR「HELLO COWCAT 42」，并实测校准 catalogue 限额。
+- **记忆续篇·经验蒸馏（#190~#194，ADR-135~137）**：`Remember` 工具是写路唯一门（四目标、caps、无自由路径）；未信任不回写（信任镜像两层）；`memory.reflect` 默认 off 的后台蒸馏回合。真机：glm 自主沉淀落盘、新会话可见、reflect 触发。
+- **可观测性 OTel（#184~#188，ADR-132~134）**：事件流 → GenAI 语义约定 span 的纯派生适配器，内核零改动；默认关、env 优先、密钥只走 env。真机：span 树与 usage 对账全对（glm cache ~99.6%）。
+- **审批与沙箱闭环（#178~#182，ADR-129~131）**：Escalate 申诉（once 消费即焚、refused 折叠、grants 覆盖 deny）；沙箱拒绝专属文案与 unsandboxedApproved 维度；usageTotals 用量仪表与预设价格。真机：glm 自然申诉、once 重试放行。
+- **会话体验（#171~#175，ADR-126~128）**：会话头 cwd/模型与标题派生；`session.fork` 事件重放式；`@` 文件引用（host 校验注入）；resume 恢复 cwd（本批次由 Worktree 模块兑现为通用行为）。
+- **Plan 模式与多方案预审（#165~#169，ADR-124/125）**：会话级只读约束；ExitPlan 虚拟工具 + 评审桥（复用审批卡）；真机 2 方案→选择→退模式→执行全链。
+- **Hooks（#159~#163，ADR-121~123）**：CC hooks.json 六事件兼容子集（command-only、五配置源、trust 门、exit 2 阻断语义照抄）；真机 CC 文档形态零改写生效。
+- **Skills 与工具结果治理（#147~#157，ADR-114~120）**：本地 SKILL.md 技能渐进披露；工具 clearing / 超限 spill 外置 / 重复调用防护。真机：技能自然触发、三机制全触发 cache ~90%+。
+- **发布流程修正（#144/#145）**：prerelease 必须带 `--tag beta`；发布顺序文档与脚本行为对齐。
+
 ## 1.0.0-beta.3（2026-10-22）—— TUI 体验、实时输出与后台任务
 
 > beta.2 之后的全部改动：TUI 交互重做（#109–#129）、实时输出与后台任务（#130–#138）、真机验收期间的修复（#139–#141）。
