@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-24（P7 Cron/Worktree 模块全链路收尾）**。
-> 交接时仓库状态：**`main` = `63f2269`；本会话产出在三个分支上：#202（调研）、#203（ADR，链 #202）、#204（实现 T1~T9），均待评审合并；最新发布仍为 `v1.0.0-beta.3`。**
+> 最近一次更新：**2026-10-24（P7 Cron/Worktree 模块全链路收尾 + `1.0.0-beta.4` 发布）**。
+> 交接时仓库状态：**`main` = `0cac652`；Cron/Worktree 三 PR（#202/#205/#204）与发版批次（#208）均已合并；`1.0.0-beta.4` 已发布**——registry 核验：四包 `@beta` = 1.0.0-beta.4，support 包 `latest` 已指齐，CLI `latest` 仍是 v1 `0.15.0`（切换由 `docs/beta-checklist.md` §7 门槛决定）。**
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实 git 跑出的验收记录（`tools/t9-cron-worktree-accept.mjs`，13/13）；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 >
@@ -69,8 +69,8 @@
 ## 6. 下一步建议
 
 1. **评审合并三 PR**：#202（调研）→ #203（ADR，链 #202）→ #204（实现 T1~T9；合并前 retarget main）。合并顺序不可乱（#203 基于 #202，#204 基于 main 但语义依赖 #203 先落）。
-2. **P7 下一个模块，用户选**：上下文压缩已在计划内？（此前已完成）；剩 NotebookEdit/PDF、WebFetch/WebSearch、`run --worktree`（§9-4）、`.worktreeinclude`（§9-5）；或攒一批发 `beta.4`（现十个模块未发）。
-3. **发版**：Cron/Worktree + 之前九个模块攒 `beta.4` 由用户定。
+2. **P7 下一个模块，用户选**：剩 NotebookEdit/PDF、WebFetch/WebSearch、`run --worktree`（§9-4）、`.worktreeinclude`（§9-5）；或处理 beta.4 反馈期的 checklist 验收。
+3. **beta.4 反馈期**：按 `docs/beta-checklist.md`（beta.4 标题）走验收，§7 五个门槛满足后再切 CLI `latest`。
 
 ## 7. 会话踩坑（新增）
 
