@@ -2352,9 +2352,17 @@ test('model selection is per-session and a failed change preserves the old selec
   await assert.rejects(fixture.client.setModel('sess_model_a', 'anthropic/claude-opus-5-5'), /API_KEY|API key|api key|key/);
   assert.equal((await fixture.client.listModels('sess_model_a')).current.id, 'openai/gpt-6.1-sol');
 
+  // A client has one active session (server `openSession` detaches every earlier
+  // attachment), so the two turns are observed in sequence — attach A, run A's turn,
+  // then attach B — instead of expecting one subscription to carry both.
+  await fixture.client.openSession('sess_model_a');
   await fixture.client.sendTurn('sess_model_a', 'first');
+  await fixture.until('session a turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed' && event.sessionId === 'sess_model_a'));
+  await fixture.client.openSession('sess_model_b');
   await fixture.client.sendTurn('sess_model_b', 'second');
-  await fixture.until('both turns to complete', () => fixture.events().filter((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed').length >= 2);
+  await fixture.until('session b turn to complete', () =>
+    fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed' && event.sessionId === 'sess_model_b'));
   const opened = fixture.events().filter((event) => event.type === 'turn.opened');
   assert.equal(field(opened.find((event) => event.sessionId === 'sess_model_a'), 'model'), 'gpt-6.1-sol');
   assert.equal(field(opened.find((event) => event.sessionId === 'sess_model_b'), 'model'), 'claude-sonnet-5-5');

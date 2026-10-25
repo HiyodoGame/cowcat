@@ -37,9 +37,11 @@ test('changed files are derived from successful Write/Edit entries and deduplica
     call('c4', 'Edit', { file_path: '/work/a.ts', old_string: 'x\n', new_string: 'y\n' }),
     finished('c4', 'Edit', '/work/a.ts'),
   ]);
+  // Write carries `written` (new-content line count), never a fabricated
+  // `added` count — there are no before bytes to diff against (ADR-149 ④).
   assert.deepEqual(changedFiles(view), [
-    { path: '/work/a.ts', operations: ['Edit'], added: 3, removed: 2 },
-    { path: '/work/b.txt', operations: ['Write'], added: 2, removed: 0 },
+    { path: '/work/a.ts', operations: ['Edit'], added: 3, removed: 2, written: 0 },
+    { path: '/work/b.txt', operations: ['Write'], added: 0, removed: 0, written: 2 },
   ]);
 });
 
@@ -59,7 +61,9 @@ test('/changes toggles a dock panel with paths and change statistics', () => {
   const text = dock.map((row) => row.text).join('\n');
   assert.match(text, /变更文件/);
   assert.match(text, /\/work\/b\.txt/);
-  assert.match(text, /\+2/);
+  assert.match(text, /写入 2 行/);
+  // A Write has no before bytes, so the panel must not fabricate a diffstat (ADR-149 ④).
+  assert.doesNotMatch(text, /\+2 -0/);
 });
 
 test('a Write card shows a new-content preview, not a fabricated before/after diff', () => {
