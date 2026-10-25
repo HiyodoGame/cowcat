@@ -3,6 +3,7 @@ import { contextCeiling, estimateMessage, RECENT_KEEP_TOKENS } from './context.j
 import type { Message } from './messages.js';
 import type { ModelPreset } from './preset.js';
 import type { Session } from './session.js';
+import { COWCAT_SYSTEM_PROMPT } from './system-prompt.js';
 import type { CompactionTrigger } from './context.js';
 
 /**
@@ -13,7 +14,7 @@ import type { CompactionTrigger } from './context.js';
  * 1. **Not a turn.** It opens no turn, writes no `model.message`, and asks nobody for
  *    approval. It is a maintenance operation on the session's history, so it runs
  *    between model calls, inside whatever turn happens to be open.
- * 2. **The request is a prefix of the real one.** Same system (none today), same tools,
+ * 2. **The request is a prefix of the real one.** Same system, same tools,
  *    and the shadowed messages byte-for-byte, with the instruction appended as one final
  *    user message. Providers cache prefixes, so the only uncached part is the instruction
  *    and the summary. Every upstream tool that writes summaries does this.
@@ -200,6 +201,7 @@ export async function compactContext(
       // instruction says not to call them; a call that arrives anyway is ignored.
       tools: deps.tools,
       model: preset.model,
+      system: COWCAT_SYSTEM_PROMPT,
       ...(preset.limits.output === undefined ? {} : { maxTokens: preset.limits.output }),
     };
 

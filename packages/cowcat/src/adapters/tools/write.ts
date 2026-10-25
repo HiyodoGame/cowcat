@@ -2,11 +2,13 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
 import type { ToolPort } from '../../ports/index.js';
+import { captureCheckpoint, checkpointAfter, type CheckpointOptions } from '../checkpoint.js';
 import { defineTool } from './define-tool.js';
 
 export interface WriteToolOptions {
   /** The working directory a relative `file_path` is resolved against. */
   readonly cwd: string;
+  readonly checkpoints?: CheckpointOptions;
 }
 
 const DESCRIPTION = [
@@ -30,9 +32,17 @@ export function createWriteTool(options: WriteToolOptions): ToolPort {
         content: z.string().describe('Full new content of the file'),
       }),
     },
-    (input) => {
+    (input, _signal, _grant, context) => {
       const filePath = resolve(options.cwd, input.file_path);
       const existed = existsSync(filePath);
+      let checkpoint;
+      if (options.checkpoints !== undefined) {
+        try {
+          checkpoint = captureCheckpoint(options.checkpoints, context, filePath);
+        } catch (error) {
+          return { ok: false, output: `cannot create checkpoint for ${filePath}: ${error instanceof Error ? error.message : String(error)}` };
+        }
+      }
       try {
         mkdirSync(dirname(filePath), { recursive: true });
         writeFileSync(filePath, input.content);
@@ -43,6 +53,7 @@ export function createWriteTool(options: WriteToolOptions): ToolPort {
         ok: true,
         output: `${existed ? 'updated' : 'created'} ${filePath} (${String(input.content.length)} chars)`,
         truncation: { truncated: false, dropped: 0, reason: null },
+        ...(checkpoint === undefined ? {} : { checkpoint: checkpointAfter(checkpoint, filePath) }),
       };
     },
   );

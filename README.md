@@ -8,12 +8,13 @@ CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回�
 
 ## 要求
 
-- Node.js **>= 22**（`cowcat tui` / `sessions resume` 需要 **>= 26.4**，因为 opentui）
+- 默认 `cowcat` / `cowcat tui` / `sessions resume`：Node.js **>= 26.4**（opentui 门槛）
+- `serve` / `run` / `sessions list` / headless 诊断：Node.js **>= 22**
 - 一个 Anthropic 或 OpenAI 兼容的模型端点与 API key（CowCat 不附带 key）
 
 ## 快速开始（npm）
 
-beta 版本发布在 `@beta` 标签上（`latest` 仍是 v1 的 `0.15.0`）：
+先确认 `node --version` 满足默认 TUI 的 **>= 26.4** 要求。beta 版本发布在 `@beta` 标签上（`latest` 仍是 v1 的 `0.15.0`）：
 
 ```bash
 npm i -g @corescense/cowcat@beta
@@ -22,7 +23,7 @@ cowcat doctor
 cowcat setup --migrate      # 从 v1 升级：备份并迁移 ~/.cowcat/config.json，不复制密钥
 cowcat trust                # 信任当前目录：项目层 cowcat.json 的 allow 与 AGENTS.md 才会生效
 cowcat run "解释一下这个仓库的入口"
-cowcat                      # TUI（需要 Node >= 26.4）
+cowcat                      # TUI
 ```
 
 `cowcat trust` 记录的是**目录本身**（精确匹配、不继承子目录，ADR-028）；`--list` 查看、`--remove` 撤销。未信任时 `AGENTS.md` 不会注入，`run` 会打印一行说明（ADR-092/093）。
@@ -70,6 +71,8 @@ node packages/cli/dist/src/cli/main.js doctor
 | `cowcat trust [dir] [--list] [--remove]` | 信任一个目录（项目层 `allow` 与 `AGENTS.md` 才会生效），或列出/撤销 |
 | `cowcat setup --migrate` | 把现有 v1 配置翻译成 v2（备份原文件，不写密钥） |
 | `cowcat setup --preset <provider/model>` | 新建 v2 配置（`--api-key-env` / `--base-url` / `--force` / `--print`） |
+
+用 `cowcat <command> --help` 或 `cowcat help <command>` 查看单个命令的参数与选项；帮助只读命令表，不启动 TUI、不读取模型配置。
 
 ## 配置
 

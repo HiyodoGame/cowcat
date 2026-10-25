@@ -6,7 +6,7 @@ import {
   type JsonRpcResponse,
   type RequestId,
 } from './jsonrpc.js';
-import type { AttachmentBytes, CronJobSummary, MethodName, Params, Result, ResultTable, SessionSummary } from './methods.js';
+import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, Result, ResultTable, SessionSummary } from './methods.js';
 import { parseNotification, type NotificationName, type NotificationParams } from './notifications.js';
 import { PROTOCOL_VERSION } from './version.js';
 import type { Transport } from './transport.js';
@@ -41,6 +41,13 @@ export interface ProtocolClient {
   forkSession(sessionId: string): Promise<string>;
   sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<string>;
   cancelTurn(sessionId: string): Promise<void>;
+  listModels(sessionId: string): Promise<ModelListResult>;
+  setModel(sessionId: string, preset: string, effort?: string | null): Promise<ModelListResult['current']>;
+  compactSession(sessionId: string): Promise<ResultTable['context.compact']>;
+  listGrants(sessionId: string): Promise<{ readonly grants: readonly GrantSummary[] }>;
+  revokeGrant(sessionId: string, grantId: string): Promise<boolean>;
+  undoChange(sessionId: string): Promise<{ readonly path: string }>;
+  redoChange(sessionId: string): Promise<{ readonly path: string }>;
   respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']): Promise<void>;
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
   respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void>;
@@ -177,6 +184,34 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async cancelTurn(sessionId: string) {
       await request('turn.cancel', { sessionId });
+    },
+
+    async listModels(sessionId: string) {
+      return request('model.list', { sessionId });
+    },
+
+    async setModel(sessionId: string, preset: string, effort?: string | null) {
+      return (await request('model.set', { sessionId, preset, ...(effort === undefined ? {} : { effort }) })).current;
+    },
+
+    async compactSession(sessionId: string) {
+      return request('context.compact', { sessionId });
+    },
+
+    async listGrants(sessionId: string) {
+      return request('grants.list', { sessionId });
+    },
+
+    async revokeGrant(sessionId: string, grantId: string) {
+      return (await request('grants.revoke', { sessionId, grantId })).revoked;
+    },
+
+    async undoChange(sessionId: string) {
+      return request('change.undo', { sessionId });
+    },
+
+    async redoChange(sessionId: string) {
+      return request('change.redo', { sessionId });
     },
 
     async respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']) {

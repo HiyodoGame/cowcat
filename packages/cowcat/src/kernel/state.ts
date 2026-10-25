@@ -380,10 +380,17 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
         ? state.refused.includes(event.key)
           ? base
           : { ...base, refused: [...state.refused, event.key] }
-        : base;    case 'escalation.granted':
+        : base;
+    case 'approval.revoked':
+      return { ...base, grants: state.grants.filter((key) => key !== event.key) };
+    case 'escalation.granted':
       return { ...base, escalations: [...state.escalations, { key: event.key, scope: event.scope, dimension: event.dimension }] };
     case 'escalation.consumed':
       return { ...base, escalationsConsumed: [...state.escalationsConsumed, escalationSlot(event.key, event.dimension)] };
+    case 'file.changed':
+    case 'file.reverted':
+    case 'file.restored':
+      return base;
   }
 }
 

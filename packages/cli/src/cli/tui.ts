@@ -5,6 +5,7 @@ import { flagValue } from './flags.js';
 import { buildHost } from './host.js';
 import type { CommandContext } from './spec.js';
 import { readVersion } from './version.js';
+import { defaultEntryProblem } from './runtime.js';
 
 /**
  * `cowcat tui` — and `cowcat sessions resume <id>`, which is the same thing with a session
@@ -40,7 +41,6 @@ import { readVersion } from './version.js';
  * before the dynamic import, so an old Node gets a sentence rather than a native-module
  * failure from three frames deep.
  */
-const RENDERER_FLOOR = { major: 26, minor: 4 } as const;
 /** The executable this verb came in through, for a copy-pasteable workaround. */
 const CLI_ENTRY = fileURLToPath(new URL('./main.js', import.meta.url));
 
@@ -50,12 +50,9 @@ export async function runTui(context: CommandContext): Promise<number> {
 
 /** Shared by the `tui` verb and `sessions resume <id>`. */
 export async function startTui(context: CommandContext, sessionId: string | null): Promise<number> {
-  const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
-  const recentEnough = major > RENDERER_FLOOR.major || (major === RENDERER_FLOOR.major && minor >= RENDERER_FLOOR.minor);
-  if (!recentEnough) {
-    context.stderr(
-      `cowcat tui: 需要 Node >=${String(RENDERER_FLOOR.major)}.${String(RENDERER_FLOOR.minor)}（opentui 的门槛，ADR-056），现在是 v${process.versions.node}`,
-    );
+  const problem = defaultEntryProblem(process.versions.node);
+  if (problem !== null) {
+    context.stderr(`cowcat tui: ${problem}（opentui 的门槛，ADR-056）`);
     context.stderr('  serve / run / sessions list / doctor 在 Node 22 上就能用');
     const command = sessionId === null ? 'tui' : `sessions resume ${sessionId}`;
     context.stderr(`  用 Node 26 运行：npx --yes node@26.12.0 "${CLI_ENTRY}" ${command}`);
@@ -90,19 +87,26 @@ export async function startTui(context: CommandContext, sessionId: string | null
   if (host === null) return EXIT.failed;
 
   const { createClient, createServer, memoryTransport } = await import('@corescense/cowcat-protocol');
-  const pair = memoryTransport();
-  const server = createServer({ host, transport: pair.server });
-  const client = createClient({ transport: pair.client });
+  const servers: (ReturnType<typeof createServer>)[] = [];
+  const clients: (ReturnType<typeof createClient>)[] = [];
+  const connect = () => {
+    const pair = memoryTransport();
+    servers.push(createServer({ host, transport: pair.server }));
+    const created = createClient({ transport: pair.client });
+    clients.push(created);
+    return created;
+  };
+  const client = connect();
 
   try {
     // Imported only once the floor is known to be met — this is the one import in the tree
     // that loads a renderer (and its native core).
     const { runTui: render } = await import('@corescense/cowcat-tui');
-    return await render({ client, sessionId, version: readVersion() });
+    return await render({ client, sessionId, version: readVersion(), reconnect: () => Promise.resolve(connect()) });
   } finally {
     try {
-      client.close();
-      await server.closed;
+      for (const connected of clients) connected.close();
+      await Promise.all(servers.map((server) => server.closed));
     } finally {
       // The session lock is the one thing that must not survive a bad exit (ADR-010). This
       // is a `finally` and not a plain sequence because a first attempt at the wiring let a

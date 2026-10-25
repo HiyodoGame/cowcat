@@ -126,7 +126,7 @@ const SKIP_ON_RENDERER = RENDERER_AVAILABLE ? 'this build would start a real TUI
 test('no arguments means the default verb, and on an old Node it says why', { skip: SKIP_ON_RENDERER }, async () => {
   const run = await cli([]);
   assert.equal(run.code, EXIT.failed);
-  assert.match(run.err.join('\n'), /cowcat tui: 需要 Node >=26\.4/);
+  assert.match(run.err.join('\n'), /cowcat tui: 默认 TUI 需要 Node >=26\.4/);
   assert.match(run.err.join('\n'), /Node 22 上就能用/);
   assert.match(run.err.join('\n'), /npx --yes node@26\.12\.0 ".+main\.js" tui/);
 });
@@ -142,7 +142,7 @@ test('setup without a mode explains the two ways to use it', async (t) => {
 test('sessions resume is the TUI with an id, and checks the renderer floor first', { skip: SKIP_ON_RENDERER }, async () => {
   const run = await cli(['sessions', 'resume', 'sess_anything']);
   assert.equal(run.code, EXIT.failed);
-  assert.match(run.err.join('\n'), /cowcat tui: 需要 Node >=26\.4/);
+  assert.match(run.err.join('\n'), /cowcat tui: 默认 TUI 需要 Node >=26\.4/);
   assert.match(run.err.join('\n'), /sessions resume sess_anything/);
 });
 
@@ -212,9 +212,9 @@ test('sessions list hides delegated children unless --all asks for them', async 
 test('doctor reports what it can check, and names the model it could not find', async (t) => {
   isolatedHome(t);
   const run = await cli(['doctor']);
-  // Nothing here is a FAIL on a supported runtime: "no model configured" is a state
-  // (ADR-064 ⑥) and the sandbox tier in effect needs no OS backend.
-  assert.equal(run.code, EXIT.ok, run.out.join('\n'));
+  // "No model configured" is a state (ADR-064 ⑥), and the sandbox tier needs no OS
+  // backend. The default TUI entry is a separate readiness check (ADR-148).
+  assert.equal(run.code, RENDERER_AVAILABLE ? EXIT.ok : EXIT.failed, run.out.join('\n'));
   const text = run.out.join('\n');
   assert.match(text, /node\s+v\d+\.\d+\.\d+（需要 >=22）/);
   assert.match(text, /protocol\s+version \d+/);
@@ -230,9 +230,9 @@ test('doctor reports what it can check, and names the model it could not find', 
   // stopped early, and accepting any `instr` row would pass if the trust gate regressed.
   assert.match(text, /instr\s+folder not trusted: skipped AGENTS\.md \(\d+ lines\)/);
   assert.match(text, /sandbox\s+mode \w+ \/ backend \w+ \/ network \w+/);
-  // Two different questions, two rows: the build runs here, and the TUI's floor is the
-  // renderer's (ADR-065 ①).
-  assert.match(text, /渲染器\s+(v26\.4 起可用|TUI 需要 >=26\.4)/);
+  // The package can run headless while the default TUI entry is not ready (ADR-148).
+  assert.match(text, /默认入口\s+.*(TUI 可以在当前运行时启动|默认 TUI 需要 >=26\.4|默认 TUI 需要 Node >=26\.4)/);
+  assert.match(text, /headless\s+serve \/ run .*Node >= 22/);
   assert.match(text, /模型\s+未配置/);
 });
 

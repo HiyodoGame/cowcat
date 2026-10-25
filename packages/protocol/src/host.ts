@@ -1,5 +1,5 @@
 import { ERROR_CODES, type ErrorCode } from './jsonrpc.js';
-import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, SessionSummary } from './methods.js';
+import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, SessionSummary } from './methods.js';
 
 /**
  * What the frontend needs from whatever holds sessions. T3/T4 implement this over the
@@ -59,8 +59,15 @@ export interface ProtocolHost {
    * emits `prompt.attached` before the turn opens (ADR-128). A bad file refuses the
    * whole send, never half of it.
    */
-  sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string }>;
+  sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string; queued?: boolean }>;
   cancelTurn(sessionId: string): Promise<void>;
+  listModels(sessionId: string): Promise<ModelListResult>;
+  setModel(sessionId: string, preset: string, effort?: string | null): Promise<{ readonly current: ModelSelectionSummary }>;
+  compactSession(sessionId: string): Promise<{ readonly compacted: boolean; readonly dropped: number; readonly reason: string | null }>;
+  listGrants(sessionId: string): Promise<{ readonly grants: readonly GrantSummary[] }>;
+  revokeGrant(sessionId: string, grantId: string): Promise<{ readonly revoked: boolean }>;
+  undoChange(sessionId: string): Promise<{ readonly path: string }>;
+  redoChange(sessionId: string): Promise<{ readonly path: string }>;
   respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void>;
   /**
    * Toggle plan mode (ADR-124 ⑥). A user act, never model-initiated; the change lands

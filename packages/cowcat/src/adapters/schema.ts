@@ -192,7 +192,7 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn.noted'),
     // The list is duplicated from `TurnNoteKind` on purpose: this is the wire contract,
     // and the kernel's union is what it is checked against (the `Equals` assertion below).
-    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'skills-skipped', 'rounds-exhausted', 'hook-failed']),
+    note: z.enum(['tools-unsupported', 'effort-not-declared', 'compaction-failed', 'instructions-skipped', 'skills-skipped', 'rounds-exhausted', 'hook-failed', 'queue-failed']),
     message: z.string(),
   }),
   z.object({
@@ -279,6 +279,12 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     ...base,
+    type: z.literal('approval.revoked'),
+    key: z.string(),
+    by: z.literal('user'),
+  }),
+  z.object({
+    ...base,
     type: z.literal('escalation.granted'),
     callId: z.string(),
     key: z.string(),
@@ -291,6 +297,29 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     callId: z.string(),
     key: z.string(),
     dimension: z.enum(['deny-override', 'unsandboxed']),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('file.changed'),
+    callId: z.string(),
+    path: z.string(),
+    beforePath: z.string(),
+    created: z.boolean(),
+    beforeHash: z.string().nullable().optional(),
+    afterHash: z.string().nullable().optional(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('file.reverted'),
+    callId: z.string(),
+    path: z.string(),
+    redoPath: z.string(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('file.restored'),
+    callId: z.string(),
+    path: z.string(),
   }),
   z.object({
     ...base,
