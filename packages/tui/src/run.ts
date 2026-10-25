@@ -96,7 +96,24 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   let nudgeTimer: ReturnType<typeof setTimeout> | undefined;
   let exitArmUntil = 0;
 
-  const draw = (): void => {
+  /**
+   * Redraws coalesce: the first after a quiet spell paints immediately, a burst paints one
+   * trailing frame per interval. A streamed turn delivers deltas far faster than a terminal
+   * can usefully paint, and every draw rebuilds the whole frame — without a cap, a burst of
+   * tokens queues a burst of full-frame rebuilds ahead of the next keypress, which is exactly
+   * the "the interface freezes while it thinks" this loop must not do.
+   */
+  const FRAME_MS = 50;
+  // State lives on an object because closures reassign it: control-flow analysis narrows a
+  // bare `let` across the calls that reassign it and reads the teardown guard as always
+  // false — the same trap `activity.timer` above avoids.
+  const frame: {
+    timer: ReturnType<typeof setTimeout> | null;
+    queued: boolean;
+    lastAt: number;
+  } = { timer: null, queued: false, lastAt: 0 };
+
+  const paint = (): void => {
     // The width is the renderer's to know (and it changes on resize); the clock is injected
     // because a component that read it would not be a pure function.
     if (disposed) return;
@@ -104,6 +121,22 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       frameOf(view.current, { width: screen.contentWidth(), height: screen.contentHeight(), now: Date.now() }),
     );
     syncActivity();
+  };
+
+  const flushFrame = (): void => {
+    frame.timer = null;
+    frame.lastAt = Date.now();
+    if (!frame.queued) return;
+    frame.queued = false;
+    paint();
+  };
+
+  const draw = (): void => {
+    frame.queued = true;
+    if (frame.timer !== null) return;
+    const wait = FRAME_MS - (Date.now() - frame.lastAt);
+    if (wait <= 0) flushFrame();
+    else frame.timer = setTimeout(flushFrame, wait);
   };
 
   /**
@@ -1030,6 +1063,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   } finally {
     // Order matters and so does the flag: stop drawing, drop the listeners, then destroy.
     disposed = true;
+    if (frame.timer !== null) {
+      clearTimeout(frame.timer);
+      frame.timer = null;
+    }
     clearTimeout(nudgeTimer);
     if (activity.timer !== null) clearInterval(activity.timer);
     for (const off of detach) off();
