@@ -114,7 +114,8 @@ Skills（`SKILL.md`，兼容 Claude Code 的目录与 frontmatter）：
 ## 文档
 
 - [`docs/dev-plan-v2.md`](docs/dev-plan-v2.md)：阶段计划与出口标准
-- [`docs/architecture/`](docs/architecture/)：ADR 表（001~090）与分层、内核、策略、平台契约
+- [`docs/architecture/`](docs/architecture/)：ADR 表（001~156）与分层、内核、策略、平台契约
+- [`docs/guides/hindsight-mcp.md`](docs/guides/hindsight-mcp.md)：接入 Hindsight 跨会话记忆（MCP 路径）
 - [`docs/HANDOFF.md`](docs/HANDOFF.md)：最近一次交接快照
 - [`docs/beta-checklist.md`](docs/beta-checklist.md)：`1.0.0-beta.2` 反馈期验收清单与切换 `latest` 的门槛
 - [`docs/research/`](docs/research/)：各阶段调研（含 MCP 2026-07-28 对照与真实端点实测）
