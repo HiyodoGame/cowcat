@@ -424,13 +424,28 @@ test('the palette draws the same table the /commands run through', () => {
   const lines = paletteLines(COMMANDS, 1, WIDTH).map((row) => row.text);
   assert.match(lines[0] ?? '', /^╭─ 命令/);
   assert.match(lines[0] ?? '', /↑↓ 选/);
-  for (const command of COMMANDS) {
+  // The card is windowed around the selection (24 commands never fit the dock budget), so
+  // a top-of-table selection shows the first WINDOW rows; `/quit` (index 11) is below it.
+  for (const command of COMMANDS.slice(0, 7)) {
     assert.match(lines.join('\n'), new RegExp(`/${command.name}`));
   }
+  assert.doesNotMatch(lines.join('\n'), /\/quit/);
   // The selection is a character, not only an attribute: a snapshot can see it, and so can a
   // terminal with no colour.
   assert.match(lines[2] ?? '', /^│ ❯ \/expand/);
   assert.match(lines[1] ?? '', /^│ {3}\/todos/);
+});
+
+test('the palette window follows the selection instead of freezing above the fold', () => {
+  // Selecting the last row scrolls the window to the tail: the marker stays visible, the
+  // click id stays the absolute row, and the rows that scrolled out are gone.
+  const last = COMMANDS.length - 1;
+  const lastName = COMMANDS[last]?.name ?? '';
+  const tail = paletteLines(COMMANDS, last, WIDTH);
+  const tailText = tail.map((row) => row.text).join('\n');
+  assert.match(tailText, new RegExp(`❯ /${lastName}`));
+  assert.equal(tail.find((row) => row.hit === `palette:${String(last)}`)?.text.includes('❯'), true);
+  assert.doesNotMatch(tailText, /\/todos/);
 });
 
 test('an image box keeps its ratio until the row budget says otherwise', () => {
@@ -713,6 +728,15 @@ test('the / menu is a selectable list in the dock, not a placeholder', () => {
 
   const moved = frameOf({ ...view, slashIndex: 2 }, { width: WIDTH, now: 1_000 });
   assert.match((moved.dock ?? []).map((row) => row.text).join('\n'), /▸ \/cancel/u);
+
+  // The window follows the selection: arrowing to `/changes` (index 12) scrolls the top
+  // out of view instead of moving the marker below the fold, and the click id stays absolute.
+  const followed = frameOf({ ...view, slashIndex: 12 }, { width: WIDTH, now: 1_000 });
+  const followedDock = followed.dock ?? [];
+  const followedText = followedDock.map((row) => row.text).join('\n');
+  assert.match(followedText, /▸ \/changes/u);
+  assert.doesNotMatch(followedText, /\/todos/u);
+  assert.equal(followedDock.find((row) => row.hit === 'slash:12')?.text.includes('▸'), true);
 
   // A space closes the menu: Enter means "send this prompt" again.
   assert.deepEqual(slashMatches('/help me'), []);
