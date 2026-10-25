@@ -793,3 +793,14 @@ test('/skills names the skills, and says so when there are none', () => {
   assert.equal(listed.kind, 'notice');
   assert.match(listed.text, /pdf（project\/cowcat）/);
 });
+
+test('accept-edits.mode-changed folds the switch and states its exact scope (ADR-159)', () => {
+  seq = 0;
+  let view = project(initialView(), event('session.opened', { turnId: null }));
+  view = project(view, event('accept-edits.mode-changed', { enabled: true }));
+  assert.equal(view.acceptEdits, true);
+  const onNotice = view.entries.at(-1);
+  assert.match(onNotice?.kind === 'notice' ? onNotice.text : '', /Write \/ Edit 不再询问/);
+  view = project(view, event('accept-edits.mode-changed', { enabled: false }));
+  assert.equal(view.acceptEdits, false);
+});

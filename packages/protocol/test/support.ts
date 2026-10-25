@@ -177,6 +177,14 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve(found);
   }
 
+  readonly acceptEditsToggles: { readonly sessionId: string; readonly enabled: boolean }[] = [];
+
+  setAcceptEdits(sessionId: string, enabled: boolean): Promise<void> {
+    if (!this.sessions.has(sessionId)) throw new NoSuchSessionError(sessionId);
+    this.acceptEditsToggles.push({ sessionId, enabled });
+    return Promise.resolve();
+  }
+
   /** What `trust.status` reports (ADR-157): the startup snapshot, scriptable per test. */
   trustSnapshot = { trusted: false, withheld: { rules: 0, instructions: 0, skills: 0, mcpServers: 0, hooks: 0 } };
   readonly trustGrants: number[] = [];

@@ -841,3 +841,12 @@ test('an answered approval keeps the / menu visible; a pending one hides it', ()
   ).dock ?? [];
   assert.match(answered.map((row) => row.text).join('\n'), /\/todos/u);
 });
+
+test('the status bar carries the mode chip while a Shift+Tab state is on (ADR-160 ①)', () => {
+  const bar = statusLine({ ...initialView(), sessionId: 'sess_mode', acceptEdits: true }, { now: 0 }).text;
+  assert.match(bar, /接受编辑/);
+  const planBar = statusLine({ ...initialView(), sessionId: 'sess_mode', planMode: true }, { now: 0 }).text;
+  assert.match(planBar, /plan/);
+  const plain = statusLine({ ...initialView(), sessionId: 'sess_mode' }, { now: 0 }).text;
+  assert.doesNotMatch(plain, /接受编辑/);
+});

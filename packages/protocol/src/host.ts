@@ -74,6 +74,11 @@ export interface ProtocolHost {
    * in the session log as `plan.mode-changed`.
    */
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
+  /**
+   * Toggle accept-edits mode (ADR-159 ③): Write/Edit asks are pre-answered for the
+   * session. Also a user act; logged as `accept-edits.mode-changed`, no standing grant.
+   */
+  setAcceptEdits(sessionId: string, enabled: boolean): Promise<void>;
   /** Answer a plan review (ADR-125 ③). `choice: null` means "none of them" (reason tells why). */
   respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void>;
   /** `null` means the host's own limit only; the caller's cap is applied by the host. */

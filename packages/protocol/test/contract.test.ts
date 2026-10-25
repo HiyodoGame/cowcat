@@ -135,3 +135,18 @@ test('trust.status reports the host snapshot and trust.grant is a bare write (AD
   assert.equal(host.trustGrants.length, 1);
   assert.equal((await client.trustStatus()).trusted, false);
 });
+
+test('accept-edits.set is a user-act toggle with the applied state echoed (ADR-159)', async () => {
+  const host = new ScriptedHost([newScriptedSession('s1')]);
+  const { client } = wire(host);
+  await client.initialize();
+
+  assert.equal(await client.setAcceptEdits('s1', true), true);
+  assert.equal(await client.setAcceptEdits('s1', false), false);
+  assert.deepEqual(host.acceptEditsToggles, [
+    { sessionId: 's1', enabled: true },
+    { sessionId: 's1', enabled: false },
+  ]);
+  // An unknown session is the host's refusal, not a silent ok.
+  await assert.rejects(() => client.setAcceptEdits('nope', true));
+});

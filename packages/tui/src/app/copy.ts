@@ -34,6 +34,10 @@ export interface Copy {
   readonly repeatReminder: string;
   /** Plan mode toggled on (ADR-124). */
   readonly planModeOn: string;
+  readonly acceptEditsOn: string;
+  readonly acceptEditsOff: string;
+  /** Status-bar chip, kept short on purpose (ADR-160 ①). */
+  readonly modeAcceptEdits: string;
   /** Plan mode toggled off. */
   readonly planModeOff: string;
   /** A plan review outcome: `{n}` is the 1-based plan number the user picked. */
@@ -73,6 +77,9 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     subagentFailed: '子会话 {session}（{role}）没跑完：{n} 轮',
     repeatReminder: '⚠️ 模型在重复调用 {name}（第 {n} 次，参数相同）',
     planModeOn: 'plan 模式已开启：只读探索，写操作会被拒；方案成熟后模型会请你选（/plan 退出）',
+    acceptEditsOn: '接受编辑已开启：本会话内 Write / Edit 不再询问（Bash 等其它操作照常）',
+    acceptEditsOff: '接受编辑已关闭',
+    modeAcceptEdits: '接受编辑',
     planModeOff: 'plan 模式已关闭，照常执行',
     planChosen: '已选方案 {n}，开始执行',
     planRejected: '方案都被拒了，模型会改一改再问你',
@@ -102,6 +109,9 @@ export const COPY: Readonly<Record<'zh' | 'en', Copy>> = {
     subagentFailed: 'sub session {session} ({role}) did not finish: {n} rounds',
     repeatReminder: '⚠️ the model is repeating {name} (call #{n}, same arguments)',
     planModeOn: 'plan mode on: read-only exploration, writes refused; the model will ask you to pick a plan (/plan to exit)',
+    acceptEditsOn: 'accept edits on: Write/Edit run without asking for this session (Bash and everything else still asks)',
+    acceptEditsOff: 'accept edits off',
+    modeAcceptEdits: 'accept edits',
     planModeOff: 'plan mode off, executing as usual',
     planChosen: 'plan {n} chosen, executing',
     planRejected: 'every plan was rejected; the model will revise and ask again',

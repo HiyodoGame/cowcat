@@ -33,6 +33,10 @@ export function statusLine(view: TuiView, options: StatusOptions = { now: 0 }): 
   const copy = copyFor(view.lang);
   const state = stateOf(view, copy, options.now);
   const parts: string[] = [view.sessionId ?? '（还没有会话）', state.text];
+  // The mode chip (ADR-160 ①): Shift+Tab's state has to be visible, or cycling it is
+  // pressing a button with no lamp. Neither mode names itself anywhere else on the bar.
+  if (view.planMode) parts.push('plan');
+  if (view.acceptEdits) parts.push(copy.modeAcceptEdits);
   if (view.model !== null) parts.push(shortModel(view.model));
   const elapsed = elapsedOf(view, options.now);
   if (elapsed !== null) parts.push(elapsed);

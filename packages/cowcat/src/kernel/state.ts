@@ -67,6 +67,8 @@ export interface SessionState {
    * takes effect on the very next one.
    */
   readonly planMode: boolean;
+  /** Write/Edit asks are pre-answered while on (ADR-159). Never a standing grant. */
+  readonly acceptEdits: boolean;
   /**
    * The seq of the `instructions.loaded` message currently in `messages`, or null when
    * there is none (ADR-078).
@@ -147,6 +149,7 @@ export function initialState(sessionId: string): SessionState {
     usageTotals: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     compactionOpen: false,
     planMode: false,
+    acceptEdits: false,
     instructionsSeq: null,
     instructionsCount: 0,
     skillsSeq: null,
@@ -331,6 +334,8 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       };
     case 'plan.mode-changed':
       return { ...base, planMode: event.enabled };
+    case 'accept-edits.mode-changed':
+      return { ...base, acceptEdits: event.enabled };
     case 'plan.proposed':
     case 'plan.decided':
       // Facts about the review, not conversation: the model learns the outcome through

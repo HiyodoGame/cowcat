@@ -24,6 +24,7 @@ export const METHODS = [
   'change.undo',
   'change.redo',
   'approval.respond',
+  'accept-edits.set',
   'plan.setMode',
   'plan.reply',
   'attachment.read',
@@ -75,6 +76,8 @@ export const PARAMS = {
     callId: z.string().min(1),
     verdict: z.enum(['once', 'always', 'session', 'reject']),
   }),
+  /** Toggling accept-edits mode is a user act too (ADR-159 ③), never model-initiated. */
+  'accept-edits.set': z.strictObject({ sessionId: z.string().min(1), enabled: z.boolean() }),
   /** Toggling plan mode is a user act (ADR-124 ⑥): the switch never comes from the model. */
   'plan.setMode': z.strictObject({
     sessionId: z.string().min(1),
@@ -184,6 +187,7 @@ export interface ResultTable {
   readonly 'change.undo': { readonly path: string };
   readonly 'change.redo': { readonly path: string };
   readonly 'approval.respond': { readonly accepted: boolean };
+  readonly 'accept-edits.set': { readonly enabled: boolean };
   readonly 'plan.setMode': { readonly enabled: boolean };
   readonly 'plan.reply': { readonly accepted: boolean };
   readonly 'attachment.read': AttachmentBytes;

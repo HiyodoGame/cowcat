@@ -1705,6 +1705,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       await rec.session.emit({ type: 'plan.mode-changed', turnId: rec.session.turnId, enabled, by: 'user' });
     },
 
+    async setAcceptEdits(sessionId: string, enabled: boolean): Promise<void> {
+      // ADR-159: a user act, exactly like plan mode's toggle. A pending review is not a
+      // conflict here — the review is about plans, not write permission — but a pending
+      // APPROVAL question is: auto-answering a question that is already on screen would
+      // answer it behind the user's back, so the toggle is plain state, applying to the
+      // next call rather than the one being asked about.
+      const rec = open(sessionId);
+      await rec.session.emit({ type: 'accept-edits.mode-changed', turnId: rec.session.turnId, enabled, by: 'user' });
+    },
+
     respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void> {
       const rec = open(sessionId);
       const answer: PlanChoice =
