@@ -1,16 +1,21 @@
+import { writeFileSync } from 'node:fs';
 import { createCliRenderer, type CliRenderer } from '@opentui/core';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { parseAtRefs } from './app/atrefs.js';
-import { COMMANDS, lastToolCallId, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
+import { atCandidates } from './app/atcomplete.js';
+import { lastToolCallId, paletteCommandAt, paletteMatches, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
 import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
+import { costOf, formatCost } from './app/meter.js';
 import { addNotice, closeView, project, streamReasoning, streamText, streamToolOutput } from './app/project.js';
+import { latestAssistantText, osc52, sessionMarkdown } from './app/workflow.js';
 import {
   advanceReasoning,
   APPROVAL_CHOICES,
   approvalChoiceAt,
   closeCronPanel,
   closePalette,
+  closeSlashMenu,
   closeTaskPanel,
   initialView,
   markReplayedTasks,
@@ -25,13 +30,17 @@ import {
   openPalette,
   openTaskPanel,
   pendingAttachments,
-  rememberInput,
   resetScroll,
   selectedCronJob,
   selectedTask,
   setCronJobs,
+  setPermissions,
   toggleExpanded,
   toggleThinking,
+  closeHistorySearch,
+  historyMatches,
+  moveHistorySearch,
+  openHistorySearch,
   withAttachment,
   withHistory,
   withInput,
@@ -70,18 +79,22 @@ export interface RunTuiOptions {
   readonly version: string;
   /** Injected so tests can drive the loop without a real terminal. */
   readonly createRenderer?: () => Promise<CliRenderer>;
+  readonly reconnect?: () => Promise<ProtocolClient>;
 }
 
 /** How long after a question the status bar nudges (§2.2). */
 const NUDGE_AFTER_MS = 10_000;
 
 export async function runTui(options: RunTuiOptions): Promise<number> {
+  let client = options.client;
   const view = { current: initialView() };
   const render = await (options.createRenderer ?? defaultRenderer)();
   const screen = createScreen(render, THEME, { title: titleOf(options.version) });
   const detach: (() => void)[] = [];
   let disposed = false;
+  let connectionGeneration = 0;
   let nudgeTimer: ReturnType<typeof setTimeout> | undefined;
+  let exitArmUntil = 0;
 
   const draw = (): void => {
     // The width is the renderer's to know (and it changes on resize); the clock is injected
@@ -140,12 +153,15 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
      * (`loading`/`ready`/`failed`) is already the shape it would need.
      */
     const requested = new Set<string>();
+    let attachmentGeneration = 0;
     const fetchAttachments = (): void => {
+      const generation = attachmentGeneration;
       for (const attachment of pendingAttachments(view.current)) {
         if (requested.has(attachment.path)) continue;
         requested.add(attachment.path);
-        options.client.readAttachment(attachment.path).then(
+        client.readAttachment(attachment.path).then(
           (bytes) => {
+            if (generation !== attachmentGeneration) return;
             view.current = withAttachment(view.current, {
               ...attachment,
               status: 'ready',
@@ -155,8 +171,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
             draw();
           },
           (error: unknown) => {
-            // Refused with a reason ("too big", "no such attachment", "the file is gone"):
-            // the card shows it rather than pretending there was no image.
+            if (generation !== attachmentGeneration) return;
             view.current = withAttachment(view.current, { ...attachment, status: 'failed', reason: message(error) });
             draw();
           },
@@ -164,40 +179,66 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       }
     };
 
-    detach.push(
-      options.client.on('event', (event) => {
-        view.current = project(view.current, event);
-        // A question nobody answers is the one thing that has to reach the screen on its own:
-        // every other redraw is triggered by something arriving.
-        if (event.type === 'approval.requested') {
-          clearTimeout(nudgeTimer);
-          nudgeTimer = setTimeout(draw, NUDGE_AFTER_MS);
-        }
-        draw();
-        fetchAttachments();
-      }),
-      options.client.on('delta', (delta) => {
-        // Three ephemeral channels now (ADR-098/109); the loop routes by type rather than
-        // feeding everything to one stream.
-        view.current =
-          delta.type === 'reasoning.delta'
-            ? streamReasoning(view.current, delta)
-            : delta.type === 'tool.output.delta'
-              ? streamToolOutput(view.current, delta)
-              : streamText(view.current, delta);
-        draw();
-      }),
-      options.client.on('log', (line) => {
-        // The server's own diagnostics are not session facts (ADR-055), so they are shown as a
-        // notice and never merged into the transcript's durable half.
-        view.current = addNotice(view.current, line.level === 'error' ? 'error' : line.level === 'warn' ? 'warn' : 'info', line.message);
-        draw();
-      }),
-    );
-    void options.client.closed.then(() => {
+    subscribeClient();
+    function subscribeClient(): void {
+      detach.push(
+        client.on('event', (event) => {
+          view.current = project(view.current, event);
+          if (event.type === 'approval.requested') {
+            clearTimeout(nudgeTimer);
+            nudgeTimer = setTimeout(draw, NUDGE_AFTER_MS);
+          }
+          draw();
+          fetchAttachments();
+        }),
+        client.on('delta', (delta) => {
+          view.current =
+            delta.type === 'reasoning.delta'
+              ? streamReasoning(view.current, delta)
+              : delta.type === 'tool.output.delta'
+                ? streamToolOutput(view.current, delta)
+                : streamText(view.current, delta);
+          draw();
+        }),
+        client.on('log', (line) => {
+          view.current = addNotice(view.current, line.level === 'error' ? 'error' : line.level === 'warn' ? 'warn' : 'info', line.message);
+          draw();
+        }),
+      );
+      void client.closed.then(() => {
+        void handleClosed();
+      });
+    }
+
+    async function handleClosed(): Promise<void> {
       view.current = closeView(view.current);
       draw();
-    });
+      if (disposed || options.reconnect === undefined) return;
+      const generation = ++connectionGeneration;
+      try {
+        client = await options.reconnect();
+        if (disposed || generation !== connectionGeneration) {
+          client.close();
+          return;
+        }
+        await client.initialize();
+        if (disposed || generation !== connectionGeneration) {
+          client.close();
+          return;
+        }
+        subscribeClient();
+        await attachSession(sessionId);
+        if (disposed || generation !== connectionGeneration) {
+          client.close();
+          return;
+        }
+        view.current = addNotice(view.current, 'info', '连接已恢复。');
+        draw();
+      } catch (error) {
+        view.current = addNotice(view.current, 'error', `重连失败：${message(error)}`);
+        draw();
+      }
+    }
 
     detach.push(
       screen.onSubmit((value) => {
@@ -205,7 +246,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         queueMicrotask(syncInput);
       }),
       screen.onKey((key) => {
-        const intent = intentFor({ name: key.name, ctrl: key.ctrl }, view.current);
+        const intent = intentFor({ name: key.name, ctrl: key.ctrl }, view.current, Date.now(), exitArmUntil);
         // ↑/↓ belong to the composer's cursor until there is nowhere left to move (ADR-106).
         // `intent` is checked first so an open menu or question keeps the keys, and Shift is
         // excluded because it extends a selection (`select-up`/`select-down`) — taking it would
@@ -268,14 +309,27 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     });
     screen.focus();
 
-    await options.client.initialize();
-    const sessionId = options.sessionId ?? (await options.client.createSession()).sessionId;
-    const opened = await options.client.openSession(sessionId);
-    // The events up to this seq are replay, not something this view watched happen; the
-    // helper also marks their still-running tasks unknown. Draw: the last replay event
-    // painted the old state, and an idle session would otherwise sit on it forever.
-    view.current = markReplayedTasks(view.current, opened.lastSeq);
-    draw();
+    await client.initialize();
+    let sessionId = options.sessionId ?? (await client.createSession()).sessionId;
+    await attachSession(sessionId);
+
+    async function attachSession(id: string): Promise<void> {
+      const previous = { id: sessionId, view: view.current };
+      sessionId = id;
+      attachmentGeneration += 1;
+      requested.clear();
+      view.current = { ...initialView(), fileCandidates: atCandidates(process.cwd()) };
+      try {
+        const opened = await client.openSession(id);
+        view.current = markReplayedTasks(view.current, opened.lastSeq);
+        draw();
+      } catch (error) {
+        sessionId = previous.id;
+        view.current = previous.view;
+        draw();
+        throw error;
+      }
+    }
 
     function handle(intent: ReturnType<typeof intentFor>): void {
       if (intent === null) return;
@@ -286,12 +340,31 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         case 'cancel':
           cancel();
           return;
+        case 'clearInput':
+          exitArmUntil = 0;
+          screen.clearInput();
+          view.current = withInput(view.current, '');
+          draw();
+          return;
+        case 'armExit':
+          exitArmUntil = Date.now() + 800;
+          view.current = addNotice(view.current, 'info', '再按一次 Ctrl+C 退出；也可以按 Ctrl+D 或输入 /exit。');
+          draw();
+          return;
+        case 'historySearch':
+          view.current = view.current.historySearch === null ? openHistorySearch(view.current) : closeHistorySearch(view.current);
+          draw();
+          return;
+        case 'historyMove':
+          view.current = moveHistorySearch(view.current, intent.delta);
+          draw();
+          return;
         case 'palette':
           view.current = view.current.palette === null ? openPalette(view.current) : closePalette(view.current);
           draw();
           return;
         case 'paletteMove':
-          view.current = movePalette(view.current, intent.delta, COMMANDS.length);
+          view.current = movePalette(view.current, intent.delta, paletteMatches(view.current).length);
           draw();
           return;
         case 'toggleLastCard': {
@@ -359,8 +432,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         }
         case 'slashClose':
-          screen.clearInput();
-          view.current = withInput(view.current, '');
+          view.current = closeSlashMenu(view.current);
           draw();
           return;
       }
@@ -392,6 +464,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         }
         return;
       }
+      if (id.startsWith('palette:')) {
+        executePaletteCommand(Number(id.slice('palette:'.length)));
+        return;
+      }
       if (id === 'scroll:bottom') {
         view.current = resetScroll(view.current);
         draw();
@@ -404,6 +480,14 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         const raw = id.slice('plan:'.length);
         choosePlan(raw === 'none' ? 'none' : Number(raw));
       }
+    }
+
+    function executePaletteCommand(row: number): void {
+      const command = paletteCommandAt(view.current, row);
+      if (command === undefined) return;
+      screen.clearInput();
+      view.current = { ...closePalette(view.current), input: '' };
+      apply(command.run(view.current));
     }
 
     /** Clicking a plan row answers the review, like clicking an approval row. */
@@ -424,7 +508,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       const answer = planAnswerAt(view.current);
       screen.clearInput();
       view.current = withInput(view.current, '');
-      options.client
+      client
         .respondPlan(
           sessionId,
           plan.callId,
@@ -444,7 +528,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       if (approval === null || approval.verdict !== null || choice === undefined) return;
       view.current = { ...view.current, approvalCursor: index };
       draw();
-      options.client.respondApproval(sessionId, approval.callId, choice).catch((error: unknown) => {
+      client.respondApproval(sessionId, approval.callId, choice).catch((error: unknown) => {
         view.current = addNotice(view.current, 'error', message(error));
         draw();
       });
@@ -469,7 +553,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         draw();
         return;
       }
-      options.client
+      client
         .stopTask(sessionId, task.taskId)
         .then((stopped) => {
           if (disposed) return;
@@ -497,7 +581,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     function deleteSelectedCronJob(): void {
       const job = selectedCronJob(view.current);
       if (job === null) return;
-      options.client
+      client
         .removeCronJob(sessionId, job.jobId)
         .then((removed) => {
           if (disposed) return;
@@ -565,7 +649,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
           // The list the panel shows comes from the host: the fold knows the jobs exist,
           // but only the projection can say when each fires next (ADR-143 ③).
-          options.client
+          client
             .listCronJobs(sessionId)
             .then((jobs) => {
               if (disposed) return;
@@ -589,7 +673,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           }
           view.current = withInput(closePalette(view.current), '');
           screen.clearInput();
-          options.client.setPlanMode(sessionId, effect.enabled).catch((error: unknown) => {
+          client.setPlanMode(sessionId, effect.enabled).catch((error: unknown) => {
             view.current = addNotice(view.current, 'error', message(error));
             draw();
           });
@@ -597,7 +681,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         case 'fork':
           view.current = withInput(closePalette(view.current), '');
           screen.clearInput();
-          options.client
+          client
             .forkSession(sessionId)
             .then((forkedId) => {
               view.current = addNotice(view.current, 'info', `已 fork 出新会话：${forkedId}（cowcat sessions resume ${forkedId}）`);
@@ -608,9 +692,158 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
               draw();
             });
           return;
+        case 'undo':
+          void client
+            .undoChange(sessionId)
+            .then((result) => {
+              view.current = addNotice(view.current, 'info', `已撤销文件变更：${result.path}`);
+              draw();
+            })
+            .catch((error: unknown) => {
+              view.current = addNotice(view.current, 'error', message(error));
+              draw();
+            });
+          return;
+        case 'redo':
+          void client
+            .redoChange(sessionId)
+            .then((result) => {
+              view.current = addNotice(view.current, 'info', `已重做文件变更：${result.path}`);
+              draw();
+            })
+            .catch((error: unknown) => {
+              view.current = addNotice(view.current, 'error', message(error));
+              draw();
+            });
+          return;
+        case 'permissions':
+          void showPermissions();
+          return;
+        case 'revokeGrant':
+          void revokePermission(effect.grantId);
+          return;
+        case 'resume':
+          void attachSession(effect.sessionId).catch((error: unknown) => {
+            view.current = addNotice(view.current, 'error', message(error));
+            draw();
+          });
+          return;
+        case 'clear':
+          void client
+            .createSession()
+            .then((created) => attachSession(created.sessionId))
+            .catch((error: unknown) => {
+              view.current = addNotice(view.current, 'error', message(error));
+              draw();
+            });
+          return;
+        case 'copy': {
+          const text = latestAssistantText(view.current);
+          if (text === null) {
+            view.current = addNotice(view.current, 'warn', '还没有可复制的助手回答。');
+          } else {
+            process.stdout.write(osc52(text));
+            view.current = addNotice(view.current, 'info', '已通过 OSC52 请求终端复制最近一条回答（是否生效取决于终端）。');
+          }
+          draw();
+          return;
+        }
+        case 'export': {
+          try {
+            const path = effect.path ?? `cowcat-${sessionId}.md`;
+            writeFileSync(path, sessionMarkdown(view.current), 'utf8');
+            view.current = addNotice(view.current, 'info', `已导出会话：${path}`);
+          } catch (error) {
+            view.current = addNotice(view.current, 'error', message(error));
+          }
+          draw();
+          return;
+        }
+        case 'model':
+          void handleModel(effect.preset, effect.effort);
+          return;
+        case 'compact':
+          void compactCurrentSession();
+          return;
+        case 'cost':
+          showCost();
+          return;
         case 'quit':
           quit(0);
           return;
+      }
+    }
+
+    async function handleModel(preset: string | null, effort: string | null | undefined): Promise<void> {
+      try {
+        if (preset === null && effort === undefined) {
+          const result = await client.listModels(sessionId);
+          if (disposed) return;
+          const choices = result.models.map((item) => `${item.id}${item.efforts.length === 0 ? '' : `（effort: ${item.efforts.join('/')}）`}`).join('、');
+          view.current = addNotice(view.current, 'info', `当前模型：${result.current.id}${result.current.effort === null ? '' : ` · effort=${result.current.effort}`}。可选：${choices}`);
+          draw();
+          return;
+        }
+        const target = preset ?? (await client.listModels(sessionId)).current.id;
+        const current = await client.setModel(sessionId, target, effort);
+        if (disposed) return;
+        view.current = addNotice(view.current, 'info', `已切换模型：${current.id}${current.effort === null ? '' : ` · effort=${current.effort}`}（下一回合生效）`);
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
+    }
+
+    async function compactCurrentSession(): Promise<void> {
+      try {
+        const result = await client.compactSession(sessionId);
+        if (disposed) return;
+        view.current = addNotice(
+          view.current,
+          result.compacted ? 'info' : 'warn',
+          result.compacted ? `已压缩 ${String(result.dropped)} 条历史消息，项目指令与技能已刷新。` : `没有完成压缩：${result.reason ?? '当前没有可压缩的历史'}`,
+        );
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
+    }
+
+    function showCost(): void {
+      const totals = view.current.usageTotals;
+      const price = view.current.price;
+      const text = `会话累计：输入 ${String(totals.input)} · 输出 ${String(totals.output)} · 缓存读 ${String(totals.cacheRead)} · 缓存写 ${String(totals.cacheCreation)}${price === null ? '' : ` · 估算成本 ${formatCost(costOf(totals, price))}`}`;
+      view.current = addNotice(view.current, 'info', text);
+      draw();
+    }
+
+    async function showPermissions(): Promise<void> {
+      try {
+        const result = await client.listGrants(sessionId);
+        if (disposed) return;
+        view.current = setPermissions(view.current, result.grants);
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
+    }
+
+    async function revokePermission(grantId: string): Promise<void> {
+      try {
+        const revoked = await client.revokeGrant(sessionId, grantId);
+        if (disposed) return;
+        view.current = addNotice(view.current, revoked ? 'info' : 'warn', revoked ? `已撤销 ${grantId}` : `${grantId} 不存在或已撤销`);
+        await showPermissions();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
       }
     }
 
@@ -623,7 +856,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
      */
     async function showSessions(): Promise<void> {
       try {
-        const sessions = await options.client.listSessions();
+        const sessions = await client.listSessions();
         if (disposed) return;
         if (sessions.length === 0) {
           view.current = addNotice(view.current, 'info', '还没有会话。');
@@ -654,7 +887,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       // the user would get an error for pressing Escape at the wrong moment.
       const state = view.current.turn?.state;
       if (state === undefined || TERMINAL.has(state)) return;
-      options.client.cancelTurn(sessionId).catch((error: unknown) => {
+      client.cancelTurn(sessionId).catch((error: unknown) => {
         view.current = addNotice(view.current, 'error', message(error));
         draw();
       });
@@ -663,14 +896,20 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     function submit(value: string): void {
       const trimmed = value.trim();
 
+      if (view.current.historySearch !== null) {
+        const selected = historyMatches(view.current)[view.current.historySearch.index];
+        if (selected !== undefined) {
+          screen.setInput(selected);
+          view.current = { ...closeHistorySearch(view.current), input: selected };
+          draw();
+        }
+        return;
+      }
+
       // The palette owns Enter while it is open: the input widget has focus, so this is the
       // one place a submitted line and a chosen command can be told apart.
       if (view.current.palette !== null) {
-        const command = COMMANDS[view.current.palette.index];
-        if (command !== undefined) {
-          screen.clearInput();
-          apply(command.run(view.current));
-        }
+        executePaletteCommand(view.current.palette.index);
         return;
       }
 
@@ -689,7 +928,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       const parsed = parseCommand(trimmed);
       if (parsed !== null) {
         screen.clearInput();
-        apply(parsed.command.run(view.current));
+        apply(parsed.command.run(view.current, parsed.rest));
         return;
       }
       if (trimmed.startsWith('/')) {
@@ -752,8 +991,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         }
         screen.clearInput();
-        screen.clearInput();
-        options.client.respondApproval(sessionId, approval.callId, verdict).catch((error: unknown) => {
+        client.respondApproval(sessionId, approval.callId, verdict).catch((error: unknown) => {
           view.current = addNotice(view.current, 'error', message(error));
           draw();
         });
@@ -762,14 +1000,19 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
       if (trimmed === '') return;
       screen.clearInput();
-      view.current = rememberInput(resetScroll(withLangFrom(view.current, trimmed)), trimmed);
+      view.current = resetScroll(withLangFrom(view.current, trimmed));
       draw();
       // `@` file references (ADR-128): only tokens that resolve to existing files are
       // sent; everything else (emails, npm scopes, trailing punctuation) stays text.
       // Relative paths resolve against the TUI's cwd — resume keeps the shell's cwd,
       // so a session created elsewhere reads @refs from where you are (ADR-128 ⑤).
       const files = parseAtRefs(trimmed, process.cwd());
-      options.client.sendTurn(sessionId, trimmed, files.length === 0 ? undefined : files).catch((error: unknown) => {
+      client.request('turn.send', { sessionId, input: trimmed, ...(files.length === 0 ? {} : { files }) }).then((result) => {
+        if (result.queued === true) {
+          view.current = addNotice(view.current, 'info', `已排队 ${result.turnId}：当前回合结束后自动执行。`);
+          draw();
+        }
+      }).catch((error: unknown) => {
         // The host refuses with a sentence a user can act on ("no model is configured …",
         // "already has a turn running"); showing it verbatim is the point of that work.
         view.current = addNotice(view.current, 'error', message(error));

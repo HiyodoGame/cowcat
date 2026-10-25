@@ -12,6 +12,7 @@ import {
 } from '@corescense/cowcat-protocol';
 import { join } from 'node:path';
 import { createBashTool } from '../adapters/tools/bash.js';
+import { hashFile, restoreAfter, restoreBefore } from '../adapters/checkpoint.js';
 import type { SpillConfig } from '../adapters/spill.js';
 import { createEditTool } from '../adapters/tools/edit.js';
 import { createGlobTool } from '../adapters/tools/glob.js';
@@ -46,11 +47,12 @@ import { CRON_MAX_JOBS, CRON_RECURRING_TTL_MS, isDue, nextFire, parseSchedule, t
 import { Session, type SessionDeps } from '../kernel/session.js';
 import { isTerminal } from '../kernel/turn.js';
 import type { PlanChoice } from '../kernel/plan.js';
-import { runTurn, type TurnDeps } from '../kernel/run-turn.js';
+import { runTurn, ensureInstructions, ensureSkills, describeTurnNote, type TurnDeps, type TurnNote } from '../kernel/run-turn.js';
+import { compactContext } from '../kernel/compact.js';
 import type { AttachedFile, EventInput, KernelEvent, SessionUpdate } from '../kernel/events.js';
 import { trustedRules, isTrusted } from '../policy/trust.js';
 import { resolveSandboxProfile, type ResolvedSandboxProfile } from '../policy/sandbox-profile.js';
-import type { CowcatConfig } from '../policy/config.js';
+import type { CowcatConfig, ResolvedModelSettings } from '../policy/config.js';
 import type { ActionRequest, Rule } from '../policy/decide.js';
 import {
   ATTACHMENT_HARD_LIMIT_BYTES,
@@ -78,6 +80,7 @@ import {
   type ModelUsage,
 } from '../ports/index.js';
 import { ModelConfigError, createModelPort, selectModel, type ModelSelection } from './model.js';
+import { BUILTIN_PRESETS } from './presets.js';
 import { loadHostConfig, selectMcpServers, withHostRules } from './config.js';
 import { cowcatPaths, type CowcatPaths } from './paths.js';
 import { rulesForRole, toolsForRole } from './subagent-roles.js';
@@ -201,6 +204,13 @@ interface PendingPlan {
   readonly resolve: (choice: PlanChoice) => void;
 }
 
+interface QueuedTurn {
+  readonly turnId: string;
+  readonly input: string;
+  readonly files: readonly AttachedFile[];
+  readonly controller: AbortController;
+}
+
 interface SessionRecord {
   readonly session: Session;
   readonly listeners: Set<(update: unknown) => void>;
@@ -234,6 +244,8 @@ interface SessionRecord {
    * P1-4). Only `turnEnded === true` means this record's turn is actually done.
    */
   turnEnded: boolean;
+  readonly queue: QueuedTurn[];
+  readonly startingControllers: Set<AbortController>;
 }
 
 export async function createHost(options: CreateHostOptions): Promise<CowcatHost> {
@@ -556,7 +568,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     // the gap would otherwise open a second turn on one session and interleave the log.
     rec.turnStarting = true;
     try {
-      const configured = currentModel();
+      const configured = currentModel(rec.session.state.sessionId);
       // The fired event names the turn before it exists (ADR-140 ②); the turn opens
       // under that reserved name so the audit link cannot break.
       const turnId = sessionDeps.ids.next('turn');
@@ -691,11 +703,23 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
 
   let selection: ModelSelection | null = null;
   let model: ModelPort | null = options.model ?? null;
+  const modelOverrides = new Map<string, ResolvedModelSettings>();
+  const modelCache = new Map<string, { readonly port: ModelPort; readonly selection: ModelSelection }>();
 
   // The model is built from the config, so a config problem becomes a refusal the
   // frontend can read instead of a stack trace it cannot (see the header, note 2).
-  function currentModel(): { readonly port: ModelPort; readonly selection: ModelSelection } {
+  function currentModel(sessionId?: string): { readonly port: ModelPort; readonly selection: ModelSelection } {
     try {
+      const override = sessionId === undefined ? undefined : modelOverrides.get(sessionId);
+      if (sessionId !== undefined && override !== undefined) {
+        const cached = modelCache.get(sessionId);
+        if (cached !== undefined) return cached;
+        const selected = selectModel(override);
+        const built = createModelPort(selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
+        const configured = { port: options.model ?? built, selection: selected };
+        modelCache.set(sessionId, configured);
+        return configured;
+      }
       selection ??= selectModel(config.model);
       model ??= createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
       return { port: model, selection };
@@ -721,7 +745,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
    * hang a session nobody is watching.
    */
   async function spawnSubagent(request: SubagentRequest, signal: AbortSignal): Promise<SubagentOutcome> {
-    const configured = currentModel();
+    const configured = currentModel(request.parentSessionId);
     const child = await Session.create(sessionDeps, request.sessionId, {
       parent: { sessionId: request.parentSessionId, role: request.role },
     });
@@ -909,6 +933,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       turnStarting: false,
       turnEnded: true,
       reflecting: false,
+      queue: [],
+      startingControllers: new Set(),
     };
     // Telemetry subscribes FIRST: Session notifies listeners in order and a throwing
     // delivery listener must not take the span view down with it (ADR-132 ④).
@@ -1092,10 +1118,35 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       // turn itself (that is the re-entry guard; the flag alone would race the
       // finally block that clears it).
       void settled.then(() => {
+        void startQueued(rec);
         void maybeReflect(rec);
       });
     }
     return { turnId };
+  }
+
+  async function startQueued(rec: SessionRecord): Promise<void> {
+    if (hostClosed || rec.running !== null || rec.turnStarting || rec.reflecting) return;
+    while (!hostClosed && rec.queue.length > 0 && rec.running === null && !rec.turnStarting && !rec.reflecting) {
+      const queued = rec.queue[0];
+      if (queued === undefined) return;
+      rec.turnStarting = true;
+      try {
+        if (queued.files.length > 0) await rec.session.emit({ type: 'prompt.attached', turnId: null, files: queued.files });
+        await startTurn(rec, currentModel(rec.session.state.sessionId), queued.input, queued.controller, 'user', queued.turnId);
+        rec.queue.shift();
+      } catch (error) {
+        rec.queue.shift();
+        await rec.session.emit({
+          type: 'turn.noted',
+          turnId: rec.session.turnId,
+          note: 'queue-failed',
+          message: `Queued turn failed: ${message(error)}`,
+        });
+      } finally {
+        rec.turnStarting = false;
+      }
+    }
   }
 
   const reflectEnabled = config.memory?.reflect === 'on';
@@ -1116,7 +1167,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
    * opportunistic, never a session event the user did not ask for.
    */
   async function maybeReflect(rec: SessionRecord): Promise<void> {
-    if (!reflectEnabled || rec.reflecting || rec.turnStarting) return;
+    if (hostClosed || !reflectEnabled || rec.reflecting || rec.turnStarting) return;
     if (options.unattended === true) return;
     if (rec.running !== null) return;
     const turn = rec.session.state.turn;
@@ -1130,7 +1181,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     // replaying (review of #192, P0-1).
     rec.turnStarting = true;
     try {
-      await startTurn(rec, currentModel(), REFLECT_PROMPT, new AbortController(), 'reflect');
+      await startTurn(rec, currentModel(rec.session.state.sessionId), REFLECT_PROMPT, new AbortController(), 'reflect');
       // The flag means "a reflect turn owns this session", not "one is starting":
       // startTurn answers as soon as the turn OPENS, so hold it until the reflect
       // turn actually settles — the busy message and the re-entry guard both key
@@ -1144,6 +1195,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     } finally {
       rec.turnStarting = false;
       rec.reflecting = false;
+      void startQueued(rec);
     }
   }
 
@@ -1353,59 +1405,29 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       };
     },
 
-    async sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string }> {
+    async sendTurn(sessionId: string, input: string, files?: readonly string[]): Promise<{ turnId: string; queued?: boolean }> {
       const rec = await record(sessionId);
-      // The check-and-claim must bracket every await below: with `@` files in play,
-      // reading and emitting are real I/O, and two concurrent sends could otherwise
-      // both pass the check and interleave attachments (review of #173, P1-3).
       if (rec.running !== null || rec.turnStarting) {
-        // A reflect turn holds the session exactly like a user turn does (runTurn is
-        // per-session serialized), but it is opportunistic: the message says so
-        // rather than letting the user believe their own turn is stuck
-        // (review of #192, P1-3 — aborting it instead was rejected: an approval the
-        // reflect turn is parked on would dangle until the timeout).
-        throw new ProtocolHostError(
-          rec.reflecting
-            ? `session ${sessionId} is running a background memory reflect turn; it will clear on its own (or when its approval is answered)`
-            : `session ${sessionId} already has a turn running`,
-          ERROR_CODES.hostRefused,
-          { sessionId },
-        );
+        if (rec.queue.length >= 8) {
+          throw new ProtocolHostError(`session ${sessionId} has too many queued turns`, ERROR_CODES.hostRefused, { sessionId });
+        }
+        currentModel(sessionId);
+        const attached = await promptAttachments(files, sessionId);
+        const turnId = sessionDeps.ids.next('turn');
+        rec.queue.push({ turnId, input, files: attached, controller: new AbortController() });
+        return { turnId, queued: true };
       }
+      const controller = new AbortController();
+      rec.startingControllers.add(controller);
       rec.turnStarting = true;
       try {
         // Before anything is opened: an unconfigured model is a refusal with a hint, not a
         // turn that starts and fails a moment later. This check runs BEFORE any file is
         // read or emitted, so a refusal leaves no orphan `prompt.attached` in the log
         // (review of #173, P1-2).
-        const configured = currentModel();
-        // `@` references (ADR-128): read and validated here — the kernel touches no host
-        // runtime and the FsPort has no read. Any bad file refuses the WHOLE send: a log
-        // must never hold half a prompt. The event lands before `turn.opened`, so the
-        // model reads the files ahead of the instruction that references them.
-        if (files !== undefined && files.length > 0) {
-          if (files.length > PROMPT_FILE_MAX_COUNT) {
-            throw new ProtocolHostError(
-              `too many @ files: ${String(files.length)} (at most ${String(PROMPT_FILE_MAX_COUNT)})`,
-              ERROR_CODES.hostRefused,
-              { sessionId },
-            );
-          }
-          const attached: AttachedFile[] = [];
-          const seen = new Set<string>();
-          for (const path of files) {
-            if (seen.has(path)) continue;
-            seen.add(path);
-            try {
-              attached.push(await readPromptFile(path));
-            } catch (error) {
-              // A bad file refuses the WHOLE send (ADR-128): the log must never hold
-              // half a prompt. The path is in the message — it is the only question a
-              // person has at that moment.
-              const why = error instanceof PromptFileError ? error.message : String(error);
-              throw new ProtocolHostError(`@文件 ${path}：${why}`, ERROR_CODES.hostRefused);
-            }
-          }
+        const configured = currentModel(sessionId);
+        const attached = await promptAttachments(files, sessionId);
+        if (attached.length > 0) {
           try {
             await rec.session.emit({ type: 'prompt.attached', turnId: null, files: attached });
           } catch (error) {
@@ -1416,15 +1438,154 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
             );
           }
         }
-        const controller = new AbortController();
         return await startTurn(rec, configured, input, controller);
       } finally {
+        rec.startingControllers.delete(controller);
         rec.turnStarting = false;
       }
     },
 
+    listModels(sessionId: string) {
+      const rec = open(sessionId);
+      const current = currentModel(rec.session.state.sessionId).selection;
+      const ids = [...new Set([...Object.keys(BUILTIN_PRESETS), ...Object.keys(config.model.presets)])].sort();
+      return Promise.resolve({
+        current: { id: current.id, effort: current.effort },
+        models: ids.map((id) => ({
+          id,
+          efforts: Object.keys(config.model.presets[id]?.efforts ?? BUILTIN_PRESETS[id]?.efforts ?? {}),
+        })),
+      });
+    },
+
+    setModel(sessionId: string, preset: string, effort?: string | null) {
+      const rec = open(sessionId);
+      if (rec.running !== null || rec.turnStarting || rec.reflecting) {
+        throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      const override = { ...config.model, preset, effort: effort ?? null };
+      try {
+        const selected = selectModel(override);
+        const built = createModelPort(selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
+        modelOverrides.set(sessionId, override);
+        modelCache.set(sessionId, { port: options.model ?? built, selection: selected });
+        return Promise.resolve({ current: { id: selected.id, effort: selected.effort } });
+      } catch (error) {
+        if (error instanceof ModelConfigError) {
+          throw new ProtocolHostError(
+            error.hint === null ? error.message : `${error.message} — ${error.hint}`,
+            ERROR_CODES.hostRefused,
+            { problem: error.problem },
+          );
+        }
+        throw error;
+      }
+    },
+
+    async compactSession(sessionId: string) {
+      const rec = open(sessionId);
+      if (rec.running !== null || rec.turnStarting || rec.reflecting) {
+        throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      rec.turnStarting = true;
+      try {
+        const configured = currentModel(sessionId);
+        const outcome = await compactContext(
+          {
+            session: rec.session,
+            model: configured.port,
+            preset: configured.selection.preset,
+            tools: configured.selection.preset.toolCalls ? [...tools.values()].map((tool) => tool.spec) : [],
+            hooks: { port: hooksPort, cwd: options.cwd },
+          },
+          'manual',
+          new AbortController().signal,
+        );
+        if (outcome.ok) {
+          const note = async (item: TurnNote): Promise<void> => {
+            await rec.session.emit({
+              type: 'turn.noted',
+              turnId: rec.session.turnId,
+              note: item.kind,
+              message: describeTurnNote(item),
+            });
+          };
+          await ensureInstructions(
+            {
+              session: rec.session,
+              instructions: {
+                port: new FileInstructionSource({ fs }),
+                cwd: options.cwd,
+                trust: { trusted: workspaceTrusted },
+                global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
+              },
+            },
+            note,
+          );
+          await ensureSkills(
+            {
+              session: rec.session,
+              skills: {
+                skills: skillDiscovery.skills,
+                trust: { trusted: workspaceTrusted },
+                ...(configured.selection.preset.limits.context === undefined ? {} : { window: configured.selection.preset.limits.context }),
+              },
+            },
+            note,
+          );
+        }
+        return { compacted: outcome.ok, dropped: outcome.dropped, reason: outcome.reason };
+      } finally {
+        rec.turnStarting = false;
+        void startQueued(rec);
+      }
+    },
+
+    async listGrants(sessionId: string) {
+      const rec = open(sessionId);
+      return { grants: standingGrants(await store.readAll(rec.session.state.sessionId)) };
+    },
+
+    async revokeGrant(sessionId: string, grantId: string) {
+      const rec = open(sessionId);
+      const grant = standingGrants(await store.readAll(sessionId)).find((item) => item.id === grantId);
+      if (grant === undefined) return { revoked: false };
+      await rec.session.emit({ type: 'approval.revoked', turnId: rec.session.turnId, key: grant.key, by: 'user' });
+      return { revoked: true };
+    },
+
+    async undoChange(sessionId: string) {
+      const rec = open(sessionId);
+      if (rec.running !== null || rec.turnStarting || rec.reflecting) throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
+      const operation = latestChange(await store.readAll(sessionId), false);
+      if (operation === null) throw new ProtocolHostError('nothing to undo', ERROR_CODES.hostRefused, { sessionId });
+      if (operation.afterHash === undefined || hashFile(operation.path) !== operation.afterHash) {
+        throw new ProtocolHostError(`cannot undo ${operation.path}: the file changed after CowCat wrote it`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      const redoPath = restoreBefore({ rootDir: paths.sessionsDir }, sessionId, operation.callId, operation.path, operation.beforePath, operation.created);
+      await rec.session.emit({ type: 'file.reverted', turnId: rec.session.turnId, callId: operation.callId, path: operation.path, redoPath });
+      return { path: operation.path };
+    },
+
+    async redoChange(sessionId: string) {
+      const rec = open(sessionId);
+      if (rec.running !== null || rec.turnStarting || rec.reflecting) throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
+      const operation = latestChange(await store.readAll(sessionId), true);
+      if (operation === null || operation.redoPath === null) throw new ProtocolHostError('nothing to redo', ERROR_CODES.hostRefused, { sessionId });
+      const currentHash = hashFile(operation.path);
+      if (operation.beforeHash === undefined || currentHash !== operation.beforeHash) {
+        throw new ProtocolHostError(`cannot redo ${operation.path}: the file changed after undo (expected ${String(operation.beforeHash)}, got ${String(currentHash)})`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      restoreAfter(operation.path, operation.redoPath);
+      await rec.session.emit({ type: 'file.restored', turnId: rec.session.turnId, callId: operation.callId, path: operation.path });
+      return { path: operation.path };
+    },
+
     async cancelTurn(sessionId: string): Promise<void> {
       const rec = open(sessionId);
+      for (const queued of rec.queue) queued.controller.abort();
+      rec.queue.length = 0;
+      for (const controller of rec.startingControllers) controller.abort();
       const running = rec.running;
       if (running === null) return;
       running.controller.abort();
@@ -1564,6 +1725,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         // `tool.background.started` still has a start to record, and its task's exit is
         // waiting for that record. Only then stop the tasks and drain the writes.
         for (const rec of sessions.values()) {
+          for (const queued of rec.queue) queued.controller.abort();
+          rec.queue.length = 0;
           rec.running?.controller.abort();
           await rec.running?.done;
         }
@@ -1641,6 +1804,83 @@ function askPlanReview(rec: SessionRecord, callId: string): Promise<PlanChoice> 
   });
 }
 
+interface ChangeOperation {
+  readonly callId: string;
+  readonly path: string;
+  readonly beforePath: string;
+  readonly created: boolean;
+  readonly beforeHash: string | null | undefined;
+  readonly afterHash: string | null | undefined;
+  readonly undone: boolean;
+  readonly redoPath: string | null;
+}
+
+function latestChange(events: readonly KernelEvent[], undone: boolean): ChangeOperation | null {
+  const operations = new Map<string, ChangeOperation>();
+  let latest: ChangeOperation | null = null;
+  for (const event of events) {
+    if (event.type === 'file.changed') {
+      latest = {
+        callId: event.callId,
+        path: event.path,
+        beforePath: event.beforePath,
+        created: event.created,
+        beforeHash: event.beforeHash,
+        afterHash: event.afterHash,
+        undone: false,
+        redoPath: null,
+      };
+      operations.set(event.callId, latest);
+    } else if (event.type === 'file.reverted') {
+      const operation = operations.get(event.callId);
+      if (operation !== undefined) {
+        latest = { ...operation, undone: true, redoPath: event.redoPath };
+        operations.set(event.callId, latest);
+      }
+    } else if (event.type === 'file.restored') {
+      const operation = operations.get(event.callId);
+      if (operation !== undefined) {
+        latest = { ...operation, undone: false, redoPath: null };
+        operations.set(event.callId, latest);
+      }
+    }
+  }
+  if (undone) return latest !== null && latest.undone ? latest : [...operations.values()].reverse().find((operation) => operation.undone) ?? null;
+  return [...operations.values()].reverse().find((operation) => !operation.undone) ?? null;
+}
+
+async function promptAttachments(files: readonly string[] | undefined, sessionId: string): Promise<readonly AttachedFile[]> {
+  if (files === undefined || files.length === 0) return [];
+  if (files.length > PROMPT_FILE_MAX_COUNT) {
+    throw new ProtocolHostError(`too many @ files: ${String(files.length)} (at most ${String(PROMPT_FILE_MAX_COUNT)})`, ERROR_CODES.hostRefused, { sessionId });
+  }
+  const attached: AttachedFile[] = [];
+  const seen = new Set<string>();
+  for (const path of files) {
+    if (seen.has(path)) continue;
+    seen.add(path);
+    try {
+      attached.push(await readPromptFile(path));
+    } catch (error) {
+      const why = error instanceof PromptFileError ? error.message : String(error);
+      throw new ProtocolHostError(`@文件 ${path}：${why}`, ERROR_CODES.hostRefused);
+    }
+  }
+  return attached;
+}
+
+function standingGrants(events: readonly KernelEvent[]): readonly { readonly id: string; readonly key: string; readonly verdict: 'always' | 'session' }[] {
+  const grants = new Map<string, { readonly id: string; readonly key: string; readonly verdict: 'always' | 'session' }>();
+  for (const event of events) {
+    if (event.type === 'approval.answered' && (event.verdict === 'always' || event.verdict === 'session') && !grants.has(event.key)) {
+      grants.set(event.key, { id: `grant_${String(event.seq)}`, key: event.key, verdict: event.verdict });
+    } else if (event.type === 'approval.revoked') {
+      grants.delete(event.key);
+    }
+  }
+  return [...grants.values()];
+}
+
 /**
  * The replayable body of a logged event: everything `emit` re-mints itself. Deleting
  * rather than destructuring: the linter reads an unused destructure as dead code, and
@@ -1679,8 +1919,8 @@ function createTools(options: {
 }): ReadonlyMap<string, ToolPort> {
   const tools: readonly ToolPort[] = [
     createReadTool({ cwd: options.cwd, spill: options.spill }),
-    createWriteTool({ cwd: options.cwd }),
-    createEditTool({ cwd: options.cwd }),
+    createWriteTool({ cwd: options.cwd, checkpoints: { rootDir: options.spill.rootDir } }),
+    createEditTool({ cwd: options.cwd, checkpoints: { rootDir: options.spill.rootDir } }),
     createGlobTool({ cwd: options.cwd }),
     createGrepTool({ cwd: options.cwd }),
     createBashTool({

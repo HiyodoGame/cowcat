@@ -128,9 +128,18 @@ export interface ToolSpec {
   readonly commandInput?: string;
 }
 
+export interface FileCheckpoint {
+  readonly path: string;
+  readonly beforePath: string;
+  readonly created: boolean;
+  readonly beforeHash: string | null;
+  readonly afterHash?: string | null;
+}
+
 export interface ToolResult {
   readonly ok: boolean;
   readonly output: string;
+  readonly checkpoint?: FileCheckpoint;
   /**
    * Set when this call started a task that outlives it (ADR-111). The kernel turns it into
    * `tool.background.started`; the task itself lives in the host's registry, not here.

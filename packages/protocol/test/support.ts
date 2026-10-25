@@ -88,6 +88,45 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve();
   }
 
+  readonly modelSelections = new Map<string, { id: string; effort: string | null }>();
+
+  listModels(sessionId: string) {
+    const current = this.modelSelections.get(sessionId) ?? { id: 'anthropic/claude-sonnet-5-5', effort: null };
+    return Promise.resolve({ current, models: [{ id: current.id, efforts: [] }] });
+  }
+
+  setModel(sessionId: string, preset: string, effort?: string | null) {
+    const current = { id: preset, effort: effort ?? null };
+    this.modelSelections.set(sessionId, current);
+    return Promise.resolve({ current });
+  }
+
+  compactSession(sessionId: string) {
+    if (!this.sessions.has(sessionId)) throw new NoSuchSessionError(sessionId);
+    return Promise.resolve({ compacted: true, dropped: 1, reason: null });
+  }
+
+  readonly grants = new Map<string, { id: string; key: string; verdict: 'always' | 'session' }[]>();
+
+  listGrants(sessionId: string) {
+    return Promise.resolve({ grants: this.grants.get(sessionId) ?? [] });
+  }
+
+  revokeGrant(sessionId: string, grantId: string) {
+    const grants = this.grants.get(sessionId) ?? [];
+    const remaining = grants.filter((grant) => grant.id !== grantId);
+    this.grants.set(sessionId, remaining);
+    return Promise.resolve({ revoked: remaining.length !== grants.length });
+  }
+
+  undoChange(sessionId: string) {
+    return Promise.resolve({ path: `${sessionId}/before` });
+  }
+
+  redoChange(sessionId: string) {
+    return Promise.resolve({ path: `${sessionId}/after` });
+  }
+
   respondApproval(sessionId: string, callId: string, verdict: ApprovalVerdict): Promise<void> {
     this.approvals.push({ sessionId, callId, verdict });
     return Promise.resolve();

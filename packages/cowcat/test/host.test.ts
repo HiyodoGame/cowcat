@@ -189,6 +189,29 @@ class HangingModel implements ModelPort {
   }
 }
 
+class FirstHangingModel implements ModelPort {
+  calls = 0;
+  readonly hanging = new HangingModel();
+
+  stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelChunk> {
+    this.calls += 1;
+    if (this.calls === 1) return this.hanging.stream(request, signal);
+    return (async function* (): AsyncIterable<ModelChunk> {
+      yield { type: 'text', text: 'queued done' };
+    })();
+  }
+}
+
+class SlowStartModel implements ModelPort {
+  calls = 0;
+
+  async *stream(): AsyncIterable<ModelChunk> {
+    this.calls += 1;
+    if (this.calls === 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    yield { type: 'text', text: this.calls === 1 ? 'first done' : 'queued done' };
+  }
+}
+
 /**
  * Parent asks for a delegation on its first call; everything after that hangs until the
  * turn is cancelled.
@@ -243,7 +266,7 @@ interface Fixture {
 async function start(
   options: { readonly cwd: string; readonly home: string; readonly model: ModelPort; readonly env?: Readonly<Record<string, string>> } & Pick<
     CreateHostOptions,
-    'platform' | 'process' | 'store' | 'approvalTimeoutMs' | 'telemetry' | 'unattended'
+    'platform' | 'process' | 'store' | 'approvalTimeoutMs' | 'telemetry' | 'unattended' | 'trustStore'
   >,
 ): Promise<Fixture> {
   const host = await createHost({
@@ -258,6 +281,7 @@ async function start(
     ...(options.store === undefined ? {} : { store: options.store }),
     ...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
     ...(options.unattended === undefined ? {} : { unattended: options.unattended }),
+    ...(options.trustStore === undefined ? {} : { trustStore: options.trustStore }),
   });
 
   const pair = memoryTransport();
@@ -2266,7 +2290,7 @@ test('an always answer on a target covers that targets later writes (approvalKey
   assert.match(written, /second lesson/);
 });
 
-test('a user turn arriving while the reflect turn runs gets a distinct, honest refusal', async (t) => {
+test('a user turn arriving while the reflect turn runs is queued until it completes', async (t) => {
   const home = tempDir(t, 'cowcat-membusy-home-');
   const cwd = tempDir(t, 'cowcat-membusy-proj-');
   writeUserConfig(home, { model: { preset: PRESET }, memory: { reflect: 'on' } });
@@ -2290,21 +2314,238 @@ test('a user turn arriving while the reflect turn runs gets a distinct, honest r
     fixture.events().some((e) => e.type === 'approval.requested' && field(e, 'name') === 'Remember'),
   );
 
-  await assert.rejects(fixture.client.sendTurn('sess_membusy', 'second user turn'), /background memory reflect/);
+  const queued = await fixture.client.request('turn.send', { sessionId: 'sess_membusy', input: 'second user turn' });
+  assert.equal(queued.queued, true);
 
   const ask = first(fixture.events(), 'approval.requested');
   await fixture.client.respondApproval('sess_membusy', field(ask, 'callId') as string, 'once');
   await fixture.until('the reflect turn to complete', () =>
     fixture.events().filter((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed').length >= 2,
   );
-  // The reflect flag clears a tick after the terminal transition (it awaits the turn's
-  // settled promise); let that land before probing the session is free again.
-  await new Promise((resolve) => setTimeout(resolve, 200));
-
-  // And the session is usable again afterwards.
-  await fixture.client.sendTurn('sess_membusy', 'second user turn');
-  await fixture.until('the second user turn to complete', () =>
+  await fixture.until('the queued user turn to complete', () =>
     fixture.events().filter((e) => e.type === 'turn.transitioned' && field(e, 'to') === 'completed').length >= 3,
   );
   assert.match(readFileSync(join(home, '.cowcat', 'AGENTS.md'), 'utf8'), /reflect lesson/);
+});
+
+test('model selection is per-session and a failed change preserves the old selection', async (t) => {
+  const home = tempDir(t, 'cowcat-model-home-');
+  const cwd = tempDir(t, 'cowcat-model-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const model = new ScriptedModel([[{ type: 'text', text: 'one' }], [{ type: 'text', text: 'two' }]]);
+  const fixture = await start({ cwd, home, model, env: { OPENAI_API_KEY: 'test-key' } });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_model_a');
+  await fixture.client.createSession('sess_model_b');
+  await fixture.client.openSession('sess_model_a');
+  await fixture.client.openSession('sess_model_b');
+
+  const initial = await fixture.client.listModels('sess_model_a');
+  assert.equal(initial.current.id, PRESET);
+  assert.ok(initial.models.some((item) => item.id === 'openai/gpt-6.1-sol'));
+  await fixture.client.setModel('sess_model_a', 'openai/gpt-6.1-sol');
+  assert.equal((await fixture.client.listModels('sess_model_a')).current.id, 'openai/gpt-6.1-sol');
+  assert.equal((await fixture.client.listModels('sess_model_b')).current.id, PRESET);
+  await assert.rejects(fixture.client.setModel('sess_model_a', 'missing/nope'), /unknown model preset/);
+  assert.equal((await fixture.client.listModels('sess_model_a')).current.id, 'openai/gpt-6.1-sol');
+  await assert.rejects(fixture.client.setModel('sess_model_a', 'anthropic/claude-opus-5-5'), /API_KEY|API key|api key|key/);
+  assert.equal((await fixture.client.listModels('sess_model_a')).current.id, 'openai/gpt-6.1-sol');
+
+  await fixture.client.sendTurn('sess_model_a', 'first');
+  await fixture.client.sendTurn('sess_model_b', 'second');
+  await fixture.until('both turns to complete', () => fixture.events().filter((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed').length >= 2);
+  const opened = fixture.events().filter((event) => event.type === 'turn.opened');
+  assert.equal(field(opened.find((event) => event.sessionId === 'sess_model_a'), 'model'), 'gpt-6.1-sol');
+  assert.equal(field(opened.find((event) => event.sessionId === 'sess_model_b'), 'model'), 'claude-sonnet-5-5');
+});
+
+test('manual compaction refreshes project instructions and preserves model selection', async (t) => {
+  const home = tempDir(t, 'cowcat-compact-home-');
+  const cwd = tempDir(t, 'cowcat-compact-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  writeFileSync(join(cwd, 'AGENTS.md'), 'Follow the project rule.\n');
+  const model = new ScriptedModel([[{ type: 'text', text: 'older answer '.repeat(10_000) }], [{ type: 'text', text: 'summary' }]]);
+  const fixture = await start({ cwd, home, model, env: { OPENAI_API_KEY: 'test-key' }, trustStore: { load: () => Promise.resolve({ trusted: [cwd], problem: null }) } });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_compact');
+  await fixture.client.openSession('sess_compact');
+  await fixture.client.sendTurn('sess_compact', 'start');
+  await fixture.until('the first turn to complete', () => fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'));
+  assert.equal(fixture.events().filter((event) => event.type === 'instructions.loaded').length, 1);
+
+  const result = await fixture.client.compactSession('sess_compact');
+  assert.equal(result.compacted, true);
+  assert.ok(result.dropped > 0);
+  assert.equal(fixture.events().filter((event) => event.type === 'instructions.loaded').length, 2);
+  assert.equal(fixture.events().filter((event) => event.type === 'context.compacted' && field(event, 'trigger') === 'manual').length, 1);
+  await fixture.client.setModel('sess_compact', 'openai/gpt-6.1-sol');
+  assert.equal((await fixture.client.listModels('sess_compact')).current.id, 'openai/gpt-6.1-sol');
+});
+
+test('a standing grant can be listed and revoked, so the next write asks again', async (t) => {
+  const home = tempDir(t, 'cowcat-grants-home-');
+  const cwd = tempDir(t, 'cowcat-grants-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const write = (callId: string) => ({ type: 'tool_call' as const, call: { callId, name: 'Write', input: { file_path: join(cwd, `${callId}.txt`), content: 'x\n' } } });
+  const model = new ScriptedModel([[write('c_grant_1')], [{ type: 'text', text: 'first done' }], [write('c_grant_2')], [{ type: 'text', text: 'second done' }]]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_grants');
+  await fixture.client.openSession('sess_grants');
+  await fixture.client.sendTurn('sess_grants', 'write');
+  await fixture.until('the first approval', () => first(fixture.events(), 'approval.requested') !== undefined);
+  await fixture.client.respondApproval('sess_grants', 'c_grant_1', 'always');
+  await fixture.until('the first turn to complete', () => fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'));
+
+  const listed = await fixture.client.listGrants('sess_grants');
+  assert.equal(listed.grants.length, 1);
+  const [grant] = listed.grants;
+  assert.ok(grant !== undefined);
+  assert.equal(grant.verdict, 'always');
+  const id = grant.id;
+  assert.equal(await fixture.client.revokeGrant('sess_grants', id), true);
+  assert.equal(await fixture.client.revokeGrant('sess_grants', id), false);
+  assert.equal((await fixture.client.listGrants('sess_grants')).grants.length, 0);
+
+  await fixture.client.sendTurn('sess_grants', 'write again');
+  await fixture.until('the post-revocation approval', () => fixture.events().filter((event) => event.type === 'approval.requested').length >= 2);
+  await fixture.client.respondApproval('sess_grants', 'c_grant_2', 'once');
+  await fixture.until('the second turn to complete', () => fixture.events().filter((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed').length >= 2);
+  assert.equal(fixture.events().filter((event) => event.type === 'approval.requested').length, 2);
+});
+
+test('a second turn queues with a reserved id and starts after the current turn completes', async (t) => {
+  const home = tempDir(t, 'cowcat-queue-home-');
+  const cwd = tempDir(t, 'cowcat-queue-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const model = new SlowStartModel();
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_queue');
+  await fixture.client.openSession('sess_queue');
+  await fixture.client.sendTurn('sess_queue', 'first');
+  const queued = await fixture.client.request('turn.send', { sessionId: 'sess_queue', input: 'second' });
+  assert.equal(queued.queued, true);
+  const queuedId = queued.turnId;
+
+  await fixture.until('the queued turn to complete', () => fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed' && event.turnId === queuedId));
+  const opened = fixture.events().find((event) => event.type === 'turn.opened' && event.turnId === queuedId);
+  assert.ok(opened !== undefined);
+  assert.equal(field(opened, 'input'), 'second');
+});
+
+test('cancelling removes queued turns before they can emit any session event', async (t) => {
+  const home = tempDir(t, 'cowcat-queue-cancel-home-');
+  const cwd = tempDir(t, 'cowcat-queue-cancel-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const model = new FirstHangingModel();
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_queue_cancel');
+  await fixture.client.openSession('sess_queue_cancel');
+  await fixture.client.sendTurn('sess_queue_cancel', 'first');
+  const queued = await fixture.client.request('turn.send', { sessionId: 'sess_queue_cancel', input: 'second' });
+  assert.equal(queued.queued, true);
+  const queuedId = queued.turnId;
+  await fixture.client.cancelTurn('sess_queue_cancel');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(fixture.events().some((event) => event.type === 'turn.opened' && event.turnId === queuedId), false);
+  assert.equal(fixture.events().some((event) => event.type === 'prompt.attached'), false);
+});
+
+test('undo deletes a file created by Write and redo recreates the exact bytes', async (t) => {
+  const home = tempDir(t, 'cowcat-undo-new-home-');
+  const cwd = tempDir(t, 'cowcat-undo-new-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const target = join(cwd, 'new.txt');
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c_new', name: 'Write', input: { file_path: target, content: 'new content\n' } } }],
+    [{ type: 'text', text: 'created' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_undo_new');
+  await fixture.client.openSession('sess_undo_new');
+  await fixture.client.sendTurn('sess_undo_new', 'create');
+  await fixture.until('the first approval', () => first(fixture.events(), 'approval.requested') !== undefined);
+  await fixture.client.respondApproval('sess_undo_new', 'c_new', 'once');
+  await fixture.until('the turn to complete', () => fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'));
+  assert.equal(readFileSync(target, 'utf8'), 'new content\n');
+
+  assert.equal((await fixture.client.undoChange('sess_undo_new')).path, target);
+  assert.equal(existsSync(target), false);
+  assert.equal((await fixture.client.redoChange('sess_undo_new')).path, target);
+  assert.equal(readFileSync(target, 'utf8'), 'new content\n');
+});
+
+test('undo restores an edited before-image and redo restores the edited content', async (t) => {
+  const home = tempDir(t, 'cowcat-undo-edit-home-');
+  const cwd = tempDir(t, 'cowcat-undo-edit-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const target = join(cwd, 'existing.txt');
+  writeFileSync(target, 'before\n');
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c_read', name: 'Read', input: { file_path: target } } }],
+    [{ type: 'tool_call', call: { callId: 'c_edit', name: 'Edit', input: { file_path: target, old_string: 'before\n', new_string: 'after\n' } } }],
+    [{ type: 'text', text: 'edited' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_undo_edit');
+  await fixture.client.openSession('sess_undo_edit');
+  await fixture.client.sendTurn('sess_undo_edit', 'edit');
+  await fixture.until('the edit approval', () => first(fixture.events(), 'approval.requested') !== undefined);
+  await fixture.client.respondApproval('sess_undo_edit', 'c_edit', 'once');
+  await fixture.until('the turn to complete', () => fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'));
+  assert.equal(readFileSync(target, 'utf8'), 'after\n');
+
+  await fixture.client.undoChange('sess_undo_edit');
+  assert.equal(readFileSync(target, 'utf8'), 'before\n');
+  await fixture.client.redoChange('sess_undo_edit');
+  assert.equal(readFileSync(target, 'utf8'), 'after\n');
+});
+
+test('undo refuses to overwrite an external edit and multi-level undo/redo follows operation order', async (t) => {
+  const home = tempDir(t, 'cowcat-undo-guard-home-');
+  const cwd = tempDir(t, 'cowcat-undo-guard-proj-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const target = join(cwd, 'guard.txt');
+  const model = new ScriptedModel([
+    [{ type: 'tool_call', call: { callId: 'c_a', name: 'Write', input: { file_path: target, content: 'A\n' } } }],
+    [{ type: 'tool_call', call: { callId: 'c_read_ab', name: 'Read', input: { file_path: target } } }],
+    [{ type: 'tool_call', call: { callId: 'c_b', name: 'Write', input: { file_path: target, content: 'B\n' } } }],
+    [{ type: 'text', text: 'done' }],
+  ]);
+  const fixture = await start({ cwd, home, model });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_undo_guard');
+  await fixture.client.openSession('sess_undo_guard');
+  await fixture.client.sendTurn('sess_undo_guard', 'write A then B');
+  await fixture.until('the first approval', () => first(fixture.events(), 'approval.requested') !== undefined);
+  await fixture.client.respondApproval('sess_undo_guard', 'c_a', 'once');
+  await fixture.until('the second approval', () => fixture.events().filter((event) => event.type === 'approval.requested').length >= 2);
+  await fixture.client.respondApproval('sess_undo_guard', 'c_b', 'once');
+  await fixture.until('the turn to complete', () => fixture.events().some((event) => event.type === 'turn.transitioned' && field(event, 'to') === 'completed'));
+
+  writeFileSync(target, 'external\n');
+  await assert.rejects(fixture.client.undoChange('sess_undo_guard'), /changed after CowCat wrote it/);
+  assert.equal(readFileSync(target, 'utf8'), 'external\n');
+
+  writeFileSync(target, 'B\n');
+  await fixture.client.undoChange('sess_undo_guard');
+  assert.equal(readFileSync(target, 'utf8'), 'A\n');
+  await fixture.client.undoChange('sess_undo_guard');
+  assert.equal(existsSync(target), false);
+  await fixture.client.redoChange('sess_undo_guard');
+  assert.equal(readFileSync(target, 'utf8'), 'A\n');
+  await fixture.client.redoChange('sess_undo_guard');
+  assert.equal(readFileSync(target, 'utf8'), 'B\n');
 });

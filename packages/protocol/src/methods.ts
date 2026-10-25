@@ -16,6 +16,13 @@ export const METHODS = [
   'session.list',
   'turn.send',
   'turn.cancel',
+  'model.list',
+  'model.set',
+  'context.compact',
+  'grants.list',
+  'grants.revoke',
+  'change.undo',
+  'change.redo',
   'approval.respond',
   'plan.setMode',
   'plan.reply',
@@ -52,6 +59,13 @@ export const PARAMS = {
     files: z.array(z.string().min(1)).max(8).optional(),
   }),
   'turn.cancel': z.strictObject({ sessionId: z.string().min(1) }),
+  'model.list': z.strictObject({ sessionId: z.string().min(1) }),
+  'model.set': z.strictObject({ sessionId: z.string().min(1), preset: z.string().min(1), effort: z.string().min(1).nullable().optional() }),
+  'context.compact': z.strictObject({ sessionId: z.string().min(1) }),
+  'grants.list': z.strictObject({ sessionId: z.string().min(1) }),
+  'grants.revoke': z.strictObject({ sessionId: z.string().min(1), grantId: z.string().regex(/^grant_\d+$/) }),
+  'change.undo': z.strictObject({ sessionId: z.string().min(1) }),
+  'change.redo': z.strictObject({ sessionId: z.string().min(1) }),
   'approval.respond': z.strictObject({
     sessionId: z.string().min(1),
     callId: z.string().min(1),
@@ -152,8 +166,15 @@ export interface ResultTable {
   /** The forked session's new id (ADR-127). */
   readonly 'session.fork': { readonly sessionId: string };
   readonly 'session.list': { readonly sessions: readonly SessionSummary[] };
-  readonly 'turn.send': { readonly turnId: string };
+  readonly 'turn.send': { readonly turnId: string; readonly queued?: boolean };
   readonly 'turn.cancel': { readonly cancelled: boolean };
+  readonly 'model.list': ModelListResult;
+  readonly 'model.set': { readonly current: ModelSelectionSummary };
+  readonly 'context.compact': { readonly compacted: boolean; readonly dropped: number; readonly reason: string | null };
+  readonly 'grants.list': { readonly grants: readonly GrantSummary[] };
+  readonly 'grants.revoke': { readonly revoked: boolean };
+  readonly 'change.undo': { readonly path: string };
+  readonly 'change.redo': { readonly path: string };
   readonly 'approval.respond': { readonly accepted: boolean };
   readonly 'plan.setMode': { readonly enabled: boolean };
   readonly 'plan.reply': { readonly accepted: boolean };
@@ -165,6 +186,27 @@ export interface ResultTable {
   /** False when the id is not this session's live job; the deletion event is the truth. */
   readonly 'cron.remove': { readonly removed: boolean };
   readonly shutdown: { readonly closing: true };
+}
+
+export interface GrantSummary {
+  readonly id: string;
+  readonly key: string;
+  readonly verdict: 'always' | 'session';
+}
+
+export interface ModelSummary {
+  readonly id: string;
+  readonly efforts: readonly string[];
+}
+
+export interface ModelSelectionSummary {
+  readonly id: string;
+  readonly effort: string | null;
+}
+
+export interface ModelListResult {
+  readonly current: ModelSelectionSummary;
+  readonly models: readonly ModelSummary[];
 }
 
 /** A cron job as it crosses the wire: the log's facts plus the derived next fire. */

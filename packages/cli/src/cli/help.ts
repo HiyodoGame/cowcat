@@ -1,6 +1,9 @@
-import { COMMANDS } from './spec.js';
+import { COMMANDS, type CommandSpec } from './spec.js';
 
 const TAGLINE = 'headless 协议服务（`cowcat serve`）、一次性回合（`cowcat run`）与 TUI（T7 起）';
+const RUNTIME_HELP = [
+  '运行环境：默认 TUI 需要 Node >= 26.4；serve / headless / run / doctor 等命令需要 Node >= 22',
+];
 
 /**
  * Generated from the table, never hand-written (ADR-060): a help screen that drifts
@@ -28,8 +31,23 @@ export function renderHelp(): string {
     '  -v, --version   显示版本',
     '  --              它之后的都当参数，不再当选项（提示词以 - 开头时用得到）',
     '',
+    ...RUNTIME_HELP,
     '环境：COWCAT_HOME 重定位状态目录（默认 ~/.cowcat；只移动文件，不改变任何策略值）',
   );
   lines.push('', '每个命令都是平的，没有嵌套子命令（ADR-060）。');
+  return lines.join('\n');
+}
+
+export function renderCommandHelp(command: CommandSpec): string {
+  const lines = [`命令：cowcat ${command.name}`, '', `用法：${command.usage}`, `  ${command.summary}`];
+  if (command.status === 'blocked') lines.push(`  尚未可用：${command.blockedBy}`);
+  if ((command.flags ?? []).length > 0) {
+    lines.push('', '选项：');
+    for (const flag of command.flags ?? []) {
+      const name = flag.value === undefined ? flag.name : `${flag.name} ${flag.value}`;
+      lines.push(`  ${name}  ${flag.summary}`);
+    }
+  }
+  lines.push('', ...RUNTIME_HELP);
   return lines.join('\n');
 }

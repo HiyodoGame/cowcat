@@ -37,3 +37,7 @@ export interface StopReason {
    */
   readonly raw: string;
 }
+
+export class ContextOverflowError extends Error {
+  override readonly name = 'ContextOverflowError';
+}

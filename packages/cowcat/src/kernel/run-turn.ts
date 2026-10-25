@@ -18,7 +18,9 @@ import {
 import { escalationStanding } from './state.js';
 import type { ReasoningBlock, ToolCall } from './messages.js';
 import { compactContext } from './compact.js';
-import { contextCeiling, contextUsage } from './context.js';
+import { COWCAT_SYSTEM_PROMPT } from './system-prompt.js';
+import { ContextOverflowError } from '../ports/model.js';
+import { contextCeiling, contextUsage, estimateMessages, SHRINK_STEPS } from './context.js';
 import type { ModelPreset } from './preset.js';
 import type { Session } from './session.js';
 import { isTerminal, type TerminalTurnState } from './turn.js';
@@ -279,6 +281,8 @@ export function describeTurnNote(note: TurnNote): string {
       return `hook 失败：${note.message}`;
     case 'rounds-exhausted':
       return `达到回合上限（${String(note.rounds)} 轮），结果不完整`;
+    case 'queue-failed':
+      return note.message;
   }
 }
 
@@ -318,7 +322,7 @@ async function runTurnBody(
         model: deps.preset.model,
         ...(deps.preset.limits.context === undefined ? {} : { contextWindow: deps.preset.limits.context }),
         ...(deps.preset.price === undefined ? {} : { price: deps.preset.price }),
-      });
+      }, deps.reservedTurnId);
       const deniedTurnId = session.turnId;
       if (deniedTurnId === null) throw new Error('the session did not open a turn');
       await note({ kind: 'hook-failed', message: `prompt 被 hook 拒绝：${report.outcome.reason}` }, deniedTurnId);
@@ -348,6 +352,8 @@ async function runTurnBody(
   let compactionChecked = false;
   // Model calls made so far; the delegation cap counts these, not tool calls (ADR-082 ②).
   let rounds = 0;
+  let overflowAttempts = 0;
+  const aborted = (): boolean => signal.aborted;
   // Repeat-call guard (ADR-120): key and outcome of the previous tool call and its
   // streak, across rounds of the same turn — a cross-round loop is exactly the failure
   // this catches.
@@ -394,7 +400,34 @@ async function runTurnBody(
         await session.transition('completed');
         return { turnId, state: 'completed', reason: null, partial: true };
       }
-      const calls = await streamModel(deps, effort.providerOptions, signal);
+      let calls: readonly ToolCall[];
+      try {
+        calls = await streamModel(deps, effort.providerOptions, signal);
+      } catch (error) {
+        if (!(error instanceof ContextOverflowError) || overflowAttempts >= SHRINK_STEPS.length) throw error;
+        const shrink = SHRINK_STEPS[overflowAttempts] ?? 0.35;
+        overflowAttempts += 1;
+        const outcome = await compactContext(
+          {
+            session,
+            model: deps.model,
+            preset: deps.preset,
+            tools: deps.preset.toolCalls ? [...deps.tools.values()].map((tool) => tool.spec) : [],
+            keepTokens: Math.max(1, Math.floor(estimateMessages(session.state.messages) * shrink)),
+            ...(deps.hooks === undefined ? {} : { hooks: deps.hooks }),
+          },
+          'overflow',
+          signal,
+        );
+        if (aborted()) throw new TurnAborted('aborted during overflow recovery');
+        if (!outcome.ok) {
+          if (outcome.reason !== null) await note({ kind: 'compaction-failed', reason: outcome.reason }, turnId);
+          throw error;
+        }
+        await ensureInstructions(deps, (item) => note(item, turnId));
+        await ensureSkills(deps, (item) => note(item, turnId));
+        continue;
+      }
       rounds += 1;
       if (calls.length === 0) {
         await fireStopHook(deps, signal);
@@ -443,6 +476,18 @@ async function runTurnBody(
           // The canonical path from the request that was decided on (ADR-049).
           path,
         });
+        if (result.ok && result.checkpoint !== undefined) {
+          await session.emit({
+            type: 'file.changed',
+            turnId: session.turnId,
+            callId: call.callId,
+            path: result.checkpoint.path,
+            beforePath: result.checkpoint.beforePath,
+            created: result.checkpoint.created,
+            beforeHash: result.checkpoint.beforeHash,
+            afterHash: result.checkpoint.afterHash,
+          });
+        }
         if (repeatCount >= 2) {
           pendingReminders.push({ callId: call.callId, name: call.name, count: repeatCount, previousOk: matched && lastCallOk });
         }
@@ -519,8 +564,8 @@ function wireEffort(preset: ModelPreset, effort: string | undefined): EffortWiri
  * when `instructionsSeq` is set **is** the dedupe — the fold decides, not a counter in
  * memory, so a reopened session does not inject a second copy either.
  */
-async function ensureInstructions(
-  deps: TurnDeps,
+export async function ensureInstructions(
+  deps: Pick<TurnDeps, 'session' | 'instructions'>,
   note: (item: TurnNote) => Promise<void>,
 ): Promise<void> {
   const needs = deps.instructions;
@@ -563,8 +608,8 @@ async function ensureInstructions(
  * Doing nothing when `skillsSeq` is set is the dedupe, for the same reason as instructions:
  * the fold decides, so a reopened session does not inject a second copy.
  */
-async function ensureSkills(
-  deps: TurnDeps,
+export async function ensureSkills(
+  deps: Pick<TurnDeps, 'session' | 'skills'>,
   note: (item: TurnNote) => Promise<void>,
 ): Promise<void> {
   const needs = deps.skills;
@@ -618,13 +663,14 @@ async function streamModel(
     // that cannot take them runs the same turn without (ADR-046 decision ③).
     tools: preset.toolCalls ? wireTools(deps) : [],
     model: preset.model,
+    system: COWCAT_SYSTEM_PROMPT,
     ...(preset.limits.output === undefined ? {} : { maxTokens: preset.limits.output }),
     ...(providerOptions === undefined ? {} : { providerOptions }),
   };
   // `aborted()` rather than `signal.aborted`: a getter read twice would be narrowed by the
   // type checker ("always false") even though an abort can land during the loop.
   const aborted = (): boolean => signal.aborted;
-  await session.transition('streaming');
+  if (session.state.turn?.state !== 'streaming') await session.transition('streaming');
   // The transition awaits the store and then the listeners; a cancel can land in that
   // window. Calling the model after that would be work nobody is waiting for — and a model
   // whose iterator only watches the signal from inside `next()` would never see the abort.

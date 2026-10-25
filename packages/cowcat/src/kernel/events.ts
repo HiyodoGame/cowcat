@@ -274,6 +274,11 @@ export type KernelEvent = EventBase &
         readonly by: ApprovalBy;
       }
     | {
+        readonly type: 'approval.revoked';
+        readonly key: string;
+        readonly by: 'user';
+      }
+    | {
         /**
          * An Escalate appeal a user approved (ADR-129): the right to retry one exact
          * subject past a `deny` (`deny-override`) or without the sandbox (`unsandboxed`).
@@ -294,6 +299,26 @@ export type KernelEvent = EventBase &
         readonly callId: string;
         readonly key: string;
         readonly dimension: 'deny-override' | 'unsandboxed';
+      }
+    | {
+        readonly type: 'file.changed';
+        readonly callId: string;
+        readonly path: string;
+        readonly beforePath: string;
+        readonly created: boolean;
+        readonly beforeHash?: string | null | undefined;
+        readonly afterHash?: string | null | undefined;
+      }
+    | {
+        readonly type: 'file.reverted';
+        readonly callId: string;
+        readonly path: string;
+        readonly redoPath: string;
+      }
+    | {
+        readonly type: 'file.restored';
+        readonly callId: string;
+        readonly path: string;
       }
     | {
         readonly type: 'tool.finished';
@@ -537,7 +562,8 @@ export type TurnNoteKind =
   | 'instructions-skipped'
   | 'skills-skipped'
   | 'rounds-exhausted'
-  | 'hook-failed';
+  | 'hook-failed'
+  | 'queue-failed';
 
 // Ephemeral updates exist for live rendering only. They are never persisted:
 // a streamed token is not a fact about the session, the final model.message is.

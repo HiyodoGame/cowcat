@@ -23,6 +23,7 @@ export function paletteLines(commands: readonly TuiCommand[], index: number, wid
     return {
       text: truncate(`${selected ? '❯' : ' '} /${command.name}  ${command.summary}`, inner),
       token: selected ? 'brand' : 'textDim',
+      hit: `palette:${String(row)}`,
     };
   });
 

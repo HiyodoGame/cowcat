@@ -22,6 +22,8 @@ export interface KeyLike {
 export type Intent =
   | { readonly kind: 'quit' }
   | { readonly kind: 'cancel' }
+  | { readonly kind: 'clearInput' }
+  | { readonly kind: 'armExit' }
   /** Toggle the palette — the same intent opens and closes it. */
   | { readonly kind: 'palette' }
   | { readonly kind: 'paletteMove'; readonly delta: number }
@@ -51,13 +53,21 @@ export type Intent =
   /** Delete the job under the panel's cursor via `cron.remove`. */
   | { readonly kind: 'cronDelete' }
   /** Close the `/cron` panel. */
-  | { readonly kind: 'cronsClose' };
+  | { readonly kind: 'cronsClose' }
+  | { readonly kind: 'historySearch' }
+  | { readonly kind: 'historyMove'; readonly delta: number };
 
-export function intentFor(key: KeyLike, view: TuiView): Intent | null {
+export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0): Intent | null {
   if (key.ctrl) {
     switch (key.name) {
-      case 'c':
-        return { kind: 'quit' };
+      case 'c': {
+        const running = view.turn !== null && !['completed', 'failed', 'cancelled'].includes(view.turn.state);
+        if (running) return { kind: 'cancel' };
+        if (view.input !== '') return { kind: 'clearInput' };
+        return now < exitArmUntil ? { kind: 'quit' } : { kind: 'armExit' };
+      }
+      case 'd':
+        return view.input === '' ? { kind: 'quit' } : null;
       case 'p':
         // A pending question outranks chrome: Ctrl-P over an open review would hide the
         // card behind the palette while its arrows mean two things (review of #167, P2-9).
@@ -66,11 +76,20 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
         return { kind: 'toggleLastCard' };
       case 't':
         return { kind: 'toggleThinking' };
+      case 'r':
+        return { kind: 'historySearch' };
       case 'end':
         return { kind: 'scrollBottom' };
       default:
         return null;
     }
+  }
+
+  if (view.historySearch !== null) {
+    if (key.name === 'up') return { kind: 'historyMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'historyMove', delta: 1 };
+    if (key.name === 'escape') return { kind: 'historySearch' };
+    return null;
   }
 
   // The task panel is a list. It owns arrows, `x` and Escape — and nothing printable:
@@ -121,6 +140,9 @@ export function intentFor(key: KeyLike, view: TuiView): Intent | null {
     if (key.name === 'up') return { kind: 'planMove', delta: -1 };
     if (key.name === 'down') return { kind: 'planMove', delta: 1 };
   }
+
+  if (view.input === '' && key.name === 'up') return { kind: 'scroll', delta: 1 };
+  if (view.input === '' && key.name === 'down') return { kind: 'scroll', delta: -1 };
 
   // Paging works while a question is open too: re-reading the transcript to decide is
   // exactly when a person needs it.

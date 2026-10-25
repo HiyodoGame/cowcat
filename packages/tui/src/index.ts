@@ -19,6 +19,8 @@ export {
   type Entry,
   type TuiView,
 } from './app/view.js';
+export { changedFiles, type ChangedFile } from './app/changes.js';
+export { changesPanelLines } from './components/changes-panel.js';
 export { COMMANDS, KEYS_HELP, findCommand, lastToolCallId, parseCommand, type CommandEffect, type TuiCommand } from './app/commands.js';
 export { intentFor, type Intent, type KeyLike } from './app/keymap.js';
 export { COPY, copyFor, detectLang, type Copy, type Lang } from './app/copy.js';
