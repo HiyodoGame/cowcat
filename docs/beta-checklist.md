@@ -4,6 +4,7 @@
 > 范围：**已发布的 beta 产物**，不是源码单元测试的替代品。
 > 记录日期用绝对日期；没实际跑过的项不要勾。
 > §1.4 / §2.1 / §3.1 / §4.3 的记录来自 `1.0.0-beta.2`；§4.4 来自 `main` 源码（beta.3 发布前）。beta.4 的新功能（Cron/Worktree、视觉、记忆蒸馏、可观测性、审批闭环等十个 P7 模块）的真机验收记录见各 `docs/research/p7-*.md` 尾节与 HANDOFF。
+> ADR-148~156 产品化批次（#210，beta.4 之后合入）的验收项已列入 §1.1 / §3 / §4.1（未勾，随下一版 beta 产物执行），源码级预跑见 §1.5。
 
 ## 0. 基本规则
 
@@ -27,6 +28,9 @@ cowcat doctor
 - [x] `cowcat --version` = `1.0.0-beta.2`
 - [x] `doctor` 没有因缺配置崩溃；未配置模型时是 `not-configured` 而不是 FAIL
 - [x] `cowcat setup --preset anthropic/claude-sonnet-5-5 --print` 能输出 v2 配置且不落盘
+- [ ] Node < 26.4 的机器：`doctor` 的「默认入口」行 FAIL 且退出码非零，`headless` 行说明 serve / run 不受影响（ADR-148 ②；beta.4 前这只是事实注记）
+- [ ] Node >= 26.4 的机器：`doctor` 的「默认入口」行 ok、退出码 0
+- [ ] `cowcat --help` 与 `cowcat help <command>` 都写明两种 Node 门槛，且不建宿主、不要求模型或密钥（ADR-148 ③）
 
 ### 1.2 v1 配置迁移（先在临时 home）
 
@@ -62,6 +66,14 @@ COWCAT_HOME="$TEST_HOME" cowcat doctor
   - 警告逐条给出：内联 key、`permissions` 不迁移、未知键、mcp `env` 不迁移
   - 回滚：`.bak` 还原后 `doctor` 仍通过（v1 兼容读取，内联 key 只在内存）
 - 【源码】protocol → cowcat → tui → cli 依次构建通过；`--version` = `1.0.0-beta.2`；空配置 `doctor` 通过
+
+### 1.5 本轮记录（2026-10-25，源码 `main` #210 合入后）
+
+> 源码级预跑，Node 24.18 正好落在 FAIL 侧；产物级勾选（§1.1 新三项）仍等下一版 beta。
+
+- 【源码】protocol → cowcat → tui → cli 按序重建后跑 `doctor`：「node」行 ok（本包下限 22）；「默认入口」行 `默认 TUI 需要 Node >=26.4，现在是 v24.18.0` **FAIL、退出码 1**；下一行 `headless  serve / run / sessions list / doctor 使用 Node >= 22；默认入口检查不表示这些命令失败`（ADR-148 ②）
+- 【源码】`cowcat --help` 与 `cowcat help tui` 都输出「运行环境：默认 TUI 需要 Node >= 26.4；serve / headless / run / doctor 等命令需要 Node >= 22」，退出码 0，不建宿主、不要求模型或密钥（ADR-148 ③）
+- 未跑：Node >= 26.4 的 ok 路径（本机 24.18）；npm 产物级验证
 
 ## 2. 真实编码任务
 
@@ -100,6 +112,9 @@ COWCAT_HOME="$TEST_HOME" cowcat doctor
 - [x] `Task` + `general`：能完成一个隔离子任务
 - [x] 取消父回合后，子会话有 `cancelled` 终结事实，且没有残留锁
 - [x] `sessions list` 默认折叠子会话；`--all` 能列出
+- [ ] 手动压缩：协议 `context.compact` 走窄协议完成，压缩后回合继续（ADR-152）
+- [ ] `model.list` / `model.set`：会话内切换模型生效；设置失败保旧选择（ADR-152）
+- [ ] 上下文溢出恢复：真实溢出（小上下文模型 + 长对话，或上游 413）触发 70%/50%/35% 有界收缩重试，回合最终完成而非失败（ADR-150）
 
 看日志里的 `context.compacted`、`subagent.started` / `subagent.finished`、`turn.transitioned`。
 
@@ -136,6 +151,13 @@ npx --yes node@26.12.0 "$(npm root -g)/@corescense/cowcat/dist/src/cli/main.js" 
 - [x] 调整窗口大小后布局正常
 - [x] `Ctrl-C` 退出后会话锁释放
 - [ ] 真实终端连续使用 30 分钟，无崩溃、无残留进程
+- [ ] Ctrl+C 分级：回合运行中先取消回合；空闲时首击清空草稿、800ms 内双击才退出（ADR-149）
+- [ ] 回合运行中输入排队（上限 8、FIFO），回合结束后依序发出（ADR-154）
+- [ ] `/changes` 变更面板：Edit 显示 diffstat；Write 只报写入行数，不伪造 `+N/-N`（ADR-149 ④）
+- [ ] `/permissions` 查看与撤销授权，撤销后同类请求重新询问（ADR-153）
+- [ ] `/undo` / `/redo` 回退与重做一次文件修改（ADR-155）
+- [ ] Ctrl+R 反向搜索输入历史（历史由会话日志重建，上限 100）（ADR-156）
+- [ ] TUI 断开后重连，视图与日志重放投影一致（ADR-156）
 
 ### 4.2 MCP
 
