@@ -41,13 +41,13 @@
 
 ## 3. 新增 ADR
 
-**ADR-148~156**：148 doctor 双门槛 FAIL（修订 ADR-065 ⑤ 口径）· 149 TUI 操作与变更可见性闭环 · 150 溢出归一与有界收缩重试（兑现 ADR-070⑤）· 151 内核最小 system prompt（兑现 ADR-072⑤）· 152 model/context 窄协议 · 153 授权可查可撤销 · 154 排队回合 · 155 写前快照与 undo/redo · 156 历史重建与重连。分步计划随快照入库于 `docs/superpowers/plans/`（五份，Kimi 会话 superpowers 插件产物，去留待评审）。
+**ADR-148~156**：148 doctor 双门槛 FAIL（修订 ADR-065 ⑤ 口径）· 149 TUI 操作与变更可见性闭环 · 150 溢出归一与有界收缩重试（兑现 ADR-070⑤）· 151 内核最小 system prompt（兑现 ADR-072⑤）· 152 model/context 窄协议 · 153 授权可查可撤销 · 154 排队回合 · 155 写前快照与 undo/redo · 156 历史重建与重连。分步计划（五份，Kimi 会话 superpowers 插件产物）2026-10-25 已归档至 `docs/archive/2026-10-24-p*-*.md`。
 
 ## 4. 未验证 / 风险（登记，不声称已解决）
 
 - **TUI 人眼验收**：`/changes`、`/permissions`、Ctrl+R、双击退出只有帧快照与逻辑测试，真实终端未看（T10 人眼清单既有缺口同类）。
 - **真机端到端**：overflow 70/50/35 恢复、排队排水、undo/redo 真实文件场景均为夹具级覆盖，未跑真实模型 API。
-- **`docs/superpowers/plans/` 去留**：插件工作笔记入库是否合适，评审时决定（保留/移 `docs/archive/`/删除）。
+- **`docs/superpowers/plans/` 去留**：已决定（2026-10-25）——五份计划归档至 `docs/archive/`，`superpowers/` 目录移除；理由与过程见对应 docs PR。
 - **Kimi 会话审计底稿**：批次源头 `flash-hawkman-longshot.md` 在 Kimi 会话目录（`~/.kimi-code/sessions/wd_cowcat_ee6ac06e6355/`），未入库；如需追溯以会话记录为准。
 - **usage 预算拒绝**（P1-B 计划 Task 3 的可选项）：未做，计划里即标注 if feasible，登记不视为缺口。
 
@@ -57,7 +57,7 @@
 
 ## 6. 下一步建议
 
-1. **评审合并本 PR**（`fix/p0-productization` → main）；合并后按需把 `docs/superpowers/plans/` 归档或移除。
+1. **评审合并本 PR**（`fix/p0-productization` → main；已合并 #210）；`docs/superpowers/plans/` 已归档（2026-10-25）。
 2. **beta.4 反馈期**：ADR-148 把「默认入口门槛不足」升级为 FAIL 会改变 `docs/beta-checklist.md` 的验收口径，合入后同步该文档。
 3. **TUI 人眼清单**：新面板与键位上真终端过一遍（§4 第一条）。
 4. 另线：Hindsight 记忆接入文档（MCP 路径 + MemoryPort ADR 草案）在主检出未提交，走独立 docs PR。
