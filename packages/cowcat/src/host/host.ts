@@ -1126,7 +1126,9 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   }
 
   async function startQueued(rec: SessionRecord): Promise<void> {
-    if (hostClosed || rec.running !== null || rec.turnStarting || rec.reflecting) return;
+    // The while condition is the whole guard: evaluating it is the first thing this
+    // function does, and every clause is re-checked after each drained turn (the body
+    // awaits, so `running`/`turnStarting`/`reflecting` may all have changed by then).
     while (!hostClosed && rec.queue.length > 0 && rec.running === null && !rec.turnStarting && !rec.reflecting) {
       const queued = rec.queue[0];
       if (queued === undefined) return;

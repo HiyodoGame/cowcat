@@ -199,7 +199,13 @@ export type TurnNote =
    * rather than thrown: the rounds that ran produced real results, and the caller needs
    * to know the answer is partial before handing it to a model as final.
    */
-  | { readonly kind: 'rounds-exhausted'; readonly rounds: number };
+  | { readonly kind: 'rounds-exhausted'; readonly rounds: number }
+  /**
+   * A queued turn failed before it could start (ADR-154). Emitted by the host's queue
+   * drain, not by `runTurn` itself: the reserved turn never opened, so a note is the only
+   * trace the user gets that the queued input will not run.
+   */
+  | { readonly kind: 'queue-failed'; readonly message: string };
 
 export interface TurnOutcome {
   /**
