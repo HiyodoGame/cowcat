@@ -72,6 +72,9 @@ export type Intent =
   | { readonly kind: 'sessionMove'; readonly delta: number }
   /** Close the `/sessions` picker. */
   | { readonly kind: 'sessionsClose' }
+  /** Move the `/model` picker's cursor; Esc from phase two goes back to phase one (ADR-161 ②). */
+  | { readonly kind: 'modelMove'; readonly delta: number }
+  | { readonly kind: 'modelClose' }
   | { readonly kind: 'historySearch' }
   | { readonly kind: 'historyMove'; readonly delta: number };
 
@@ -150,6 +153,14 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
     if (key.name === 'up') return { kind: 'sessionMove', delta: -1 };
     if (key.name === 'down') return { kind: 'sessionMove', delta: 1 };
     if (key.name === 'escape') return { kind: 'sessionsClose' };
+  }
+
+  // The `/model` picker ditto (ADR-161 ②); in phase two Esc backs out to the preset
+  // list instead of closing the whole panel.
+  if (view.modelPanel !== null) {
+    if (key.name === 'up') return { kind: 'modelMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'modelMove', delta: 1 };
+    if (key.name === 'escape') return { kind: 'modelClose' };
   }
 
   // Arrow keys and j/k only mean something while there is a list to move through. Letting

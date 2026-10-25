@@ -13,7 +13,8 @@ test('slash commands receive their argument text', () => {
   const parsed = parseCommand('/model openai/gpt-6.1-sol');
   assert.equal(parsed?.rest, 'openai/gpt-6.1-sol');
   assert.deepEqual(effectOf('model', 'openai/gpt-6.1-sol'), { kind: 'model', preset: 'openai/gpt-6.1-sol', effort: undefined });
-  assert.deepEqual(effectOf('model'), { kind: 'model', preset: null, effort: undefined });
+  // No-arg /model opens the picker instead of dumping a notice (ADR-161 ②).
+  assert.deepEqual(effectOf('model'), { kind: 'modelPanel' });
 });
 
 test('/compact asks the host for a manual compaction', () => {

@@ -19,6 +19,8 @@ export type CommandEffect =
   | { readonly kind: 'quit' }
   /** Ask the loop for the session list; it is the only thing here that needs the client. */
   | { readonly kind: 'sessions'; readonly all: boolean }
+  /** Open the `/model` picker (ADR-161 ②); the loop fetches the host's list. */
+  | { readonly kind: 'modelPanel' }
   /** Open the background-task panel (ADR-113); the loop owns the stop call. */
   | { readonly kind: 'tasks' }
   /** Open the `/cron` panel (ADR-143 ③); the loop owns the list and delete calls. */
@@ -112,8 +114,8 @@ export const COMMANDS: readonly TuiCommand[] = [  {
   },
   {
     name: 'model',
-    summary: '查看或切换模型：/model [provider/preset]',
-    run: (_view, rest = '') => ({ kind: 'model', preset: rest.trim() === '' ? null : rest.trim(), effort: undefined }),
+    summary: '模型选择器；/model <provider/preset> 直达切换',
+    run: (_view, rest = '') => (rest.trim() === '' ? { kind: 'modelPanel' as const } : { kind: 'model' as const, preset: rest.trim(), effort: undefined }),
   },
   { name: 'compact', summary: '手动压缩当前会话上下文', run: () => ({ kind: 'compact' }) },
   {
