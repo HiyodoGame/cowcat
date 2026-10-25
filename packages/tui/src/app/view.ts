@@ -1,4 +1,4 @@
-import type { GrantSummary, SessionSummary, TrustWithheld } from '@corescense/cowcat-protocol';
+import type { GrantSummary, ModelSelectionSummary, ModelSummary, SessionSummary, TrustWithheld } from '@corescense/cowcat-protocol';
 import type { Lang } from './copy.js';
 import { detectLang } from './copy.js';
 
@@ -425,6 +425,15 @@ export interface TuiView {
   readonly sessionPanel: { readonly index: number; readonly all: boolean } | null;
   /** What the picker shows — fetched once per open, never a live subscription (ADR-158 ③). */
   readonly sessionList: readonly SessionSummary[];
+  /**
+   * The `/model` picker (ADR-161 ②): rows are the host's available presets; phase two
+   * (`preset` set) picks the reasoning effort among that preset's offerings.
+   */
+  readonly modelPanel: { readonly index: number; readonly preset: string | null } | null;
+  /** Fetched once per open (the same rule as `sessionList`). */
+  readonly modelList: readonly ModelSummary[];
+  /** The selection the host reports, so the panel can mark （当前）. */
+  readonly modelCurrent: ModelSelectionSummary | null;
 }
 
 export function initialView(): TuiView {
@@ -486,6 +495,9 @@ export function initialView(): TuiView {
     trustCursor: 0,
     sessionPanel: null,
     sessionList: [],
+    modelPanel: null,
+    modelList: [],
+    modelCurrent: null,
   };
 }
 
@@ -828,6 +840,51 @@ export function moveSessionPanel(view: TuiView, delta: number, count: number): T
   if (view.sessionPanel === null || count === 0) return view;
   const index = (view.sessionPanel.index + delta + count) % count;
   return { ...view, sessionPanel: { ...view.sessionPanel, index } };
+}
+
+// ── the model picker (ADR-161 ②) ────────────────────────────────────────────────
+
+export function withModelList(view: TuiView, models: readonly ModelSummary[], current: ModelSelectionSummary): TuiView {
+  return { ...view, modelList: models, modelCurrent: current };
+}
+
+export function openModelPanel(view: TuiView): TuiView {
+  return { ...view, modelPanel: { index: 0, preset: null } };
+}
+
+export function closeModelPanel(view: TuiView): TuiView {
+  return { ...view, modelPanel: null };
+}
+
+/** Wrapping move; in phase two the row count is the chosen preset's efforts. */
+export function moveModelPanel(view: TuiView, delta: number, count: number): TuiView {
+  if (view.modelPanel === null || count === 0) return view;
+  const index = (view.modelPanel.index + delta + count) % count;
+  return { ...view, modelPanel: { ...view.modelPanel, index } };
+}
+
+/** Enter on phase one: a preset with efforts descends into phase two; bare ones pick directly. */
+export function enterModelPanel(view: TuiView): { readonly view: TuiView; readonly picked: string | null } {
+  const panel = view.modelPanel;
+  if (panel === null) return { view, picked: null };
+  const model = view.modelList[panel.index];
+  if (model === undefined) return { view, picked: null };
+  if (model.efforts.length === 0) return { view: closeModelPanel(view), picked: model.id };
+  if (panel.preset === model.id) {
+    // Already in phase two for this preset: Enter there means the effort row, handled by
+    // `pickModelEffort` — this function only descends.
+    return { view, picked: null };
+  }
+  return { view: { ...view, modelPanel: { index: 0, preset: model.id } }, picked: null };
+}
+
+/** Enter on phase two: the effort for the locked preset. */
+export function pickModelEffort(view: TuiView): { readonly view: TuiView; readonly preset: string | null; readonly effort: string | null } {
+  const panel = view.modelPanel;
+  if (panel === null || panel.preset === null) return { view, preset: null, effort: null };
+  const model = view.modelList.find((entry) => entry.id === panel.preset);
+  const effort = model?.efforts[panel.index] ?? null;
+  return { view: closeModelPanel(view), preset: panel.preset, effort };
 }
 
 /**

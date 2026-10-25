@@ -24,14 +24,19 @@ import {
   markReplayedTasks,
   moveApprovalCursor,
   moveCronPanel,
+  moveModelPanel,
   movePalette,
   movePlanCursor,
   moveSessionPanel,
   moveTrust,
+  pickModelEffort,
   planAnswerAt,
   moveSlash,
   moveTaskPanel,
+  closeModelPanel,
+  enterModelPanel,
   openCronPanel,
+  openModelPanel,
   openPalette,
   openSessionPanel,
   openTaskPanel,
@@ -51,6 +56,7 @@ import {
   openHistorySearch,
   withAttachment,
   withHistory,
+  withModelList,
   withSessionList,
   withInput,
   withLangFrom,
@@ -569,6 +575,19 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = resetScroll(view.current);
           paint();
           return;
+        case 'modelMove':
+          view.current = moveModelPanel(view.current, intent.delta, modelRowCount());
+          draw();
+          return;
+        case 'modelClose':
+          if (view.current.modelPanel !== null && view.current.modelPanel.preset !== null) {
+            // Phase two backs out to the preset list, it does not close (ADR-161 ②).
+            view.current = { ...view.current, modelPanel: { index: 0, preset: null } };
+          } else {
+            view.current = closeModelPanel(view.current);
+          }
+          draw();
+          return;
         case 'trustMove':
           view.current = moveTrust(view.current, intent.delta);
           draw();
@@ -793,6 +812,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         case 'sessions':
           void openSessionPicker(effect.all);
+          return;
+        case 'modelPanel':
+          void openModelPicker();
           return;
         case 'tasks':
           if (view.current.approval !== null) {
@@ -1051,6 +1073,50 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       });
     }
 
+    /**
+     * The `/model` picker (ADR-161 ②): the host's presets browsed, not typed. One fetch
+     * per open, the same rule as the session picker.
+     */
+    async function openModelPicker(): Promise<void> {
+      try {
+        const result = await client.listModels(sessionId);
+        if (disposed) return;
+        view.current = openModelPanel(withModelList(view.current, result.models, result.current));
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
+    }
+
+    /** The existing typed `/model <id>` path, kept as the direct form of the same switch. */
+    function applyModel(preset: string, effort: string | null): void {
+      client
+        .setModel(sessionId, preset, effort)
+        .then((current) => {
+          if (disposed) return;
+          view.current = addNotice(view.current, 'info', `已切换模型：${current.id}${current.effort === null ? '' : ` · effort=${current.effort}`}（下一回合生效）`);
+          draw();
+        })
+        .catch((error: unknown) => {
+          if (disposed) return;
+          // The switch is refused atomically (ADR-152 ②): the old selection survives.
+          view.current = addNotice(view.current, 'error', message(error));
+          draw();
+        });
+    }
+
+    /** Rows the picker moves over: phase two counts the locked preset's efforts. */
+    function modelRowCount(): number {
+      const panel = view.current.modelPanel;
+      if (panel === null) return 0;
+      if (panel.preset !== null) {
+        return view.current.modelList.find((model) => model.id === panel.preset)?.efforts.length ?? 0;
+      }
+      return view.current.modelList.length;
+    }
+
     /** The trust card's answer, however it was given (arrow+Enter, y/n, or Esc). */
     function answerTrust(choice: 'grant' | 'skip'): void {
       if (view.current.trust === null) return;
@@ -1092,6 +1158,25 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
                 : 'skip';
         view.current = withInput(view.current, '');
         answerTrust(choice);
+        return;
+      }
+
+      // The `/model` picker owns Enter while it is open (ADR-161 ②): phase one picks a
+      // preset (or descends into its efforts), phase two confirms the effort.
+      const modelPicker = view.current.modelPanel;
+      if (modelPicker !== null) {
+        screen.clearInput();
+        view.current = withInput(view.current, '');
+        if (modelPicker.preset !== null) {
+          const picked = pickModelEffort(view.current);
+          view.current = picked.view;
+          if (picked.preset !== null) applyModel(picked.preset, picked.effort);
+        } else {
+          const entered = enterModelPanel(view.current);
+          view.current = entered.view;
+          if (entered.picked !== null) applyModel(entered.picked, null);
+        }
+        draw();
         return;
       }
 
