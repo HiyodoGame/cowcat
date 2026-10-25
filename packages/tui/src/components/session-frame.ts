@@ -91,7 +91,11 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.sessionPanel !== null) {
     dock.push(...sessionPanelLines(view.sessionList, view.sessionPanel.index, view.sessionId, options.width));
   }
-  const matches = view.approval === null ? slashMatches(view.input) : [];
+  // An ANSWERED approval lingers on screen until its turn ends (project.ts keeps it with
+  // the verdict) — that is a record, not an open question, so it hides the menu only while
+  // the verdict is still pending, the same condition the keymap uses for the arrows.
+  const questionOpen = (view.approval !== null && view.approval.verdict === null) || view.plan !== null;
+  const matches = questionOpen ? [] : slashMatches(view.input);
   if (matches.length > 0) {
     dock.push(...slashMenuLines(matches, view.slashIndex, options.width));
   }

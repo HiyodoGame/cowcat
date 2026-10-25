@@ -815,3 +815,29 @@ test('the status bar says where the session is, and truncates rather than wrappi
   assert.match(failed.text, /刚才那步失败了。（upstream 503）/);
   assert.equal(failed.token, 'alert');
 });
+
+test('an answered approval keeps the / menu visible; a pending one hides it', () => {
+  // project.ts keeps an answered card on screen until the turn ends — a record, not a
+  // question. The menu suppressed under it forever was the reported "typing / again did
+  // nothing after answering".
+  const approval = {
+    callId: 'c1',
+    name: 'Bash',
+    rule: 'no-rule-matched',
+    reason: null,
+    warning: null,
+    command: null,
+    path: null,
+    dimensions: [] as never[],
+    askedAt: 0,
+    verdict: null as string | null,
+    by: null as string | null,
+  };
+  const pending = frameOf({ ...initialView(), approval, input: '/' }, { width: WIDTH, now: 0 }).dock ?? [];
+  assert.doesNotMatch(pending.map((row) => row.text).join('\n'), /\/todos/u);
+  const answered = frameOf(
+    { ...initialView(), approval: { ...approval, verdict: 'once', by: 'user' }, input: '/' },
+    { width: WIDTH, now: 0 },
+  ).dock ?? [];
+  assert.match(answered.map((row) => row.text).join('\n'), /\/todos/u);
+});

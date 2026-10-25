@@ -126,3 +126,20 @@ test('closing the slash menu preserves the typed command', () => {
   assert.equal(closeSlashMenu(view).input, '/hel');
   assert.equal(closeSlashMenu(view).slashIndex, 0);
 });
+
+test('an answered approval that lingers is not a question: the / menu keys reach it', () => {
+  // Answered cards stay on screen until their turn ends (project.ts keeps the verdict);
+  // the menu hidden under a PENDING card must come back once the verdict is in.
+  const pendingApproval = withApproval().approval;
+  assert.ok(pendingApproval !== null);
+  const answered: TuiView = { ...withApproval(), approval: { ...pendingApproval, verdict: 'once', by: 'user' } };
+  const open = withApproval();
+  const menuView = { ...initialView(), input: '/' };
+  // Pending question: the card owns the keys (the menu is not even rendered).
+  assert.deepEqual(intentFor({ name: 'down', ctrl: false }, { ...open, input: '/' }), { kind: 'approvalMove', delta: 1 });
+  assert.equal(intentFor({ name: 'p', ctrl: true }, open), null);
+  // Answered lingering card: the menu owns them again, exactly like no card at all.
+  assert.deepEqual(intentFor({ name: 'down', ctrl: false }, { ...answered, input: '/' }), { kind: 'slashMove', delta: 1 });
+  assert.deepEqual(intentFor({ name: 'p', ctrl: true }, answered), { kind: 'palette' });
+  assert.deepEqual(intentFor({ name: 'down', ctrl: false }, menuView), { kind: 'slashMove', delta: 1 });
+});

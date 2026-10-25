@@ -1074,31 +1074,6 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         return;
       }
 
-      // The `/` menu owns Enter while it is open: the highlighted row is what runs. A space
-      // in the input closes the menu (slashMatches returns []), so Enter then sends text.
-      const slash = slashMatches(trimmed);
-      const slashCommand = slash[view.current.slashIndex % Math.max(1, slash.length)];
-      if (slashCommand !== undefined) {
-        screen.clearInput();
-        view.current = withInput(view.current, '');
-        apply(slashCommand.run(view.current));
-        return;
-      }
-
-      // `/command`: the same table, reached by typing.
-      const parsed = parseCommand(trimmed);
-      if (parsed !== null) {
-        screen.clearInput();
-        apply(parsed.command.run(view.current, parsed.rest));
-        return;
-      }
-      if (trimmed.startsWith('/')) {
-        screen.clearInput();
-        view.current = addNotice(view.current, 'warn', `没有这个命令：${trimmed.split(/\s+/)[0] ?? trimmed}（Ctrl-P 看全部）`);
-        draw();
-        return;
-      }
-
       if (view.current.plan !== null) {
         const plan = view.current.plan;
         if (trimmed === '') {
@@ -1119,31 +1094,26 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           answerPlan();
           return;
         }
-        view.current = addNotice(view.current, 'info', '↑↓ 选择 + 回车，或输入方案序号 / n（都不选）');
-        draw();
+        // Any other draft answers the highlighted plan, the same way an approval Enter
+        // does — the review owns the keyboard, and the draft survives it.
+        answerPlan();
         return;
       }
 
       const approval = view.current.approval;
       if (approval !== null && approval.verdict === null) {
-        // Empty input + Enter is the highlighted row; a typed letter is the old habit.
-        const verdict =
-          trimmed === ''
-            ? approvalChoiceAt(view.current)
-            : trimmed === 'y'
-              ? 'once'
-              : trimmed === 'always'
-                ? 'always'
-                : trimmed === 's'
-                  ? 'session'
-                  : trimmed === 'n'
-                    ? 'reject'
-                    : null;
-        if (verdict === null) {
-          view.current = addNotice(view.current, 'info', '↑↓ 选择 + 回车，或输入 y / n / always / s。');
-          draw();
-          return;
-        }
+        // The card owns Enter the way it owns the arrows: empty — or any draft the user
+        // was mid-typing when the question arrived — answers the highlighted row, and the
+        // draft is kept so typing resumes where it left off. Only the typed shortcuts
+        // consume the input, because the shortcut IS the input.
+        const shortcut =
+          trimmed === 'y' ? 'once'
+          : trimmed === 'always' ? 'always'
+          : trimmed === 's' ? 'session'
+          : trimmed === 'n' ? 'reject'
+          : null;
+        const verdict = shortcut ?? approvalChoiceAt(view.current);
+        if (shortcut !== null) screen.clearInput();
         // Escalate appeals have no `session` answer (ADR-129 2): the kernel would
         // narrow it anyway, but the habit should be told, not silently downgraded.
         if (verdict === 'session' && approval.rule === 'escalation') {
@@ -1151,11 +1121,37 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
           return;
         }
-        screen.clearInput();
         client.respondApproval(sessionId, approval.callId, verdict).catch((error: unknown) => {
           view.current = addNotice(view.current, 'error', message(error));
           draw();
         });
+        return;
+      }
+
+      // The `/` menu owns Enter while it is open — but only once no question is on the
+      // screen: an open approval or plan review owns Enter exactly like it owns the arrows,
+      // and answering it must not run a highlighted command nobody could see (the menu is
+      // hidden under the card). A draft survives the answer, so the menu comes back.
+      const slash = slashMatches(trimmed);
+      const slashCommand = slash[view.current.slashIndex % Math.max(1, slash.length)];
+      if (slashCommand !== undefined) {
+        screen.clearInput();
+        view.current = withInput(view.current, '');
+        apply(slashCommand.run(view.current));
+        return;
+      }
+
+      // `/command`: the same table, reached by typing.
+      const parsed = parseCommand(trimmed);
+      if (parsed !== null) {
+        screen.clearInput();
+        apply(parsed.command.run(view.current, parsed.rest));
+        return;
+      }
+      if (trimmed.startsWith('/')) {
+        screen.clearInput();
+        view.current = addNotice(view.current, 'warn', `没有这个命令：${trimmed.split(/\s+/)[0] ?? trimmed}（Ctrl-P 看全部）`);
+        draw();
         return;
       }
 

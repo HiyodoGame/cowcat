@@ -80,7 +80,9 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
         // A pending question outranks chrome: Ctrl-P over an open review would hide the
         // card behind the palette while its arrows mean two things (review of #167, P2-9).
         // The pre-session trust card outranks it for the same reason (ADR-157 ①).
-        return view.approval !== null || view.plan !== null || view.trust !== null ? null : { kind: 'palette' };
+        return (view.approval !== null && view.approval.verdict === null) || view.plan !== null || view.trust !== null
+          ? null
+          : { kind: 'palette' };
       case 'o':
         return { kind: 'toggleLastCard' };
       case 't':
@@ -145,8 +147,12 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
 
   // The `/` menu owns arrows, Tab and Escape while it is open; the input still owns the
   // letters. A space in the input closes the menu (slashMatches returns []). Neither it
-  // nor the palette opens over a pending question — arrows belong to the card.
-  if (view.approval === null && view.plan === null && slashMatches(view.input).length > 0) {
+  // nor the palette opens over a pending question — arrows belong to the card. An
+  // ANSWERED approval that lingers until its turn ends is not a pending question: the
+  // frame shows the menu again and these keys reach it (the frame and this condition
+  // must agree, or the menu is visible but its keys are dead).
+  const questionOpen = (view.approval !== null && view.approval.verdict === null) || view.plan !== null;
+  if (!questionOpen && slashMatches(view.input).length > 0) {
     if (key.name === 'up') return { kind: 'slashMove', delta: -1 };
     if (key.name === 'down') return { kind: 'slashMove', delta: 1 };
     if (key.name === 'tab') return { kind: 'slashAccept' };
