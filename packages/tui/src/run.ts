@@ -213,22 +213,26 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     async function handleClosed(): Promise<void> {
       view.current = closeView(view.current);
       draw();
-      if (disposed || options.reconnect === undefined) return;
+      if (options.reconnect === undefined) return;
       const generation = ++connectionGeneration;
+      // Read through a function on purpose: an inline `disposed || …` in one guard
+      // narrows `disposed` to false for the rest of the block, and these re-checks are
+      // load-bearing — dispose or a newer reconnect can land across any `await` below.
+      const stale = (): boolean => disposed || generation !== connectionGeneration;
       try {
         client = await options.reconnect();
-        if (disposed || generation !== connectionGeneration) {
+        if (stale()) {
           client.close();
           return;
         }
         await client.initialize();
-        if (disposed || generation !== connectionGeneration) {
+        if (stale()) {
           client.close();
           return;
         }
         subscribeClient();
         await attachSession(sessionId);
-        if (disposed || generation !== connectionGeneration) {
+        if (stale()) {
           client.close();
           return;
         }
@@ -1007,7 +1011,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       // Relative paths resolve against the TUI's cwd — resume keeps the shell's cwd,
       // so a session created elsewhere reads @refs from where you are (ADR-128 ⑤).
       const files = parseAtRefs(trimmed, process.cwd());
-      client.request('turn.send', { sessionId, input: trimmed, ...(files.length === 0 ? {} : { files }) }).then((result) => {
+      // The wire params type carries a mutable array (zod inference); copy the readonly
+      // parse result into it — the same widening `protocol/client.ts` does for files.
+      client.request('turn.send', { sessionId, input: trimmed, ...(files.length === 0 ? {} : { files: [...files] }) }).then((result) => {
         if (result.queued === true) {
           view.current = addNotice(view.current, 'info', `已排队 ${result.turnId}：当前回合结束后自动执行。`);
           draw();
