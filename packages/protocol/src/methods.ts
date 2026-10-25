@@ -32,6 +32,10 @@ export const METHODS = [
   'cron.list',
   /** The `/cron` panel's delete side: false when the id is not this session's live job. */
   'cron.remove',
+  /** The workspace trust gate's read side (ADR-157 ②): the host's startup snapshot. */
+  'trust.status',
+  /** Persist the startup cwd into the trust store (ADR-157 ②); no config hot-reload. */
+  'trust.grant',
   'shutdown',
 ] as const;
 
@@ -104,6 +108,10 @@ export const PARAMS = {
   // only read or remove ids its own session owns.
   'cron.list': z.strictObject({ sessionId: z.string().min(1) }),
   'cron.remove': z.strictObject({ sessionId: z.string().min(1), jobId: z.string().min(1) }),
+  // Trust is asked about the host's own startup cwd (ADR-157), so neither method takes a
+  // path: a client cannot ask about — or grant — anywhere else.
+  'trust.status': noParams,
+  'trust.grant': noParams,
   shutdown: noParams,
 } satisfies Record<MethodName, z.ZodType>;
 
@@ -185,7 +193,24 @@ export interface ResultTable {
   readonly 'cron.list': { readonly jobs: readonly CronJobSummary[] };
   /** False when the id is not this session's live job; the deletion event is the truth. */
   readonly 'cron.remove': { readonly removed: boolean };
+  /** The startup snapshot (ADR-157 ②): what trusting this workspace would unlock. */
+  readonly 'trust.status': { readonly trusted: boolean; readonly withheld: TrustWithheld };
+  readonly 'trust.grant': { readonly granted: true };
   readonly shutdown: { readonly closing: true };
+}
+
+/** What the project layer is holding back from an untrusted workspace (ADR-157 ②). */
+export interface TrustWithheld {
+  /** Project `allow` rules that trust would admit (ADR-028). */
+  readonly rules: number;
+  /** AGENTS.md/CLAUDE.md files whose injection trust would allow (ADR-030/077). */
+  readonly instructions: number;
+  /** Project skills skipped by the trust gate (ADR-114). */
+  readonly skills: number;
+  /** Project-scoped MCP servers (ADR-083~). */
+  readonly mcpServers: number;
+  /** Project hook files skipped by the trust gate (ADR-121). */
+  readonly hooks: number;
 }
 
 export interface GrantSummary {

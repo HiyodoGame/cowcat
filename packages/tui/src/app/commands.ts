@@ -18,7 +18,7 @@ export type CommandEffect =
   | { readonly kind: 'cancel' }
   | { readonly kind: 'quit' }
   /** Ask the loop for the session list; it is the only thing here that needs the client. */
-  | { readonly kind: 'sessions' }
+  | { readonly kind: 'sessions'; readonly all: boolean }
   /** Open the background-task panel (ADR-113); the loop owns the stop call. */
   | { readonly kind: 'tasks' }
   /** Open the `/cron` panel (ADR-143 ③); the loop owns the list and delete calls. */
@@ -77,7 +77,7 @@ export const COMMANDS: readonly TuiCommand[] = [  {
     summary: '展开 / 折叠 AI 的思考内容',
     run: (view) => ({ kind: 'view', view: toggleThinking(closePalette(view)) }),
   },
-  { name: 'sessions', summary: '列出会话与恢复命令', run: () => ({ kind: 'sessions' }) },
+  { name: 'sessions', summary: '本工作区的会话选择器；/sessions all 看全部', run: (_view, rest = '') => ({ kind: 'sessions', all: rest.trim() === 'all' }) },
   { name: 'tasks', summary: '后台任务：查看与终止', run: () => ({ kind: 'tasks' }) },
   { name: 'cron', summary: '定时任务：查看与删除（cron）', run: () => ({ kind: 'cron' }) },
   {
@@ -135,8 +135,8 @@ export const COMMANDS: readonly TuiCommand[] = [  {
   { name: 'cost', summary: '显示本会话 token 与成本明细', run: () => ({ kind: 'cost' }) },
   {
     name: 'resume',
-    summary: '恢复会话：/resume <id>；无参数列出会话',
-    run: (_view, rest = '') => rest.trim() === '' ? { kind: 'sessions' } : { kind: 'resume', sessionId: rest.trim() },
+    summary: '恢复会话：/resume 弹出本工作区的会话选择；/resume <id> 直达',
+    run: (_view, rest = '') => rest.trim() === '' ? { kind: 'sessions', all: false } : { kind: 'resume', sessionId: rest.trim() },
   },
   { name: 'clear', summary: '新建并切换到一个空会话', run: () => ({ kind: 'clear' }) },
   { name: 'copy', summary: '复制最近一条助手回答（OSC52 终端剪贴板）', run: () => ({ kind: 'copy' }) },

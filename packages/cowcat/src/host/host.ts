@@ -40,7 +40,7 @@ import { createHooksPort, loadHookSources } from '../adapters/hooks.js';
 import { PROMPT_FILE_MAX_COUNT, PromptFileError, readPromptFile } from '../adapters/prompt-files.js';
 import { createSkillTool } from '../adapters/tools/skill.js';
 import { createCronTools } from '../adapters/tools/cron.js';
-import { GLOBAL_INSTRUCTION_FILENAME } from '../policy/instructions.js';
+import { GLOBAL_INSTRUCTION_FILENAME, decideInstruction } from '../policy/instructions.js';
 import { projectRootOf } from '../adapters/instructions.js';
 import { decideSkills } from '../policy/skills.js';
 import { CRON_MAX_JOBS, CRON_RECURRING_TTL_MS, isDue, nextFire, parseSchedule, type CronSpec } from '../policy/cron.js';
@@ -150,7 +150,11 @@ export interface CreateHostOptions {
   readonly snapshots?: SnapshotPort;
   readonly clock?: Clock;
   readonly ids?: IdSource;
-  readonly trustStore?: { load(): Promise<{ readonly trusted: readonly string[]; readonly problem: string | null }> };
+  /** `add` is the write half of the trust gate (ADR-157); the default store has both. */
+  readonly trustStore?: {
+    load(): Promise<{ readonly trusted: readonly string[]; readonly problem: string | null }>;
+    add(path: string): Promise<void>;
+  };
   /** A model for tests. When absent it is built from the config on the first turn. */
   readonly model?: ModelPort;
   /** Injected so a test can assert the endpoint without a network (ADR-042). */
@@ -354,6 +358,34 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   if (hookSources.skippedUntrusted > 0) {
     warnings.push(`hooks: skipped ${String(hookSources.skippedUntrusted)} project file(s) from an untrusted workspace (cowcat trust 后再生效)`);
   }
+
+  // The trust gate's read side (ADR-157 ②): what the project layer is holding back, as
+  // counts. Computed by asking the same deciders the loaded session would use, with and
+  // without trust — never a second discovery pass, and `0` everywhere means the TUI has
+  // nothing to ask about and stays quiet in a bare directory.
+  const trustWithheld = workspaceTrusted
+    ? { rules: 0, instructions: 0, skills: 0, mcpServers: 0, hooks: 0 }
+    : await (async () => {
+        const instructionChain = await new FileInstructionSource({ fs }).chain(options.cwd, {
+          global: join(paths.dir, GLOBAL_INSTRUCTION_FILENAME),
+        });
+        // The skipped-untrusted decision carries exactly the project files trust would
+        // admit (policy/instructions.ts), so it IS the count — no second discovery pass.
+        const untrustedDecision = decideInstruction(instructionChain, { trusted: false });
+        const skillsWithheld =
+          skillDecision.kind === 'skipped-untrusted'
+            ? skillDecision.skills.length
+            : skillDecision.kind === 'injected'
+              ? skillDecision.skipped.length
+              : 0;
+        return {
+          rules: trustedRules(config, { trusted: true }).length - trustedRules(config, { trusted: false }).length,
+          instructions: untrustedDecision.kind === 'skipped-untrusted' ? untrustedDecision.files.length : 0,
+          skills: skillsWithheld,
+          mcpServers: Object.values(config.mcp.servers).filter((entry) => entry.origin === 'project').length,
+          hooks: hookSources.skippedUntrusted,
+        };
+      })();
   const hooksPort = createHooksPort({
     parsed: hookSources.parsed,
     process: processes,
@@ -1227,6 +1259,16 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     rules,
     sandbox,
     configWarnings: warnings,
+
+    /** The startup snapshot, not a live fact (ADR-157 ②): the host never hot-reloads. */
+    trustStatus(): Promise<{ trusted: boolean; withheld: { rules: number; instructions: number; skills: number; mcpServers: number; hooks: number } }> {
+      return Promise.resolve({ trusted: workspaceTrusted, withheld: trustWithheld });
+    },
+
+    /** Persist the cwd; the RUNNING host is unchanged — the caller rebuilds to apply (ADR-157). */
+    async trustGrant() {
+      await trustStore.add(options.cwd);
+    },
 
     async listSessions(): Promise<readonly SessionSummary[]> {
       const entries = await index.list();

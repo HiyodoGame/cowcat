@@ -47,6 +47,7 @@ export {
   type Result,
   type ResultTable,
   type SessionSummary,
+  type TrustWithheld,
 } from './methods.js';
 
 export {
