@@ -17,6 +17,8 @@ import { slashMatches } from './commands.js';
 export interface KeyLike {
   readonly name: string;
   readonly ctrl: boolean;
+  /** Shift+Tab arrives as name 'tab' with this set (ADR-160 ①). */
+  readonly shift?: boolean;
 }
 
 export type Intent =
@@ -54,6 +56,14 @@ export type Intent =
   | { readonly kind: 'cronDelete' }
   /** Close the `/cron` panel. */
   | { readonly kind: 'cronsClose' }
+  /** Shift+Tab's three-state cycle: normal → accept-edits → plan → normal (ADR-160 ①). */
+  | { readonly kind: 'modeCycle' }
+  /** Idle Esc number one: arm the double-press window (ADR-160 ②). */
+  | { readonly kind: 'armRecall' }
+  /** Idle Esc number two inside the window: bring the last prompt back (ADR-160 ②). */
+  | { readonly kind: 'recallLast' }
+  /** Ctrl+L: back to the tail and repaint now (ADR-160 ③). */
+  | { readonly kind: 'repaint' }
   /** Move the pre-session trust card's two-row highlight (ADR-157 ①). */
   | { readonly kind: 'trustMove'; readonly delta: number }
   /** Escape on the trust card is the same answer as the 跳过 row (ADR-157 ①). */
@@ -65,7 +75,7 @@ export type Intent =
   | { readonly kind: 'historySearch' }
   | { readonly kind: 'historyMove'; readonly delta: number };
 
-export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0): Intent | null {
+export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0, escArmUntil = 0): Intent | null {
   if (key.ctrl) {
     switch (key.name) {
       case 'c': {
@@ -91,6 +101,8 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
         return { kind: 'historySearch' };
       case 'end':
         return { kind: 'scrollBottom' };
+      case 'l':
+        return { kind: 'repaint' };
       default:
         return null;
     }
@@ -110,6 +122,10 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
     if (key.name === 'down') return { kind: 'trustMove', delta: 1 };
     if (key.name === 'escape') return { kind: 'trustSkip' };
   }
+
+  // Shift+Tab cycles the mode everywhere (ADR-160 ①): it is a whole-app state, not a
+  // widget's, and nothing else binds the key — Tab itself only completes the `/` menu.
+  if (key.name === 'tab' && key.shift === true) return { kind: 'modeCycle' };
 
   // The task panel is a list. It owns arrows, `x` and Escape — and nothing printable:
   // letters (including j/k) still belong to the input so a person can keep typing (ADR-113).
@@ -159,7 +175,13 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
     if (key.name === 'escape') return { kind: 'slashClose' };
   }
 
-  if (key.name === 'escape') return { kind: 'cancel' };
+  if (key.name === 'escape') {
+    const running = view.turn !== null && !['completed', 'failed', 'cancelled'].includes(view.turn.state);
+    if (running) return { kind: 'cancel' };
+    // Idle Esc (ADR-160 ②): the second press inside the window brings the last prompt
+    // back into the input; the first only arms, silently, so a stray Esc costs nothing.
+    return now < escArmUntil ? { kind: 'recallLast' } : { kind: 'armRecall' };
+  }
 
   // Arrow keys belong to the open question while there is one: the input line is showing
   // four rows of answers, not a prompt to type into.

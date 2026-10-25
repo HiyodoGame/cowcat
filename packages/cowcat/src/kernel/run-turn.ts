@@ -986,7 +986,7 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
 
   // The "read before write" gate (ADR-049). It lives in the kernel because that is
   // where `readFiles` is: a tool cannot see the session state, and passing the state
-  // into a tool would give it a window onto the state machine the layers forbid.
+  // into the tool would give it a window onto the state machine the layers forbid.
   // Checked before an approval prompt is raised — asking about a write that will be
   // refused is theatre.
   const unread = unreadTarget(deps, spec, path);
@@ -1020,6 +1020,22 @@ async function runCall(deps: TurnDeps, call: ToolCall, signal: AbortSignal, esca
         callId: call.callId,
         key: matched.key,
         verdict: matched.verdict,
+        by: 'policy',
+      });
+      approved = true;
+    } else if (session.state.acceptEdits && (call.name === 'Write' || call.name === 'Edit')) {
+      // Accept-edits mode (ADR-159): the person pre-answered Write/Edit for this session.
+      // This branch sits INSIDE the ask path, so deny, plan mode and the read-before-write
+      // gate above have all had their say — pre-answering a write those gates refuse would
+      // be a bypass. Write/Edit by NAME, never by risk class: Bash is also a "write"-risk
+      // tool and must never ride an edits switch. No grant is created — the switch is the
+      // whole of the permission, and turning it off revokes everything.
+      await session.emit({
+        type: 'approval.answered',
+        turnId,
+        callId: call.callId,
+        key: approvalKey(request),
+        verdict: 'once',
         by: 'policy',
       });
       approved = true;

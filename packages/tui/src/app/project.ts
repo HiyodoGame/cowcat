@@ -281,6 +281,15 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       return add({ ...base, planMode: on }, notice(base, seq, 'info', line));
     }
 
+    case 'accept-edits.mode-changed': {
+      // ADR-159: a user act folded from the log, same shape as plan mode's toggle. The
+      // notice states the exact scope — Write/Edit only — because "auto-accept" that
+      // silently covers Bash would be a lie with teeth.
+      const on = flag(event, 'enabled') === true;
+      const line = on ? copyFor(base.lang).acceptEditsOn : copyFor(base.lang).acceptEditsOff;
+      return add({ ...base, acceptEdits: on }, notice(base, seq, 'info', line));
+    }
+
     case 'plan.proposed': {
       const plans: PlanCardOption[] = records(event, 'plans').map((raw) => ({
         title: text(raw, 'title') ?? '?',

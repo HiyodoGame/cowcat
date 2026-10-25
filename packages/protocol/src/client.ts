@@ -50,6 +50,8 @@ export interface ProtocolClient {
   redoChange(sessionId: string): Promise<{ readonly path: string }>;
   respondApproval(sessionId: string, callId: string, verdict: Params<'approval.respond'>['verdict']): Promise<void>;
   setPlanMode(sessionId: string, enabled: boolean): Promise<void>;
+  /** Toggle accept-edits mode (ADR-159 ③); resolves with the applied state. */
+  setAcceptEdits(sessionId: string, enabled: boolean): Promise<boolean>;
   respondPlan(sessionId: string, callId: string, choice: number | null, reason: string | null): Promise<void>;
   readAttachment(id: string, maxBytes?: number): Promise<AttachmentBytes>;
   /** Stop a background task this session started; false when it is already gone. */
@@ -253,6 +255,10 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async trustGrant() {
       await request('trust.grant', {});
+    },
+
+    async setAcceptEdits(sessionId: string, enabled: boolean) {
+      return (await request('accept-edits.set', { sessionId, enabled })).enabled;
     },
 
     async shutdown() {

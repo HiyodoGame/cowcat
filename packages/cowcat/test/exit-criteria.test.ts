@@ -214,6 +214,7 @@ function project(events: readonly KernelEvent[]): readonly unknown[] {
         // Same family as approval.answered: bookkeeping of what a person decided (or
         // spent), never something the model said (ADR-129).
         break;
+      case 'accept-edits.mode-changed':
       case 'plan.mode-changed':
         out.push(withoutVolatile(event));
         break;

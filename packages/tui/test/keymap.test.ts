@@ -143,3 +143,27 @@ test('an answered approval that lingers is not a question: the / menu keys reach
   assert.deepEqual(intentFor({ name: 'p', ctrl: true }, answered), { kind: 'palette' });
   assert.deepEqual(intentFor({ name: 'down', ctrl: false }, menuView), { kind: 'slashMove', delta: 1 });
 });
+
+test('Shift+Tab cycles the mode everywhere; Ctrl+L repaints (ADR-160 ①③)', () => {
+  const idle = initialView();
+  assert.deepEqual(intentFor({ name: 'tab', ctrl: false, shift: true }, idle), { kind: 'modeCycle' });
+  // Over an open panel too: the cycle is whole-app state, the panel keeps its own keys.
+  const withPanel = { ...initialView(), taskPanel: { index: 0 } };
+  assert.deepEqual(intentFor({ name: 'tab', ctrl: false, shift: true }, withPanel), { kind: 'modeCycle' });
+  // Plain Tab is untouched: it completes the `/` menu, and here is not bound at all.
+  assert.equal(intentFor({ name: 'tab', ctrl: false }, idle), null);
+  assert.deepEqual(intentFor({ name: 'l', ctrl: true }, idle), { kind: 'repaint' });
+});
+
+test('idle Esc arms, the second press inside the window recalls; a running turn still cancels (ADR-160 ②)', () => {
+  const idle = initialView();
+  // First press: silent arm.
+  assert.deepEqual(intentFor({ name: 'escape', ctrl: false }, idle, 1_000, 0, 0), { kind: 'armRecall' });
+  // Second press inside 400ms: recall.
+  assert.deepEqual(intentFor({ name: 'escape', ctrl: false }, idle, 1_200, 0, 1_400), { kind: 'recallLast' });
+  // Too late: re-arm instead.
+  assert.deepEqual(intentFor({ name: 'escape', ctrl: false }, idle, 2_000, 0, 1_400), { kind: 'armRecall' });
+  // A running turn keeps the classic meaning.
+  const running = { ...initialView(), turn: { id: 't', state: 'streaming', reason: null, cronSourced: false } };
+  assert.deepEqual(intentFor({ name: 'escape', ctrl: false }, running, 1_000, 0, 1_400), { kind: 'cancel' });
+});

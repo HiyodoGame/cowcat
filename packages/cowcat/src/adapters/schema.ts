@@ -366,6 +366,12 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     ...base,
+    type: z.literal('accept-edits.mode-changed'),
+    enabled: z.boolean(),
+    by: z.literal('user'),
+  }),
+  z.object({
+    ...base,
     type: z.literal('plan.proposed'),
     callId: z.string(),
     plans: z.readonly(z.array(z.readonly(z.object({ title: z.string(), summary: z.string() })))),
@@ -502,6 +508,7 @@ const sessionStateSchema = z.object({
   // Plan mode (ADR-124). Same lifecycle as the fields below: a snapshot written before
   // the field existed fails validation and the caller replays instead (ADR-013).
   planMode: z.boolean(),
+  acceptEdits: z.boolean(),
   // The instruction message currently in `messages` (ADR-078), and how many were injected.
   instructionsSeq: z.number().int().positive().nullable(),
   instructionsCount: z.number().int().nonnegative(),

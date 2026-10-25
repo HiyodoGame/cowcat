@@ -236,6 +236,7 @@ function stateWithTurnIn(state: TurnState): SessionState {
     usageTotals: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     compactionOpen: false,
     planMode: false,
+    acceptEdits: false,
     instructionsSeq: null,
     instructionsCount: 0,
     skillsSeq: null,

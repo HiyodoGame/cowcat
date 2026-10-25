@@ -93,6 +93,8 @@ export interface RunTuiOptions {
 
 /** How long after a question the status bar nudges (§2.2). */
 const NUDGE_AFTER_MS = 10_000;
+/** The idle-Esc double-press window (ADR-160 ②). */
+const ESC_RECALL_WINDOW_MS = 400;
 
 export async function runTui(options: RunTuiOptions): Promise<number> {
   let client = options.client;
@@ -104,6 +106,8 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   let connectionGeneration = 0;
   let nudgeTimer: ReturnType<typeof setTimeout> | undefined;
   let exitArmUntil = 0;
+  // The idle-Esc double-press window (ADR-160 ②), the same arm pattern as exit's.
+  let escArmUntil = 0;
   // The trust gate's handoff state (ADR-157), on an object because closures reassign it —
   // a bare `let` gets flow-narrowed across those calls and the guards read as dead code
   // (the same trap `activity.timer` and `frame.timer` avoid above and below).
@@ -314,7 +318,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         queueMicrotask(syncInput);
       }),
       screen.onKey((key) => {
-        const intent = intentFor({ name: key.name, ctrl: key.ctrl }, view.current, Date.now(), exitArmUntil);
+        const intent = intentFor({ name: key.name, ctrl: key.ctrl, shift: key.shift }, view.current, Date.now(), exitArmUntil, escArmUntil);
         // ↑/↓ belong to the composer's cursor until there is nowhere left to move (ADR-106).
         // `intent` is checked first so an open menu or question keeps the keys, and Shift is
         // excluded because it extends a selection (`select-up`/`select-down`) — taking it would
@@ -524,6 +528,46 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         case 'cronDelete':
           deleteSelectedCronJob();
+          return;
+        case 'modeCycle': {
+          // ADR-160 ①: at most one mode on — the cycle closes the old one before opening
+          // the next, so the chip on the status bar is always the whole truth.
+          if (view.current.acceptEdits) {
+            client.setAcceptEdits(sessionId, false).catch((error: unknown) => {
+              noticeError(error);
+            });
+            client.setPlanMode(sessionId, true).catch((error: unknown) => {
+              noticeError(error);
+            });
+          } else if (view.current.planMode) {
+            client.setPlanMode(sessionId, false).catch((error: unknown) => {
+              noticeError(error);
+            });
+          } else {
+            client.setAcceptEdits(sessionId, true).catch((error: unknown) => {
+              noticeError(error);
+            });
+          }
+          return;
+        }
+        case 'armRecall':
+          escArmUntil = Date.now() + ESC_RECALL_WINDOW_MS;
+          return;
+        case 'recallLast': {
+          escArmUntil = 0;
+          const last = view.current.history.at(-1);
+          if (last !== undefined && last !== '') {
+            screen.setInput(last);
+            view.current = withInput(view.current, last);
+            draw();
+          }
+          return;
+        }
+        case 'repaint':
+          // Ctrl+L (ADR-160 ③): back to the tail, painted now — past the coalescer,
+          // because "repaint" is the one key whose point is immediacy.
+          view.current = resetScroll(view.current);
+          paint();
           return;
         case 'trustMove':
           view.current = moveTrust(view.current, intent.delta);
@@ -1011,6 +1055,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     function answerTrust(choice: 'grant' | 'skip'): void {
       if (view.current.trust === null) return;
       gate.answer?.(choice);
+    }
+
+    function noticeError(error: unknown): void {
+      view.current = addNotice(view.current, 'error', message(error));
+      draw();
     }
 
     function cancel(): void {

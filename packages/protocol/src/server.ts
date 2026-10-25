@@ -170,6 +170,8 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return redoChange(id, params as Params<'change.redo'>);
       case 'approval.respond':
         return respondApproval(id, params as Params<'approval.respond'>);
+      case 'accept-edits.set':
+        return setAcceptEdits(id, params as Params<'accept-edits.set'>);
       case 'plan.setMode':
         return setPlanMode(id, params as Params<'plan.setMode'>);
       case 'plan.reply':
@@ -297,6 +299,11 @@ export function createServer(options: ServerOptions): ProtocolServer {
 
   async function setPlanMode(id: RequestId, params: Params<'plan.setMode'>): Promise<void> {
     await host.setPlanMode(params.sessionId, params.enabled);
+    reply(id, { enabled: params.enabled });
+  }
+
+  async function setAcceptEdits(id: RequestId, params: Params<'accept-edits.set'>): Promise<void> {
+    await host.setAcceptEdits(params.sessionId, params.enabled);
     reply(id, { enabled: params.enabled });
   }
 

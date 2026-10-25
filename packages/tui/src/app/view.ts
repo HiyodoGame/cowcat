@@ -419,6 +419,8 @@ export interface TuiView {
   readonly trust: { readonly withheld: TrustWithheld; readonly cwd: string } | null;
   /** The highlighted row of the trust card: 0 = 信任, 1 = 跳过. */
   readonly trustCursor: number;
+  /** Write/Edit asks are pre-answered while on (ADR-159), folded from the log. */
+  readonly acceptEdits: boolean;
   /** The `/sessions` picker (ADR-158 ①): cursor and whether the scope is every session. */
   readonly sessionPanel: { readonly index: number; readonly all: boolean } | null;
   /** What the picker shows — fetched once per open, never a live subscription (ADR-158 ③). */
@@ -479,6 +481,7 @@ export function initialView(): TuiView {
     scrollOffset: 0,
     newSinceScroll: 0,
     closed: false,
+    acceptEdits: false,
     trust: null,
     trustCursor: 0,
     sessionPanel: null,

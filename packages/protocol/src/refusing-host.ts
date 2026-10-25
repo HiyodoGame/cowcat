@@ -36,6 +36,7 @@ export function refusingHost(reason: string = NOT_WIRED): ProtocolHost {
     redoChange: () => refuse(),
     respondApproval: () => refuse(),
     setPlanMode: () => refuse(),
+    setAcceptEdits: () => refuse(),
     respondPlan: () => refuse(),
     readAttachment: () => refuse(),
     stopTask: () => refuse(),

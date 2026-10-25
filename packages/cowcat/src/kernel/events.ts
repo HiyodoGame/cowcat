@@ -417,6 +417,18 @@ export type KernelEvent = EventBase &
       }
     | {
         /**
+         * Accept-edits mode toggled (ADR-159): Write/Edit asks are pre-answered for this
+         * session. A user act only — the model cannot turn it on — and it creates no
+         * standing grant: turning it off is the whole revocation. Folded into
+         * `SessionState.acceptEdits`.
+         */
+        readonly type: 'accept-edits.mode-changed';
+        readonly turnId: string | null;
+        readonly enabled: boolean;
+        readonly by: 'user';
+      }
+    | {
+        /**
          * An `ExitPlan` call presented its plans to the person (ADR-125). A fact, not a
          * message: the frontends render the card from this event, and replay reproduces
          * what was offered without re-running anything.

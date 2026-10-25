@@ -49,7 +49,8 @@ export interface TuiCommand {
 export const KEYS_HELP = [
   '回车 发送（审批时：↑↓ 选择 + 回车确认，y / n / always / s 也可）',
   '换行：Ctrl+J 或 Ctrl+Enter（任何终端都行）；Alt+Enter 多数终端可用；Shift+Enter 只在支持 kitty 协议的终端上有效',
-  'Esc 取消正在跑的回合；命令面板开着时关掉它',
+  'Esc 取消正在跑的回合；菜单/面板开着时关掉它；空闲时快速按两次 Esc 取回上一条输入',
+  'Shift+Tab 循环模式：正常 → 接受编辑 → plan → 正常 · Ctrl+L 回到底部并重绘',
   '空输入 ↑↓ 滚动 · PageUp/PageDown 翻页 · Ctrl+End 回到底部',
   'Ctrl-P 命令面板 · Ctrl-O 展开/折叠最后一张工具卡 · Ctrl-T 思考内容',
   'Ctrl-C 取消回合/清空输入/再按一次退出 · Ctrl+D 空输入退出 · /exit 或 /quit 退出',
