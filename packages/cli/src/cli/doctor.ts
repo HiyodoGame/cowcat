@@ -6,6 +6,7 @@ import { flagValue } from './flags.js';
 import { statePaths } from './host.js';
 import { COMMANDS, type CommandContext } from './spec.js';
 import { readVersion } from './version.js';
+import { defaultEntryProblem, meetsNodeFloor } from './runtime.js';
 
 /**
  * This package's Node floor is the kernel's: 22.
@@ -17,8 +18,6 @@ import { readVersion } from './version.js';
  * (`cowcat tui`, T7) and reported as its own row here (ADR-065 ①).
  */
 const MIN_NODE = { major: 22, minor: 0 } as const;
-/** opentui's floor (ADR-056), for the one verb that loads a renderer. */
-const RENDERER_NODE = { major: 26, minor: 4 } as const;
 
 /**
  * `cowcat doctor`.
@@ -34,7 +33,7 @@ const RENDERER_NODE = { major: 26, minor: 4 } as const;
  * `serve` and this verb all work without one, and a `FAIL` on a fresh install would teach
  * people to ignore the exit code.
  */
-export async function runDoctor(context: CommandContext): Promise<number> {
+export async function runDoctor(context: CommandContext, nodeVersion = process.versions.node): Promise<number> {
   let failed = 0;
   const row = (label: string, value: string, ok: boolean): void => {
     context.stdout(`  ${label.padEnd(10)}${value.padEnd(52)}${ok ? 'ok' : 'FAIL'}`);
@@ -49,14 +48,10 @@ export async function runDoctor(context: CommandContext): Promise<number> {
 
   context.stdout(`cowcat ${readVersion()} doctor`);
 
-  const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
-  const meets = (required: { readonly major: number; readonly minor: number }): boolean =>
-    major > required.major || (major === required.major && minor >= required.minor);
-
-  // Two rows rather than one: "this build runs" and "the TUI would run here" are
-  // different questions, and answering them with one FAIL is how people learn to ignore
-  // the exit code.
-  row('node', `v${process.versions.node}（需要 >=${String(MIN_NODE.major)}）`, meets(MIN_NODE));
+  row('node', `v${nodeVersion}（需要 >=${String(MIN_NODE.major)}）`, meetsNodeFloor(nodeVersion, MIN_NODE));
+  const problem = defaultEntryProblem(nodeVersion);
+  row('默认入口', problem ?? 'TUI 可以在当前运行时启动', problem === null);
+  note('headless', 'serve / run / sessions list / doctor 使用 Node >= 22；默认入口检查不表示这些命令失败');
 
   // What this build does NOT check: the renderer's native core. It lives in
   // `packages/tui`'s own `node_modules` (a `file:` dependency is a junction, so npm does
@@ -64,13 +59,6 @@ export async function runDoctor(context: CommandContext): Promise<number> {
   // report a false FAIL. The floor is a fact this process can check, so it is reported;
   // the binary itself is checked by `packages/tui/test/render.test.ts` and, from T7, when
   // the `tui` verb starts.
-  const rendererOk = meets(RENDERER_NODE);
-  note(
-    '渲染器',
-    rendererOk
-      ? `v${String(RENDERER_NODE.major)}.${String(RENDERER_NODE.minor)} 起可用（TUI 的 opentui 门槛，ADR-056）`
-      : `TUI 需要 >=${String(RENDERER_NODE.major)}.${String(RENDERER_NODE.minor)}（opentui 的门槛）；serve/run/doctor 不受影响`,
-  );
 
   const { PROTOCOL_VERSION } = await import('@corescense/cowcat-protocol');
   row('protocol', `version ${String(PROTOCOL_VERSION)}`, true);

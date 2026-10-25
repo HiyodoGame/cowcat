@@ -1,3 +1,4 @@
+import type { GrantSummary } from '@corescense/cowcat-protocol';
 import type { Lang } from './copy.js';
 import { detectLang } from './copy.js';
 
@@ -324,6 +325,7 @@ export interface TuiView {
   readonly historyIndex: number | null;
   /** The draft saved when browsing started, restored by ↓ past the newest entry. */
   readonly historyDraft: string;
+  readonly historySearch: { readonly index: number; readonly draft: string } | null;
   /** The model `turn.opened` reported, for the status bar (ADR-102). */
   readonly model: string | null;
   /**
@@ -339,9 +341,13 @@ export interface TuiView {
   readonly slashIndex: number;
   /** Attachment bytes, by path: the log has the reference, this is where the pixels land. */
   readonly attachments: Readonly<Record<string, AttachmentView>>;
+  readonly fileCandidates: readonly string[];
   readonly todosVisible: boolean;
-  /** The command palette when it is open: which row is selected. */
-  readonly palette: { readonly index: number } | null;
+  readonly changesVisible: boolean;
+  readonly permissionsVisible: boolean;
+  readonly permissionGrants: readonly GrantSummary[];
+  /** The command palette query, selected row, and the draft it temporarily replaced. */
+  readonly palette: { readonly index: number; readonly query: string; readonly draft: string } | null;
   readonly todos: readonly TodoView[];
   /**
    * The last `model.usage` the log reported (ADR-041), cache fields included.
@@ -438,12 +444,17 @@ export function initialView(): TuiView {
     history: [],
     historyIndex: null,
     historyDraft: '',
+    historySearch: null,
     model: null,
     contextWindow: null,
     turnStartedAt: null,
     slashIndex: 0,
     attachments: {},
+    fileCandidates: [],
     todosVisible: true,
+    changesVisible: false,
+    permissionsVisible: false,
+    permissionGrants: [],
     palette: null,
     todos: [],
     usage: null,
@@ -479,13 +490,23 @@ export function withInput(view: TuiView, input: string): TuiView {
   if (view.input === input) return view;
   // A different query means a different list; keeping the old highlight would point at a
   // row that may no longer exist.
-  return { ...view, input, slashIndex: 0 };
+  return {
+    ...view,
+    input,
+    slashIndex: 0,
+    palette: view.palette === null ? null : { ...view.palette, index: 0, query: input },
+    historySearch: view.historySearch === null ? null : { ...view.historySearch, index: 0 },
+  };
 }
 
 export function moveSlash(view: TuiView, delta: number, count: number): TuiView {
   if (count === 0) return view;
   const next = (view.slashIndex + delta + count) % count;
   return next === view.slashIndex ? view : { ...view, slashIndex: next };
+}
+
+export function closeSlashMenu(view: TuiView): TuiView {
+  return { ...view, slashIndex: 0 };
 }
 
 /** Open the `/tasks` panel (ADR-113); nothing to show means nothing opens. The two
@@ -617,6 +638,27 @@ export function rememberInput(view: TuiView, text: string): TuiView {
   return { ...idle, history: [...view.history, text].slice(-HISTORY_LIMIT) };
 }
 
+export function historyMatches(view: TuiView): readonly string[] {
+  const query = view.historySearch === null ? '' : view.input.trim().toLowerCase();
+  if (query === '') return view.history;
+  return view.history.filter((entry) => entry.toLowerCase().includes(query));
+}
+
+export function openHistorySearch(view: TuiView): TuiView {
+  return { ...view, input: '', historySearch: { index: Math.max(0, view.history.length - 1), draft: view.input } };
+}
+
+export function closeHistorySearch(view: TuiView): TuiView {
+  return { ...view, input: view.historySearch?.draft ?? view.input, historySearch: null, historyIndex: null };
+}
+
+export function moveHistorySearch(view: TuiView, delta: number): TuiView {
+  if (view.historySearch === null) return view;
+  const count = historyMatches(view).length;
+  if (count === 0) return view;
+  return { ...view, historySearch: { ...view.historySearch, index: (view.historySearch.index + delta + count) % count } };
+}
+
 /**
  * Move through the input history (ADR-106).
  *
@@ -693,6 +735,14 @@ export function toggleTodos(view: TuiView): TuiView {
   return { ...view, todosVisible: !view.todosVisible };
 }
 
+export function toggleChanges(view: TuiView): TuiView {
+  return { ...view, changesVisible: !view.changesVisible };
+}
+
+export function setPermissions(view: TuiView, grants: readonly GrantSummary[]): TuiView {
+  return { ...view, permissionsVisible: true, permissionGrants: grants };
+}
+
 /** Record an attachment (an image/PDF reference) and its state, by path. */
 export function withAttachment(view: TuiView, attachment: AttachmentView): TuiView {
   return { ...view, attachments: { ...view.attachments, [attachment.path]: attachment } };
@@ -704,18 +754,18 @@ export function pendingAttachments(view: TuiView): readonly AttachmentView[] {
 }
 
 export function openPalette(view: TuiView): TuiView {
-  return { ...view, palette: { index: 0 } };
+  return { ...view, input: '', palette: { index: 0, query: '', draft: view.input } };
 }
 
 export function closePalette(view: TuiView): TuiView {
-  return { ...view, palette: null };
+  return { ...view, input: view.palette?.draft ?? view.input, palette: null, slashIndex: 0 };
 }
 
 /** Move the palette selection, wrapping at both ends (`count` rows). */
 export function movePalette(view: TuiView, delta: number, count: number): TuiView {
   if (view.palette === null || count === 0) return view;
   const index = (view.palette.index + delta + count) % count;
-  return { ...view, palette: { index } };
+  return { ...view, palette: { ...view.palette, index } };
 }
 
 /** The language of any user text, decided once and then left alone. */

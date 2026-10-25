@@ -3,6 +3,7 @@ import type { Message, ReasoningBlock } from '../kernel/messages.js';
 import type { Attachment, ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
 import { tryMaterializeAttachment, unavailableAttachmentNote } from './attachments.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
+import { contextOverflow } from './model-overflow.js';
 
 // The OpenAI-compatible adapter (ADR-036): one protocol that 201 of the 209 catalogued
 // providers speak, Chat Completions rather than the Responses API, because a compatible
@@ -75,6 +76,10 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
           ),
         classify: (error, attemptSignal) => classifyOpenAI(error, signal, attemptSignal),
         ...(options.retry === undefined ? {} : { policy: options.retry }),
+      }).catch((error: unknown) => {
+        const overflow = contextOverflow(error, error instanceof APIError ? error.status : null);
+        if (overflow !== null) throw overflow;
+        throw error;
       });
 
       // Tool calls arrive as fragments keyed by `index`: the first fragment carries the

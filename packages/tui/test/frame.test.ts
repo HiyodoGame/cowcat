@@ -248,7 +248,7 @@ test('the todo panel, and the command palette over it', async () => {
     }),
   ]);
   await expectFrame('todos', withTodos);
-  await expectFrame('palette', { ...withTodos, palette: { index: 1 } });
+  await expectFrame('palette', { ...withTodos, palette: { index: 1, query: '', draft: '' } });
 });
 
 // CJK is two cells wide and one grapheme, so the count that matters is the renderer's own

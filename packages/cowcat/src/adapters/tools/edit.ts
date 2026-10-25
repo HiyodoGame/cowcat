@@ -2,11 +2,13 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { ToolPort } from '../../ports/index.js';
+import { captureCheckpoint, checkpointAfter, type CheckpointOptions } from '../checkpoint.js';
 import { defineTool } from './define-tool.js';
 
 export interface EditToolOptions {
   /** The working directory a relative `file_path` is resolved against. */
   readonly cwd: string;
+  readonly checkpoints?: CheckpointOptions;
 }
 
 const DESCRIPTION = [
@@ -36,7 +38,7 @@ export function createEditTool(options: EditToolOptions): ToolPort {
         replace_all: z.boolean().optional().describe('Replace every occurrence instead of exactly one'),
       }),
     },
-    (input) => {
+    (input, _signal, _grant, context) => {
       const filePath = resolve(options.cwd, input.file_path);
       let content: string;
       try {
@@ -80,6 +82,14 @@ export function createEditTool(options: EditToolOptions): ToolPort {
         input.replace_all === true
           ? content.split(input.old_string).join(input.new_string)
           : content.replace(input.old_string, input.new_string);
+      let checkpoint;
+      if (options.checkpoints !== undefined) {
+        try {
+          checkpoint = captureCheckpoint(options.checkpoints, context, filePath);
+        } catch (error) {
+          return { ok: false, output: `cannot create checkpoint for ${filePath}: ${error instanceof Error ? error.message : String(error)}` };
+        }
+      }
       try {
         writeFileSync(filePath, next);
       } catch (error) {
@@ -91,6 +101,7 @@ export function createEditTool(options: EditToolOptions): ToolPort {
         ok: true,
         output: `edited ${filePath} (${String(replaced)} replacement${replaced === 1 ? '' : 's'})`,
         truncation: { truncated: false, dropped: 0, reason: null },
+        ...(checkpoint === undefined ? {} : { checkpoint: checkpointAfter(checkpoint, filePath) }),
       };
     },
   );

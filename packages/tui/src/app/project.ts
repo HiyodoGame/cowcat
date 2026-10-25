@@ -2,7 +2,7 @@ import type { WireDelta, WireEvent } from '@corescense/cowcat-protocol';
 import { graphemes } from '../text/width.js';
 import { copyFor } from './copy.js';
 import { flag, number, read, record, records, text, texts, updateSeq, updateType } from './fields.js';
-import { withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type CronJobView, type Entry, type PlanCardOption, type PlanView, type TodoView, type ToolCallView, type TuiView } from './view.js';
+import { rememberInput, withLangFrom, withAttachment, type AgentView, type ApprovalView, type BackgroundTaskState, type BackgroundTaskView, type CronJobView, type Entry, type PlanCardOption, type PlanView, type TodoView, type ToolCallView, type TuiView } from './view.js';
 import { noteBelow } from './view.js';
 
 /**
@@ -39,7 +39,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // A turn a cron fire opened carries the marker (ADR-142 ④): the fired event named
       // this id first. The pending entry is consumed; the id stays for the session.
       const cronSourced = base.cronPendingTurns.includes(turnId);
-      const opened = add(withLangFrom(base, input), { kind: 'user', seq, text: input, ...(cronSourced ? { cron: true as const } : {}) });
+      const opened = rememberInput(add(withLangFrom(base, input), { kind: 'user', seq, text: input, ...(cronSourced ? { cron: true as const } : {}) }), input);
       return {
         ...opened,
         streaming: '',
@@ -469,6 +469,12 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         cronJobs: base.cronJobs.map((entry) => (entry.jobId === jobId ? { ...entry, lastFiredAt: firedAt } : entry)),
       };
     }
+
+    case 'file.changed':
+    case 'file.reverted':
+    case 'file.restored':
+    case 'approval.revoked':
+      return base;
 
     default:
       return unsupported(base, updateType(event) ?? 'unknown');

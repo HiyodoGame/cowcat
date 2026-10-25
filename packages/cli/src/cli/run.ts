@@ -1,7 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import { EXIT } from './exit.js';
 import { parseArgv } from './flags.js';
-import { renderHelp } from './help.js';
+import { renderCommandHelp, renderHelp } from './help.js';
 import { COMMANDS, defaultCommand, findCommand, type CommandContext } from './spec.js';
 import { readVersion } from './version.js';
 
@@ -50,6 +50,19 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
     stdout(readVersion());
     return EXIT.ok;
   }
+  if (head === 'help') {
+    if (rest.length === 0) {
+      stdout(renderHelp());
+      return EXIT.ok;
+    }
+    const command = rest.length === 1 ? findCommand(rest[0] ?? '') : undefined;
+    if (command !== undefined) {
+      stdout(renderCommandHelp(command));
+      return EXIT.ok;
+    }
+    stderr(`cowcat help: 未知命令 "${rest.join(' ')}"`);
+    return EXIT.usage;
+  }
 
   const spec = head === undefined ? defaultCommand() : findCommand(head);
   if (spec === undefined) {
@@ -57,6 +70,12 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
     stderr(`可用命令：${COMMANDS.map((command) => command.name).join(', ')}`);
     stderr('运行 cowcat --help 看完整说明');
     return EXIT.usage;
+  }
+  const optionEnd = rest.indexOf('--');
+  const optionArgs = optionEnd === -1 ? rest : rest.slice(0, optionEnd);
+  if (optionArgs.includes('-h') || optionArgs.includes('--help')) {
+    stdout(renderCommandHelp(spec));
+    return EXIT.ok;
   }
 
   // Options before positionals: they are the structural half of the command line, so

@@ -154,6 +154,20 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return sendTurn(id, params as Params<'turn.send'>);
       case 'turn.cancel':
         return cancelTurn(id, params as Params<'turn.cancel'>);
+      case 'model.list':
+        return listModels(id, params as Params<'model.list'>);
+      case 'model.set':
+        return setModel(id, params as Params<'model.set'>);
+      case 'context.compact':
+        return compactSession(id, params as Params<'context.compact'>);
+      case 'grants.list':
+        return listGrants(id, params as Params<'grants.list'>);
+      case 'grants.revoke':
+        return revokeGrant(id, params as Params<'grants.revoke'>);
+      case 'change.undo':
+        return undoChange(id, params as Params<'change.undo'>);
+      case 'change.redo':
+        return redoChange(id, params as Params<'change.redo'>);
       case 'approval.respond':
         return respondApproval(id, params as Params<'approval.respond'>);
       case 'plan.setMode':
@@ -204,14 +218,10 @@ export function createServer(options: ServerOptions): ProtocolServer {
   async function openSession(id: RequestId, params: Params<'session.open'>): Promise<void> {
     const session = await host.attach(params.sessionId);
 
-    // Re-opening the same session replaces the subscription rather than adding a
-    // second one: otherwise every re-open leaks a listener and the client sees each
-    // update as many times as it has opened the session.
-    const previous = attached.get(params.sessionId);
-    if (previous !== undefined) {
-      previous.unsubscribe();
-      attached.delete(params.sessionId);
-    }
+    // A client has one active session: replacing it detaches every earlier session,
+    // not only the same id. Otherwise A→B leaves A's tools and approvals reaching B.
+    for (const previous of attached.values()) previous.unsubscribe();
+    attached.clear();
     const unsubscribe = session.subscribe(notify);
     attached.set(params.sessionId, { session, unsubscribe });
 
@@ -246,6 +256,34 @@ export function createServer(options: ServerOptions): ProtocolServer {
   async function cancelTurn(id: RequestId, params: Params<'turn.cancel'>): Promise<void> {
     await host.cancelTurn(params.sessionId);
     reply(id, { cancelled: true });
+  }
+
+  async function listModels(id: RequestId, params: Params<'model.list'>): Promise<void> {
+    reply(id, await host.listModels(params.sessionId));
+  }
+
+  async function setModel(id: RequestId, params: Params<'model.set'>): Promise<void> {
+    reply(id, await host.setModel(params.sessionId, params.preset, params.effort));
+  }
+
+  async function compactSession(id: RequestId, params: Params<'context.compact'>): Promise<void> {
+    reply(id, await host.compactSession(params.sessionId));
+  }
+
+  async function listGrants(id: RequestId, params: Params<'grants.list'>): Promise<void> {
+    reply(id, await host.listGrants(params.sessionId));
+  }
+
+  async function revokeGrant(id: RequestId, params: Params<'grants.revoke'>): Promise<void> {
+    reply(id, await host.revokeGrant(params.sessionId, params.grantId));
+  }
+
+  async function undoChange(id: RequestId, params: Params<'change.undo'>): Promise<void> {
+    reply(id, await host.undoChange(params.sessionId));
+  }
+
+  async function redoChange(id: RequestId, params: Params<'change.redo'>): Promise<void> {
+    reply(id, await host.redoChange(params.sessionId));
   }
 
   async function respondApproval(id: RequestId, params: Params<'approval.respond'>): Promise<void> {

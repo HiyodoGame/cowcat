@@ -1,6 +1,7 @@
-import { COMMANDS, slashMatches } from '../app/commands.js';
+import { COMMANDS, paletteMatches, slashMatches } from '../app/commands.js';
+import { atQuery, rankAtCandidates } from '../app/atcomplete.js';
 import { copyFor, type Copy } from '../app/copy.js';
-import { runningAgents, type TuiView } from '../app/view.js';
+import { historyMatches, runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
 import { line, type Line } from '../ui/line.js';
 import { agentPanelLines } from './agent-panel.js';
@@ -11,6 +12,8 @@ import { slashMenuLines } from './slash-menu.js';
 import { statusLine } from './status-bar.js';
 import { taskPanelLines } from './task-panel.js';
 import { cronPanelLines } from './cron-panel.js';
+import { changesPanelLines } from './changes-panel.js';
+import { permissionsPanelLines } from './permissions-panel.js';
 import { todoPanelLines } from './todo-panel.js';
 import { transcriptLines } from './transcript.js';
 
@@ -89,8 +92,14 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.todosVisible && view.todos.length > 0) {
     dock.push(...todoPanelLines(view.todos, options.width));
   }
+  if (view.changesVisible) {
+    dock.push(...changesPanelLines(view, options.width));
+  }
+  if (view.permissionsVisible) {
+    dock.push(...permissionsPanelLines(view, options.width));
+  }
   if (view.palette !== null) {
-    dock.push(...paletteLines(COMMANDS, view.palette.index, options.width));
+    dock.push(...paletteLines(paletteMatches(view), view.palette.index, options.width));
   }
   const maxDock = options.height === undefined ? dock.length : Math.max(3, Math.floor(options.height * 0.4));
 
@@ -118,6 +127,7 @@ export function titleOf(version: string): string {
  * `turn.send` is refused by the host (`session … already has a turn running`).
  */
 function placeholderFor(view: TuiView, copy: Copy): string {
+  if (view.historySearch !== null) return `历史搜索：${view.input} · ${String(historyMatches(view).length)} 条 · Enter 填回 · Esc 取消`;
   if (view.palette !== null) return '↑↓ 选命令 · 回车执行 · Esc 关掉';
   if (view.approval !== null && view.approval.verdict === null) {
     return `${view.approval.name}：${copy.approveKeys}`;
@@ -126,7 +136,15 @@ function placeholderFor(view: TuiView, copy: Copy): string {
   const state = view.turn?.state;
   if (state !== undefined && !TERMINAL.has(state)) return copy.busy;
   if (view.closed) return '连接已断开';
-  return slashHint(view.input) ?? copy.inputPlaceholder;
+  return atHint(view) ?? slashHint(view.input) ?? copy.inputPlaceholder;
+}
+
+function atHint(view: TuiView): string | null {
+  const query = atQuery(view.input);
+  if (query === null) return null;
+  const matches = rankAtCandidates(query, view.fileCandidates);
+  if (matches.length === 0) return `@${query}：没有匹配文件`;
+  return `@${query} 候选：${matches.slice(0, 3).join(' · ')}`;
 }
 
 /**

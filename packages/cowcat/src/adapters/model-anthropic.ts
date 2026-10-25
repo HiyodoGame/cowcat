@@ -3,6 +3,7 @@ import type { Message } from '../kernel/messages.js';
 import type { Attachment, ModelChunk, ModelPort, ModelRequest, ModelUsage, StopReason, ToolSpec } from '../ports/index.js';
 import { tryMaterializeAttachment, unavailableAttachmentNote } from './attachments.js';
 import { NO_RETRY, asHeaderReader, retryAfterMs, retryableStatus, withRetry, type RetryDecision, type RetryPolicy } from './model-retry.js';
+import { contextOverflow } from './model-overflow.js';
 
 // The Anthropic adapter (ADR-036). Needed for Claude itself and for the four MiniMax
 // entries in the provider catalogue — the only catalogued providers whose protocol is
@@ -73,6 +74,10 @@ export function anthropicModel(options: AnthropicModelOptions): ModelPort {
           ),
         classify: (error, attemptSignal) => classifyAnthropic(error, signal, attemptSignal),
         ...(options.retry === undefined ? {} : { policy: options.retry }),
+      }).catch((error: unknown) => {
+        const overflow = contextOverflow(error, error instanceof APIError ? error.status : null);
+        if (overflow !== null) throw overflow;
+        throw error;
       });
 
       // Tool use arrives in pieces like OpenAI's, but indexed by content block instead

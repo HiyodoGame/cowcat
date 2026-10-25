@@ -27,6 +27,8 @@ export {
   type CompactDeps,
   type CompactOutcome,
 } from './kernel/compact.js';
+export { ContextOverflowError } from './ports/model.js';
+export { COWCAT_SYSTEM_PROMPT } from './kernel/system-prompt.js';
 export { runTurn, DEFAULT_APPROVAL_TIMEOUT_MS, type InstructionNeeds, type SkillNeeds, type TurnDeps, type TurnNote, type TurnOutcome } from './kernel/run-turn.js';
 export {
   SUBAGENT_REPORT_MAX_CHARS,

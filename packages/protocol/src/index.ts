@@ -41,6 +41,7 @@ export {
   type ApprovalVerdict,
   type AttachmentBytes,
   type CronJobSummary,
+  type GrantSummary,
   type MethodName,
   type Params,
   type Result,

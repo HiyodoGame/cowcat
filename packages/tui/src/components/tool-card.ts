@@ -1,4 +1,5 @@
 import { copyFor } from '../app/copy.js';
+import { lineCount } from '../app/changes.js';
 import type { AttachmentView, ToolTail, TranscriptToolEntry, TuiView } from '../app/view.js';
 import { imageBox } from '../image/layout.js';
 import { card, type CardBodyLine } from '../ui/card.js';
@@ -39,10 +40,15 @@ export function toolCardLines(
   width: number,
 ): { readonly lines: readonly Line[]; readonly images: readonly ImageSlot[] } {  const expanded = view.expanded.includes(entry.callId);
   const diff = editOf(view.calls[entry.callId]?.input);
+  const write = diff === null ? writeOf(view.calls[entry.callId]?.input) : null;
   const status = entry.ok ? 'ok' : '失败';
   const where = entry.path === null ? '' : ` — ${entry.path}`;
 
-  const suffix = diff === null ? (expanded ? '[收起]' : '[展开]') : `+${String(diff.added)} -${String(diff.removed)}`;
+  const suffix = diff !== null
+    ? `+${String(diff.added)} -${String(diff.removed)}`
+    : write !== null
+      ? `写入 ${String(lineCount(write))} 行`
+      : expanded ? '[收起]' : '[展开]';
   const title = `⏺ ${entry.name} ${status}${where}`;
   const body: CardBodyLine[] = [];
   const images: ImageSlot[] = [];
@@ -76,6 +82,9 @@ export function toolCardLines(
 
   if (diff !== null) {
     body.push(...diffLines(diff.items, width - 4, expanded ? DIFF_EXPANDED_LINES : DIFF_FOLDED_LINES));
+  } else if (write !== null) {
+    body.push({ text: '写入内容预览（仅新内容，不是覆写前 diff）', token: 'textDim' });
+    body.push(...writePreviewLines(write, width - 4, expanded));
   } else if (entry.output !== '') {
     body.push(...outputLines(entry.output, width - 4, expanded));
   }
@@ -111,6 +120,24 @@ function editOf(input: unknown): { readonly added: number; readonly removed: num
   if (before === null || after === null) return null;
   const diff = unifiedDiff(before, after);
   return { added: diff.added, removed: diff.removed, items: diff.items };
+}
+
+function writeOf(input: unknown): string | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const record = input as Record<string, unknown>;
+  return typeof record['file_path'] === 'string' && typeof record['content'] === 'string' ? record['content'] : null;
+}
+
+function writePreviewLines(content: string, inner: number, expanded: boolean): readonly CardBodyLine[] {
+  const rows = content.split('\n');
+  if (content.endsWith('\n')) rows.pop();
+  const wrapped = rows.flatMap((row) => wrap(row, Math.max(1, inner - 2)));
+  const budget = expanded ? DIFF_EXPANDED_LINES : DIFF_FOLDED_LINES;
+  const kept = wrapped.slice(0, budget);
+  const lines: CardBodyLine[] = kept.map((row) => ({ text: `+ ${row}`, token: 'brand' as const }));
+  const hidden = wrapped.length - kept.length;
+  if (hidden > 0) lines.push({ text: `… 下面还有 ${String(hidden)} 行（Ctrl-O 展开）`, token: 'textDim' });
+  return lines;
 }
 
 function diffLines(items: readonly UnifiedItem[], inner: number, budget: number): readonly CardBodyLine[] {

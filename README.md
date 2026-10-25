@@ -8,12 +8,13 @@ CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回�
 
 ## 要求
 
-- Node.js **>= 22**（`cowcat tui` / `sessions resume` 需要 **>= 26.4**，因为 opentui）
+- 默认 `cowcat` / `cowcat tui` / `sessions resume`：Node.js **>= 26.4**（opentui 门槛）
+- `serve` / `run` / `sessions list` / headless 诊断：Node.js **>= 22**
 - 一个 Anthropic 或 OpenAI 兼容的模型端点与 API key（CowCat 不附带 key）
 
 ## 快速开始（npm）
 
-beta 版本发布在 `@beta` 标签上（`latest` 仍是 v1 的 `0.15.0`）：
+先确认 `node --version` 满足默认 TUI 的 **>= 26.4** 要求。beta 版本发布在 `@beta` 标签上（`latest` 仍是 v1 的 `0.15.0`）：
 
 ```bash
 npm i -g @corescense/cowcat@beta
@@ -22,7 +23,7 @@ cowcat doctor
 cowcat setup --migrate      # 从 v1 升级：备份并迁移 ~/.cowcat/config.json，不复制密钥
 cowcat trust                # 信任当前目录：项目层 cowcat.json 的 allow 与 AGENTS.md 才会生效
 cowcat run "解释一下这个仓库的入口"
-cowcat                      # TUI（需要 Node >= 26.4）
+cowcat                      # TUI
 ```
 
 `cowcat trust` 记录的是**目录本身**（精确匹配、不继承子目录，ADR-028）；`--list` 查看、`--remove` 撤销。未信任时 `AGENTS.md` 不会注入，`run` 会打印一行说明（ADR-092/093）。
@@ -71,6 +72,8 @@ node packages/cli/dist/src/cli/main.js doctor
 | `cowcat setup --migrate` | 把现有 v1 配置翻译成 v2（备份原文件，不写密钥） |
 | `cowcat setup --preset <provider/model>` | 新建 v2 配置（`--api-key-env` / `--base-url` / `--force` / `--print`） |
 
+用 `cowcat <command> --help` 或 `cowcat help <command>` 查看单个命令的参数与选项；帮助只读命令表，不启动 TUI、不读取模型配置。
+
 ## 配置
 
 - 用户层：`~/.cowcat/config.json`
@@ -111,7 +114,8 @@ Skills（`SKILL.md`，兼容 Claude Code 的目录与 frontmatter）：
 ## 文档
 
 - [`docs/dev-plan-v2.md`](docs/dev-plan-v2.md)：阶段计划与出口标准
-- [`docs/architecture/`](docs/architecture/)：ADR 表（001~090）与分层、内核、策略、平台契约
+- [`docs/architecture/`](docs/architecture/)：ADR 表（001~156）与分层、内核、策略、平台契约
+- [`docs/guides/hindsight-mcp.md`](docs/guides/hindsight-mcp.md)：接入 Hindsight 跨会话记忆（MCP 路径）
 - [`docs/HANDOFF.md`](docs/HANDOFF.md)：最近一次交接快照
 - [`docs/beta-checklist.md`](docs/beta-checklist.md)：`1.0.0-beta.2` 反馈期验收清单与切换 `latest` 的门槛
 - [`docs/research/`](docs/research/)：各阶段调研（含 MCP 2026-07-28 对照与真实端点实测）

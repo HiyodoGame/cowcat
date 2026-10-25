@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { intentFor } from '../src/app/keymap.js';
-import { initialView, type TuiView } from '../src/app/view.js';
+import { closeSlashMenu, initialView, type TuiView } from '../src/app/view.js';
+import { findCommand, KEYS_HELP } from '../src/app/commands.js';
 
 /**
  * The keymap is a table of assertions, not a switch buried in the loop — a key that stops
@@ -34,8 +35,8 @@ test('Ctrl-T toggles thinking', () => {
 test('arrows move the approval highlight only while a question is open', () => {
   assert.deepEqual(intentFor({ name: 'up', ctrl: false }, withApproval()), { kind: 'approvalMove', delta: -1 });
   assert.deepEqual(intentFor({ name: 'down', ctrl: false }, withApproval()), { kind: 'approvalMove', delta: 1 });
-  // No question: the input widget keeps its arrow keys (history, cursor).
-  assert.equal(intentFor({ name: 'up', ctrl: false }, initialView()), null);
+  // No question and a non-empty draft: the input widget keeps its arrow keys.
+  assert.equal(intentFor({ name: 'up', ctrl: false }, { ...initialView(), input: 'draft' }), null);
 });
 
 test('the task panel owns arrows, x and Escape while it is open (ADR-113)', () => {
@@ -82,10 +83,46 @@ test('paging scrolls the transcript', () => {
   assert.deepEqual(intentFor({ name: 'pagedown', ctrl: false }, initialView()), { kind: 'scroll', delta: -10 });
 });
 
-test('an answered question hands the arrows back', () => {
+test('an answered question hands empty-input arrows back to scrolling', () => {
   const view = withApproval();
   const approval = view.approval;
   assert.ok(approval !== null);
   const answered: TuiView = { ...view, approval: { ...approval, verdict: 'once', by: 'user' } };
-  assert.equal(intentFor({ name: 'down', ctrl: false }, answered), null);
+  assert.deepEqual(intentFor({ name: 'down', ctrl: false }, answered), { kind: 'scroll', delta: -1 });
+});
+
+test('Ctrl+C cancels a running turn instead of quitting', () => {
+  const view: TuiView = { ...initialView(), turn: { id: 'turn_1', state: 'streaming', reason: null, cronSourced: false } };
+  assert.deepEqual(intentFor({ name: 'c', ctrl: true }, view, 1_000, 0), { kind: 'cancel' });
+});
+
+test('Ctrl+C clears a draft and arms a second-press exit for an empty prompt', () => {
+  assert.deepEqual(intentFor({ name: 'c', ctrl: true }, { ...initialView(), input: 'draft' }, 1_000, 0), { kind: 'clearInput' });
+  assert.deepEqual(intentFor({ name: 'c', ctrl: true }, initialView(), 1_000, 0), { kind: 'armExit' });
+  assert.deepEqual(intentFor({ name: 'c', ctrl: true }, initialView(), 1_500, 1_800), { kind: 'quit' });
+  assert.deepEqual(intentFor({ name: 'c', ctrl: true }, initialView(), 1_801, 1_800), { kind: 'armExit' });
+});
+
+test('Ctrl+D exits only with an empty prompt', () => {
+  assert.deepEqual(intentFor({ name: 'd', ctrl: true }, initialView()), { kind: 'quit' });
+  assert.equal(intentFor({ name: 'd', ctrl: true }, { ...initialView(), input: 'draft' }), null);
+});
+
+test('plain arrows scroll only when the prompt is empty', () => {
+  assert.deepEqual(intentFor({ name: 'up', ctrl: false }, initialView()), { kind: 'scroll', delta: 1 });
+  assert.deepEqual(intentFor({ name: 'down', ctrl: false }, initialView()), { kind: 'scroll', delta: -1 });
+  assert.equal(intentFor({ name: 'up', ctrl: false }, { ...initialView(), input: 'draft' }), null);
+});
+
+test('/exit aliases /quit and help lists paging and explicit exit keys', () => {
+  assert.equal(findCommand('exit'), findCommand('quit'));
+  assert.match(KEYS_HELP, /PageUp\/PageDown/);
+  assert.match(KEYS_HELP, /Ctrl\+End/);
+  assert.match(KEYS_HELP, /Ctrl\+D/);
+});
+
+test('closing the slash menu preserves the typed command', () => {
+  const view: TuiView = { ...initialView(), input: '/hel', slashIndex: 2 };
+  assert.equal(closeSlashMenu(view).input, '/hel');
+  assert.equal(closeSlashMenu(view).slashIndex, 0);
 });
