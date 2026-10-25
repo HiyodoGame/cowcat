@@ -78,31 +78,41 @@ export async function startTui(context: CommandContext, sessionId: string | null
     await restoreSessionCwd(context, sessionId);
   }
 
-  const host = await buildHost(
-    context,
-    worktree === null
-      ? {}
-      : { extraPaths: { write: [worktree.mainGitDir], read: [worktree.mainGitDir] } },
-  );
-  if (host === null) return EXIT.failed;
+  const hostOptions = worktree === null
+    ? {}
+    : { extraPaths: { write: [worktree.mainGitDir], read: [worktree.mainGitDir] } };
+  const firstHost = await buildHost(context, hostOptions);
+  if (firstHost === null) return EXIT.failed;
 
   const { createClient, createServer, memoryTransport } = await import('@corescense/cowcat-protocol');
   const servers: (ReturnType<typeof createServer>)[] = [];
   const clients: (ReturnType<typeof createClient>)[] = [];
-  const connect = () => {
+  // Every connection gets a host of its own (ADR-157 ③): the trust gate grants and then
+  // reconnects to pick up the project layer, and a shared host would keep the untrusted
+  // startup snapshot forever. Session state is not lost — the logs on disk are the truth,
+  // and the reconnected host replays them.
+  const hosts: [typeof firstHost] = [firstHost];
+  let connections = 0;
+  const connect = async () => {
+    connections += 1;
+    // The FIRST connection uses the host built above; every later one rebuilds, so a
+    // trust grant between them is picked up by the next snapshot.
+    const host = connections === 1 ? firstHost : await buildHost(context, hostOptions);
+    if (host === null) throw new Error('重建宿主失败（配置可能刚变得不可用）');
+    if (host !== firstHost) hosts.push(host);
     const pair = memoryTransport();
     servers.push(createServer({ host, transport: pair.server }));
     const created = createClient({ transport: pair.client });
     clients.push(created);
     return created;
   };
-  const client = connect();
+  const client = await connect();
 
   try {
     // Imported only once the floor is known to be met — this is the one import in the tree
     // that loads a renderer (and its native core).
     const { runTui: render } = await import('@corescense/cowcat-tui');
-    return await render({ client, sessionId, version: readVersion(), reconnect: () => Promise.resolve(connect()) });
+    return await render({ client, sessionId, version: readVersion(), reconnect: () => connect() });
   } finally {
     try {
       for (const connected of clients) connected.close();
@@ -112,7 +122,7 @@ export async function startTui(context: CommandContext, sessionId: string | null
       // is a `finally` and not a plain sequence because a first attempt at the wiring let a
       // renderer's teardown error skip this line — and the next run then reported "writer
       // pid … is gone but left its lock file behind".
-      await host.close();
+      for (const built of hosts) await built.close();
     }
     // Exit cleanup runs after the host is down (its processes are done). Only a worktree
     // created or adopted by THIS run is examined; the rules are ADR-144 ⑤. chdir back to

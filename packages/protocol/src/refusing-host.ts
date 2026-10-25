@@ -41,5 +41,7 @@ export function refusingHost(reason: string = NOT_WIRED): ProtocolHost {
     stopTask: () => refuse(),
     listCronJobs: () => refuse(),
     removeCronJob: () => refuse(),
+    trustStatus: () => refuse(),
+    trustGrant: () => refuse(),
   };
 }

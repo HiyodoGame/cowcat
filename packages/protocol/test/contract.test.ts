@@ -118,3 +118,20 @@ test('a session that is replaced keeps replaying its own log to a new client', a
     [1, 2],
   );
 });
+
+test('trust.status reports the host snapshot and trust.grant is a bare write (ADR-157)', async () => {
+  const host = new ScriptedHost([]);
+  host.trustSnapshot = { trusted: false, withheld: { rules: 2, instructions: 1, skills: 3, mcpServers: 1, hooks: 0 } };
+  const { client } = wire(host);
+  await client.initialize();
+
+  const status = await client.trustStatus();
+  assert.equal(status.trusted, false);
+  assert.deepEqual(status.withheld, { rules: 2, instructions: 1, skills: 3, mcpServers: 1, hooks: 0 });
+
+  // Grant is a write, not a state flip: the running snapshot stays untrusted — the
+  // caller rebuilds the host to pick up the project layer.
+  await client.trustGrant();
+  assert.equal(host.trustGrants.length, 1);
+  assert.equal((await client.trustStatus()).trusted, false);
+});

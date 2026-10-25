@@ -2374,7 +2374,7 @@ test('manual compaction refreshes project instructions and preserves model selec
   writeUserConfig(home, { model: { preset: PRESET } });
   writeFileSync(join(cwd, 'AGENTS.md'), 'Follow the project rule.\n');
   const model = new ScriptedModel([[{ type: 'text', text: 'older answer '.repeat(10_000) }], [{ type: 'text', text: 'summary' }]]);
-  const fixture = await start({ cwd, home, model, env: { OPENAI_API_KEY: 'test-key' }, trustStore: { load: () => Promise.resolve({ trusted: [cwd], problem: null }) } });
+  const fixture = await start({ cwd, home, model, env: { OPENAI_API_KEY: 'test-key' }, trustStore: { load: () => Promise.resolve({ trusted: [cwd], problem: null }), add: () => Promise.resolve() } });
   t.after(() => fixture.close());
   await fixture.client.initialize();
   await fixture.client.createSession('sess_compact');
@@ -2556,4 +2556,38 @@ test('undo refuses to overwrite an external edit and multi-level undo/redo follo
   assert.equal(readFileSync(target, 'utf8'), 'A\n');
   await fixture.client.redoChange('sess_undo_guard');
   assert.equal(readFileSync(target, 'utf8'), 'B\n');
+});
+
+test('trust.status reports withheld project layer; grant persists without hot-reload (ADR-157)', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-trust-');
+  const home = tempDir(t, 'cowcat-host-trust-home-');
+  writeFileSync(join(cwd, 'AGENTS.md'), 'Project rule.\n');
+  const granted: string[] = [];
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const fixture = await start({
+    cwd,
+    home,
+    model,
+    env: {},
+    trustStore: {
+      load: () => Promise.resolve({ trusted: [], problem: null }),
+      add: (path) => {
+        granted.push(path);
+        return Promise.resolve();
+      },
+    },
+  });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+
+  const before = await fixture.client.trustStatus();
+  assert.equal(before.trusted, false);
+  assert.equal(before.withheld.instructions, 1, 'the AGENTS.md is the withheld item');
+  assert.equal(before.withheld.rules, 0);
+
+  await fixture.client.trustGrant();
+  assert.deepEqual(granted, [cwd], 'grant persists the startup cwd');
+  // The snapshot is startup state, not a live fact: the running host stays untrusted.
+  const after = await fixture.client.trustStatus();
+  assert.equal(after.trusted, false);
 });

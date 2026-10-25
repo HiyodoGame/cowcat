@@ -1,4 +1,4 @@
-import type { GrantSummary } from '@corescense/cowcat-protocol';
+import type { GrantSummary, SessionSummary, TrustWithheld } from '@corescense/cowcat-protocol';
 import type { Lang } from './copy.js';
 import { detectLang } from './copy.js';
 
@@ -401,8 +401,7 @@ export interface TuiView {
   readonly toolOutput: Readonly<Record<string, ToolTail>>;
   /** Lines scrolled up from the newest row; 0 follows the tail. */
   readonly scrollOffset: number;
-  /**
-   * Output that arrived while the reader was scrolled up (ADR-103).
+  /** Output that arrived while the reader was scrolled up (ADR-103).
    *
    * Counting events rather than lines: "3 new results" is what a person needs to decide
    * whether to jump back; the exact row count changes with wrapping.
@@ -410,6 +409,20 @@ export interface TuiView {
   readonly newSinceScroll: number;
   /** The transport closed; the view stays readable. */
   readonly closed: boolean;
+  /**
+   * The pre-session workspace question (ADR-157 ①): what the project layer is holding
+   * back, and the directory being asked about (the frame is a pure function, so the
+   * cwd travels in the view rather than being read from `process`).
+   * Non-null only before the first session exists — the answer rebuilds the host,
+   * so it cannot outlive the session it gated.
+   */
+  readonly trust: { readonly withheld: TrustWithheld; readonly cwd: string } | null;
+  /** The highlighted row of the trust card: 0 = 信任, 1 = 跳过. */
+  readonly trustCursor: number;
+  /** The `/sessions` picker (ADR-158 ①): cursor and whether the scope is every session. */
+  readonly sessionPanel: { readonly index: number; readonly all: boolean } | null;
+  /** What the picker shows — fetched once per open, never a live subscription (ADR-158 ③). */
+  readonly sessionList: readonly SessionSummary[];
 }
 
 export function initialView(): TuiView {
@@ -466,6 +479,10 @@ export function initialView(): TuiView {
     scrollOffset: 0,
     newSinceScroll: 0,
     closed: false,
+    trust: null,
+    trustCursor: 0,
+    sessionPanel: null,
+    sessionList: [],
   };
 }
 
@@ -772,4 +789,55 @@ export function movePalette(view: TuiView, delta: number, count: number): TuiVie
 export function withLangFrom(view: TuiView, input: string): TuiView {
   if (view.langDecided || input.trim() === '') return view;
   return { ...view, lang: detectLang(input), langDecided: true };
+}
+
+// ── the trust gate and the session picker (ADR-157 ① / ADR-158) ─────────────────
+
+export function openTrust(view: TuiView, withheld: TrustWithheld, cwd: string): TuiView {
+  return { ...view, trust: { withheld, cwd }, trustCursor: 0 };
+}
+
+/** 0 = 信任, 1 = 跳过; a two-row list wraps. */
+export function moveTrust(view: TuiView, delta: number): TuiView {
+  if (view.trust === null) return view;
+  return { ...view, trustCursor: (view.trustCursor + delta + 2) % 2 };
+}
+
+export function closeTrust(view: TuiView): TuiView {
+  return { ...view, trust: null, trustCursor: 0 };
+}
+
+/** The picker's data lands first, then the panel opens onto it (ADR-158 ③). */
+export function withSessionList(view: TuiView, sessions: readonly SessionSummary[]): TuiView {
+  return { ...view, sessionList: sessions };
+}
+
+export function openSessionPanel(view: TuiView, all: boolean): TuiView {
+  return { ...view, sessionPanel: { index: 0, all } };
+}
+
+export function closeSessionPanel(view: TuiView): TuiView {
+  return { ...view, sessionPanel: null };
+}
+
+/** Wrapping move over the picker's rows, like the palette and the `/` menu. */
+export function moveSessionPanel(view: TuiView, delta: number, count: number): TuiView {
+  if (view.sessionPanel === null || count === 0) return view;
+  const index = (view.sessionPanel.index + delta + count) % count;
+  return { ...view, sessionPanel: { ...view.sessionPanel, index } };
+}
+
+/**
+ * The picker's scope (ADR-158 ①): top-level sessions of THIS workspace by default —
+ * `cwd` is optional on old summaries, and an absent cwd is simply not this workspace's.
+ * `all` keeps every entry so the picker can annotate children and forks instead of
+ * hiding them.
+ */
+export function pickableSessions(
+  sessions: readonly SessionSummary[],
+  cwd: string,
+  all: boolean,
+): readonly SessionSummary[] {
+  if (all) return sessions;
+  return sessions.filter((session) => session.parentSessionId === undefined && session.cwd === cwd);
 }

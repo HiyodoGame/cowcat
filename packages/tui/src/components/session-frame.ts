@@ -12,6 +12,8 @@ import { slashMenuLines } from './slash-menu.js';
 import { statusLine } from './status-bar.js';
 import { taskPanelLines } from './task-panel.js';
 import { cronPanelLines } from './cron-panel.js';
+import { sessionPanelLines } from './session-panel.js';
+import { trustCardLines } from './trust-card.js';
 import { changesPanelLines } from './changes-panel.js';
 import { permissionsPanelLines } from './permissions-panel.js';
 import { todoPanelLines } from './todo-panel.js';
@@ -72,6 +74,11 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.approval !== null) {
     dock.push(...approvalCardLines(view.approval, { ...options, cursor: view.approvalCursor }));
   }
+  // The pre-session trust question outranks everything but an approval (ADR-157 ①): it
+  // is the reason the session has not started yet.
+  if (view.trust !== null) {
+    dock.push(...trustCardLines(view.trust.withheld, view.trustCursor, view.trust.cwd, options.width));
+  }
   if (view.plan !== null) {
     dock.push(...planCardLines(view.plan, { width: options.width, cursor: view.planCursor }));
   }
@@ -80,6 +87,9 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   }
   if (view.cronPanel !== null) {
     dock.push(...cronPanelLines(view.cronJobs, view.cronPanel.index, options.width, options.now));
+  }
+  if (view.sessionPanel !== null) {
+    dock.push(...sessionPanelLines(view.sessionList, view.sessionPanel.index, view.sessionId, options.width));
   }
   const matches = view.approval === null ? slashMatches(view.input) : [];
   if (matches.length > 0) {

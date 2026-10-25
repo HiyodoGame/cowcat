@@ -1,5 +1,5 @@
 import { ERROR_CODES, type ErrorCode } from './jsonrpc.js';
-import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, SessionSummary } from './methods.js';
+import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, SessionSummary, TrustWithheld } from './methods.js';
 
 /**
  * What the frontend needs from whatever holds sessions. T3/T4 implement this over the
@@ -91,6 +91,18 @@ export interface ProtocolHost {
    * the log as `cron.deleted by: 'user'`, so replay and other clients see it.
    */
   removeCronJob(sessionId: string, jobId: string): Promise<boolean>;
+  /**
+   * The host's startup trust snapshot for its own cwd (ADR-157 ②): whether it is trusted
+   * and what the project layer is holding back. Read-only — the host never hot-reloads
+   * config; a grant takes effect on the next host build.
+   */
+  trustStatus(): Promise<{ readonly trusted: boolean; readonly withheld: TrustWithheld }>;
+  /**
+   * Append the startup cwd to the persistent trust store (ADR-157 ②). The running host's
+   * snapshot is unchanged; the caller rebuilds the host (the TUI's reconnect factory) to
+   * pick up the project layer.
+   */
+  trustGrant(): Promise<void>;
 }
 
 /**

@@ -6,7 +6,7 @@ import {
   type JsonRpcResponse,
   type RequestId,
 } from './jsonrpc.js';
-import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, Result, ResultTable, SessionSummary } from './methods.js';
+import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, Result, ResultTable, SessionSummary, TrustWithheld } from './methods.js';
 import { parseNotification, type NotificationName, type NotificationParams } from './notifications.js';
 import { PROTOCOL_VERSION } from './version.js';
 import type { Transport } from './transport.js';
@@ -58,6 +58,10 @@ export interface ProtocolClient {
   listCronJobs(sessionId: string): Promise<readonly CronJobSummary[]>;
   /** Remove one of this session's cron jobs; false when the id is not its live job. */
   removeCronJob(sessionId: string, jobId: string): Promise<boolean>;
+  /** The host's workspace-trust snapshot for its own cwd (ADR-157 ②). */
+  trustStatus(): Promise<{ readonly trusted: boolean; readonly withheld: TrustWithheld }>;
+  /** Persist the host's cwd into the trust store; the running host stays as-is (ADR-157 ②). */
+  trustGrant(): Promise<void>;
   shutdown(): Promise<void>;
   on<N extends NotificationName>(name: N, handler: (params: NotificationParams[N]) => void): () => void;
   /** Resolves when the transport closes, whoever closed it. */
@@ -241,6 +245,14 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async removeCronJob(sessionId: string, jobId: string) {
       return (await request('cron.remove', { sessionId, jobId })).removed;
+    },
+
+    async trustStatus() {
+      return request('trust.status', {});
+    },
+
+    async trustGrant() {
+      await request('trust.grant', {});
     },
 
     async shutdown() {

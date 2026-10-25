@@ -177,6 +177,19 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve(found);
   }
 
+  /** What `trust.status` reports (ADR-157): the startup snapshot, scriptable per test. */
+  trustSnapshot = { trusted: false, withheld: { rules: 0, instructions: 0, skills: 0, mcpServers: 0, hooks: 0 } };
+  readonly trustGrants: number[] = [];
+
+  trustStatus(): Promise<{ trusted: boolean; withheld: { rules: number; instructions: number; skills: number; mcpServers: number; hooks: number } }> {
+    return Promise.resolve(this.trustSnapshot);
+  }
+
+  trustGrant(): Promise<void> {
+    this.trustGrants.push(this.trustGrants.length + 1);
+    return Promise.resolve();
+  }
+
   /** Push a durable fact or a streamed delta to whoever attached this session. */
   emit(sessionId: string, update: unknown): void {
     const session = this.sessions.get(sessionId);

@@ -13,7 +13,10 @@ function effectOf(name: string, rest = ''): CommandEffect {
 
 test('resume, clear, copy and export are first-class command effects', () => {
   assert.deepEqual(effectOf('resume', 'sess_123'), { kind: 'resume', sessionId: 'sess_123' });
-  assert.deepEqual(effectOf('resume'), { kind: 'sessions' });
+  // No-arg resume opens the workspace picker instead of listing ids (ADR-158).
+  assert.deepEqual(effectOf('resume'), { kind: 'sessions', all: false });
+  assert.deepEqual(effectOf('sessions'), { kind: 'sessions', all: false });
+  assert.deepEqual(effectOf('sessions', 'all'), { kind: 'sessions', all: true });
   assert.deepEqual(effectOf('clear'), { kind: 'clear' });
   assert.deepEqual(effectOf('copy'), { kind: 'copy' });
   assert.deepEqual(effectOf('export'), { kind: 'export', path: null });

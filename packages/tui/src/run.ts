@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import type { TrustWithheld } from '@corescense/cowcat-protocol';
 import { createCliRenderer, type CliRenderer } from '@opentui/core';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { parseAtRefs } from './app/atrefs.js';
@@ -15,20 +16,27 @@ import {
   approvalChoiceAt,
   closeCronPanel,
   closePalette,
+  closeSessionPanel,
   closeSlashMenu,
   closeTaskPanel,
+  closeTrust,
   initialView,
   markReplayedTasks,
   moveApprovalCursor,
   moveCronPanel,
   movePalette,
   movePlanCursor,
+  moveSessionPanel,
+  moveTrust,
   planAnswerAt,
   moveSlash,
   moveTaskPanel,
   openCronPanel,
   openPalette,
+  openSessionPanel,
   openTaskPanel,
+  openTrust,
+  pickableSessions,
   pendingAttachments,
   resetScroll,
   selectedCronJob,
@@ -43,6 +51,7 @@ import {
   openHistorySearch,
   withAttachment,
   withHistory,
+  withSessionList,
   withInput,
   withLangFrom,
   withScroll,
@@ -95,6 +104,20 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   let connectionGeneration = 0;
   let nudgeTimer: ReturnType<typeof setTimeout> | undefined;
   let exitArmUntil = 0;
+  // The trust gate's handoff state (ADR-157), on an object because closures reassign it —
+  // a bare `let` gets flow-narrowed across those calls and the guards read as dead code
+  // (the same trap `activity.timer` and `frame.timer` avoid above and below).
+  const gate: {
+    sessionEstablished: boolean;
+    answer: ((choice: 'grant' | 'skip') => void) | null;
+    hostRebuilt: (() => void) | null;
+  } = { sessionEstablished: false, answer: null, hostRebuilt: null };
+  const trustAnswered = new Promise<'grant' | 'skip'>((resolve) => {
+    gate.answer = resolve;
+  });
+  const hostRebuilt = new Promise<void>((resolve) => {
+    gate.hostRebuilt = resolve;
+  });
 
   /**
    * Redraws coalesce: the first after a quiet spell paints immediately, a burst paints one
@@ -264,14 +287,22 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         }
         subscribeClient();
-        await attachSession(sessionId);
-        if (stale()) {
-          client.close();
-          return;
+        if (gate.sessionEstablished) {
+          await attachSession(sessionId);
+          if (stale()) {
+            client.close();
+            return;
+          }
+          view.current = addNotice(view.current, 'info', '连接已恢复。');
+        } else {
+          // The trust gate closed the transport before any session existed (ADR-157 ③):
+          // the reconnect is a fresh, now-trusted host, and the startup flow continues
+          // from its `await hostRebuilt`.
+          gate.hostRebuilt?.();
         }
-        view.current = addNotice(view.current, 'info', '连接已恢复。');
         draw();
       } catch (error) {
+        if (!gate.sessionEstablished) gate.hostRebuilt?.();
         view.current = addNotice(view.current, 'error', `重连失败：${message(error)}`);
         draw();
       }
@@ -347,7 +378,49 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     screen.focus();
 
     await client.initialize();
+    // The workspace question comes before the first session (ADR-157 ①): granting
+    // rebuilds the host through the reconnect factory, so the session — and its
+    // instructions, rules, skills and MCP — starts with the project layer in.
+    const status = await client.trustStatus().catch(() => null);
+    if (status !== null && !status.trusted && hasWithheld(status.withheld)) {
+      view.current = openTrust(view.current, status.withheld, process.cwd());
+      draw();
+      // The answer races quitting at the gate — losing that race must exit, not create
+      // a session nobody asked for.
+      const answer = await Promise.race([trustAnswered, finished.then(() => 'quit' as const)]);
+      if (answer === 'quit') return await finished;
+      if (answer === 'grant') {
+        view.current = closeTrust(view.current);
+        try {
+          await client.trustGrant();
+        } catch (error) {
+          // The write failed; the session can still run without the project layer, and
+          // telling the user beats exiting into a terminal they did not choose.
+          view.current = addNotice(view.current, 'error', `信任写入失败（重启后可重试）：${message(error)}`);
+        }
+        if (options.reconnect === undefined) {
+          // No factory to rebuild with: the grant persists for the next launch instead.
+          view.current = addNotice(view.current, 'info', '已写入信任，重启后项目层配置生效。');
+        } else {
+          view.current = addNotice(view.current, 'info', '已信任本工作区，正在加载项目层配置…');
+          draw();
+          // Closing the client hands control to handleClosed: it reconnects through the
+          // factory (a fresh, now-trusted host) and resolves `hostRebuilt` because no
+          // session is established yet.
+          client.close();
+          await hostRebuilt;
+        }
+      } else {
+        view.current = addNotice(
+          closeTrust(view.current),
+          'info',
+          '已跳过：本会话不加载项目层（allow / AGENTS.md / MCP / 技能 / hooks）；`cowcat trust` 或重启可再选。',
+        );
+      }
+      draw();
+    }
     let sessionId = options.sessionId ?? (await client.createSession()).sessionId;
+    gate.sessionEstablished = true;
     await attachSession(sessionId);
 
     async function attachSession(id: string): Promise<void> {
@@ -451,6 +524,21 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         case 'cronDelete':
           deleteSelectedCronJob();
+          return;
+        case 'trustMove':
+          view.current = moveTrust(view.current, intent.delta);
+          draw();
+          return;
+        case 'trustSkip':
+          answerTrust('skip');
+          return;
+        case 'sessionMove':
+          view.current = moveSessionPanel(view.current, intent.delta, view.current.sessionList.length);
+          draw();
+          return;
+        case 'sessionsClose':
+          view.current = closeSessionPanel(view.current);
+          draw();
           return;
         case 'slashMove': {
           const count = slashMatches(view.current.input).length;
@@ -660,7 +748,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           cancel();
           return;
         case 'sessions':
-          void showSessions();
+          void openSessionPicker(effect.all);
           return;
         case 'tasks':
           if (view.current.approval !== null) {
@@ -885,38 +973,44 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     }
 
     /**
-     * `/sessions`: the ids and the command that reopens one.
-     *
-     * Listing only. Switching in place would need the event stream filtered by session id
-     * (every replay event currently lands in one view), and a half-done switch is worse than
-     * a command the user can copy.
+     * The `/sessions` picker (ADR-158): this workspace's own sessions first, switch in
+     * place with Enter. The view-switching half is `attachSession` — the same replay
+     * path a reconnect uses, which is what made in-place switching honest to build.
      */
-    async function showSessions(): Promise<void> {
+    async function openSessionPicker(all: boolean): Promise<void> {
       try {
         const sessions = await client.listSessions();
         if (disposed) return;
-        if (sessions.length === 0) {
-          view.current = addNotice(view.current, 'info', '还没有会话。');
-          draw();
-          return;
-        }
-        for (const session of sessions.slice(0, 10)) {
-          const current = session.sessionId === sessionId ? '（当前）' : '';
-          const fork = session.parentRole === 'fork' ? ' · fork' : '';
-          const facts = [session.title, session.cwd, session.model].filter((part) => part !== undefined);
-          const detail = facts.length === 0 ? '' : ` · ${facts.join(' · ')}`;
-          view.current = addNotice(
-            view.current,
-            'info',
-            `${session.sessionId}${current}${fork}${detail} · ${String(session.lastSeq)} 条事件 · cowcat sessions resume ${session.sessionId}`,
-          );
-        }
+        view.current = openSessionPanel(
+          withSessionList(view.current, pickableSessions(sessions, process.cwd(), all)),
+          all,
+        );
         draw();
       } catch (error) {
         if (disposed) return;
         view.current = addNotice(view.current, 'error', message(error));
         draw();
       }
+    }
+
+    /** Enter on the picker's row: switch the whole view to that session. */
+    function pickSession(index: number): void {
+      const picked = view.current.sessionList[index];
+      view.current = closeSessionPanel(view.current);
+      if (picked === undefined || picked.sessionId === sessionId) {
+        draw();
+        return;
+      }
+      void attachSession(picked.sessionId).catch((error: unknown) => {
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      });
+    }
+
+    /** The trust card's answer, however it was given (arrow+Enter, y/n, or Esc). */
+    function answerTrust(choice: 'grant' | 'skip'): void {
+      if (view.current.trust === null) return;
+      gate.answer?.(choice);
     }
 
     function cancel(): void {
@@ -932,6 +1026,36 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
     function submit(value: string): void {
       const trimmed = value.trim();
+
+      // The trust card owns Enter before any session exists (ADR-157 ①): the highlighted
+      // row answers it, and `y`/`t`/`n`/`s` typed and submitted are the shortcuts — the
+      // same two ways an approval is answered.
+      if (view.current.trust !== null) {
+        screen.clearInput();
+        const lower = trimmed.toLowerCase();
+        const choice: 'grant' | 'skip' =
+          lower === 'y' || lower === 't' || lower === '信任'
+            ? 'grant'
+            : lower === 'n' || lower === 's' || lower === '跳过'
+              ? 'skip'
+              : view.current.trustCursor === 0
+                ? 'grant'
+                : 'skip';
+        view.current = withInput(view.current, '');
+        answerTrust(choice);
+        return;
+      }
+
+      // The `/sessions` picker owns Enter while it is open (ADR-158 ②). The index is
+      // read before the view is rebuilt — `withInput` returns a fresh object and the
+      // narrowing cannot cross it.
+      const picker = view.current.sessionPanel;
+      if (picker !== null) {
+        screen.clearInput();
+        view.current = withInput(view.current, '');
+        pickSession(picker.index);
+        return;
+      }
 
       if (view.current.historySearch !== null) {
         const selected = historyMatches(view.current)[view.current.historySearch.index];
@@ -1097,4 +1221,9 @@ async function defaultRenderer(): Promise<CliRenderer> {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Anything the project layer is holding back? A bare directory gets no question (ADR-157 ①). */
+function hasWithheld(withheld: TrustWithheld): boolean {
+  return withheld.rules + withheld.instructions + withheld.skills + withheld.mcpServers + withheld.hooks > 0;
 }

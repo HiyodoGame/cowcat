@@ -54,6 +54,14 @@ export type Intent =
   | { readonly kind: 'cronDelete' }
   /** Close the `/cron` panel. */
   | { readonly kind: 'cronsClose' }
+  /** Move the pre-session trust card's two-row highlight (ADR-157 ①). */
+  | { readonly kind: 'trustMove'; readonly delta: number }
+  /** Escape on the trust card is the same answer as the 跳过 row (ADR-157 ①). */
+  | { readonly kind: 'trustSkip' }
+  /** Move the `/sessions` picker's cursor (ADR-158 ②). */
+  | { readonly kind: 'sessionMove'; readonly delta: number }
+  /** Close the `/sessions` picker. */
+  | { readonly kind: 'sessionsClose' }
   | { readonly kind: 'historySearch' }
   | { readonly kind: 'historyMove'; readonly delta: number };
 
@@ -71,7 +79,8 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
       case 'p':
         // A pending question outranks chrome: Ctrl-P over an open review would hide the
         // card behind the palette while its arrows mean two things (review of #167, P2-9).
-        return view.approval !== null || view.plan !== null ? null : { kind: 'palette' };
+        // The pre-session trust card outranks it for the same reason (ADR-157 ①).
+        return view.approval !== null || view.plan !== null || view.trust !== null ? null : { kind: 'palette' };
       case 'o':
         return { kind: 'toggleLastCard' };
       case 't':
@@ -92,6 +101,14 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
     return null;
   }
 
+  // The pre-session trust card owns the arrows while it is the question on screen
+  // (ADR-157 ①); Enter and the y/n shortcuts arrive through submit, like an approval.
+  if (view.trust !== null) {
+    if (key.name === 'up') return { kind: 'trustMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'trustMove', delta: 1 };
+    if (key.name === 'escape') return { kind: 'trustSkip' };
+  }
+
   // The task panel is a list. It owns arrows, `x` and Escape — and nothing printable:
   // letters (including j/k) still belong to the input so a person can keep typing (ADR-113).
   if (view.taskPanel !== null) {
@@ -107,6 +124,14 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
     if (key.name === 'down') return { kind: 'cronMove', delta: 1 };
     if (key.name === 'x') return { kind: 'cronDelete' };
     if (key.name === 'escape') return { kind: 'cronsClose' };
+  }
+
+  // The `/sessions` picker owns arrows and Escape (ADR-158 ②); Enter picks through
+  // submit, the same way the palette and the `/` menu run their highlighted row.
+  if (view.sessionPanel !== null) {
+    if (key.name === 'up') return { kind: 'sessionMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'sessionMove', delta: 1 };
+    if (key.name === 'escape') return { kind: 'sessionsClose' };
   }
 
   // Arrow keys and j/k only mean something while there is a list to move through. Letting
