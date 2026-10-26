@@ -2,6 +2,7 @@ import type { AssistantEntry, UserEntry } from '../app/view.js';
 import { card } from '../ui/card.js';
 import { line, type Line } from '../ui/line.js';
 import { wrap } from '../text/wrap.js';
+import { renderMarkdown } from '../text/markdown.js';
 
 /**
  * What the person said, and what the agent said back.
@@ -52,7 +53,9 @@ export function assistantMessageLines(
       }
     }
   }
-  lines.push(...wrap(entry.text, width).map((row) => line(row, 'assistant')));
+  // The model answers in Markdown; printing it raw was the transcript-as-text-wall (ADR-162).
+  // Unstyled spans keep the assistant voice; headings keep their own tokens.
+  lines.push(...renderMarkdown(entry.text, width, 'assistant'));
   if (entry.calls > 0) {
     // A fact the log has and the screen would otherwise lose: the calls below are drawn as
     // their own cards, and the answer itself arrived with them.

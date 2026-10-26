@@ -10,7 +10,6 @@ import { paletteLines } from '../src/components/palette.js';
 import { COMMANDS, slashMatches } from '../src/app/commands.js';
 import { stringWidth } from '../src/text/width.js';
 import { imageBox } from '../src/image/layout.js';
-import { line } from '../src/ui/line.js';
 import type { Line } from '../src/ui/line.js';
 import { PNG_BYTES } from './png.js';
 
@@ -84,9 +83,12 @@ test('the agent answers without a box, and says when the answer came with calls'
     event('model.message', { text: '改好了。', toolCalls: [{ callId: 'c1', name: 'Read', input: { file_path: '/a.ts' } }], reasoning: [], stopReason: null }),
   ]);
   const lines = bodyLines(view);
-  // One assertion for the whole line: `text`, `token` and `bold` in one go, and no chained
-  // optional access (which `assert.equal`'s narrowing turns into a lint error).
-  assert.deepEqual(lines[0], line('改好了。', 'assistant'));
+  // Markdown rendering (ADR-162) gives every row runs — even a plain sentence is one
+  // assistant-voiced span — so the assertion is on the visible text and the voice.
+  const first = lines[0];
+  assert.ok(first !== undefined);
+  assert.equal(first.text, '改好了。');
+  assert.equal((first.runs ?? [])[0]?.token, 'assistant');
   assert.match(lines[1]?.text ?? '', /带了 1 个工具调用/);
 });
 

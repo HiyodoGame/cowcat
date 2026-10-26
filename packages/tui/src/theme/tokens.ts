@@ -46,7 +46,9 @@ export type TokenName =
   | 'user'
   | 'assistant'
   | 'tool'
-  | 'notice';
+  | 'notice'
+  /** Markdown code (fenced blocks, inline code) — non-conversation content, act-blue family (ADR-162). */
+  | 'code';
 
 /**
  * A colour, or `null` for "whatever the terminal already uses".
@@ -91,6 +93,7 @@ export const THEME: Theme = {
     assistant: BRAND.primary,
     tool: '#8A8A94',
     notice: BRAND.plan,
+    code: BRAND.act,
   },
 };
 
