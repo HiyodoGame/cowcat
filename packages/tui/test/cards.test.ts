@@ -54,6 +54,17 @@ function assertCardWidths(lines: readonly Line[], label: string): void {
   }
 }
 
+/** The bar-card invariant (ADR-164): a `▌` head, and no body row wider than the page. */
+function assertBarCard(lines: readonly Line[], label: string): void {
+  assert.match(lines[0]?.text ?? '', /^▌ /, `${label}: the bar row leads`);
+  for (const [index, row] of lines.entries()) {
+    assert.ok(
+      stringWidth(row.text) <= WIDTH,
+      `${label}: line ${String(index + 1)} is ${String(stringWidth(row.text))} cells, over ${String(WIDTH)}`,
+    );
+  }
+}
+
 test('the user speaks from inside a card', () => {
   seq = 0;
   const view = viewOf([event('turn.opened', { input: '把 value 改成 total' })]);
@@ -83,12 +94,12 @@ test('the agent answers without a box, and says when the answer came with calls'
     event('model.message', { text: '改好了。', toolCalls: [{ callId: 'c1', name: 'Read', input: { file_path: '/a.ts' } }], reasoning: [], stopReason: null }),
   ]);
   const lines = bodyLines(view);
-  // Markdown rendering (ADR-162) gives every row runs — even a plain sentence is one
-  // assistant-voiced span — so the assertion is on the visible text and the voice.
+  // Markdown rendering (ADR-162) gives every row runs — even a plain sentence is one span —
+  // and ADR-164 puts the answer's body in the terminal's default voice, not the brand green.
   const first = lines[0];
   assert.ok(first !== undefined);
   assert.equal(first.text, '改好了。');
-  assert.equal((first.runs ?? [])[0]?.token, 'assistant');
+  assert.equal((first.runs ?? [])[0]?.token, 'text');
   assert.match(lines[1]?.text ?? '', /带了 1 个工具调用/);
 });
 
@@ -110,16 +121,17 @@ test('a tool result is a card: status, tail, and a way to see the rest', () => {
 
   const folded = bodyLines(base);
   const foldedText = folded.map((row) => row.text).join('\n');
-  assert.match(folded[0]?.text ?? '', /^╭─ ⏺ Bash 失败 \[展开\]/);
+  assert.match(folded[0]?.text ?? '', /^▌ Bash 失败/);
+  assert.match(folded[0]?.text ?? '', /展开/);
   assert.match(foldedText, /上面还有 2 行/);
   assert.match(foldedText, /three/);
-  assertCardWidths(folded, 'tool folded');
+  assertBarCard(folded, 'tool folded');
 
   const expanded = bodyLines(toggleExpanded(base, 'c1'));
   const expandedText = expanded.map((row) => row.text).join('\n');
-  assert.match(expanded[0]?.text ?? '', /\[收起\]/);
+  assert.match(expanded[0]?.text ?? '', /收起/);
   assert.match(expandedText, /one/);
-  assertCardWidths(expanded, 'tool expanded');
+  assertBarCard(expanded, 'tool expanded');
 });
 
 test('an attachment is a hole in the text plus a slot, and it says what it is at every stage', () => {
@@ -142,7 +154,7 @@ test('an attachment is a hole in the text plus a slot, and it says what it is at
   const loading = frameOf(asked, { width: WIDTH, now: 0 });
   assert.match(loading.body.map((row) => row.text).join('\n'), /图片 image\/png 320×200 — 正在取字节…/);
   assert.equal(loading.images?.length, 0);
-  assertCardWidths(loading.body, 'attachment loading');
+  assertBarCard(loading.body, "attachment loading");
 
   // 2. The bytes arrived: the card reserves rows and hands the pixels to the screen.
   const ready = withAttachment(asked, {
@@ -163,13 +175,13 @@ test('an attachment is a hole in the text plus a slot, and it says what it is at
   // (12), so the box shrinks keeping the ratio: 12 rows × 2 cells ≈ 38 columns.
   assert.equal(slot.rows, 12, 'the row budget caps an inline image');
   assert.equal(slot.cols, 38);
-  assert.equal(slot.left, 2, 'a card image starts after the `│ ` frame');
+  assert.equal(slot.left, 2, "the image starts at the bar-card's body indent");
   assert.equal(slot.source.byteLength, 83);
-  // The rows it occupies are card rows, so the text below it cannot be drawn over the image.
+  // The rows it occupies are reserved blank rows, so nothing can be drawn over the image.
   for (let index = 0; index < slot.rows; index += 1) {
-    assert.match(framed.body[slot.row + index]?.text ?? 'x', /^│\s*│$/, `row ${String(index)} of the image is a card row`);
+    assert.equal(framed.body[slot.row + index]?.text ?? 'x', '', `row ${String(index)} of the image is reserved`);
   }
-  assertCardWidths(framed.body, 'attachment ready');
+  assertBarCard(framed.body, 'attachment ready');
 
   // 3. Refused: the reason is shown, and there is no hole pretending to be a picture.
   const failed = withAttachment(asked, {
@@ -187,7 +199,7 @@ test('an attachment is a hole in the text plus a slot, and it says what it is at
   // shown at all, rather than a silent blank where a picture was promised.
   assert.match(bad.body.map((row) => row.text).join('\n'), /取不到：attachment/);
   assert.equal(bad.images?.length, 0);
-  assertCardWidths(bad.body, 'attachment failed');
+  assertBarCard(bad.body, "attachment failed");
 });
 
 test('an edit shows its diff, because the request is in the log', () => {
@@ -219,7 +231,7 @@ test('an edit shows its diff, because the request is in the log', () => {
   assert.match(text, /@@ -1,2 \+1,2 @@/);
   assert.match(text, /\s1 - const value = 1;/);
   assert.match(text, /\s1 \+ const value = 2;/);
-  assertCardWidths(bodyLines(view), 'diff card');
+  assertBarCard(bodyLines(view), "diff card");
 });
 
 test('a pending approval is a card with the quip, the rule and the keys; ten seconds later it nudges', () => {

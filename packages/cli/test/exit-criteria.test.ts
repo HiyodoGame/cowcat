@@ -145,7 +145,7 @@ test('a turn with a tool and an approval, over the protocol, as the frontend ren
     const text = frame();
     assert.match(text, /╭─ 你/, 'the user spoke');
     assert.match(text, /写个文件/);
-    assert.match(text, /⏺ Write ok/, 'the tool card');
+    assert.match(text, /▌ Write ok/, 'the tool card (bar language, ADR-164)');
     assert.match(text, /写好了。/, 'the answer');
     // The question is gone once its turn is over: the card is the PENDING question, and the
     // record of the answer is the log (`approval.answered`) plus the tool card that ran.

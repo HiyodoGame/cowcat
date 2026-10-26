@@ -24,21 +24,25 @@ test('wrapRuns keeps spans intact across row breaks', () => {
   assert.equal(boldChars, '加粗');
 });
 
-test('headings: h1/h2 brand+bold, h3+ plain bold, markers stripped', () => {
+test('headings: h1/h2 get an accent bar and breathing room, h3+ plain bold (ADR-164)', () => {
   const rows = renderMarkdown('# 大标题\n## 二级\n### 三级', 40);
   assert.deepEqual(
     rows.map((row) => row.text),
-    ['大标题', '二级', '三级'],
+    ['▌ 大标题', '', '▌ 二级', '', '三级', ''],
   );
   // Style lives in the runs; the Line-level token stays the row's base voice.
   const voice = (row: (typeof rows)[number] | undefined): string | undefined => {
     const spans = (row?.runs ?? []).filter((span) => span.text.trim() !== '');
     return spans[0]?.token ?? row?.token;
   };
+  // The BAR is brand; the heading text itself stays the base voice — colour is emphasis.
   assert.equal(voice(rows[0]), 'brand');
-  assert.equal(voice(rows[1]), 'brand');
-  assert.equal(voice(rows[2]), 'text');
-  assert.ok(rows.every((row) => (row.runs ?? []).every((span) => Boolean(span.bold))));
+  assert.equal(voice(rows[2]), 'brand');
+  const boldText = (row: (typeof rows)[number] | undefined): boolean =>
+    (row?.runs ?? [])
+      .filter((span) => span.text.trim() !== '' && !span.text.startsWith('▌'))
+      .every((span) => Boolean(span.bold));
+  assert.ok(boldText(rows[0]) && boldText(rows[2]) && boldText(rows[4]));
 });
 
 test('lists keep their marker on the first row and a hanging indent after wrapping', () => {
@@ -64,7 +68,7 @@ test('code fences: language label, code token, indent; unterminated still render
     ),
   );
   const open = renderMarkdown('```\nnever closed', 30);
-  assert.match(open.at(-1)?.text ?? '', /never closed/);
+  assert.ok(open.some((row) => row.text.includes('never closed')));
 });
 
 test('tables align columns by display width, CJK included', () => {
@@ -76,7 +80,7 @@ test('tables align columns by display width, CJK included', () => {
   const content = rows.filter((row) => !row.text.startsWith('|') && row.text.startsWith('+'));
   assert.equal(content.length, 4);
   for (const row of rows) {
-    if (row.text.startsWith('+')) continue;
+    if (row.text.startsWith('+') || row.text.trim() === '') continue;
     assert.ok(stringWidth(row.text.trimEnd()) > 0);
   }
 });
