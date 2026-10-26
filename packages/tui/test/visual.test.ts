@@ -25,7 +25,7 @@ async function renderAt(width: number, height: number, events: readonly WireEven
   const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width, height });
   try {
     const screen = createScreen(renderer, THEME, { title: titleOf('0.0.0-test') });
-    let view = events.reduce(project, initialView());
+    const view = events.reduce(project, initialView());
     screen.update(frameOf(view, { width: screen.contentWidth(), height: screen.contentHeight(), now: 1_000, ...(cwd === undefined ? {} : { cwd }) }));
     await renderOnce();
     return captureCharFrame();
