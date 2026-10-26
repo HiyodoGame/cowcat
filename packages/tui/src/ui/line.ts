@@ -11,10 +11,23 @@ import type { TokenName } from '../theme/tokens.js';
  * `token` is a theme token, never a colour: the renderer resolves it once. A component that
  * carried `#A8C34A` would put a brand decision in a place that cannot be re-themed.
  */
+/** One styled span of a row (ADR-162): markdown inline runs mount one span each. */
+export interface LineRun {
+  readonly text: string;
+  readonly token: TokenName;
+  readonly bold?: boolean;
+}
+
 export interface Line {
   readonly text: string;
   readonly token: TokenName;
   readonly bold: boolean;
+  /**
+   * Rich spans for this row (ADR-162), present only when the row mixes styles — a plain
+   * row is just `text`+`token`. `text` stays the full concatenation: width checks, the
+   * mount diff and the frame snapshots all read the plain string.
+   */
+  readonly runs?: readonly LineRun[];
   /**
    * What a click on this row means, as an opaque id the loop decodes.
    *
@@ -26,6 +39,17 @@ export interface Line {
 
 export function line(text: string, token: TokenName = 'text', bold = false, hit?: string): Line {
   return hit === undefined ? { text, token, bold } : { text, token, bold, hit };
+}
+
+/** A row from styled spans: `text` is the concatenation, so every plain-text consumer is unaffected. */
+export function runLine(prefix: string, runs: readonly LineRun[], suffix: string, hit?: string): Line {
+  const text = prefix + runs.map((span) => span.text).join('') + suffix;
+  const full: readonly LineRun[] = [
+    ...(prefix === '' ? [] : [{ text: prefix, token: 'text' as const }]),
+    ...runs,
+    ...(suffix === '' ? [] : [{ text: suffix, token: 'text' as const }]),
+  ];
+  return hit === undefined ? { text, token: 'text', bold: false, runs: full } : { text, token: 'text', bold: false, runs: full, hit };
 }
 
 /** One `Line` per source line, with a marker on the first and padding afterwards. */

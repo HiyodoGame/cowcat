@@ -4,6 +4,7 @@ import { copyFor, type Copy } from '../app/copy.js';
 import { historyMatches, runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
 import { line, type Line } from '../ui/line.js';
+import { truncate } from '../text/width.js';
 import { agentPanelLines } from './agent-panel.js';
 import { approvalCardLines } from './approval-card.js';
 import { planCardLines } from './plan-card.js';
@@ -43,6 +44,12 @@ export interface FrameOptions {
   readonly now: number;
   /** The terminal's rows, so the dock can be capped. Omitted by tests that only pin width. */
   readonly height?: number;
+  /**
+   * The working directory, injected like `now` because the frame is a pure function
+   * (ADR-163): the aside names the workspace, and a component that read `process` would
+   * not be one.
+   */
+  readonly cwd?: string;
 }
 
 export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
@@ -124,6 +131,7 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   return {
     body,
     dock: dock.slice(0, maxDock),
+    aside: asideLines(view, options),
     images,
     status: statusLine(view, options),
     placeholder: placeholderFor(view, copyFor(view.lang)),
@@ -183,3 +191,37 @@ function slashHint(input: string): string | null {
 }
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+
+/**
+ * The right-rail session facts (ADR-163): what a person glances at — which session, which
+ * model, how full the window, what it cost, which directory. Built unconditionally; the
+ * screen decides whether the terminal is wide enough to show it.
+ */
+const ASIDE_COLUMNS = 24;
+
+function asideLines(view: TuiView, options: FrameOptions): readonly Line[] {
+  const rows: string[] = [];
+  rows.push(`会话  ${view.sessionId ?? '（还没有）'}`);
+  rows.push(`模型  ${view.model ?? '（未记录）'}`);
+  if (view.usage !== null && view.contextWindow !== null && view.contextWindow > 0) {
+    const used = view.usage.input + view.usage.cacheRead + view.usage.cacheCreation + view.usage.output;
+    rows.push(`上下文  ${String(Math.round((used / view.contextWindow) * 100))}%`);
+  }
+  rows.push(`累计  ↑${String(view.usageTotals.input)} ↓${String(view.usageTotals.output)}`);
+  const spent = sessionSpent(view);
+  if (spent !== null) rows.push(`费用  ${spent}`);
+  if (options.cwd !== undefined) rows.push(`目录  ${options.cwd}`);
+  return rows.map((row) => line(truncate(row, ASIDE_COLUMNS), 'textDim'));
+}
+
+/** The session's summed cost, in the same terms the /cost panel uses; null when unpriced. */
+function sessionSpent(view: TuiView): string | null {
+  const price = view.price;
+  if (price === null) return null;
+  const total =
+    view.usageTotals.input * price.input +
+    view.usageTotals.output * price.output +
+    view.usageTotals.cacheRead * (price.cacheRead ?? 0) +
+    view.usageTotals.cacheCreation * (price.cacheCreation ?? 0);
+  return `$${total.toFixed(2)}`;
+}

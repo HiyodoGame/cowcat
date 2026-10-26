@@ -2,12 +2,14 @@ import {
   BoxRenderable,
   ImageRenderable,
   RGBA,
+  StyledText,
   TextareaRenderable,
   TextAttributes,
   TextRenderable,
   createTextAttributes,
   type CliRenderer,
   type KeyEvent,
+  type TextChunk,
 } from '@opentui/core';
 import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import type { Line } from './line.js';
@@ -45,6 +47,9 @@ import type { Line } from './line.js';
  */
 const READING_WIDTH = 100;
 
+/** Columns the session aside occupies, rail content plus its gutter (ADR-163). */
+const ASIDE_WIDTH = 26;
+
 /**
  * An image, as a rectangle of the frame rather than a line of it.
  *
@@ -69,6 +74,8 @@ export interface ScreenSpec {
   readonly body: readonly Line[];
   /** Fixed panels above the status line: approval, running agents, todos (ADR-101). */
   readonly dock?: readonly Line[];
+  /** Right-rail session facts (ADR-163); shown only on wide terminals, never a second layout. */
+  readonly aside?: readonly Line[];
   readonly status: Line;
   readonly placeholder: string;
   readonly images?: readonly ImageSlot[];
@@ -125,11 +132,20 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   renderer.root.add(root);
 
+  // The page is a ROW: a main column (everything the beta shipped) and — on wide
+  // terminals — the session aside (ADR-163). On a narrow terminal the aside is never
+  // added, so the layout is byte-for-byte the pre-sidebar one.
   const page = new BoxRenderable(renderer, {
     id: 'cowcat-page',
     width: '100%',
     maxWidth: READING_WIDTH,
     alignSelf: 'center',
+    flexGrow: 1,
+    flexDirection: 'row',
+  });
+  const main = new BoxRenderable(renderer, {
+    id: 'cowcat-main',
+    width: '100%',
     flexGrow: 1,
     flexDirection: 'column',
   });
@@ -211,15 +227,39 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   inputBox.add(prompt);
   inputBox.add(input);
-  page.add(body);
-  page.add(dock);
-  page.add(status);
-  page.add(inputBox);
+  main.add(body);
+  main.add(dock);
+  main.add(status);
+  main.add(inputBox);
+  page.add(main);
   root.add(page);
 
   // One renderable per line, updated in place when only the text or the colour changed.
   const mounted: TextRenderable[] = [];
   const specs: (Line | undefined)[] = [];
+  // The aside's own mount state (ADR-163) — separate, so transcript scrolling never
+  // touches it and vice versa.
+  const asideBox = new BoxRenderable(renderer, {
+    id: 'cowcat-aside',
+    width: ASIDE_WIDTH,
+    flexShrink: 0,
+    flexDirection: 'column',
+  });
+  let asideMounted = false;
+  const asideLines: TextRenderable[] = [];
+  const asideSpecs: (Line | undefined)[] = [];
+
+  /**
+   * The sidebar's visibility rule, shared by `contentWidth` (which must reserve its
+   * columns before the frame is built) and `update` (which mounts it). 120 columns is
+   * where a 100-column reading column plus 26 of rail still leaves the transcript
+   * honest; below that the rail would be the layout, not an aside.
+   */
+  const ASIDE_MIN_WIDTH = 120;
+
+  function asideVisible(): boolean {
+    return renderer.width >= ASIDE_MIN_WIDTH && process.env.COWCAT_SIDEBAR !== 'off';
+  }
   const dockMounted: TextRenderable[] = [];
   const dockSpecs: (Line | undefined)[] = [];
   const images: ImageRenderable[] = [];
@@ -247,6 +287,36 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     const step = Math.max(1, Math.abs(scroll.delta));
     scrollHandler(scroll.direction === 'up' ? step : -step);
   };
+
+  const BOLD = createTextAttributes({ bold: true });
+
+  /**
+   * A row's renderable content: the plain string, or — when the row carries markdown's
+   * inline runs (ADR-162) — a StyledText with one chunk per span. The renderer's own rich
+   * text path makes per-span colour and bold a property of the row's content, not of a
+   * forest of child renderables, so the mount structure (one TextRenderable per row) is
+   * unchanged.
+   */
+  function contentOf(spec: Line): string | StyledText {
+    if (spec.runs === undefined || spec.runs.length === 0) return spec.text;
+    const chunks: TextChunk[] = [];
+    for (const run of spec.runs) {
+      const fg = resolve(theme, run.token);
+      chunks.push({
+        __isChunk: true,
+        text: run.text,
+        ...(typeof fg === 'string' ? { fg: RGBA.fromHex(fg) } : {}),
+        ...(run.bold === true ? { attributes: BOLD } : {}),
+      });
+    }
+    return new StyledText(chunks);
+  }
+
+  /** Runs change the row's look without changing its text: compare them, or styled rows go stale. */
+  function runsSignature(spec: Line): string {
+    if (spec.runs === undefined) return '';
+    return spec.runs.map((run) => `${run.token}:${run.bold === true ? 'b' : 'n'}:${String(run.text.length)}`).join('|');
+  }
 
   function mountLines(
     container: BoxRenderable,
@@ -278,7 +348,7 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       if (existing === undefined) {
         const created = new TextRenderable(renderer, {
           id: `${idPrefix}-${String(index)}`,
-          content: spec.text,
+          content: contentOf(spec),
           fg: resolve(theme, spec.token),
           attributes: spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE,
           // Each `Line` is already wrapped by our own width table, so the renderer must not
@@ -301,13 +371,14 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         previous.text === spec.text &&
         previous.token === spec.token &&
         previous.bold === spec.bold &&
-        previous.hit === spec.hit
+        previous.hit === spec.hit &&
+        runsSignature(previous) === runsSignature(spec)
       ) {
         continue;
       }
-      existing.content = spec.text;
+      existing.content = contentOf(spec);
       existing.fg = resolve(theme, spec.token);
-      existing.attributes = spec.bold ? createTextAttributes({ bold: true }) : TextAttributes.NONE;
+      existing.attributes = spec.bold ? BOLD : TextAttributes.NONE;
       attachHit(existing, spec);
       specArray[index] = spec;
     }
@@ -372,8 +443,13 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   return {
     contentWidth() {
       // Two cells for the root box's own border, then the reading-width cap (ADR-101): a
-      // 200-column terminal gets a 100-column page, not a 198-column card.
-      return Math.min(Math.max(8, renderer.width - 2), READING_WIDTH);
+      // ADR-163: the 100-column reading column stays the default (the readability
+      // measurement still holds); `COWCAT_WIDTH=full` is the explicit way out. A visible
+      // aside has already been paid for out of the terminal's width, so the reading
+      // column shrinks by exactly its width — cards must fit what they actually get.
+      const base = process.env.COWCAT_WIDTH === 'full' ? renderer.width - 2 : Math.min(renderer.width - 2, READING_WIDTH);
+      const rail = asideVisible() ? ASIDE_WIDTH + 1 : 0;
+      return Math.max(8, base - rail);
     },
     contentHeight() {
       return renderer.height;
@@ -396,6 +472,20 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         'cowcat-line',
       );
       updateImages(spec.images ?? [], viewStart);
+      // The aside mounts only while the terminal is wide enough; mounting is a page child
+      // add/remove, so the narrow layout is exactly the pre-sidebar layout (ADR-163).
+      const wantAside = spec.aside !== undefined && asideVisible();
+      if (wantAside !== asideMounted) {
+        if (wantAside) page.add(asideBox);
+        else page.remove(asideBox);
+        asideMounted = wantAside;
+      }
+      const asideRows = spec.aside;
+      if (wantAside && asideRows !== undefined) {
+        mountLines(asideBox, asideLines, asideSpecs, asideRows, 0, asideRows.length, 'cowcat-aside');
+      }
+      // Full mode lifts the page's own cap; default mode keeps the reading column.
+      page.maxWidth = process.env.COWCAT_WIDTH === 'full' ? 100_000 : READING_WIDTH;
       status.content = spec.status.text;
       status.fg = resolve(theme, spec.status.token);
       input.placeholder = spec.placeholder;
