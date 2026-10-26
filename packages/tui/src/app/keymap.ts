@@ -75,6 +75,10 @@ export type Intent =
   /** Move the `/model` picker's cursor; Esc from phase two goes back to phase one (ADR-161 ②). */
   | { readonly kind: 'modelMove'; readonly delta: number }
   | { readonly kind: 'modelClose' }
+  /** Move the `/providers` panel's cursor (list or field phase) (ADR-165 ③). */
+  | { readonly kind: 'providerMove'; readonly delta: number }
+  /** Esc: field phase backs out to the list; list phase closes (ADR-165 ③). */
+  | { readonly kind: 'providerClose' }
   | { readonly kind: 'historySearch' }
   | { readonly kind: 'historyMove'; readonly delta: number };
 
@@ -161,6 +165,14 @@ export function intentFor(key: KeyLike, view: TuiView, now = 0, exitArmUntil = 0
     if (key.name === 'up') return { kind: 'modelMove', delta: -1 };
     if (key.name === 'down') return { kind: 'modelMove', delta: 1 };
     if (key.name === 'escape') return { kind: 'modelClose' };
+  }
+
+  // The `/providers` panel ditto (ADR-165 ③): Esc in the field menu backs out to the
+  // list, Esc in the list closes.
+  if (view.providerPanel !== null) {
+    if (key.name === 'up') return { kind: 'providerMove', delta: -1 };
+    if (key.name === 'down') return { kind: 'providerMove', delta: 1 };
+    if (key.name === 'escape') return { kind: 'providerClose' };
   }
 
   // Arrow keys and j/k only mean something while there is a list to move through. Letting

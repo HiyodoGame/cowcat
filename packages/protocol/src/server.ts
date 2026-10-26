@@ -184,6 +184,10 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return listCronJobs(id, params as Params<'cron.list'>);
       case 'cron.remove':
         return removeCronJob(id, params as Params<'cron.remove'>);
+      case 'providers.list':
+        return listProviders(id);
+      case 'provider.set':
+        return setProvider(id, params as Params<'provider.set'>);
       case 'trust.status':
         return trustStatus(id);
       case 'trust.grant':
@@ -326,6 +330,18 @@ export function createServer(options: ServerOptions): ProtocolServer {
 
   async function removeCronJob(id: RequestId, params: Params<'cron.remove'>): Promise<void> {
     reply(id, { removed: await host.removeCronJob(params.sessionId, params.jobId) });
+  }
+
+  async function listProviders(id: RequestId): Promise<void> {
+    reply(id, await host.listProviders());
+  }
+
+  async function setProvider(id: RequestId, params: Params<'provider.set'>): Promise<void> {
+    await host.setProvider(params.name, {
+      ...(params.baseUrl === undefined ? {} : { baseUrl: params.baseUrl }),
+      ...(params.apiKeyEnv === undefined ? {} : { apiKeyEnv: params.apiKeyEnv }),
+    });
+    reply(id, { saved: true });
   }
 
   async function trustStatus(id: RequestId): Promise<void> {

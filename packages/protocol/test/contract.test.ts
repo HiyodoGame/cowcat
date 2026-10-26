@@ -150,3 +150,20 @@ test('accept-edits.set is a user-act toggle with the applied state echoed (ADR-1
   // An unknown session is the host's refusal, not a silent ok.
   await assert.rejects(() => client.setAcceptEdits('nope', true));
 });
+
+test('providers.list reports the user layer; provider.set writes one entry (ADR-165)', async () => {
+  const host = new ScriptedHost([]);
+  host.providerRows = [
+    { name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', keySet: true },
+    { name: 'selfhost', baseUrl: 'https://gw.local/v1', apiKeyEnv: 'GW_KEY', keySet: false },
+  ];
+  const { client } = wire(host);
+  await client.initialize();
+
+  const { providers } = await client.listProviders();
+  assert.equal(providers.length, 2);
+  assert.equal(providers[1]?.keySet, false);
+
+  await client.setProvider('selfhost', { baseUrl: 'https://gw2.local/v1' });
+  assert.deepEqual(host.writtenProviders, [{ name: 'selfhost', fields: { baseUrl: 'https://gw2.local/v1' } }]);
+});

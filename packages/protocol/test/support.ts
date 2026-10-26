@@ -185,6 +185,18 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve();
   }
 
+  providerRows: { readonly name: string; readonly baseUrl: string | null; readonly apiKeyEnv: string | null; readonly keySet: boolean }[] = [];
+  readonly writtenProviders: { readonly name: string; readonly fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string } }[] = [];
+
+  listProviders() {
+    return Promise.resolve({ providers: this.providerRows });
+  }
+
+  setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }): Promise<void> {
+    this.writtenProviders.push({ name, fields });
+    return Promise.resolve();
+  }
+
   /** What `trust.status` reports (ADR-157): the startup snapshot, scriptable per test. */
   trustSnapshot = { trusted: false, withheld: { rules: 0, instructions: 0, skills: 0, mcpServers: 0, hooks: 0 } };
   readonly trustGrants: number[] = [];

@@ -27,16 +27,24 @@ import {
   moveModelPanel,
   movePalette,
   movePlanCursor,
+  moveProviderPanel,
   moveSessionPanel,
   moveTrust,
   pickModelEffort,
   planAnswerAt,
+  providerFieldCount,
   moveSlash,
   moveTaskPanel,
+  beginProviderAdd,
+  beginProviderEdit,
   closeModelPanel,
+  closeProviderPanel,
   enterModelPanel,
+  endProviderEdit,
+  enterProviderPanel,
   openCronPanel,
   openModelPanel,
+  openProviderPanel,
   openPalette,
   openSessionPanel,
   openTaskPanel,
@@ -57,6 +65,7 @@ import {
   withAttachment,
   withHistory,
   withModelList,
+  withProviderList,
   withSessionList,
   withInput,
   withLangFrom,
@@ -579,6 +588,22 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           view.current = moveModelPanel(view.current, intent.delta, modelRowCount());
           draw();
           return;
+        case 'providerMove':
+          view.current = moveProviderPanel(
+            view.current,
+            intent.delta,
+            view.current.providerPanel?.entry === null ? view.current.providerList.length + 1 : providerFieldCount(),
+          );
+          draw();
+          return;
+        case 'providerClose':
+          if (view.current.providerPanel !== null && view.current.providerPanel.entry !== null) {
+            view.current = { ...view.current, providerPanel: { index: 0, entry: null } };
+          } else {
+            view.current = closeProviderPanel(view.current);
+          }
+          draw();
+          return;
         case 'modelClose':
           if (view.current.modelPanel !== null && view.current.modelPanel.preset !== null) {
             // Phase two backs out to the preset list, it does not close (ADR-161 ②).
@@ -815,6 +840,12 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           return;
         case 'modelPanel':
           void openModelPicker();
+          return;
+        case 'effortPanel':
+          void openEffortPicker();
+          return;
+        case 'providerPanel':
+          void openProviderPicker();
           return;
         case 'tasks':
           if (view.current.approval !== null) {
@@ -1073,6 +1104,63 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       });
     }
 
+    /** `/effort`: the CURRENT model's reasoning levels, no model switch involved (ADR-165 ③). */
+    async function openEffortPicker(): Promise<void> {
+      try {
+        const result = await client.listModels(sessionId);
+        if (disposed) return;
+        view.current = openModelPanel(withModelList(view.current, result.models, result.current));
+        const current = result.current;
+        const model = view.current.modelList.find((entry) => entry.id === current.id);
+        if (model === undefined) {
+          view.current = addNotice(view.current, 'warn', '还没有可调档位的模型：先用 /model 选一个。');
+        } else {
+          view.current = { ...view.current, modelPanel: { index: 0, preset: current.id } };
+        }
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
+    }
+
+    /** `/providers`: the user layer's provider entries (ADR-165 ③). One fetch per open. */
+    async function openProviderPicker(): Promise<void> {
+      try {
+        const result = await client.listProviders();
+        if (disposed) return;
+        view.current = openProviderPanel(withProviderList(view.current, result.providers));
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
+    }
+
+    /** Save one field of one provider; the wire carries a variable NAME, never a key. */
+    function saveProviderField(name: string, field: 'baseUrl' | 'apiKeyEnv', value: string): void {
+      const fields = field === 'baseUrl' ? { baseUrl: value } : { apiKeyEnv: value };
+      client
+        .setProvider(name, fields)
+        .then(() => {
+          if (disposed) return;
+          // The panel's list is a snapshot; refresh it so the row shows what was saved.
+          client.listProviders().then((result) => {
+            if (disposed) return;
+            view.current = withProviderList(view.current, result.providers);
+            view.current = addNotice(view.current, 'info', `已保存 ${name}.${field}。重启 CowCat 后对新会话生效。`);
+            draw();
+          }, () => undefined);
+        })
+        .catch((error: unknown) => {
+          if (disposed) return;
+          view.current = addNotice(view.current, 'error', message(error));
+          draw();
+        });
+    }
+
     /**
      * The `/model` picker (ADR-161 ②): the host's presets browsed, not typed. One fetch
      * per open, the same rule as the session picker.
@@ -1158,6 +1246,68 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
                 : 'skip';
         view.current = withInput(view.current, '');
         answerTrust(choice);
+        return;
+      }
+
+      // A provider field is waiting for composer input (ADR-165 ③): Enter saves the
+      // typed value (empty cancels), and the panel comes back.
+      if (view.current.providerEdit !== null) {
+        const edit = view.current.providerEdit;
+        const value = trimmed;
+        screen.clearInput();
+        view.current = endProviderEdit(view.current).view;
+        if (value === '') {
+          // Empty input is the way out; the panel is still there.
+        } else if (edit.field === 'name') {
+          // Creating: an empty entry is valid — the field menu fills it in next.
+          client
+            .setProvider(value, {})
+            .then(async () => {
+              // Read through a function: two checks around an `await` — CFA narrows a
+              // bare variable across the boundary and calls the second one dead (§7).
+              const gone = (): boolean => disposed;
+              if (gone()) return;
+              const result = await client.listProviders();
+              if (gone()) return;
+              view.current = openProviderPanel(withProviderList(view.current, result.providers));
+              view.current = { ...view.current, providerPanel: { index: 0, entry: value } };
+              view.current = addNotice(view.current, 'info', `已创建 ${value}：选一个字段填值。`);
+              draw();
+            })
+            // falls through to the shared catch below
+            .catch((error: unknown) => {
+              if (disposed) return;
+              view.current = addNotice(view.current, 'error', message(error));
+              draw();
+            });
+        } else {
+          saveProviderField(edit.name, edit.field, value);
+        }
+        draw();
+        return;
+      }
+
+      // The `/providers` panel owns Enter while it is open (ADR-165 ③): a provider row
+      // opens its field menu, the add row asks for a name through the composer, a field
+      // row starts editing it.
+      const providerRow = view.current.providerPanel;
+      if (providerRow !== null && providerRow.entry === null) {
+        screen.clearInput();
+        view.current = withInput(view.current, '');
+        if (providerRow.index === view.current.providerList.length) {
+          view.current = beginProviderAdd(addNotice(view.current, 'info', '新服务商：输入名字后回车。'));
+        } else {
+          view.current = enterProviderPanel(view.current);
+        }
+        draw();
+        return;
+      }
+      if (providerRow !== null && providerRow.entry !== null) {
+        screen.clearInput();
+        view.current = withInput(view.current, '');
+        view.current = beginProviderEdit(view.current, providerRow.index === 0 ? 0 : 1);
+        view.current = addNotice(view.current, 'info', `输入新的 ${providerRow.index === 0 ? 'baseUrl' : 'apiKeyEnv'}，回车保存（空回车取消）。`);
+        draw();
         return;
       }
 

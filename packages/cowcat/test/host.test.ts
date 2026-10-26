@@ -2591,3 +2591,65 @@ test('trust.status reports withheld project layer; grant persists without hot-re
   const after = await fixture.client.trustStatus();
   assert.equal(after.trusted, false);
 });
+
+test('providers.list reads the user layer and detects keys; setProvider writes atomically (ADR-165)', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-prov-');
+  const home = tempDir(t, 'cowcat-host-prov-home-');
+  mkdirSync(join(home, '.cowcat'), { recursive: true });
+  writeFileSync(join(home, '.cowcat', 'config.json'), JSON.stringify({
+    model: {
+      preset: 'deepseek/deepseek-v4',
+      providers: {
+        deepseek: { baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'PROV_TEST_KEY' },
+        hand: { baseUrl: 'https://old.example/v1' },
+      },
+    },
+  }));
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const fixture = await start({
+    cwd,
+    home,
+    model,
+    env: { PROV_TEST_KEY: 'set-in-host-env' },
+  });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+
+  const { providers } = await fixture.client.listProviders();
+  assert.equal(providers.length, 2);
+  const deepseek = providers.find((entry) => entry.name === 'deepseek');
+  assert.equal(deepseek?.keySet, true, 'the host env has the named variable');
+  const hand = providers.find((entry) => entry.name === 'hand');
+  assert.ok(hand !== undefined);
+  assert.equal(hand.baseUrl, 'https://old.example/v1');
+  assert.equal(hand.keySet, false, 'no apiKeyEnv named, so no key');
+
+  await fixture.client.setProvider('hand', { baseUrl: 'https://gw.local/v1', apiKeyEnv: 'GW_KEY' });
+  const document = JSON.parse(readFileSync(join(home, '.cowcat', 'config.json'), 'utf8')) as {
+    model?: { providers?: Record<string, Record<string, unknown>> };
+  };
+  const deepseekAfter = document.model?.providers?.deepseek;
+  assert.equal(deepseekAfter?.['baseUrl'], 'https://api.deepseek.com/v1', 'the sibling entry is untouched');
+  const handAfter = document.model?.providers?.hand;
+  assert.equal(handAfter?.['baseUrl'], 'https://gw.local/v1', 'the field is overwritten in place');
+  assert.equal(await fixture.client.listProviders().then((r) => r.providers.find((entry) => entry.name === 'hand')?.keySet), false, 'the host env does not have GW_KEY');
+});
+
+test('setProvider refuses a config corrupted after startup instead of replacing it (ADR-165 ①)', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-prov-bad-');
+  const home = tempDir(t, 'cowcat-host-prov-bad-home-');
+  mkdirSync(join(home, '.cowcat'), { recursive: true });
+  const configFile = join(home, '.cowcat', 'config.json');
+  writeFileSync(configFile, JSON.stringify({ model: { preset: 'deepseek/deepseek-v4' } }));
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const fixture = await start({ cwd, home, model, env: {} });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+
+  // Someone hand-edits (or a crashed editor half-writes) the file while the host lives.
+  // The host started from a VALID document, so the refusal is about the file on disk now:
+  // replacing an unparseable document with our own edit is how a user loses their config.
+  writeFileSync(configFile, '{ crashed editor');
+  await assert.rejects(() => fixture.client.setProvider('x', { baseUrl: 'https://x' }), /not valid JSON/);
+  assert.match(readFileSync(configFile, 'utf8'), /crashed editor/, 'the broken file is untouched — the user fixes it, not us');
+});
