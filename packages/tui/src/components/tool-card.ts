@@ -2,8 +2,8 @@ import { copyFor } from '../app/copy.js';
 import { lineCount } from '../app/changes.js';
 import type { AttachmentView, ToolTail, TranscriptToolEntry, TuiView } from '../app/view.js';
 import { imageBox } from '../image/layout.js';
-import { card, type CardBodyLine } from '../ui/card.js';
-import type { Line } from '../ui/line.js';
+import type { Line, LineRun } from '../ui/line.js';
+import { runLine } from '../ui/line.js';
 import type { ImageSlot } from '../ui/screen.js';
 import { unifiedDiff, foldItems, type UnifiedItem } from '../text/diff.js';
 import { truncate } from '../text/width.js';
@@ -12,9 +12,13 @@ import { wrap } from '../text/wrap.js';
 /**
  * The task card: what the agent did, whether it worked, and enough of the result to judge it.
  *
- * The brand guide's rules for it (§4.2) are all visible here: the output is FOLDED by default
- * with the last three lines and an exit status, the diff of an edit is what the card shows
- * when it has one, and everything is reachable again with one key rather than lost.
+ * The brand guide's rules (§4.2) are all visible here: the output is FOLDED by default with
+ * the last three lines and an exit status, the diff of an edit is what the card shows when it
+ * has one, and everything is reachable again with one key rather than lost.
+ *
+ * The card's language is the BAR (ADR-164): one coloured gutter row — brand when ok, alert
+ * when not — with the action, the status and the count on it, and the body indented under it.
+ * Full `┄` frames around every action made the transcript read as boxes, not as work.
  *
  * The diff is possible at all because the REQUEST is in the log: `Edit`'s `old_string` and
  * `new_string` never appear in `tool.finished`, so the view keeps the model's tool calls by
@@ -34,24 +38,44 @@ const OUTPUT_EXPANDED_LINES = 60;
 /** How tall an inline image may be before it stops being inline. */
 const IMAGE_MAX_ROWS = 12;
 
+/** Indent the body of a bar-card: content sits under the action, two cells in. */
+function indented(rows: readonly Line[]): readonly Line[] {
+  return rows.map((row) => runLine('  ', row.runs ?? [{ text: row.text, token: row.token, ...(row.bold ? { bold: true } : {}) }], ''));
+}
+
+function asLine(text: string, token: LineRun['token'], bold = false): Line {
+  return { text, token, bold };
+}
+
 export function toolCardLines(
   entry: TranscriptToolEntry,
   view: TuiView,
   width: number,
-): { readonly lines: readonly Line[]; readonly images: readonly ImageSlot[] } {  const expanded = view.expanded.includes(entry.callId);
+): { readonly lines: readonly Line[]; readonly images: readonly ImageSlot[] } {
+  const expanded = view.expanded.includes(entry.callId);
   const diff = editOf(view.calls[entry.callId]?.input);
   const write = diff === null ? writeOf(view.calls[entry.callId]?.input) : null;
   const status = entry.ok ? 'ok' : '失败';
   const where = entry.path === null ? '' : ` — ${entry.path}`;
 
-  const suffix = diff !== null
+  const tail = diff !== null
     ? `+${String(diff.added)} -${String(diff.removed)}`
     : write !== null
       ? `写入 ${String(lineCount(write))} 行`
-      : expanded ? '[收起]' : '[展开]';
-  const title = `⏺ ${entry.name} ${status}${where}`;
-  const body: CardBodyLine[] = [];
+      : expanded
+        ? '收起'
+        : '展开';
+
+  const body: Line[] = [];
   const images: ImageSlot[] = [];
+
+  body.push(runLine('', [
+    { text: '▌', token: entry.ok ? 'brand' : 'alert' },
+    { text: ` ${entry.name} `, token: 'text', bold: true },
+    { text: status, token: entry.ok ? 'textDim' : 'alert' },
+    ...(where === '' ? [] : [{ text: where, token: 'textDim' } satisfies LineRun]),
+    ...(tail === '' ? [] : [{ text: `  ${tail}`, token: 'textDim' } satisfies LineRun]),
+  ], ''));
 
   for (const path of entry.attachments) {
     const attachment = view.attachments[path];
@@ -66,39 +90,31 @@ export function toolCardLines(
       });
       // The header names what it is even when the picture cannot be drawn: a terminal with no
       // image protocol must still say "there was a PNG here, 320×200".
-      body.push({ text: `${copyFor('zh').image} ${label}`, token: 'textDim' });
-      // `card()` draws one row of border above the body, so body row `b` is line `b + 1`.
-      const row = body.length + 1;
-      for (let index = 0; index < box.rows; index += 1) body.push({ text: '', token: 'text' });
-      // Column 2: the card's `│ ` frame is two cells before its content.
+      body.push(asLine(`  ${copyFor('zh').image} ${label}`, 'textDim'));
+      const row = body.length;
+      for (let index = 0; index < box.rows; index += 1) body.push(asLine('', 'text'));
       images.push({ row, left: 2, cols: box.cols, rows: box.rows, source: attachment.bytes, label });
     } else if (attachment.status === 'failed') {
-      body.push({ text: `${copyFor('zh').image} ${label} — 取不到：${attachment.reason ?? '未知原因'}`, token: 'notice' });
+      // No card() to truncate for us any more: an untrusted reason is the one string here
+      // that can be arbitrarily long, and the bar-card invariant (no row over the page)
+      // is what keeps it from blowing out the layout.
+      body.push(asLine(`  ${truncate(`${copyFor('zh').image} ${label} — 取不到：${attachment.reason ?? '未知原因'}`, Math.max(8, width - 2))}`, 'notice'));
     } else {
-      body.push({ text: `${copyFor('zh').image} ${label} — 正在取字节…`, token: 'textDim' });
+      body.push(asLine(`  ${copyFor('zh').image} ${label} — 正在取字节…`, 'textDim'));
     }
   }
-  if (entry.truncation !== null) body.push({ text: entry.truncation, token: 'textDim' });
+  if (entry.truncation !== null) body.push(asLine(`  ${truncate(entry.truncation, Math.max(8, width - 2))}`, 'textDim'));
 
   if (diff !== null) {
-    body.push(...diffLines(diff.items, width - 4, expanded ? DIFF_EXPANDED_LINES : DIFF_FOLDED_LINES));
+    body.push(...indented(diffLines(diff.items, width - 4, expanded ? DIFF_EXPANDED_LINES : DIFF_FOLDED_LINES)));
   } else if (write !== null) {
-    body.push({ text: '写入内容预览（仅新内容，不是覆写前 diff）', token: 'textDim' });
-    body.push(...writePreviewLines(write, width - 4, expanded));
+    body.push(asLine('  写入内容预览（仅新内容，不是覆写前 diff）', 'textDim'));
+    body.push(...indented(writePreviewLines(write, width - 4, expanded)));
   } else if (entry.output !== '') {
-    body.push(...outputLines(entry.output, width - 4, expanded));
+    body.push(...indented(outputLines(entry.output, width - 4, expanded)));
   }
 
-  return {
-    lines: card({
-      title: truncate(title, Math.max(8, width - 4 - suffix.length - 2)),
-      titleToken: entry.ok ? 'tool' : 'alert',
-      ...(suffix === '' ? {} : { suffix }),
-      body,
-      width,
-    }),
-    images,
-  };
+  return { lines: body, images };
 }
 
 /** `image/png 320×200`, or the part of it that is known. */
@@ -128,30 +144,30 @@ function writeOf(input: unknown): string | null {
   return typeof record['file_path'] === 'string' && typeof record['content'] === 'string' ? record['content'] : null;
 }
 
-function writePreviewLines(content: string, inner: number, expanded: boolean): readonly CardBodyLine[] {
+function writePreviewLines(content: string, inner: number, expanded: boolean): readonly Line[] {
   const rows = content.split('\n');
   if (content.endsWith('\n')) rows.pop();
   const wrapped = rows.flatMap((row) => wrap(row, Math.max(1, inner - 2)));
   const budget = expanded ? DIFF_EXPANDED_LINES : DIFF_FOLDED_LINES;
   const kept = wrapped.slice(0, budget);
-  const lines: CardBodyLine[] = kept.map((row) => ({ text: `+ ${row}`, token: 'brand' as const }));
+  const lines: Line[] = kept.map((row) => asLine(`+ ${row}`, 'brand'));
   const hidden = wrapped.length - kept.length;
-  if (hidden > 0) lines.push({ text: `… 下面还有 ${String(hidden)} 行（Ctrl-O 展开）`, token: 'textDim' });
+  if (hidden > 0) lines.push(asLine(`… 下面还有 ${String(hidden)} 行（Ctrl-O 展开）`, 'textDim'));
   return lines;
 }
 
-function diffLines(items: readonly UnifiedItem[], inner: number, budget: number): readonly CardBodyLine[] {
+function diffLines(items: readonly UnifiedItem[], inner: number, budget: number): readonly Line[] {
   const folded = foldItems(items, budget);
   return folded.items.map((item) => {
-    if (item.kind === 'hunk') return { text: item.header, token: 'textDim' as const };
+    if (item.kind === 'hunk') return asLine(item.header, 'textDim');
     const gutter = item.sign === ' ' ? '  ' : `${item.sign} `;
     const number = item.newNo ?? item.oldNo ?? 0;
-    const token = item.sign === '+' ? ('brand' as const) : item.sign === '-' ? ('alert' as const) : ('textDim' as const);
-    return { text: `${String(number).padStart(3)} ${gutter}${item.text}`.slice(0, Math.max(0, inner)), token };
+    const token: LineRun['token'] = item.sign === '+' ? 'brand' : item.sign === '-' ? 'alert' : 'textDim';
+    return asLine(`${String(number).padStart(3)} ${gutter}${item.text}`.slice(0, Math.max(0, inner)), token);
   });
 }
 
-function outputLines(output: string, inner: number, expanded: boolean): readonly CardBodyLine[] {
+function outputLines(output: string, inner: number, expanded: boolean): readonly Line[] {
   const rows = output.split('\n').filter((row) => row !== '');
   // The two-space prefix is part of the row: wrapping at `inner` first made every full row
   // two cells too wide, and `padTo` ate them (plus an ellipsis) instead of the card growing.
@@ -159,8 +175,9 @@ function outputLines(output: string, inner: number, expanded: boolean): readonly
   const budget = expanded ? OUTPUT_EXPANDED_LINES : TOOL_OUTPUT_TAIL;
   const kept = wrapped.slice(-budget);
   const hidden = wrapped.length - kept.length;
-  const lines: CardBodyLine[] = kept.map((row) => ({ text: `  ${row}`, token: 'tool' as const }));
-  if (hidden > 0) lines.unshift({ text: `… 上面还有 ${String(hidden)} 行（Ctrl-O 展开）`, token: 'textDim' });
+  // Terminal output is terminal text: the default voice; dim is for the fold hint only.
+  const lines: Line[] = kept.map((row) => asLine(`  ${row}`, 'text'));
+  if (hidden > 0) lines.unshift(asLine(`… 上面还有 ${String(hidden)} 行（Ctrl-O 展开）`, 'textDim'));
   return lines;
 }
 
@@ -193,15 +210,19 @@ export function runningToolLines(
   tail?: ToolTail,
 ): readonly Line[] {
   const frame = RUNNING[Math.floor(now / 100) % RUNNING.length] ?? '·';
-  const body: CardBodyLine[] = [{ text: truncate(summary, Math.max(8, width - 6)), token: 'textDim' }];
-  if (tail !== undefined && tail.text !== '') body.push(...liveTailLines(tail, Math.max(8, width - 6)));
-  return card({
-    title: `${frame} ${name}`,
-    titleToken: 'plan',
-    suffix: '[运行中]',
-    body,
-    width,
-  });
+  const inner = Math.max(8, width - 4);
+  const rows: Line[] = [
+    runLine('', [
+      { text: '▌', token: 'plan' },
+      { text: ` ${frame} ${name} `, token: 'text', bold: true },
+      { text: '运行中', token: 'textDim' },
+    ], ''),
+    asLine(`  ${truncate(summary, inner)}`, 'textDim'),
+  ];
+  if (tail !== undefined && tail.text !== '') {
+    rows.push(...indented(liveTailLines(tail, inner)));
+  }
+  return rows;
 }
 
 /** Rows a running card spends on live output. One `Line` per row, per ADR-100. */
@@ -214,14 +235,14 @@ const LIVE_TAIL_ROWS = 20;
  * or the transcript's scroll arithmetic starts lying (ADR-100). The budget is display only —
  * the durable output keeps its own cap in the kernel.
  */
-function liveTailLines(tail: ToolTail, inner: number): readonly CardBodyLine[] {
+function liveTailLines(tail: ToolTail, inner: number): readonly Line[] {
   const rows = tail.text.split('\n').filter((row) => row !== '');
   const wrapped = rows.flatMap((row) => wrap(row, inner));
   const kept = wrapped.slice(-LIVE_TAIL_ROWS);
   const hidden = wrapped.length - kept.length;
-  const lines: CardBodyLine[] = kept.map((row) => ({ text: `  ${row}`, token: 'tool' as const }));
+  const lines: Line[] = kept.map((row) => asLine(row, 'text'));
   // A count is only honest when the cap did not already drop output the count cannot see.
   const hint = tail.truncated ? '… 只显示末尾输出' : hidden > 0 ? `… 上面还有 ${String(hidden)} 行` : null;
-  if (hint !== null) lines.unshift({ text: hint, token: 'textDim' as const });
+  if (hint !== null) lines.unshift(asLine(hint, 'textDim'));
   return lines;
 }

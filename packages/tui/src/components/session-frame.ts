@@ -3,8 +3,8 @@ import { atQuery, rankAtCandidates } from '../app/atcomplete.js';
 import { copyFor, type Copy } from '../app/copy.js';
 import { historyMatches, runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
-import { line, type Line } from '../ui/line.js';
-import { truncate } from '../text/width.js';
+import { line, runLine, type Line } from '../ui/line.js';
+import { padTo, truncate } from '../text/width.js';
 import { agentPanelLines } from './agent-panel.js';
 import { approvalCardLines } from './approval-card.js';
 import { planCardLines } from './plan-card.js';
@@ -198,20 +198,38 @@ const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
  * screen decides whether the terminal is wide enough to show it.
  */
 const ASIDE_COLUMNS = 24;
+const ASIDE_LABEL = 4;
 
 function asideLines(view: TuiView, options: FrameOptions): readonly Line[] {
-  const rows: string[] = [];
-  rows.push(`会话  ${view.sessionId ?? '（还没有）'}`);
-  rows.push(`模型  ${view.model ?? '（未记录）'}`);
+  const out: Line[] = [];
+  /** One titled group; skipped entirely when it has nothing to say, blank row between groups. */
+  const group = (title: string, rows: readonly (readonly [string, string])[]): void => {
+    if (rows.length === 0) return;
+    const last = out.at(-1);
+    if (last !== undefined && last.text !== '') out.push(line('', 'text'));
+    out.push(runLine('', [{ text: title, token: 'brand', bold: true }], ''));
+    for (const [label, value] of rows) {
+      out.push(runLine('', [
+        { text: padTo(label, ASIDE_LABEL), token: 'textDim' },
+        { text: truncate(value, ASIDE_COLUMNS - ASIDE_LABEL - 1), token: 'text' },
+      ], ''));
+    }
+  };
   if (view.usage !== null && view.contextWindow !== null && view.contextWindow > 0) {
     const used = view.usage.input + view.usage.cacheRead + view.usage.cacheCreation + view.usage.output;
-    rows.push(`上下文  ${String(Math.round((used / view.contextWindow) * 100))}%`);
+    const spent = sessionSpent(view);
+    group('上下文', [
+      ['窗口', `${String(Math.round((used / view.contextWindow) * 100))}%`],
+      ['累计', `↑${String(view.usageTotals.input)} ↓${String(view.usageTotals.output)}`],
+      ...(spent === null ? [] : [['费用', spent] as readonly [string, string]]),
+    ]);
   }
-  rows.push(`累计  ↑${String(view.usageTotals.input)} ↓${String(view.usageTotals.output)}`);
-  const spent = sessionSpent(view);
-  if (spent !== null) rows.push(`费用  ${spent}`);
-  if (options.cwd !== undefined) rows.push(`目录  ${options.cwd}`);
-  return rows.map((row) => line(truncate(row, ASIDE_COLUMNS), 'textDim'));
+  group('会话', [
+    ['模型', view.model ?? '（未记录）'],
+    ...(view.sessionId === null ? [] : [['id', view.sessionId] as readonly [string, string]]),
+  ]);
+  if (options.cwd !== undefined) group('工作区', [['目录', options.cwd]]);
+  return out;
 }
 
 /** The session's summed cost, in the same terms the /cost panel uses; null when unpriced. */

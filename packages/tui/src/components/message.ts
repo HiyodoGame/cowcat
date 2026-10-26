@@ -54,8 +54,9 @@ export function assistantMessageLines(
     }
   }
   // The model answers in Markdown; printing it raw was the transcript-as-text-wall (ADR-162).
-  // Unstyled spans keep the assistant voice; headings keep their own tokens.
-  lines.push(...renderMarkdown(entry.text, width, 'assistant'));
+  // The BODY is the terminal's own foreground — the colour discipline that makes OpenCode
+  // readable: colour is emphasis, never the default voice of a whole answer (ADR-164).
+  lines.push(...renderMarkdown(entry.text, width, 'text'));
   if (entry.calls > 0) {
     // A fact the log has and the screen would otherwise lose: the calls below are drawn as
     // their own cards, and the answer itself arrived with them.

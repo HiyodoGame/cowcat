@@ -127,11 +127,6 @@ export function wrapRuns(runs: readonly LineRun[], width: number): readonly Line
   return out;
 }
 
-/** One heading level → style: h1/h2 speak in the brand voice, deeper levels are just bold. */
-function headingStyle(level: number): { readonly token: TokenName; readonly bold: true } {
-  return level <= 2 ? { token: 'brand', bold: true } : { token: 'text', bold: true };
-}
-
 function lineOf(text: string, token: TokenName): Line {
   return { text, token, bold: false };
 }
@@ -173,6 +168,16 @@ function tableRows(lines: readonly string[]): readonly Line[] {
   return out;
 }
 
+/**
+ * Vertical rhythm (ADR-164): one blank line between blocks, never two, none at the top.
+ * A transcript without breathing room reads as a wall regardless of how correct the
+ * inline styles are — whitespace is the hierarchy, colour only backs it up.
+ */
+function gap(out: Line[]): void {
+  const last = out.at(-1);
+  if (last !== undefined && last.text !== '') out.push(lineOf('', 'text'));
+}
+
 /** The whole renderer: assistant text in, transcript lines out. `base` is the unstyled voice. */
 export function renderMarkdown(source: string, width: number, base: TokenName = 'text'): readonly Line[] {
   const out: Line[] = [];
@@ -194,6 +199,7 @@ export function renderMarkdown(source: string, width: number, base: TokenName = 
     const fence = /^```(\w*)/.exec(line.trim());
     if (fence !== null) {
       flushParagraph();
+      gap(out);
       const lang = fence[1] ?? '';
       if (lang !== '') out.push(lineOf(`▸ ${lang}`, 'textDim'));
       i += 1;
@@ -206,14 +212,24 @@ export function renderMarkdown(source: string, width: number, base: TokenName = 
       for (const row of body) {
         out.push(...prefixed([{ text: row, token: 'code', bold: false }], '  ', '  '));
       }
+      gap(out);
       continue;
     }
 
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading !== null) {
       flushParagraph();
-      const style = headingStyle(heading[1]?.length ?? 1);
-      out.push(...wrapRuns(inlineRuns(heading[2] ?? '', style.token).map((span) => ({ ...span, bold: true })), width));
+      gap(out);
+      const level = heading[1]?.length ?? 1;
+      const text = heading[2] ?? '';
+      if (level <= 2) {
+        // The accent bar anchors the heading; its text stays the base voice, bold — a
+        // whole green headline is emphasis shouting down the whole answer (ADR-164).
+        out.push(runLine('', [{ text: '▌ ', token: 'brand' }, { text, token: base, bold: true }], ''));
+      } else {
+        out.push(...wrapRuns(inlineRuns(text, base).map((span) => ({ ...span, bold: true })), width));
+      }
+      gap(out);
       i += 1;
       continue;
     }
@@ -227,19 +243,23 @@ export function renderMarkdown(source: string, width: number, base: TokenName = 
 
     if (/^\s*\|.*\|\s*$/.test(line)) {
       flushParagraph();
+      gap(out);
       const table: string[] = [];
       while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i] ?? '')) {
         table.push(lines[i] ?? '');
         i += 1;
       }
       out.push(...tableRows(table));
+      gap(out);
       continue;
     }
 
     const quote = /^>\s?(.*)$/.exec(line);
     if (quote !== null) {
       flushParagraph();
+      gap(out);
       out.push(...prefixed(wrapRuns(inlineRuns(quote[1] ?? '', 'textDim'), Math.max(8, width - 3)), '│ ', '│ '));
+      gap(out);
       i += 1;
       continue;
     }
