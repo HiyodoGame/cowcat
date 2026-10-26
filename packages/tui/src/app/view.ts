@@ -1,4 +1,4 @@
-import type { GrantSummary, ModelSelectionSummary, ModelSummary, SessionSummary, TrustWithheld } from '@corescense/cowcat-protocol';
+import type { GrantSummary, ModelSelectionSummary, ModelSummary, ProviderSummary, SessionSummary, TrustWithheld } from '@corescense/cowcat-protocol';
 import type { Lang } from './copy.js';
 import { detectLang } from './copy.js';
 
@@ -434,6 +434,18 @@ export interface TuiView {
   readonly modelList: readonly ModelSummary[];
   /** The selection the host reports, so the panel can mark （当前）. */
   readonly modelCurrent: ModelSelectionSummary | null;
+  /**
+   * The `/providers` panel (ADR-165 ③): list phase (`field` null) or field-menu phase
+   * for one entry.
+   */
+  readonly providerPanel: { readonly index: number; readonly entry: string | null } | null;
+  /** Fetched once per open. */
+  readonly providerList: readonly ProviderSummary[];
+  /**
+   * A field awaiting composer input (ADR-165 ③): the panel stays open, the composer
+   * types the new value, Enter saves through `provider.set`, empty Enter cancels.
+   */
+  readonly providerEdit: { readonly name: string; readonly field: 'name' | 'baseUrl' | 'apiKeyEnv' } | null;
 }
 
 export function initialView(): TuiView {
@@ -498,6 +510,9 @@ export function initialView(): TuiView {
     modelPanel: null,
     modelList: [],
     modelCurrent: null,
+    providerPanel: null,
+    providerList: [],
+    providerEdit: null,
   };
 }
 
@@ -885,6 +900,65 @@ export function pickModelEffort(view: TuiView): { readonly view: TuiView; readon
   const model = view.modelList.find((entry) => entry.id === panel.preset);
   const effort = model?.efforts[panel.index] ?? null;
   return { view: closeModelPanel(view), preset: panel.preset, effort };
+}
+
+// ── the provider panel (ADR-165 ③) ─────────────────────────────────────────────
+
+export function withProviderList(view: TuiView, providers: readonly ProviderSummary[]): TuiView {
+  return { ...view, providerList: providers };
+}
+
+export function openProviderPanel(view: TuiView): TuiView {
+  return { ...view, providerPanel: { index: 0, entry: null }, providerEdit: null };
+}
+
+export function closeProviderPanel(view: TuiView): TuiView {
+  return { ...view, providerPanel: null, providerEdit: null };
+}
+
+/** Enter on a provider row: into its field menu. Enter on the add row marks `entry ''`. */
+export function enterProviderPanel(view: TuiView): TuiView {
+  if (view.providerPanel === null) return view;
+  const entry = view.providerPanel.index < view.providerList.length
+    ? view.providerList[view.providerPanel.index]?.name ?? null
+    : view.providerPanel.index === view.providerList.length
+      ? ''
+      : null;
+  return { ...view, providerPanel: { index: 0, entry } };
+}
+
+export function moveProviderPanel(view: TuiView, delta: number, count: number): TuiView {
+  if (view.providerPanel === null || count === 0) return view;
+  const index = (view.providerPanel.index + delta + count) % count;
+  return { ...view, providerPanel: { ...view.providerPanel, index } };
+}
+
+/** Pick a field to edit (0 = baseUrl, 1 = apiKeyEnv) for the entry the panel is on. */
+export function beginProviderEdit(view: TuiView, field: 0 | 1): TuiView {
+  const panel = view.providerPanel;
+  if (panel === null || panel.entry === null) return view;
+  return { ...view, providerEdit: { name: panel.entry, field: field === 0 ? 'baseUrl' : 'apiKeyEnv' } };
+}
+
+/** The add row: the first thing a new provider needs is its NAME, typed in the composer. */
+export function beginProviderAdd(view: TuiView): TuiView {
+  return { ...view, providerEdit: { name: '', field: 'name' } };
+}
+
+/** The composer delivered a value (empty means cancel): clear the edit state, keep the panel. */
+export function endProviderEdit(view: TuiView): { readonly view: TuiView; readonly value: string | null } {
+  if (view.providerEdit === null) return { view, value: null };
+  return { view: { ...view, providerEdit: null }, value: '' };
+}
+
+/** Rows the list-phase cursor moves over: every provider plus the add row. */
+export function providerRowCount(view: TuiView): number {
+  return view.providerPanel === null ? 0 : view.providerList.length + 1;
+}
+
+/** Rows the field-menu cursor moves over. */
+export function providerFieldCount(): number {
+  return 2;
 }
 
 /**

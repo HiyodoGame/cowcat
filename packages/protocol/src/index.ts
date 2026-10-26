@@ -47,6 +47,7 @@ export {
   type ModelSelectionSummary,
   type ModelSummary,
   type Params,
+  type ProviderSummary,
   type Result,
   type ResultTable,
   type SessionSummary,

@@ -1,5 +1,5 @@
 import { ERROR_CODES, type ErrorCode } from './jsonrpc.js';
-import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, SessionSummary, TrustWithheld } from './methods.js';
+import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, ProviderSummary, SessionSummary, TrustWithheld } from './methods.js';
 
 /**
  * What the frontend needs from whatever holds sessions. T3/T4 implement this over the
@@ -96,6 +96,13 @@ export interface ProtocolHost {
    * the log as `cron.deleted by: 'user'`, so replay and other clients see it.
    */
   removeCronJob(sessionId: string, jobId: string): Promise<boolean>;
+  /** The user layer's providers with key detection (ADR-165 ①). */
+  listProviders(): Promise<{ readonly providers: readonly ProviderSummary[] }>;
+  /**
+   * Write one provider entry into the user config (ADR-165 ①). The secret itself is
+   * carried by the environment, never the wire — `apiKeyEnv` is a NAME.
+   */
+  setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }): Promise<void>;
   /**
    * The host's startup trust snapshot for its own cwd (ADR-157 ②): whether it is trusted
    * and what the project layer is holding back. Read-only — the host never hot-reloads

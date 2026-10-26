@@ -15,6 +15,7 @@ import { taskPanelLines } from './task-panel.js';
 import { cronPanelLines } from './cron-panel.js';
 import { sessionPanelLines } from './session-panel.js';
 import { modelPanelLines } from './model-panel.js';
+import { providerFieldLines, providerPanelLines } from './provider-panel.js';
 import { trustCardLines } from './trust-card.js';
 import { changesPanelLines } from './changes-panel.js';
 import { permissionsPanelLines } from './permissions-panel.js';
@@ -101,6 +102,12 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   }
   if (view.modelPanel !== null) {
     dock.push(...modelPanelLines(view.modelList, view.modelPanel.index, view.modelCurrent, view.modelPanel.preset, options.width));
+  }
+  if (view.providerPanel !== null) {
+    const entry = view.providerPanel.entry;
+    dock.push(...(entry === null
+      ? providerPanelLines(view.providerList, view.providerPanel.index, options.width)
+      : providerFieldLines(entry, view.providerList.find((provider) => provider.name === entry), view.providerPanel.index, options.width)));
   }
   // An ANSWERED approval lingers on screen until its turn ends (project.ts keeps it with
   // the verdict) — that is a record, not an open question, so it hides the menu only while

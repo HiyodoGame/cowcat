@@ -6,7 +6,7 @@ import {
   type JsonRpcResponse,
   type RequestId,
 } from './jsonrpc.js';
-import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, Result, ResultTable, SessionSummary, TrustWithheld } from './methods.js';
+import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, ProviderSummary, Result, ResultTable, SessionSummary, TrustWithheld } from './methods.js';
 import { parseNotification, type NotificationName, type NotificationParams } from './notifications.js';
 import { PROTOCOL_VERSION } from './version.js';
 import type { Transport } from './transport.js';
@@ -60,6 +60,10 @@ export interface ProtocolClient {
   listCronJobs(sessionId: string): Promise<readonly CronJobSummary[]>;
   /** Remove one of this session's cron jobs; false when the id is not its live job. */
   removeCronJob(sessionId: string, jobId: string): Promise<boolean>;
+  /** The user layer's providers with key detection (ADR-165 ①). */
+  listProviders(): Promise<{ readonly providers: readonly ProviderSummary[] }>;
+  /** Write one provider entry (a variable NAME, never the secret) into the user config. */
+  setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }): Promise<void>;
   /** The host's workspace-trust snapshot for its own cwd (ADR-157 ②). */
   trustStatus(): Promise<{ readonly trusted: boolean; readonly withheld: TrustWithheld }>;
   /** Persist the host's cwd into the trust store; the running host stays as-is (ADR-157 ②). */
@@ -247,6 +251,14 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async removeCronJob(sessionId: string, jobId: string) {
       return (await request('cron.remove', { sessionId, jobId })).removed;
+    },
+
+    async listProviders() {
+      return request('providers.list', {});
+    },
+
+    async setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }) {
+      await request('provider.set', { name, ...fields });
     },
 
     async trustStatus() {

@@ -27,6 +27,7 @@ import { AttachmentUnavailableError, materializeAttachment } from '../adapters/a
 import { createSpanTranslator, initTelemetry, type TelemetryHandle } from '../adapters/otel/index.js';
 import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
 import { NodeFs } from '../adapters/fs.js';
+import { readUserProviders, writeUserProvider } from '../adapters/providers.js';
 import { NodePlatform } from '../adapters/platform.js';
 import { NodeProcess } from '../adapters/process.js';
 import { createSandboxExecutor } from '../adapters/sandbox/executor.js';
@@ -1259,6 +1260,31 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     rules,
     sandbox,
     configWarnings: warnings,
+
+    /**
+     * The user layer's providers with key detection (ADR-165 ①). Read from the FILE, not
+     * from the resolved config: the panel edits the document, and a resolved view would
+     * hide which layer a field came from.
+     */
+    async listProviders() {
+      const providers = await readUserProviders(paths.userConfig);
+      return {
+        providers: Object.entries(providers).map(([name, entry]) => ({
+          name,
+          baseUrl: entry.baseUrl ?? null,
+          apiKeyEnv: entry.apiKeyEnv ?? null,
+          // Detection uses the HOST's environment — the same process that would send
+          // the request — not whatever the client shell happens to have.
+          keySet: entry.apiKeyEnv !== undefined && (options.env[entry.apiKeyEnv] ?? '') !== '',
+        })),
+      };
+    },
+
+    async setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }) {
+      // The adapter owns the file and the atomic write; a corrupt document refuses
+      // rather than being replaced (ADR-165 ①).
+      await writeUserProvider(paths.userConfig, name, fields);
+    },
 
     /** The startup snapshot, not a live fact (ADR-157 ②): the host never hot-reloads. */
     trustStatus(): Promise<{ trusted: boolean; withheld: { rules: number; instructions: number; skills: number; mcpServers: number; hooks: number } }> {

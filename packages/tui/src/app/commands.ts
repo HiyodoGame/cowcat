@@ -21,6 +21,10 @@ export type CommandEffect =
   | { readonly kind: 'sessions'; readonly all: boolean }
   /** Open the `/model` picker (ADR-161 ②); the loop fetches the host's list. */
   | { readonly kind: 'modelPanel' }
+  /** Open the effort picker straight onto the CURRENT model (ADR-165 ③). */
+  | { readonly kind: 'effortPanel' }
+  /** Open the `/providers` panel (ADR-165 ③); the loop fetches the user layer. */
+  | { readonly kind: 'providerPanel' }
   /** Open the background-task panel (ADR-113); the loop owns the stop call. */
   | { readonly kind: 'tasks' }
   /** Open the `/cron` panel (ADR-143 ③); the loop owns the list and delete calls. */
@@ -112,6 +116,8 @@ export const COMMANDS: readonly TuiCommand[] = [  {
     summary: '显示 / 隐藏本会话修改的文件',
     run: (view) => ({ kind: 'view', view: toggleChanges(closePalette(view)) }),
   },
+  { name: 'effort', summary: '思考档位：直接选当前模型的推理力度', run: () => ({ kind: 'effortPanel' }) },
+  { name: 'providers', summary: '服务商：查看与编辑端点 / 密钥变量名（key 走环境变量）', run: () => ({ kind: 'providerPanel' }) },
   {
     name: 'model',
     summary: '模型选择器；/model <provider/preset> 直达切换',

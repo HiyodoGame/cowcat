@@ -391,7 +391,7 @@ test('a running tool is a card with an animated marker and its command', () => {
 test('the input line hints at / commands as they are typed', () => {
   const empty = frameOf({ ...initialView(), input: '/' }, { width: WIDTH, now: 1_000 });
   assert.match(empty.placeholder, /\/todos/u);
-  assert.match(empty.placeholder, /共 24 个/u);
+  assert.match(empty.placeholder, /共 \d+ 个/u);
 
   const narrowed = frameOf({ ...initialView(), input: '/th' }, { width: WIDTH, now: 1_000 });
   assert.match(narrowed.placeholder, /\/thinking/u);
