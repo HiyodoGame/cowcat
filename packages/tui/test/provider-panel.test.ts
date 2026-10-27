@@ -59,7 +59,7 @@ test('panel phases own arrows and Esc; Esc in the field menu backs out to the li
   // Esc in the field phase returns to the list, not out of the panel.
   const back = intentFor({ name: 'escape', ctrl: false }, view);
   assert.deepEqual(back, { kind: 'providerClose' });
-  const listed = { ...view, providerPanel: { index: 0, entry: null } };
+  const listed = { ...view, providerPanel: { index: 0, entry: null, query: '' } };
   assert.equal(closeProviderPanel(listed).providerPanel, null);
 });
 
@@ -82,8 +82,16 @@ test('/providers and /effort are first-class command effects (ADR-165 ③)', () 
   assert.equal(effort.run(initialView()).kind, 'effortPanel');
 });
 
-test('the frame mounts the provider panel in the dock', () => {
+test('the frame carries the providers dialog as a modal spec (ADR-166)', () => {
   const view = openProviderPanel(withProviderList(initialView(), PROVIDERS));
-  const dock = frameOf(view, { width: 90, height: 24, now: 0 }).dock ?? [];
-  assert.match(dock.map((row) => row.text).join('\n'), /服务商（2）/);
+  const frame = frameOf(view, { width: 90, height: 24, now: 0 });
+  const dialog = frame.dialog;
+  assert.ok(dialog !== undefined, 'an open provider panel produces a dialog');
+  assert.equal(dialog.title, '服务');
+  const group = dialog.groups[0];
+  assert.ok(group !== undefined);
+  const rows = group.rows;
+  assert.deepEqual(rows.map((row) => row.label), ['deepseek', 'selfhost']);
+  assert.equal(rows[0]?.mark, '✓');
+  assert.equal(rows[1]?.mark, undefined, 'a provider without its env var is not connected');
 });

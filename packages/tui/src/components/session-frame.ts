@@ -14,8 +14,7 @@ import { statusLine } from './status-bar.js';
 import { taskPanelLines } from './task-panel.js';
 import { cronPanelLines } from './cron-panel.js';
 import { sessionPanelLines } from './session-panel.js';
-import { modelPanelLines } from './model-panel.js';
-import { providerFieldLines, providerPanelLines } from './provider-panel.js';
+import { modelDialog, providerDialog } from '../app/dialog.js';
 import { trustCardLines } from './trust-card.js';
 import { changesPanelLines } from './changes-panel.js';
 import { permissionsPanelLines } from './permissions-panel.js';
@@ -100,15 +99,6 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.sessionPanel !== null) {
     dock.push(...sessionPanelLines(view.sessionList, view.sessionPanel.index, view.sessionId, options.width));
   }
-  if (view.modelPanel !== null) {
-    dock.push(...modelPanelLines(view.modelList, view.modelPanel.index, view.modelCurrent, view.modelPanel.preset, options.width));
-  }
-  if (view.providerPanel !== null) {
-    const entry = view.providerPanel.entry;
-    dock.push(...(entry === null
-      ? providerPanelLines(view.providerList, view.providerPanel.index, options.width)
-      : providerFieldLines(entry, view.providerList.find((provider) => provider.name === entry), view.providerPanel.index, options.width)));
-  }
   // An ANSWERED approval lingers on screen until its turn ends (project.ts keeps it with
   // the verdict) — that is a record, not an open question, so it hides the menu only while
   // the verdict is still pending, the same condition the keymap uses for the arrows.
@@ -135,14 +125,48 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   }
   const maxDock = options.height === undefined ? dock.length : Math.max(3, Math.floor(options.height * 0.4));
 
+  // The modal dialog (ADR-166): configuration choices float above everything as real
+  // components; the dock keeps only the run-state views (tasks, cron, todos).
+  const dialog =
+    view.modelPanel !== null
+      ? modelDialog(view.modelList, view.modelCurrent, view.modelPanel.query)
+      : view.providerPanel !== null
+        ? view.providerEdit !== null
+          ? providerEditDialog(view)
+          : providerDialog(view.providerList, view.providerPanel.query)
+        : undefined;
+
   return {
     body,
     dock: dock.slice(0, maxDock),
     aside: asideLines(view, options),
+    ...(dialog === undefined ? {} : { dialog }),
     images,
     status: statusLine(view, options),
     placeholder: placeholderFor(view, copyFor(view.lang)),
     scroll: view.scrollOffset,
+  };
+}
+
+/** The Connect 式 input step: one field, typed in the dialog, enter submits (ADR-166 ③). */
+function providerEditDialog(view: TuiView): import('../app/dialog.js').DialogSpec {
+  const edit = view.providerEdit;
+  if (edit === null) return { title: '', groups: [], footer: [] };
+  const fieldLabel = edit.field === 'name' ? '服务商 ID' : edit.field === 'baseUrl' ? 'Base URL' : 'API Key 环境变量名';
+  const placeholder =
+    edit.field === 'name'
+      ? '例如 deepseek'
+      : edit.field === 'baseUrl'
+        ? '例如 https://api.deepseek.com/v1'
+        : '例如 DEEPSEEK_API_KEY（密钥本身走环境变量）';
+  return {
+    title: edit.field === 'name' ? '新增服务商' : `编辑 ${edit.name} · ${fieldLabel}`,
+    input: { placeholder, value: edit.value },
+    groups: [],
+    footer: [
+      { key: 'enter', label: '提交' },
+      { key: 'esc', label: '取消' },
+    ],
   };
 }
 

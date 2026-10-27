@@ -10,6 +10,7 @@ import {
   openModelPanel,
   pickModelEffort,
   withModelList,
+  withModelQuery,
 } from '../src/app/view.js';
 import { frameOf } from '../src/components/session-frame.js';
 import { modelPanelLines } from '../src/components/model-panel.js';
@@ -61,13 +62,28 @@ test('pickModelEffort resolves the highlighted effort and closes the panel', () 
   assert.deepEqual(picked, { view: closeModelPanel(moved), preset: 'openai/gpt-6.1-sol', effort: 'high' });
 });
 
-test('the panel owns arrows and Esc while open; the frame mounts it in the dock', () => {
+test('the dialog owns arrows and Esc; the frame carries it as a modal spec (ADR-166)', () => {
   const view = panelView();
   assert.deepEqual(intentFor({ name: 'down', ctrl: false }, view), { kind: 'modelMove', delta: 1 });
   assert.deepEqual(intentFor({ name: 'escape', ctrl: false }, view), { kind: 'modelClose' });
-  const dock = frameOf(view, { width: 80, height: 24, now: 0 }).dock ?? [];
-  assert.match(dock.map((row) => row.text).join('\n'), /模型（3） · ↑↓ 选择/);
+  // Not a dock panel any more: the frame produces a dialog the screen mounts as a
+  // centred floating window.
+  const frame = frameOf(view, { width: 80, height: 24, now: 0 });
+  const dialog = frame.dialog;
+  assert.ok(dialog !== undefined, 'an open model panel produces a dialog');
+  assert.equal(dialog.title, '选择模型');
+  const rows = dialog.groups.flatMap((group) => group.rows);
+  assert.equal(rows.length, 3);
+  assert.equal(dialog.query, '');
   assert.equal(closeModelPanel(view).modelPanel, null);
+});
+
+test('the search filters model rows and the dialog reflects the query (ADR-166 ②)', () => {
+  const queried = withModelQuery(panelView(), 'glm');
+  const frame = frameOf(queried, { width: 80, height: 24, now: 0 });
+  const rows = frame.dialog?.groups.flatMap((group) => group.rows) ?? [];
+  assert.deepEqual(rows.map((row) => row.label), ['zai/glm-5.3-flash']);
+  assert.equal(frame.dialog?.query, 'glm');
 });
 
 test('an empty list renders the configure hint instead of an empty box', () => {
