@@ -423,17 +423,22 @@ test('the todo panel shows what is happening now, not just the plan', () => {
       ],
     }),
   ]);
-  // Todos live in the LEFT RAIL now (ADR-167), not the dock.
-  const rail = frameOf(view, { width: WIDTH, now: 0 }).leftRail ?? [];
-  const railText = rail.map((row) => row.text).join('\n');
-  assert.match(railText, /待办 1\/3/);
-  assert.match(railText, /\[▸\] 在加输入校验/);
-  assert.match(railText, /\[ \] 写测试/);
-  assert.match(railText, /\[x\] 跑一遍/);
+  // Todos live in the LEFT RAIL now (ADR-168), as a structured panel — no `[ ]` glyphs:
+  // the in-progress row is the accent voice, finished ones are dim.
+  const railSpec = frameOf(view, { width: WIDTH, now: 0 }).leftRail;
+  assert.ok(railSpec !== undefined);
+  const todoPanelSpec = railSpec.panels.find((panel) => panel.title === '待办 1/3');
+  assert.ok(todoPanelSpec !== undefined);
+  assert.deepEqual(
+    todoPanelSpec.rows.map((row) => row.text),
+    ['在加输入校验', '写测试', '跑一遍'],
+  );
+  assert.equal(todoPanelSpec.rows[0]?.accent, true);
+  assert.equal(todoPanelSpec.rows[1]?.dim, undefined);
 
-  // Hidden on request, without touching the log.
-  const hidden = frameOf({ ...view, todosVisible: false }, { width: WIDTH, now: 0 }).leftRail ?? [];
-  assert.doesNotMatch(hidden.map((row) => row.text).join('\n'), /待办 1\/3/);
+  // Hidden on request, without touching the log: no panel at all.
+  const hidden = frameOf({ ...view, todosVisible: false }, { width: WIDTH, now: 0 }).leftRail;
+  assert.equal((hidden?.panels ?? []).some((panel) => panel.title.startsWith('待办')), false);
 });
 
 test('the palette draws the same table the /commands run through', () => {
@@ -637,10 +642,11 @@ test('a running sub-agent is a panel; a finished one collapses to its notice', (
     }),
   ]);
   const frame = frameOf(view, { width: WIDTH, now: 5_000 });
-  const text = (frame.leftRail ?? []).map((row) => row.text).join('\n');
+  const railSpec = frame.leftRail;
+  const text = (railSpec?.panels ?? []).map((panel) => [panel.title, ...panel.rows.map((row) => row.text)].join('\n')).join('\n');
   assert.match(text, /子代理/u);
   assert.match(text, /explore/u);
-  assert.match(text, / · \d+s/u);
+  assert.match(text, /\d+s/u);
 
   const done = project(
     view,

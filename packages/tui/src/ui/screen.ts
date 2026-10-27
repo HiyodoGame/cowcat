@@ -14,6 +14,7 @@ import {
 import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import type { Line } from './line.js';
 import type { DialogSpec } from '../app/dialog.js';
+import type { AsideSpec, LeftRailSpec, RailPanel } from '../app/rails.js';
 
 /**
  * The one file that knows about opentui (ADR-066 ③).
@@ -77,10 +78,10 @@ export interface ScreenSpec {
   readonly dock?: readonly Line[];
   /** The modal dialog (ADR-166): mounted as a centred floating window above everything. */
   readonly dialog?: import('../app/dialog.js').DialogSpec;
-  /** The left rail (ADR-167): todos, tasks, sub-agents, the mascot — run state at a glance. */
-  readonly leftRail?: readonly Line[];
-  /** Right-rail session facts (ADR-163); shown only on wide terminals, never a second layout. */
-  readonly aside?: readonly Line[];
+  /** The left rail (ADR-168): structured panels + mascot, mounted as components. */
+  readonly leftRail?: import('../app/rails.js').LeftRailSpec;
+  /** The right rail (ADR-168): titled info panels, mounted as components. */
+  readonly aside?: import('../app/rails.js').AsideSpec;
   readonly status: Line;
   readonly placeholder: string;
   readonly images?: readonly ImageSlot[];
@@ -131,6 +132,12 @@ export interface Screen {
 function truncatePlain(text: string, maxWidth: number): string {
   if (text.length <= maxWidth) return text;
   return `${text.slice(0, Math.max(0, maxWidth - 1))}…`;
+}
+
+/** A rail panel instance (ADR-168): its box plus a row setter the screen feeds each frame. */
+interface Panel {
+  readonly box: BoxRenderable;
+  setRows(rows: readonly { readonly text: string; readonly dim?: boolean; readonly accent?: boolean }[]): void;
 }
 
 export function createScreen(renderer: CliRenderer, theme: Theme, options: { readonly title: string }): Screen {
@@ -396,6 +403,7 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     flexDirection: 'column',
   });
   let asideMounted = false;
+  const asidePanels: Panel[] = [];
   const asideLines: TextRenderable[] = [];
   const asideSpecs: (Line | undefined)[] = [];
 
@@ -405,10 +413,88 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
    * where a 100-column reading column plus 26 of rail still leaves the transcript
    * honest; below that the rail would be the layout, not an aside.
    */
+  /** One titled panel inside a rail: a coloured header and a pooled stack of rows (ADR-168). */
+  function makePanel(title: string, width: number): Panel {
+    const box = new BoxRenderable(renderer, {
+      id: `panel-${title}-${String(Math.round(Math.random() * 1e6))}`,
+      width,
+      flexDirection: 'column',
+      marginBottom: 1,
+    });
+    const header = new BoxRenderable(renderer, {
+      id: `panel-header-${title}-${String(Math.round(Math.random() * 1e6))}`,
+      width: '100%',
+      height: 1,
+      backgroundColor: RGBA.fromHex('#A8C34A'),
+    });
+    header.add(new TextRenderable(renderer, {
+      id: `panel-header-text-${title}-${String(Math.round(Math.random() * 1e6))}`,
+      content: ` ${title}`,
+      fg: RGBA.fromHex('#141419'),
+      attributes: createTextAttributes({ bold: true }),
+      wrapMode: 'none',
+      width: '100%',
+      height: 1,
+    }));
+    box.add(header);
+    const rowsBox = new BoxRenderable(renderer, {
+      id: `panel-rows-${title}-${String(Math.round(Math.random() * 1e6))}`,
+      width: '100%',
+      flexDirection: 'column',
+    });
+    box.add(rowsBox);
+    const rowTexts: TextRenderable[] = [];
+    return {
+      box,
+      setRows(rows: readonly { readonly text: string; readonly dim?: boolean; readonly accent?: boolean }[]) {
+        for (const extra of rowTexts.splice(rows.length)) rowsBox.remove(extra);
+        rows.forEach((row, index) => {
+          let text = rowTexts[index];
+          if (text === undefined) {
+            text = new TextRenderable(renderer, {
+              id: `panel-row-${title}-${String(index)}-${String(Math.round(Math.random() * 1e6))}`,
+              content: '',
+              wrapMode: 'none',
+              width: '100%',
+              height: 1,
+            });
+            rowTexts[index] = text;
+            rowsBox.add(text);
+          }
+          text.content = ` ${row.text}`;
+          text.fg = row.accent === true
+            ? RGBA.fromHex('#4A9EDA')
+            : row.dim === true
+              ? RGBA.fromHex('#8A8A94')
+              : RGBA.defaultForeground();
+        });
+      },
+    };
+  }
+
+  /** Pool the panels of one rail to the spec's panel count and feed each its rows. */
+  function renderRailPanels(
+    rail: BoxRenderable,
+    pool: Panel[],
+    panels: readonly { readonly title: string; readonly rows: readonly { readonly text: string; readonly dim?: boolean; readonly accent?: boolean }[] }[],
+    width: number,
+  ): void {
+    for (const extra of pool.splice(panels.length)) rail.remove(extra.box);
+    panels.forEach((spec, index) => {
+      let panel = pool[index];
+      if (panel === undefined) {
+        panel = makePanel(spec.title, width);
+        pool[index] = panel;
+        rail.add(panel.box);
+      }
+      panel.setRows(spec.rows);
+    });
+  }
+
   const ASIDE_MIN_WIDTH = 120;
 
-  // The LEFT rail (ADR-167): todos / tasks / sub-agents / mascot. Same visibility rule
-  // as the right rail — a narrow terminal is the classic layout, byte for byte.
+  // The LEFT rail (ADR-167/168): todos / tasks / sub-agents / mascot, as COMPONENTS.
+  // Same visibility rule as the right rail — a narrow terminal is the classic layout.
   const LEFT_RAIL_WIDTH = 24;
   const leftRailBox = new BoxRenderable(renderer, {
     id: 'cowcat-leftrail',
@@ -417,8 +503,16 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     flexDirection: 'column',
   });
   let leftRailMounted = false;
-  const leftRailLines: TextRenderable[] = [];
-  const leftRailSpecs: (Line | undefined)[] = [];
+  const leftRailPanels: Panel[] = [];
+  const mascotText = new TextRenderable(renderer, {
+    id: 'cowcat-mascot',
+    content: '',
+    fg: resolve(theme, 'textDim'),
+    wrapMode: 'none',
+    width: '100%',
+    marginTop: 1,
+  });
+  leftRailBox.add(mascotText);
 
   function leftRailVisible(): boolean {
     return renderer.width >= ASIDE_MIN_WIDTH && process.env.COWCAT_SIDEBAR !== 'off';
@@ -614,8 +708,10 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       // measurement still holds); `COWCAT_WIDTH=full` is the explicit way out. A visible
       // aside has already been paid for out of the terminal's width, so the reading
       // column shrinks by exactly its width — cards must fit what they actually get.
-      const base = process.env.COWCAT_WIDTH === 'full' ? renderer.width - 2 : Math.min(renderer.width - 2, READING_WIDTH);
       const rail = (asideVisible() ? ASIDE_WIDTH + 1 : 0) + (leftRailVisible() ? LEFT_RAIL_WIDTH + 1 : 0);
+      // Three-column mode is full width (the rails own their columns); the solo mode
+      // keeps the 100-column reading measurement (ADR-163).
+      const base = rail > 0 || process.env.COWCAT_WIDTH === 'full' ? renderer.width - 2 : Math.min(renderer.width - 2, READING_WIDTH);
       return Math.max(8, base - rail);
     },
     contentHeight() {
@@ -652,32 +748,47 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       // The dialog rides every update: its content is frame data like everything else.
       if (spec.dialog !== undefined) updateDialog(spec.dialog);
       else hideDialog();
-      // The aside mounts only while the terminal is wide enough; mounting is a page child
-      // add/remove, so the narrow layout is exactly the pre-sidebar layout (ADR-163).
+      // The rails are COMPONENTS (ADR-168): each rail is a column of titled panels with
+      // a coloured header; rows are pooled Text renderables updated in place. Mounting
+      // is visible-toggle on statically-ordered children, so the position can never drift.
       const wantAside = spec.aside !== undefined && asideVisible();
       const wantLeft = spec.leftRail !== undefined && leftRailVisible();
       if (wantLeft !== leftRailMounted) {
-        // Index 0: the LEFT rail goes left of the main column, however many times the
-        // aside has been added and removed before it.
+        // Index 0: left of the main column, whichever rails mounted before it.
         if (wantLeft) page.add(leftRailBox, 0);
         else page.remove(leftRailBox);
         leftRailMounted = wantLeft;
       }
-      const leftRows = spec.leftRail;
-      if (wantLeft && leftRows !== undefined) {
-        mountLines(leftRailBox, leftRailLines, leftRailSpecs, leftRows, 0, leftRows.length, 'cowcat-left');
+      if (wantLeft && spec.leftRail !== undefined) {
+        renderRailPanels(leftRailBox, leftRailPanels, spec.leftRail.panels, LEFT_RAIL_WIDTH - 1);
+        mascotText.content = spec.leftRail.mascot.join('\n');
+        mascotText.height = spec.leftRail.mascot.length;
+        mascotText.visible = true;
+      } else {
+        mascotText.visible = false;
       }
       if (wantAside !== asideMounted) {
         if (wantAside) page.add(asideBox);
         else page.remove(asideBox);
         asideMounted = wantAside;
       }
-      const asideRows = spec.aside;
-      if (wantAside && asideRows !== undefined) {
-        mountLines(asideBox, asideLines, asideSpecs, asideRows, 0, asideRows.length, 'cowcat-aside');
+      if (wantAside && spec.aside !== undefined) {
+        renderRailPanels(
+          asideBox,
+          asidePanels,
+          spec.aside.panels.map((panel) => ({
+            title: panel.title,
+            rows: panel.rows.map((row) => ({
+              text: `${row.label}  ${row.value}`,
+              ...(row.valueAccent === true ? { accent: true } : {}),
+            })),
+          })),
+          ASIDE_WIDTH - 1,
+        );
       }
-      // Full mode lifts the page's own cap; default mode keeps the reading column.
-      page.maxWidth = process.env.COWCAT_WIDTH === 'full' ? 100_000 : READING_WIDTH;
+      // Three-column mode is FULL WIDTH — the rails already own their columns, and a
+      // 100-column cap is what squeezed the middle column into a sliver (ADR-168).
+      page.maxWidth = wantAside || wantLeft ? 100_000 : process.env.COWCAT_WIDTH === 'full' ? 100_000 : READING_WIDTH;
       status.content = spec.status.text;
       status.fg = resolve(theme, spec.status.token);
       input.placeholder = spec.placeholder;

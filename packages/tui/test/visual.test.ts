@@ -141,7 +141,7 @@ test('a wide terminal mounts the three-column layout: left rail, aside with git 
     assert.match(frame, /在改代码/);
     assert.match(frame, /后台任务/);
     assert.match(frame, /npm test/);
-    assert.match(frame, /\^\.\^/, 'the mascot is on the rail');
+        assert.match(frame, /\^\.o/,'the mascot is on the rail (running frame 2)');
     assert.match(frame, /上下文|会话/, 'the right rail is the info column');
   } finally {
     await dispose();
