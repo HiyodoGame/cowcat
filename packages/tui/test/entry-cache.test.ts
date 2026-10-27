@@ -5,6 +5,7 @@ import { initialView, type Entry, type TuiView } from '../src/app/view.js';
 import { line } from '../src/ui/line.js';
 import { graphemes } from '../src/text/width.js';
 import { wrap } from '../src/text/wrap.js';
+import { textBlock } from '../src/ui/scene.js';
 
 function toolEntry(): Entry {
   return {
@@ -34,7 +35,7 @@ test('entry rendering is reused only while every rendering dependency is unchang
   let renders = 0;
   const cached = createEntryCache(() => {
     renders += 1;
-    return { lines: [line(`render ${String(renders)}`)], images: [] };
+    return textBlock('entry', [line(`render ${String(renders)}`)]);
   });
   const entry = toolEntry();
   const base = viewWithCall(initialView());

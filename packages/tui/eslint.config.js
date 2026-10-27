@@ -20,15 +20,10 @@ export default tseslint.config(
   // directory that happened to hold the bin. `packages/cli` is the one package allowed to
   // import both, and it is not the frontend (ADR-062 ③).
   //
-  // T10 added the second half of ADR-066 ③: **only `ui/screen.ts` (the renderables) and
-  // `run.ts` (the renderer's lifecycle) may import it**. CI taught this the hard way — the
-  // first version said "only screen.ts", and `src/smoke.ts` (a test helper) and `run.ts`
-  // (which calls `createCliRenderer`) both told it otherwise. Two files, each with one job;
-  // everything else produces `Line[]` and is testable without a terminal.
-  //
-  // Two blocks, because `no-restricted-imports` does not merge — the later block *replaces*
-  // the rule for the files it matches, so those two files get their own copy with the
-  // renderer allowed and the kernel still banned.
+  // ADR-171 moves all renderer-aware primitives under `ui/`; feature components still produce
+  // pure SceneNode data. Only that adapter directory and `run.ts` may import OpenTUI.
+  // The kernel ban applies independently in both blocks because no-restricted-imports replaces
+  // rather than merges when a later files block matches.
   {
     files: ['src/**/*.ts'],
     rules: {
@@ -44,7 +39,7 @@ export default tseslint.config(
             {
               group: ['@opentui/*', '@opentui'],
               message:
-                'only src/ui/screen.ts and src/run.ts touch the renderer; everything else produces Line[] so it can be tested without a terminal (ADR-066 ③)',
+                'only src/ui/** (renderable adapters) and src/run.ts (renderer lifecycle) touch OpenTUI; feature components produce pure SceneNode data (ADR-171)',
             },
           ],
         },
@@ -52,8 +47,8 @@ export default tseslint.config(
     },
   },
   {
-    // The two renderer-aware files. The kernel ban still applies here; the renderer does not.
-    files: ['src/ui/screen.ts', 'src/run.ts'],
+    // Renderer-aware adapters and lifecycle. The kernel ban still applies here.
+    files: ['src/ui/**/*.ts', 'src/run.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -76,6 +71,7 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-floating-promises': 'off',
       '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/no-unnecessary-condition': 'off',
     },
   },
   // ADR-059's ban on importing the kernel and its adapters is in the block above, and it

@@ -1,8 +1,8 @@
 import type { AttachmentView, Entry, ToolCallView, TuiView } from '../app/view.js';
 import { graphemes, stringWidth } from '../text/width.js';
-import type { TranscriptLines } from './transcript.js';
+import type { SceneNode } from '../ui/scene.js';
 
-export type EntryRenderer = (entry: Entry, view: TuiView, width: number) => TranscriptLines;
+export type EntryRenderer = (entry: Entry, view: TuiView, width: number) => SceneNode;
 
 interface CachedEntry {
   readonly width: number;
@@ -10,7 +10,7 @@ interface CachedEntry {
   readonly expanded: boolean;
   readonly call: ToolCallView | undefined;
   readonly attachments: readonly (AttachmentView | undefined)[];
-  readonly part: TranscriptLines;
+  readonly part: SceneNode;
 }
 
 export function createEntryCache(render: EntryRenderer): EntryRenderer {

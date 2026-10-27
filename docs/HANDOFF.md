@@ -2,65 +2,67 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-27（全项目审查驱动的正确性与性能优化）**。
-> 交接时仓库状态：**`fix/review-optimization` 分支，基线 main @ `fc41d89`，改动未提交**；四包全绿（TUI 需 Node 26）；ADR-168~170 已落表。
+> 最近一次更新：**2026-10-28（TUI 原生组件化与奶牛猫动效）**。
+> 交接时仓库状态：**本地 `main` 已合入 `feat/component-tui`，基线 `61979b5`，未推送远端**。
 >
-> **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实 git 跑出的验收记录；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
+> **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实终端验收；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 
 ---
 
 ## 1. 本批完成
 
-按“正确性 → TUI 性能 → 会话 I/O → 结构与文档”顺序实施，所有行为修复均先写回归测试并确认原实现失败。
+按“原生组件契约 → 布局与业务组件 → 像素猫与状态机 → 真实渲染与全量验证”实施。协议、内核事件格式和端口未改。
 
 | 类别 | 内容 | 结果 |
 |---|---|---|
-| 配置写入 | `provider.set` 按配置文件串行完整读—改—写；唯一临时文件；`dirname` | 20 并发写入全部保留；Windows 不再产生 `config.jso` |
-| usage | ADR-169：`model.usage/message` 可选 `invocation`；同调用累计值替换、跨调用累加；assistant 消息补齐锚点 | 修复 Anthropic 用量/缓存翻倍及上下文重复估算；旧日志兼容 |
-| 侧栏 | 成本复用 `costOf/formatCost`；变更组改称“CowCat 变更”；Panel 用主题 token | 修复成本放大 100 万倍；自定义主题实测生效 |
-| TUI 性能 | `entry-cache.ts` 按 entry 与真实依赖缓存；思考只在换行边界可证等价时缩短，否则完整 wrap | 最终探针：frameOf 100 轮 176.17→0.09ms，200 轮 352.27→0.16ms；思考 tick 26.07→20.40ms；含空白/CJK 尾部逐行等价有回归 |
-| 会话 I/O | ADR-170：索引读有界头尾；`EventStore.readAfter`；打开优先快照+增量；host.close 保存快照 | 普通索引不再全读；快照打开不再 `readAll`；损坏/超长记录仍全量回退 |
-| `@` 候选 | attach 改异步遍历，generation 丢弃迟到结果 | attach 不等待目录扫描，旧会话结果不覆盖新会话 |
-| 发布 | tarball 安装检查增加隔离 `COWCAT_HOME` 的 doctor（当前 Node + Node 26.12） | `--install` 实测通过，无模型/密钥需求 |
+| 组件契约 | ADR-171：纯数据 `SceneNode` + 稳定 key + `ui/` 原生 renderable 适配层 | 不再以 `╭/▌/▸/[x]` 等字符模拟边框、色条、选择或复选状态；Markdown 与 diff 正文保留 |
+| 基础组件 | `scene.ts`、`primitives.ts`、`composer.ts`、`dialog.ts` | Panel、ChoiceList、Status、Sprite、Image 统一边框、背景、点击和原位更新；旧 `ui/card.ts` 删除 |
+| 布局 | ≥144 三栏，104–143 双栏，<104 单栏；中栏阅读宽度上限 100 | 中屏不再同时挤压正文；长会话 ID 与路径可换行显示；窄屏活动信息回 dock |
+| 对话与操作 | 消息、工具、审批、计划、信任、任务、cron、会话、权限、变更、命令菜单、状态栏全部迁移 | 选中态使用整行背景；审批主体/规则/警告完整换行；短终端保留审批选项；附件说明在图片前 |
+| 奶牛猫 | 固定 24×16 像素精灵：白毛、黑色斑块、粉色鼻尖、眼睛、身体与尾巴 | 不依赖 ASCII 或终端图片协议；idle/thinking/tools/approval/success/failed 六态 |
+| 状态与动效 | 主回合接入，优先级为待审批 > 工作 > 思考 > 短暂结果反馈 > idle | 200ms 活跃帧与约 4 秒 idle 眨眼；`COWCAT_ANIMATIONS=off` 冻结；隐藏/销毁停止计时器 |
+| 状态栏 | 主活动 + 模型/模式/时间/上下文/用量等结构化事实 | 窄宽度优先保留当前动作，不再用完整会话 ID 和全部指标堆满一行 |
+| 真实问题修复 | 原生 borderColor 后写会重开边框；Rail 高度因此少一行 | 先设置颜色再禁用边框；真实帧证明待办、路径和 ID 恢复显示 |
+| 消费方与探针 | CLI 测试读取场景结构；lint 允许 `ui/**` 与 `run.ts` 接触 OpenTUI；smoke 覆盖信任门与二次退出 | 完整协议回合、分层规则与真实进程退出均验证 |
 
-## 2. 测试基线
+## 2. 验证结果
 
-| 包 | 通过 | 说明 |
+| 包 / 检查 | 结果 | 证据 |
 |---|---|---|
-| cowcat | 932/948 | 16 skip 平台既有项；新增 provider、usage、索引/快照/宿主回归 |
-| protocol | 47/47 | 无变化 |
-| tui | 200/200 | **Node 26.12.0**（`npx --yes node@26.12.0 --test dist/test/`） |
-| cli | 41/41 | 无变化 |
+| protocol | 47/47 | `npm --prefix packages/protocol test` |
+| cowcat | 932 通过、16 个既有平台 skip，0 fail | `npm --prefix packages/cowcat test` |
+| tui | **201/201** | Node 26.12，`npx --yes node@26.12.0 --test "packages/tui/dist/test/**/*.test.js"`；build + ESLint 同过 |
+| cli | 41/41 | `npm --prefix packages/cli test`；真实协议审批回合通过 |
+| 原生渲染 | 80/120/150 档、CJK、长路径、审批、图片、猫咪颜色与主题 token | `createTestRenderer` 字符帧与 color spans；新 golden 逐帧检查 |
+| 性能 | frameOf：100 轮约 0.07ms、200 轮约 0.09ms；思考 tick 约 16.31ms | `node tools/tui-perf-probe.mjs`；保留 entry cache 与可见区域挂载 |
+| 探针 | 分层、OpenTUI API、Impeccable detector | `tools/lint-probe.mjs`、`tools/tui-api-probe.mjs`、Impeccable `detect --json` |
+| 真实进程 | 信任选择、会话落盘、Ctrl+C 退出、锁释放 | Node 26.12 `tools/tui-smoke.mjs`，隔离 `COWCAT_HOME` |
 
-探针与守卫：`lint-probe` 全过、策略 16/16、`tui-perf-probe` 已复测、`check-tarball --install` 含 doctor 通过。**CI 三平台为权威门。**
+## 3. 独立审查与修复
 
-## 3. 本批 ADR
+独立 reviewer 找到 1 Critical、6 Important 和 2 Minor，全部已在同一修复批次处理：
 
-- **ADR-168** 双栏组件化布局：结构化 Panel spec、page 全宽，补上 #226 的决策记录。
-- **ADR-169** usage invocation：原始事实全留痕，账单同调用取最后值，锚点随 assistant 消息补齐。
-- **ADR-170** 会话读取分层：索引有界头尾、快照+`readAfter` 增量回放、host.close 尽力保存快照。
+- **长审批安全**：正文使用原生 `ScrollText`，固定允许/拒绝操作，初始显示命令尾部，鼠标回看时不再自动拉回。
+- **组件正确性**：按 key 在指定索引替换；图片每次同步当前 source；`COWCAT_WIDTH=full` 同步移除中栏宽度上限。
+- **长列表与状态**：模型对话框使用滚动列表和固定 footer；provider/effort 的状态以可读「当前」文本保留。
+- **思考与计时**：窄屏独立推进思考，关闭动画立即完整揭示；主回合与后台工作立即切换活跃帧，idle 精确安排眨眼开闭。
+- **测试**：补充真实渲染回归和 `runTui` 集成验证，覆盖 80 列、120 列、关闭动画、鼠标滚动与退出。
 
-## 4. 未验证 / 风险（登记，不声称已解决）
+## 4. 本批 ADR
 
-- **产物级验收**：本批 tarball 与 doctor 已验，但 beta-checklist 中真实模型、真实终端 30 分钟、各平台项仍需按清单执行，不能以单测全绿替代。
-- **`readAfter` 的边界**：Jsonl 流式跳过旧事件，减少解码与常驻内存，但仍需顺序读取文件；不宣称完全消除磁盘 I/O。
-- **真实 Anthropic 累计用量**：已用真实协议夹具与内核/TUI 测试固定语义，未在本批调用付费端点复测。
-- **P3 挂起**：`!` 前缀直跑 bash、Ctrl+V 图片粘贴。
-- **MemoryPort ADR 草案**仍待评审（`docs/architecture/adr-memory-port-draft.md`）。
+- **ADR-171** 所有装饰使用原生组件树；三档响应式布局；固定尺寸奶牛像素精灵；保留纯 frame、keyed 更新与可见区域挂载。
+- 既有 ADR-167 的 ASCII 猫与统一 120 列断点、ADR-164 的字符色条标题由新决策替代；`06-frontend.md` 的目录与分层说明已同步。
 
-## 5. 下一步建议
+## 5. 未验证 / 风险
 
-1. 在分支评审后合入本批，再推进 beta.5 与 beta-checklist 的产物级验收。
-2. 若会话规模继续增长，为 Jsonl 增加字节水位/索引，进一步减少 `readAfter` 的顺序 I/O。
-3. P3 两项按需排期；MemoryPort 草案评审沿用现有编号续排。
+- **真实终端观感**：真实进程启动与退出已验证，但没有取得新分支的可见窗口截图；不同终端的色彩、闪烁、原生图片协议与长时间使用仍需按 beta-checklist 人眼验收。
+- **原生图片协议**：headless 证明 `ImageRenderable` 的布局及 blocks 回退；kitty/sixel 未实测。
+- **远端 CI**：本批没有推送或运行 GitHub Actions，三平台 CI 仍需作为合并前权威门。
+- **真实模型**：本批不调用付费模型端点，不新增模型行为声明。
+- **公开 TUI 组件 API**：旧的字符卡片导出被结构化组件替代；这是刻意的界面与渲染契约重构，不保留旧装饰兼容层。
 
-## 6. 构建与测试（不变）
+## 6. 下一步建议
 
-```bash
-cd packages/cowcat && npm test        # pretest = tsc + ESLint；改完必须跑这个
-cd packages/protocol && npm test
-cd packages/tui && npm test           # 本机用 npx --yes node@26.12.0 --test dist/test/
-cd packages/cli && npm test
-```
-
-探针：`node tools/lint-probe.mjs`、`node tools/policy-decide-probe.mjs`、`node tools/check-tarball.mjs --install`、`node tools/tui-perf-probe.mjs`。
+1. 完成独立代码审查与全量验证后，由用户决定提交、推送分支和创建 PR；不直推 main。
+2. 在目标终端检查 80/120/160 列、关闭动画、长对话滚动、审批与真实图片协议。
+3. 合并后按 beta-checklist 做真实模型与持续使用验收。

@@ -67,6 +67,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
           return table;
         })(),
         turnStartedAt: number(event, 'ts') ?? base.turnStartedAt,
+        turnSettledAt: null,
         slashIndex: 0,
         // A new turn cannot have output from the previous one attached to it.
         toolOutput: {},
@@ -94,6 +95,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         // Its live tail is a view of a call that no longer exists; the durable output is in
         // the transcript already.
         toolOutput: done ? {} : base.toolOutput,
+        turnSettledAt: done ? number(event, 'ts') : base.turnSettledAt,
       };
     }
 

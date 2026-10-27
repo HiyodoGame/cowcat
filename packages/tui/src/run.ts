@@ -7,6 +7,7 @@ import { loadFileCandidates } from './app/atcomplete.js';
 import { lastToolCallId, paletteCommandAt, paletteMatches, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
 import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
+import { activityDelay } from './app/activity.js';
 import { costOf, formatCost } from './app/meter.js';
 import { addNotice, closeView, project, streamReasoning, streamText, streamToolOutput } from './app/project.js';
 import { latestAssistantText, osc52, sessionMarkdown } from './app/workflow.js';
@@ -163,6 +164,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     // because a component that read it would not be a pure function. So are the cwd (the
     // aside names the workspace) and the rail mode (narrow terminals fall back).
     if (disposed) return;
+    if (animationsOff) {
+      const remaining = Array.from(view.current.reasoningStream).length - view.current.reasoningShown;
+      if (remaining > 0) view.current = advanceReasoning(view.current, remaining);
+    }
     screen.update(
       frameOf(view.current, {
         width: screen.contentWidth(),
@@ -170,6 +175,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         now: Date.now(),
         cwd: process.cwd(),
         rails: screen.wideRails(),
+        activityRail: screen.activityRail(),
       }),
     );
     syncActivity();
@@ -192,35 +198,27 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   };
 
   /**
-   * The spinner tick, and its off switch.
-   *
-   * Only while a turn is running: an idle terminal must not be repainted ten times a second,
-   * and a snapshot with a fixed clock stays deterministic. `COWCAT_ANIMATIONS=off` keeps the
-   * status word but freezes the cell, which is the CI- and screenshot-friendly mode.
+   * Mascot frames and reasoning reveal share one scheduler, but not one visibility rule:
+   * narrow terminals still reveal reasoning, and reduced motion reveals it immediately.
+   * A visible idle cat schedules only exact blink deadlines. Every timer is torn down on exit.
    */
-  const activity: { timer: ReturnType<typeof setInterval> | null } = { timer: null };
+  const activity: { timer: ReturnType<typeof setTimeout> | null; delay: number | null } = { timer: null, delay: null };
   const animationsOff = !animationsEnabled(process.env);
   const wheelStep = scrollStep(process.env);
   const syncActivity = (): void => {
-    const state = view.current.turn?.state;
-    const running = state !== undefined && !TERMINAL.has(state);
-    const want = running && !animationsOff && !disposed;
-    if (want && activity.timer === null) {
-      // 20fps: fast enough that a spinner reads as motion and a chunk of reasoning can be
-      // revealed a few characters at a time, slow enough that a long transcript is not
-      // rebuilt 60 times a second.
-      activity.timer = setInterval(() => {
-        const total = Array.from(view.current.reasoningStream).length;
-        const remaining = total - view.current.reasoningShown;
-        if (remaining > 0) {
-          view.current = advanceReasoning(view.current, Math.max(2, Math.ceil(remaining / 6)));
-        }
-        draw();
-      }, 50);
-    } else if (!want && activity.timer !== null) {
-      clearInterval(activity.timer);
+    const delay = disposed ? null : activityDelay(view.current, Date.now(), screen.activityRail(), !animationsOff);
+    if (activity.timer !== null && activity.delay === delay) return;
+    if (activity.timer !== null) clearTimeout(activity.timer);
+    activity.timer = null;
+    activity.delay = delay;
+    if (delay === null) return;
+    activity.timer = setTimeout(() => {
       activity.timer = null;
-    }
+      const total = Array.from(view.current.reasoningStream).length;
+      const remaining = total - view.current.reasoningShown;
+      if (remaining > 0) view.current = advanceReasoning(view.current, Math.max(2, Math.ceil(remaining / 6)));
+      draw();
+    }, delay);
   };
 
   let quit: (code: number) => void = () => undefined;

@@ -337,6 +337,8 @@ export interface TuiView {
   readonly contextWindow: number | null;
   /** When the current turn opened, so the status bar can show elapsed time. */
   readonly turnStartedAt: number | null;
+  /** The terminal transition's event time, used only for a bounded mascot reaction. */
+  readonly turnSettledAt: number | null;
   /** Which `/` menu row is highlighted. */
   readonly slashIndex: number;
   /** Attachment bytes, by path: the log has the reference, this is where the pixels land. */
@@ -490,6 +492,7 @@ export function initialView(): TuiView {
     model: null,
     contextWindow: null,
     turnStartedAt: null,
+    turnSettledAt: null,
     slashIndex: 0,
     attachments: {},
     fileCandidates: [],

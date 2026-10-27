@@ -24,23 +24,23 @@ test('wrapRuns keeps spans intact across row breaks', () => {
   assert.equal(boldChars, '加粗');
 });
 
-test('headings: h1/h2 get an accent bar and breathing room, h3+ plain bold (ADR-164)', () => {
+test('headings use bold native text and breathing room, not glyph bars', () => {
   const rows = renderMarkdown('# 大标题\n## 二级\n### 三级', 40);
   assert.deepEqual(
     rows.map((row) => row.text),
-    ['▌ 大标题', '', '▌ 二级', '', '三级', ''],
+    ['大标题', '', '二级', '', '三级', ''],
   );
   // Style lives in the runs; the Line-level token stays the row's base voice.
   const voice = (row: (typeof rows)[number] | undefined): string | undefined => {
     const spans = (row?.runs ?? []).filter((span) => span.text.trim() !== '');
     return spans[0]?.token ?? row?.token;
   };
-  // The BAR is brand; the heading text itself stays the base voice — colour is emphasis.
-  assert.equal(voice(rows[0]), 'brand');
-  assert.equal(voice(rows[2]), 'brand');
+  assert.equal(voice(rows[0]), 'text');
+  assert.equal(voice(rows[2]), 'text');
+  assert.equal(rows.some((row) => row.text.includes('▌')), false, 'headings use native text weight, not a glyph bar');
   const boldText = (row: (typeof rows)[number] | undefined): boolean =>
     (row?.runs ?? [])
-      .filter((span) => span.text.trim() !== '' && !span.text.startsWith('▌'))
+      .filter((span) => span.text.trim() !== '')
       .every((span) => Boolean(span.bold));
   assert.ok(boldText(rows[0]) && boldText(rows[2]) && boldText(rows[4]));
 });
@@ -60,7 +60,7 @@ test('ordered lists keep their number', () => {
 
 test('code fences: language label, code token, indent; unterminated still renders', () => {
   const rows = renderMarkdown('```ts\nconst a = 1;\nconst b = 2;\n```', 30);
-  assert.match(rows[0]?.text ?? '', /▸ ts/);
+  assert.equal(rows[0]?.text, 'ts');
   // Non-whitespace spans of the body are all in the code voice; the indent span is plain.
   assert.ok(
     rows.slice(1).every((row) =>

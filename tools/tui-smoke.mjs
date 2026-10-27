@@ -83,8 +83,16 @@ await new Promise((resolve) => {
 
 check('it is still running after 2s (a TUI that exits immediately is not a TUI)', child.exitCode === null);
 
-// Ctrl-C: the renderer is created with `exitOnCtrlC: false`, so this exercises our own
-// handler and the teardown path (screen removed, renderer destroyed, host closed).
+// A fresh COWCAT_HOME can require the project-trust answer before a session exists.
+// Skip project-layer loading for this isolated smoke, then exercise the documented
+// two-press empty-input exit (the renderer itself must not consume Ctrl-C).
+if (stdout.replace(ESCAPES, '').includes('工作区信任')) {
+  child.stdin.write(String.fromCharCode(27));
+  await new Promise((resolve) => {
+    setTimeout(resolve, 500);
+  });
+}
+child.stdin.write(String.fromCharCode(3));
 child.stdin.write('\u0003');
 const code = await Promise.race([
   exited,

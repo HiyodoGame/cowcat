@@ -13,7 +13,7 @@ import {
   type ProcessResult,
   type ProcessSpec,
 } from '@corescense/cowcat-core';
-import { frameOf, initialView, project, type TuiView } from '@corescense/cowcat-tui';
+import { frameOf, initialView, project, type SceneNode, type TuiView } from '@corescense/cowcat-tui';
 
 /**
  * P6's first exit criterion, in the only form that actually tests it:
@@ -119,8 +119,20 @@ test('a turn with a tool and an approval, over the protocol, as the frontend ren
 
   const frame = (): string => {
     const rendered = frameOf(view, { width: 60, now: 0 });
-    // Fixed panels (the approval card among them) live in the dock, not the transcript.
-    return [...rendered.body, ...(rendered.dock ?? [])].map((row) => row.text).join('\n');
+    const textOf = (nodes: readonly SceneNode[]): string => nodes.map((node): string => {
+      switch (node.kind) {
+        case 'panel': return [node.title, textOf(node.children)].join('\n');
+        case 'stack':
+        case 'block': return textOf(node.children);
+        case 'text':
+        case 'scrolltext': return node.rows.map((row) => row.text).join('\n');
+        case 'choice': return node.text;
+        case 'status': return [node.activity, ...node.facts.map((fact) => `${fact.label} ${fact.value}`)].join(' · ');
+        case 'sprite':
+        case 'image': return '';
+      }
+    }).join('\n');
+    return textOf([...rendered.body, ...(rendered.dock ?? [])]);
   };
 
   try {
@@ -136,20 +148,20 @@ test('a turn with a tool and an approval, over the protocol, as the frontend ren
       'the approval request',
     );
     assert.equal(asked.name, 'Write');
-    assert.match(frame(), /╭─ ⚠ Write/);
+    assert.match(frame(), /Write · 待回答/);
 
     await client.respondApproval('sess_exit', asked.callId, 'once');
 
     // 2. The turn finishes, and the transcript carries the whole story.
     await waitFor(() => view.turn?.state === 'completed', 'the turn to complete');
     const text = frame();
-    assert.match(text, /╭─ 你/, 'the user spoke');
+    assert.match(text, /你/, 'the user spoke');
     assert.match(text, /写个文件/);
-    assert.match(text, /▌ Write ok/, 'the tool card (bar language, ADR-164)');
+    assert.match(text, /Write {2}完成/, 'the native tool component');
     assert.match(text, /写好了。/, 'the answer');
     // The question is gone once its turn is over: the card is the PENDING question, and the
     // record of the answer is the log (`approval.answered`) plus the tool card that ran.
-    assert.doesNotMatch(text, /╭─ ⚠ Write/, 'no question is left hanging after the turn');
+    assert.doesNotMatch(text, /Write · 待回答/, 'no question is left hanging after the turn');
 
     // 3. Every fact came from the protocol, in order: the approval is asked before it is
     //    answered, and the tool finished before the answer.
