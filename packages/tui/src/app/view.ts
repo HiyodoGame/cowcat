@@ -429,7 +429,7 @@ export interface TuiView {
    * The `/model` picker (ADR-161 ②): rows are the host's available presets; phase two
    * (`preset` set) picks the reasoning effort among that preset's offerings.
    */
-  readonly modelPanel: { readonly index: number; readonly preset: string | null } | null;
+  readonly modelPanel: { readonly index: number; readonly preset: string | null; readonly query: string } | null;
   /** Fetched once per open (the same rule as `sessionList`). */
   readonly modelList: readonly ModelSummary[];
   /** The selection the host reports, so the panel can mark （当前）. */
@@ -438,14 +438,18 @@ export interface TuiView {
    * The `/providers` panel (ADR-165 ③): list phase (`field` null) or field-menu phase
    * for one entry.
    */
-  readonly providerPanel: { readonly index: number; readonly entry: string | null } | null;
+  readonly providerPanel: { readonly index: number; readonly entry: string | null; readonly query: string } | null;
   /** Fetched once per open. */
   readonly providerList: readonly ProviderSummary[];
   /**
-   * A field awaiting composer input (ADR-165 ③): the panel stays open, the composer
-   * types the new value, Enter saves through `provider.set`, empty Enter cancels.
+   * A field awaiting input (ADR-165 ③ → ADR-166): the value types INTO THE DIALOG's
+   * input field (routed keys), never the composer.
    */
-  readonly providerEdit: { readonly name: string; readonly field: 'name' | 'baseUrl' | 'apiKeyEnv' } | null;
+  readonly providerEdit: {
+    readonly name: string;
+    readonly field: 'name' | 'baseUrl' | 'apiKeyEnv';
+    readonly value: string;
+  } | null;
 }
 
 export function initialView(): TuiView {
@@ -864,7 +868,13 @@ export function withModelList(view: TuiView, models: readonly ModelSummary[], cu
 }
 
 export function openModelPanel(view: TuiView): TuiView {
-  return { ...view, modelPanel: { index: 0, preset: null } };
+  return { ...view, modelPanel: { index: 0, preset: null, query: '' } };
+}
+
+/** The dialog's search field: characters append, backspace deletes. */
+export function withModelQuery(view: TuiView, query: string): TuiView {
+  if (view.modelPanel === null) return view;
+  return { ...view, modelPanel: { ...view.modelPanel, query } };
 }
 
 export function closeModelPanel(view: TuiView): TuiView {
@@ -890,7 +900,7 @@ export function enterModelPanel(view: TuiView): { readonly view: TuiView; readon
     // `pickModelEffort` — this function only descends.
     return { view, picked: null };
   }
-  return { view: { ...view, modelPanel: { index: 0, preset: model.id } }, picked: null };
+  return { view: { ...view, modelPanel: { index: 0, preset: model.id, query: panel.query } }, picked: null };
 }
 
 /** Enter on phase two: the effort for the locked preset. */
@@ -909,7 +919,13 @@ export function withProviderList(view: TuiView, providers: readonly ProviderSumm
 }
 
 export function openProviderPanel(view: TuiView): TuiView {
-  return { ...view, providerPanel: { index: 0, entry: null }, providerEdit: null };
+  return { ...view, providerPanel: { index: 0, entry: null, query: '' }, providerEdit: null };
+}
+
+/** The providers dialog's search field. */
+export function withProviderQuery(view: TuiView, query: string): TuiView {
+  if (view.providerPanel === null) return view;
+  return { ...view, providerPanel: { ...view.providerPanel, query } };
 }
 
 export function closeProviderPanel(view: TuiView): TuiView {
@@ -918,13 +934,14 @@ export function closeProviderPanel(view: TuiView): TuiView {
 
 /** Enter on a provider row: into its field menu. Enter on the add row marks `entry ''`. */
 export function enterProviderPanel(view: TuiView): TuiView {
-  if (view.providerPanel === null) return view;
-  const entry = view.providerPanel.index < view.providerList.length
-    ? view.providerList[view.providerPanel.index]?.name ?? null
-    : view.providerPanel.index === view.providerList.length
+  const panel = view.providerPanel;
+  if (panel === null) return view;
+  const entry = panel.index < view.providerList.length
+    ? view.providerList[panel.index]?.name ?? null
+    : panel.index === view.providerList.length
       ? ''
       : null;
-  return { ...view, providerPanel: { index: 0, entry } };
+  return { ...view, providerPanel: { index: 0, entry, query: panel.query } };
 }
 
 export function moveProviderPanel(view: TuiView, delta: number, count: number): TuiView {
@@ -937,12 +954,21 @@ export function moveProviderPanel(view: TuiView, delta: number, count: number): 
 export function beginProviderEdit(view: TuiView, field: 0 | 1): TuiView {
   const panel = view.providerPanel;
   if (panel === null || panel.entry === null) return view;
-  return { ...view, providerEdit: { name: panel.entry, field: field === 0 ? 'baseUrl' : 'apiKeyEnv' } };
+  return {
+    ...view,
+    providerEdit: { name: panel.entry, field: field === 0 ? 'baseUrl' : 'apiKeyEnv', value: '' },
+  };
 }
 
-/** The add row: the first thing a new provider needs is its NAME, typed in the composer. */
+/** The add flow: the first thing a new provider needs is its NAME, typed in the dialog. */
 export function beginProviderAdd(view: TuiView): TuiView {
-  return { ...view, providerEdit: { name: '', field: 'name' } };
+  return { ...view, providerEdit: { name: '', field: 'name', value: '' } };
+}
+
+/** One typed character / backspace into the dialog's input field. */
+export function withProviderEditValue(view: TuiView, value: string): TuiView {
+  if (view.providerEdit === null) return view;
+  return { ...view, providerEdit: { ...view.providerEdit, value } };
 }
 
 /** The composer delivered a value (empty means cancel): clear the edit state, keep the panel. */

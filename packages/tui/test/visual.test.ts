@@ -74,3 +74,34 @@ test('markdown reaches the glass without its markers (ADR-162)', async () => {
   assert.match(frame, /旧包/);
   assert.match(frame, /• 第一条/);
 });
+
+test('a modal dialog renders as a centred floating window with a highlighted row (ADR-166)', async () => {
+  const { createTestRenderer } = await import('@opentui/core/testing');
+  const { frameOf } = await import('../src/components/session-frame.js');
+  const { THEME } = await import('../src/theme/tokens.js');
+  const { createScreen } = await import('../src/ui/screen.js');
+  const { withModelList, openModelPanel, initialView } = await import('../src/app/view.js');
+  const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 100, height: 30 });
+  try {
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    const view = openModelPanel(withModelList(initialView(), [
+      { id: 'openai/gpt-6.1-sol', efforts: ['high'] },
+      { id: 'zai/glm-5.3-flash', efforts: [] },
+    ], { id: 'zai/glm-5.3-flash', effort: null }));
+    screen.update(frameOf(view, { width: screen.contentWidth(), height: screen.contentHeight(), now: 1_000, cwd: 'F:\\d' }));
+    await renderOnce();
+    // The overlay flips `visible` on first mount; give the renderer a full cycle to lay
+    // the newly-visible subtree out before capturing.
+    await flush();
+    await renderOnce();
+    const frame = captureCharFrame();
+    // The floating window: title, search field, both models, the footer.
+    assert.match(frame, /选择模型/);
+    assert.match(frame, /▏/);
+    assert.match(frame, /openai\/gpt-6\.1-sol/);
+    assert.match(frame, /zai\/glm-5\.3-flash/);
+    assert.match(frame, /切换 enter/);
+  } finally {
+    await dispose();
+  }
+});

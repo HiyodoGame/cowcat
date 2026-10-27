@@ -65,6 +65,9 @@ import {
   withAttachment,
   withHistory,
   withModelList,
+  withModelQuery,
+  withProviderEditValue,
+  withProviderQuery,
   withProviderList,
   withSessionList,
   withInput,
@@ -333,6 +336,33 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         queueMicrotask(syncInput);
       }),
       screen.onKey((key) => {
+        // ADR-166: a modal dialog owns the printable keys — they type into its search
+        // field or input, never into the composer underneath. Backspace deletes; a
+        // dialog input routes everything to `providerEdit.value`.
+        const dialogOpen = view.current.modelPanel !== null || view.current.providerPanel !== null;
+        if (dialogOpen && !key.ctrl && !key.meta && key.name !== 'escape' && key.name !== 'up' && key.name !== 'down' && key.name !== 'return') {
+          key.preventDefault();
+          if (key.name === 'backspace') {
+            if (view.current.providerEdit !== null) {
+              view.current = withProviderEditValue(view.current, view.current.providerEdit.value.slice(0, -1));
+            } else if (view.current.modelPanel !== null) {
+              view.current = withModelQuery(view.current, view.current.modelPanel.query.slice(0, -1));
+            } else if (view.current.providerPanel !== null) {
+              view.current = withProviderQuery(view.current, view.current.providerPanel.query.slice(0, -1));
+            }
+          } else if (key.name.length === 1) {
+            const ch = key.sequence;
+            if (view.current.providerEdit !== null) {
+              view.current = withProviderEditValue(view.current, view.current.providerEdit.value + ch);
+            } else if (view.current.modelPanel !== null) {
+              view.current = withModelQuery(view.current, view.current.modelPanel.query + ch);
+            } else if (view.current.providerPanel !== null) {
+              view.current = withProviderQuery(view.current, view.current.providerPanel.query + ch);
+            }
+          }
+          draw();
+          return;
+        }
         const intent = intentFor({ name: key.name, ctrl: key.ctrl, shift: key.shift }, view.current, Date.now(), exitArmUntil, escArmUntil);
         // ↑/↓ belong to the composer's cursor until there is nowhere left to move (ADR-106).
         // `intent` is checked first so an open menu or question keeps the keys, and Shift is
@@ -597,8 +627,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
           return;
         case 'providerClose':
-          if (view.current.providerPanel !== null && view.current.providerPanel.entry !== null) {
-            view.current = { ...view.current, providerPanel: { index: 0, entry: null } };
+          const openPanel = view.current.providerPanel;
+          if (openPanel !== null && openPanel.entry !== null) {
+            view.current = { ...view.current, providerPanel: { index: 0, entry: null, query: openPanel.query } };
           } else {
             view.current = closeProviderPanel(view.current);
           }
@@ -607,7 +638,8 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         case 'modelClose':
           if (view.current.modelPanel !== null && view.current.modelPanel.preset !== null) {
             // Phase two backs out to the preset list, it does not close (ADR-161 ②).
-            view.current = { ...view.current, modelPanel: { index: 0, preset: null } };
+            const mp = view.current.modelPanel;
+            view.current = { ...view.current, modelPanel: { index: 0, preset: null, query: mp.query } };
           } else {
             view.current = closeModelPanel(view.current);
           }
@@ -1115,7 +1147,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         if (model === undefined) {
           view.current = addNotice(view.current, 'warn', '还没有可调档位的模型：先用 /model 选一个。');
         } else {
-          view.current = { ...view.current, modelPanel: { index: 0, preset: current.id } };
+          const panel = view.current.modelPanel;
+          if (panel === null) return;
+          view.current = { ...view.current, modelPanel: { index: 0, preset: current.id, query: panel.query } };
         }
         draw();
       } catch (error) {
@@ -1270,7 +1304,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
               const result = await client.listProviders();
               if (gone()) return;
               view.current = openProviderPanel(withProviderList(view.current, result.providers));
-              view.current = { ...view.current, providerPanel: { index: 0, entry: value } };
+              const pp = view.current.providerPanel;
+              if (pp === null) return;
+              view.current = { ...view.current, providerPanel: { index: 0, entry: value, query: pp.query } };
               view.current = addNotice(view.current, 'info', `已创建 ${value}：选一个字段填值。`);
               draw();
             })

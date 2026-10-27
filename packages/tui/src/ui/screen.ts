@@ -13,6 +13,7 @@ import {
 } from '@opentui/core';
 import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import type { Line } from './line.js';
+import type { DialogSpec } from '../app/dialog.js';
 
 /**
  * The one file that knows about opentui (ADR-066 ③).
@@ -74,6 +75,8 @@ export interface ScreenSpec {
   readonly body: readonly Line[];
   /** Fixed panels above the status line: approval, running agents, todos (ADR-101). */
   readonly dock?: readonly Line[];
+  /** The modal dialog (ADR-166): mounted as a centred floating window above everything. */
+  readonly dialog?: import('../app/dialog.js').DialogSpec;
   /** Right-rail session facts (ADR-163); shown only on wide terminals, never a second layout. */
   readonly aside?: readonly Line[];
   readonly status: Line;
@@ -114,8 +117,16 @@ export interface Screen {
   inputLineCount(): number;
   /** Grow or shrink the composer to fit the draft (1–6 content rows). */
   syncInputSize(): void;
+  /** Mount or update the modal dialog; undefined hides it (ADR-166). */
+  dialog(spec: DialogSpec | undefined): void;
   focus(): void;
   destroy(): void;
+}
+
+/** Cell-width-aware cut for dialog detail text (the width table, one-off form). */
+function truncatePlain(text: string, maxWidth: number): string {
+  if (text.length <= maxWidth) return text;
+  return `${text.slice(0, Math.max(0, maxWidth - 1))}…`;
 }
 
 export function createScreen(renderer: CliRenderer, theme: Theme, options: { readonly title: string }): Screen {
@@ -131,6 +142,141 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     titleAlignment: 'left',
   });
   renderer.root.add(root);
+
+  // ── the modal dialog (ADR-166) ────────────────────────────────────────────────
+  // Real components, mounted ONCE and updated in place: a centred floating window
+  // (absolute, above everything) with a title bar, a search field, grouped rows whose
+  // selection is a full-width BACKGROUND (not a glyph), and a shortcut footer. What
+  // OpenCode/DevEco do; what character lines in a dock could never be.
+  const dialogLayer = new BoxRenderable(renderer, {
+    id: 'cowcat-dialog-layer',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 50,
+    backgroundColor: RGBA.fromHex('#00000066'),
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    visible: false,
+  });
+  const dialogWindow = new BoxRenderable(renderer, {
+    id: 'cowcat-dialog',
+    width: 70,
+    maxHeight: '86%',
+    backgroundColor: RGBA.fromHex('#1B1B22'),
+    border: true,
+    borderStyle: 'rounded',
+    borderColor: resolve(theme, 'border'),
+    title: '',
+    titleAlignment: 'left',
+    bottomTitle: 'esc 关闭',
+    bottomTitleAlignment: 'right',
+    paddingLeft: 1,
+    paddingRight: 1,
+    flexDirection: 'column',
+    overflow: 'hidden',
+  });
+  const dialogSearch = new BoxRenderable(renderer, {
+    id: 'cowcat-dialog-search',
+    width: '100%',
+    height: 1,
+    backgroundColor: RGBA.fromHex('#2A2A33'),
+    marginBottom: 1,
+    visible: false,
+  });
+  const dialogSearchText = new TextRenderable(renderer, {
+    id: 'cowcat-dialog-search-text',
+    content: '',
+    fg: resolve(theme, 'text'),
+    wrapMode: 'none',
+    width: '100%',
+    height: 1,
+  });
+  dialogSearch.add(dialogSearchText);
+  const dialogRows = new BoxRenderable(renderer, {
+    id: 'cowcat-dialog-rows',
+    width: '100%',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  });
+  const dialogFooter = new TextRenderable(renderer, {
+    id: 'cowcat-dialog-footer',
+    content: '',
+    fg: resolve(theme, 'textDim'),
+    wrapMode: 'none',
+    width: '100%',
+    height: 1,
+    marginTop: 1,
+  });
+  dialogWindow.add(dialogSearch);
+  dialogWindow.add(dialogRows);
+  dialogWindow.add(dialogFooter);
+  dialogLayer.add(dialogWindow);
+  root.add(dialogLayer);
+  // One row renderable per visible dialog row, reused across frames.
+  const dialogRowRenderables: TextRenderable[] = [];
+
+  /** Rebuild the row stack for the current spec: group titles, then rows — the selected
+   * one painted full-width (Text's own bg; no wrapper boxes, no id collisions). */
+  function renderDialogRows(spec: DialogSpec): void {
+    for (const row of dialogRowRenderables) dialogRows.remove(row);
+    dialogRowRenderables.length = 0;
+    let sequence = 0;
+    const next = (): string => {
+      sequence += 1;
+      return `dialog-${String(sequence)}`;
+    };
+    for (const group of spec.groups) {
+      if (group.title !== null) {
+        dialogRows.add(new TextRenderable(renderer, {
+          id: next(),
+          content: group.title,
+          fg: resolve(theme, 'brand'),
+          wrapMode: 'none',
+          width: '100%',
+          height: 1,
+        }));
+      }
+      for (const row of group.rows) {
+        dialogRowRenderables.push(new TextRenderable(renderer, {
+          id: next(),
+          content: `${row.mark === undefined ? '' : `${row.mark} `}${row.label}${row.detail === undefined ? '' : `  ${truncatePlain(row.detail, 30)}`}`,
+          fg: row.selected ? RGBA.fromHex('#141419') : resolve(theme, 'text'),
+          ...(row.selected ? { bg: RGBA.fromHex('#E0A63C') } : {}),
+          attributes: row.selected ? createTextAttributes({ bold: true }) : TextAttributes.NONE,
+          wrapMode: 'none',
+          width: '100%',
+          height: 1,
+        }));
+      }
+    }
+    for (const row of dialogRowRenderables) dialogRows.add(row);
+  }
+
+  function updateDialog(spec: DialogSpec): void {
+    const becameVisible = !dialogLayer.visible;
+    dialogLayer.visible = true;
+    dialogWindow.title = spec.title;
+    dialogSearch.visible = spec.query !== undefined;
+    if (spec.query !== undefined) {
+      dialogSearchText.content = `▏${spec.query}`;
+    }
+    if (spec.input !== undefined) {
+      // The input dialog: the search field renders the typed value and the placeholder.
+      dialogSearch.visible = true;
+      dialogSearchText.content = spec.input.value === '' ? `▏${spec.input.placeholder}` : `▏${spec.input.value}`;
+    }
+    renderDialogRows(spec);
+    dialogFooter.content = spec.footer.map((entry) => `${entry.label} ${entry.key}`).join('   ');
+    if (becameVisible) renderer.requestRender();
+  }
+
+  function hideDialog(): void {
+    dialogLayer.visible = false;
+  }
 
   // The page is a ROW: a main column (everything the beta shipped) and — on wide
   // terminals — the session aside (ADR-163). On a narrow terminal the aside is never
@@ -454,6 +600,13 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     contentHeight() {
       return renderer.height;
     },
+    dialog(spec) {
+      if (spec === undefined) {
+        hideDialog();
+        return;
+      }
+      updateDialog(spec);
+    },
     update(spec) {
       // The dock takes its rows out of the transcript's budget; capping it at half the body
       // keeps a three-card dock from erasing the conversation on a 24-row terminal.
@@ -472,6 +625,9 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         'cowcat-line',
       );
       updateImages(spec.images ?? [], viewStart);
+      // The dialog rides every update: its content is frame data like everything else.
+      if (spec.dialog !== undefined) updateDialog(spec.dialog);
+      else hideDialog();
       // The aside mounts only while the terminal is wide enough; mounting is a page child
       // add/remove, so the narrow layout is exactly the pre-sidebar layout (ADR-163).
       const wantAside = spec.aside !== undefined && asideVisible();
