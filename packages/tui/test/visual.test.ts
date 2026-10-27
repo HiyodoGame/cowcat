@@ -105,3 +105,45 @@ test('a modal dialog renders as a centred floating window with a highlighted row
     await dispose();
   }
 });
+
+test('a wide terminal mounts the three-column layout: left rail, aside with git group (ADR-167)', async () => {
+  const { createTestRenderer } = await import('@opentui/core/testing');
+  const { project } = await import('../src/app/project.js');
+  const { frameOf } = await import('../src/components/session-frame.js');
+  const { THEME } = await import('../src/theme/tokens.js');
+  const { createScreen } = await import('../src/ui/screen.js');
+  const { initialView } = await import('../src/app/view.js');
+  seq += 0;
+  const event = (type: string, body: Record<string, unknown> = {}): WireEvent => {
+    seq += 1;
+    return { seq, ts: 1_000, sessionId: 'sess_w', turnId: 'turn_1', type, ...body };
+  };
+  let view = [event('session.opened', {}), event('todo.updated', { todos: [{ content: '改代码', status: 'in_progress', activeForm: '在改代码' }] })]
+    .reduce(project, initialView());
+  view = {
+    ...view,
+    tasks: [{ taskId: 't1', callId: 'c1', command: 'npm test', startedAt: 1_000, startedSeq: 3, state: 'running' as const, endedAt: null, exitCode: null }],
+  };
+  const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 150, height: 36 });
+  try {
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(view, { width: screen.contentWidth(), height: screen.contentHeight(), now: 2_000, cwd: 'F:\demo', rails: true }));
+    await renderOnce();
+    await flush();
+    await renderOnce();
+    const frame = captureCharFrame();
+    // Debugging aid, never a side effect: set FRAME_DUMP to capture the frame to a file.
+    if (process.env.FRAME_DUMP !== undefined) {
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(process.env.FRAME_DUMP, frame);
+    }
+    assert.match(frame, /待办 0\/1/);
+    assert.match(frame, /在改代码/);
+    assert.match(frame, /后台任务/);
+    assert.match(frame, /npm test/);
+    assert.match(frame, /\^\.\^/, 'the mascot is on the rail');
+    assert.match(frame, /上下文|会话/, 'the right rail is the info column');
+  } finally {
+    await dispose();
+  }
+});

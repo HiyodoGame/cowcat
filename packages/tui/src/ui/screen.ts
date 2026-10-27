@@ -77,6 +77,8 @@ export interface ScreenSpec {
   readonly dock?: readonly Line[];
   /** The modal dialog (ADR-166): mounted as a centred floating window above everything. */
   readonly dialog?: import('../app/dialog.js').DialogSpec;
+  /** The left rail (ADR-167): todos, tasks, sub-agents, the mascot — run state at a glance. */
+  readonly leftRail?: readonly Line[];
   /** Right-rail session facts (ADR-163); shown only on wide terminals, never a second layout. */
   readonly aside?: readonly Line[];
   readonly status: Line;
@@ -119,6 +121,8 @@ export interface Screen {
   syncInputSize(): void;
   /** Mount or update the modal dialog; undefined hides it (ADR-166). */
   dialog(spec: DialogSpec | undefined): void;
+  /** Whether the three-column rails are mounted (terminal ≥120 and not switched off). */
+  wideRails(): boolean;
   focus(): void;
   destroy(): void;
 }
@@ -403,6 +407,23 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
    */
   const ASIDE_MIN_WIDTH = 120;
 
+  // The LEFT rail (ADR-167): todos / tasks / sub-agents / mascot. Same visibility rule
+  // as the right rail — a narrow terminal is the classic layout, byte for byte.
+  const LEFT_RAIL_WIDTH = 24;
+  const leftRailBox = new BoxRenderable(renderer, {
+    id: 'cowcat-leftrail',
+    width: LEFT_RAIL_WIDTH,
+    flexShrink: 0,
+    flexDirection: 'column',
+  });
+  let leftRailMounted = false;
+  const leftRailLines: TextRenderable[] = [];
+  const leftRailSpecs: (Line | undefined)[] = [];
+
+  function leftRailVisible(): boolean {
+    return renderer.width >= ASIDE_MIN_WIDTH && process.env.COWCAT_SIDEBAR !== 'off';
+  }
+
   function asideVisible(): boolean {
     return renderer.width >= ASIDE_MIN_WIDTH && process.env.COWCAT_SIDEBAR !== 'off';
   }
@@ -594,7 +615,7 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       // aside has already been paid for out of the terminal's width, so the reading
       // column shrinks by exactly its width — cards must fit what they actually get.
       const base = process.env.COWCAT_WIDTH === 'full' ? renderer.width - 2 : Math.min(renderer.width - 2, READING_WIDTH);
-      const rail = asideVisible() ? ASIDE_WIDTH + 1 : 0;
+      const rail = (asideVisible() ? ASIDE_WIDTH + 1 : 0) + (leftRailVisible() ? LEFT_RAIL_WIDTH + 1 : 0);
       return Math.max(8, base - rail);
     },
     contentHeight() {
@@ -606,6 +627,9 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         return;
       }
       updateDialog(spec);
+    },
+    wideRails() {
+      return asideVisible();
     },
     update(spec) {
       // The dock takes its rows out of the transcript's budget; capping it at half the body
@@ -631,6 +655,18 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       // The aside mounts only while the terminal is wide enough; mounting is a page child
       // add/remove, so the narrow layout is exactly the pre-sidebar layout (ADR-163).
       const wantAside = spec.aside !== undefined && asideVisible();
+      const wantLeft = spec.leftRail !== undefined && leftRailVisible();
+      if (wantLeft !== leftRailMounted) {
+        // Index 0: the LEFT rail goes left of the main column, however many times the
+        // aside has been added and removed before it.
+        if (wantLeft) page.add(leftRailBox, 0);
+        else page.remove(leftRailBox);
+        leftRailMounted = wantLeft;
+      }
+      const leftRows = spec.leftRail;
+      if (wantLeft && leftRows !== undefined) {
+        mountLines(leftRailBox, leftRailLines, leftRailSpecs, leftRows, 0, leftRows.length, 'cowcat-left');
+      }
       if (wantAside !== asideMounted) {
         if (wantAside) page.add(asideBox);
         else page.remove(asideBox);
