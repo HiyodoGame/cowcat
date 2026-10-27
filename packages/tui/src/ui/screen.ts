@@ -14,7 +14,6 @@ import {
 import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import type { Line } from './line.js';
 import type { DialogSpec } from '../app/dialog.js';
-import type { AsideSpec, LeftRailSpec, RailPanel } from '../app/rails.js';
 
 /**
  * The one file that knows about opentui (ADR-066 ③).
@@ -404,8 +403,6 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   });
   let asideMounted = false;
   const asidePanels: Panel[] = [];
-  const asideLines: TextRenderable[] = [];
-  const asideSpecs: (Line | undefined)[] = [];
 
   /**
    * The sidebar's visibility rule, shared by `contentWidth` (which must reserve its
@@ -759,10 +756,11 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         else page.remove(leftRailBox);
         leftRailMounted = wantLeft;
       }
-      if (wantLeft && spec.leftRail !== undefined) {
-        renderRailPanels(leftRailBox, leftRailPanels, spec.leftRail.panels, LEFT_RAIL_WIDTH - 1);
-        mascotText.content = spec.leftRail.mascot.join('\n');
-        mascotText.height = spec.leftRail.mascot.length;
+      const leftSpec = spec.leftRail;
+      if (wantLeft && leftSpec !== undefined) {
+        renderRailPanels(leftRailBox, leftRailPanels, leftSpec.panels, LEFT_RAIL_WIDTH - 1);
+        mascotText.content = leftSpec.mascot.join('\n');
+        mascotText.height = leftSpec.mascot.length;
         mascotText.visible = true;
       } else {
         mascotText.visible = false;
@@ -772,11 +770,12 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         else page.remove(asideBox);
         asideMounted = wantAside;
       }
-      if (wantAside && spec.aside !== undefined) {
+      const asideData = spec.aside;
+      if (wantAside && asideData !== undefined) {
         renderRailPanels(
           asideBox,
           asidePanels,
-          spec.aside.panels.map((panel) => ({
+          asideData.panels.map((panel) => ({
             title: panel.title,
             rows: panel.rows.map((row) => ({
               text: `${row.label}  ${row.value}`,
