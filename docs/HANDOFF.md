@@ -2,75 +2,59 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-26（UX 对齐批次收尾：验收驱动的 9 个 PR 全部合入）**。
-> 交接时仓库状态：**main @ `9e99716`，无开放 PR**；四包全绿（TUI 需 Node 26）；ADR-157~160 已落表；`docs/superpowers/plans/` 已归档至 `docs/archive/`。
+> 最近一次更新：**2026-10-27（全项目审查驱动的正确性与性能优化）**。
+> 交接时仓库状态：**`fix/review-optimization` 分支，基线 main @ `fc41d89`，改动未提交**；四包全绿（TUI 需 Node 26）；ADR-168~170 已落表。
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实 git 跑出的验收记录；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 
 ---
 
-## 1. 本次会话做了什么（9 个 PR，全部已合入）
+## 1. 本批完成
 
-用户验收驱动的批次：每一条都从真机反馈或明确审查结论出发。
+按“正确性 → TUI 性能 → 会话 I/O → 结构与文档”顺序实施，所有行为修复均先写回归测试并确认原实现失败。
 
-| PR | 内容 | 备注 |
+| 类别 | 内容 | 结果 |
 |---|---|---|
-| #211 | Hindsight MCP 接入指南 + MemoryPort ADR 草案 | docs；草案在 `docs/architecture/adr-memory-port-draft.md`，落表编号自 161 起 |
-| #212 | beta-checklist 验收口径同步（ADR-148~156 项入清单 + §1.5 源码预跑） | 兑现上一批次 HANDOFF §6 |
-| #177 | openai 7.36 → 7.39（dependabot） | |
-| #213 | superpowers 分步计划归档 `docs/archive/`，`superpowers/` 目录移除 | 决策记录在 PR 描述 |
-| #214 | 斜杠菜单/命令面板补选择跟随窗口 | 用户报「翻到底不翻页」；task-panel 惯用法补齐 |
-| #215 | **性能修复**：`wrap` O(n²)→单遍 + `draw()` 合并 | 用户报「运行中非常卡」；探针 `tools/tui-perf-probe.mjs` 入库；单帧 298ms→22ms（10 轮）、流式 969→26ms |
-| #216 | **批次 A**：工作区信任引导 + 会话选择器（ADR-157/158） | 用户报「无信任弹窗」「sessions 不分工作区」；协议新增 `trust.status/grant`、CLI connect 工厂改为每次重建宿主 |
-| #217 | 打开的问题拥有回车，已答滞留卡不再压制菜单 | 用户完整复现定位三处叠加；`submit()` 分支重排 + frame/keymap 统一 `verdict === null` 判定 |
-| #218 | **P2 批次**：接受编辑模式 + Shift+Tab/Esc-Esc/Ctrl+L（ADR-159/160） | UX 审查的 P2 全做；内核事件 + 协议 `accept-edits.set` + 三键位 |
-
-UX 审查（对照 Claude Code / Codex / Gemini CLI）三批全部收官：P1=#216、问题2修复=#217、P2=#218。P3 两项（`!` 前缀 bash、Ctrl+V 图片粘贴）挂起。
+| 配置写入 | `provider.set` 按配置文件串行完整读—改—写；唯一临时文件；`dirname` | 20 并发写入全部保留；Windows 不再产生 `config.jso` |
+| usage | ADR-169：`model.usage/message` 可选 `invocation`；同调用累计值替换、跨调用累加；assistant 消息补齐锚点 | 修复 Anthropic 用量/缓存翻倍及上下文重复估算；旧日志兼容 |
+| 侧栏 | 成本复用 `costOf/formatCost`；变更组改称“CowCat 变更”；Panel 用主题 token | 修复成本放大 100 万倍；自定义主题实测生效 |
+| TUI 性能 | `entry-cache.ts` 按 entry 与真实依赖缓存；思考只在换行边界可证等价时缩短，否则完整 wrap | 最终探针：frameOf 100 轮 176.17→0.09ms，200 轮 352.27→0.16ms；思考 tick 26.07→20.40ms；含空白/CJK 尾部逐行等价有回归 |
+| 会话 I/O | ADR-170：索引读有界头尾；`EventStore.readAfter`；打开优先快照+增量；host.close 保存快照 | 普通索引不再全读；快照打开不再 `readAll`；损坏/超长记录仍全量回退 |
+| `@` 候选 | attach 改异步遍历，generation 丢弃迟到结果 | attach 不等待目录扫描，旧会话结果不覆盖新会话 |
+| 发布 | tarball 安装检查增加隔离 `COWCAT_HOME` 的 doctor（当前 Node + Node 26.12） | `--install` 实测通过，无模型/密钥需求 |
 
 ## 2. 测试基线
 
 | 包 | 通过 | 说明 |
 |---|---|---|
-| cowcat | 922/938 | 16 skip 平台既有项；新增 accept-edits 六用例 |
-| protocol | 46/46 | trust 契约 + accept-edits.set 契约 |
-| tui | 165/165 | **Node 26.12.0**（`npx --yes node@26.12.0 --test dist/test/`） |
-| cli | 41/41 | |
+| cowcat | 932/948 | 16 skip 平台既有项；新增 provider、usage、索引/快照/宿主回归 |
+| protocol | 47/47 | 无变化 |
+| tui | 200/200 | **Node 26.12.0**（`npx --yes node@26.12.0 --test dist/test/`） |
+| cli | 41/41 | 无变化 |
 
-探针与守卫：`lint-probe` 全过、`check-tarball` 四包干净。**CI 三平台为权威门。**
+探针与守卫：`lint-probe` 全过、策略 16/16、`tui-perf-probe` 已复测、`check-tarball --install` 含 doctor 通过。**CI 三平台为权威门。**
 
-## 3. 新增 ADR
+## 3. 本批 ADR
 
-**ADR-157** 未受信工作区在首个会话前询问，授予即重建宿主（`trust.status/grant` 窄协议；CLI connect 工厂每次重建；拒绝按现状继续）· **ADR-158** 会话切换是工作区内的交互面板（cwd 过滤、Enter 原地切换、纯函数 pickableSessions）· **ADR-159** 接受编辑模式（事件溯源；仅 Write/Edit 的 ask、位于 deny/plan/写前读之后；Bash 永不放行；无 standing grant）· **ADR-160** Shift+Tab 三态循环 + Esc-Esc 取回上一条 + Ctrl+L 诚实重绘。
+- **ADR-168** 双栏组件化布局：结构化 Panel spec、page 全宽，补上 #226 的决策记录。
+- **ADR-169** usage invocation：原始事实全留痕，账单同调用取最后值，锚点随 assistant 消息补齐。
+- **ADR-170** 会话读取分层：索引有界头尾、快照+`readAfter` 增量回放、host.close 尽力保存快照。
 
 ## 4. 未验证 / 风险（登记，不声称已解决）
 
-- **产物级验收**：ADR-148~160 全部只在源码级验过（真机记录见 beta-checklist §4.5）；npm 产物勾选等 beta.5。
-- **信任授予→宿主重建的端到端**：各半环节有测试，整链路真机走查已过（§4.5），但重建失败的异常路径（配置在授予后损坏）只有代码审读。
-- **frameOf 全量重建**（#215 登记遗留）：100+ 轮会话单帧 200–400ms，配合 50ms 合并可感；按 entry 缓存渲染行是下一步。
+- **产物级验收**：本批 tarball 与 doctor 已验，但 beta-checklist 中真实模型、真实终端 30 分钟、各平台项仍需按清单执行，不能以单测全绿替代。
+- **`readAfter` 的边界**：Jsonl 流式跳过旧事件，减少解码与常驻内存，但仍需顺序读取文件；不宣称完全消除磁盘 I/O。
+- **真实 Anthropic 累计用量**：已用真实协议夹具与内核/TUI 测试固定语义，未在本批调用付费端点复测。
 - **P3 挂起**：`!` 前缀直跑 bash、Ctrl+V 图片粘贴。
-- **MemoryPort ADR 草案**待评审（#211 入库的 `adr-memory-port-draft.md`）。
+- **MemoryPort ADR 草案**仍待评审（`docs/architecture/adr-memory-port-draft.md`）。
 
-## 5. 开放 issue
+## 5. 下一步建议
 
-无。
+1. 在分支评审后合入本批，再推进 beta.5 与 beta-checklist 的产物级验收。
+2. 若会话规模继续增长，为 Jsonl 增加字节水位/索引，进一步减少 `readAfter` 的顺序 I/O。
+3. P3 两项按需排期；MemoryPort 草案评审沿用现有编号续排。
 
-## 6. 下一步建议
-
-1. **beta.5 发布**：ADR-148~160 是一批用户可感的功能（doctor FAIL 口径、菜单/面板、性能、信任、会话管理、模式循环），发布后按 beta-checklist §1.1/§4.1 的产物级口径勾选。
-2. **frameOf 按 entry 缓存**：性能遗留，entry 不可变、以引用+宽度为键即可。
-3. P3 两项按需排期。
-4. MemoryPort 草案评审（届时编号 161 起，与 Hindsight MCP 指南配套）。
-
-## 7. 会话踩坑（新增）
-
-- **`python` heredoc 批量改 TS 源**：正则与转义（`\s`、`\/`）在两种语言里语义不同，两次都是断言失败救场——断言必须开，失败就改用 Edit 工具，别赌。
-- **ScriptedHost 与 ProtocolHost 签名必须逐字一致**：`Promise<boolean>` vs `Promise<void>` 会在 build 期爆；写 host 方法先看 `setPlanMode` 模板（void + server 回显参数）。
-- **SessionState 扩展的三个连锁点**：快照 schema（`Equals` 类型测试会抓）、`property.test` 的状态字面量、投影/穷尽 switch——加字段时一并 grep。
-- **渲染层纯函数禁 `process.*`**：`frameOf` 是快照契约，cwd 这类环境事实要进 view 状态再传组件。
-- **CFA 跨闭包收窄第四例**：门控状态（trust 答案、hostRebuilt）收进对象属性（`gate`），与 `activity.timer`/`frame.timer` 同列。
-- **`KeyLike` 没有 `shift` 字段**而 KeyEvent 有：加可选字段即可，Shift+Tab 就位；lint 会拦 `?? false`（非空类型），直接传。
-
-## 8. 构建与测试（不变）
+## 6. 构建与测试（不变）
 
 ```bash
 cd packages/cowcat && npm test        # pretest = tsc + ESLint；改完必须跑这个
@@ -79,4 +63,4 @@ cd packages/tui && npm test           # 本机用 npx --yes node@26.12.0 --test 
 cd packages/cli && npm test
 ```
 
-探针：`node tools/lint-probe.mjs`、`node tools/policy-decide-probe.mjs`、`node tools/check-tarball.mjs`、`node tools/tui-perf-probe.mjs`（渲染性能，怀疑回归时跑）。
+探针：`node tools/lint-probe.mjs`、`node tools/policy-decide-probe.mjs`、`node tools/check-tarball.mjs --install`、`node tools/tui-perf-probe.mjs`。

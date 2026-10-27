@@ -659,6 +659,7 @@ async function streamModel(
   const { session, model, preset } = deps;
   const turnId = session.turnId;
   if (turnId === null) throw new Error('streamModel outside a turn');
+  const invocation = deps.ids.next('model');
 
   const request: ModelRequest = {
     // The sent view, not the log: old tool results travel as deterministic
@@ -708,7 +709,7 @@ async function streamModel(
       case 'usage':
         // Written when it arrives rather than held until the turn ends: usage that has
         // already been billed has to survive a cancellation (ADR-041).
-        await session.emit({ type: 'model.usage', turnId, usage: chunk.usage });
+        await session.emit({ type: 'model.usage', turnId, usage: chunk.usage, invocation });
         break;
       case 'stop':
         // The last one wins, and it never ends the loop — the end of the iterator is
@@ -725,7 +726,7 @@ async function streamModel(
   }
   if (aborted()) throw new TurnAborted('aborted while streaming');
 
-  await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, reasoning, stopReason });
+  await session.emit({ type: 'model.message', turnId, text, toolCalls: calls, reasoning, stopReason, invocation });
   return calls;
 }
 

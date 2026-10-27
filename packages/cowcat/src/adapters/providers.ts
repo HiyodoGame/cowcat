@@ -1,4 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 /**
  * The user layer's provider entries, as a FILE (ADR-165 ①).
@@ -45,7 +47,21 @@ export async function readUserProviders(file: string): Promise<Record<string, Pr
   }
 }
 
+const writeQueues = new Map<string, Promise<void>>();
+
 export async function writeUserProvider(file: string, name: string, fields: ProviderEntry): Promise<void> {
+  const previous = writeQueues.get(file) ?? Promise.resolve();
+  const operation = previous.then(() => writeUserProviderNow(file, name, fields));
+  const queued = operation.catch(() => undefined);
+  writeQueues.set(file, queued);
+  try {
+    await operation;
+  } finally {
+    if (writeQueues.get(file) === queued) writeQueues.delete(file);
+  }
+}
+
+async function writeUserProviderNow(file: string, name: string, fields: ProviderEntry): Promise<void> {
   let document: Record<string, unknown>;
   try {
     document = asRecord(JSON.parse(await readFile(file, 'utf8')));
@@ -66,8 +82,12 @@ export async function writeUserProvider(file: string, name: string, fields: Prov
   };
   model['providers'] = providers;
   document['model'] = model;
-  const temporary = `${file}.tmp`;
-  await mkdir(file.slice(0, file.lastIndexOf('/')) || '.', { recursive: true });
-  await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  await rename(temporary, file);
+  const temporary = `${file}.tmp-${String(process.pid)}-${randomUUID()}`;
+  await mkdir(dirname(file), { recursive: true });
+  try {
+    await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await rename(temporary, file);
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
 }

@@ -329,6 +329,8 @@ export interface EventStore {
    * the header anyway — a second full read per adoption would double open's IO.
    */
   readHeader(sessionId: string): Promise<KernelEvent | null>;
+  /** Events after a replay watermark, or null when the log is shorter than it (ADR-170). */
+  readAfter?(sessionId: string, afterSeq: number): Promise<readonly KernelEvent[] | null>;
   /**
    * Best-effort log removal; exists for the fork cleanup path (ADR-127). Optional
    * because the port's contract is append/read — a store without it simply leaves

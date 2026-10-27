@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { costOf, formatCost, stripControl } from '../src/app/meter.js';
+import { asideSpec } from '../src/app/rails.js';
+import { initialView } from '../src/app/view.js';
 
 /**
  * ADR-131 meter arithmetic and the ADR-129 P2-2 sanitizer. The cost formula is the
@@ -31,4 +33,20 @@ test('stripControl removes C0/C1 and bidi controls, keeps ordinary text intact',
   // A bidi override can make the card show a different sentence than the grant key
   // records; the controls go, the words stay.
   assert.equal(stripControl('safe\u202Eevil\u202Ctext'), 'safeeviltext');
+});
+
+test('the aside uses the same per-million cost arithmetic as the status meter', () => {
+  const usage = { input: 100, output: 20, cacheRead: 0, cacheCreation: 0 };
+  const price = { input: 3, output: 15 };
+  const view = { ...initialView(), usage, usageTotals: usage, contextWindow: 1000, price };
+
+  const context = asideSpec(view, {}, []).panels.find((panel) => panel.title === '上下文');
+  assert.equal(context?.rows.find((row) => row.label === '费用')?.value, '<$0.01');
+});
+
+test('the changes panel names only the writes CowCat actually tracked', () => {
+  const panels = asideSpec(initialView(), {}, [{ path: '/work/a.ts', added: 1, removed: 0, written: 0 }]).panels;
+
+  assert.ok(panels.some((panel) => panel.title === 'CowCat 变更'));
+  assert.equal(panels.some((panel) => panel.title === 'git 变更'), false);
 });

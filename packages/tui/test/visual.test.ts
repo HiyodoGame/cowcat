@@ -147,3 +147,28 @@ test('a wide terminal mounts the three-column layout: left rail, aside with git 
     await dispose();
   }
 });
+
+test('rail panels use the injected theme instead of hard-coded colors', async () => {
+  const { renderer, renderOnce, captureSpans, dispose, flush } = await createTestRenderer({ width: 150, height: 36 });
+  try {
+    const theme = {
+      ...THEME,
+      foreground: { ...THEME.foreground, brand: '#010203', act: '#040506' },
+    };
+    const screen = createScreen(renderer, theme, { title: 't' });
+    const view = {
+      ...initialView(),
+      todos: [{ content: '改代码', status: 'in_progress' as const, activeForm: '在改代码' }],
+    };
+    screen.update(frameOf(view, { width: screen.contentWidth(), height: screen.contentHeight(), now: 1_000, cwd: 'F:\\d', rails: true }));
+    await renderOnce();
+    await flush();
+    await renderOnce();
+
+    const spans = captureSpans().lines.flatMap((line) => line.spans);
+    assert.ok(spans.some((span) => span.bg.toInts().join(',') === '1,2,3,255'), 'panel header uses theme brand');
+    assert.ok(spans.some((span) => span.fg.toInts().join(',') === '4,5,6,255'), 'active row uses theme act');
+  } finally {
+    await dispose();
+  }
+});

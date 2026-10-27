@@ -3,7 +3,7 @@ import type { TrustWithheld } from '@corescense/cowcat-protocol';
 import { createCliRenderer, type CliRenderer } from '@opentui/core';
 import type { ProtocolClient } from '@corescense/cowcat-protocol';
 import { parseAtRefs } from './app/atrefs.js';
-import { atCandidates } from './app/atcomplete.js';
+import { loadFileCandidates } from './app/atcomplete.js';
 import { lastToolCallId, paletteCommandAt, paletteMatches, parseCommand, slashMatches, type CommandEffect } from './app/commands.js';
 import { intentFor } from './app/keymap.js';
 import { animationsEnabled, mouseEnabled, scrollStep } from './app/preferences.js';
@@ -483,8 +483,15 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       const previous = { id: sessionId, view: view.current };
       sessionId = id;
       attachmentGeneration += 1;
+      const generation = attachmentGeneration;
       requested.clear();
-      view.current = { ...initialView(), fileCandidates: atCandidates(process.cwd()) };
+      view.current = { ...initialView(), fileCandidates: [] };
+      void loadFileCandidates(process.cwd(), () => !disposed && generation === attachmentGeneration)
+        .then((files) => {
+          if (files === null) return;
+          view.current = { ...view.current, fileCandidates: files };
+        })
+        .catch(() => undefined);
       try {
         const opened = await client.openSession(id);
         view.current = markReplayedTasks(view.current, opened.lastSeq);

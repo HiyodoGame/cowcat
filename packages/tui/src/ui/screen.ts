@@ -11,7 +11,7 @@ import {
   type KeyEvent,
   type TextChunk,
 } from '@opentui/core';
-import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
+import { BRAND, colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import type { Line } from './line.js';
 import type { DialogSpec } from '../app/dialog.js';
 
@@ -422,12 +422,12 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       id: `panel-header-${title}-${String(Math.round(Math.random() * 1e6))}`,
       width: '100%',
       height: 1,
-      backgroundColor: RGBA.fromHex('#A8C34A'),
+      backgroundColor: resolve(theme, 'brand'),
     });
     header.add(new TextRenderable(renderer, {
       id: `panel-header-text-${title}-${String(Math.round(Math.random() * 1e6))}`,
       content: ` ${title}`,
-      fg: RGBA.fromHex('#141419'),
+      fg: RGBA.fromHex(BRAND.ink),
       attributes: createTextAttributes({ bold: true }),
       wrapMode: 'none',
       width: '100%',
@@ -460,9 +460,9 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
           }
           text.content = ` ${row.text}`;
           text.fg = row.accent === true
-            ? RGBA.fromHex('#4A9EDA')
+            ? resolve(theme, 'act')
             : row.dim === true
-              ? RGBA.fromHex('#8A8A94')
+              ? resolve(theme, 'textDim')
               : RGBA.defaultForeground();
         });
       },

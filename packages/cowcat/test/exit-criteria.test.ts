@@ -82,15 +82,15 @@ async function runScriptedTurn(protocol: FixtureProtocol) {
   return { events: await store.readAll('sess_p4'), requests: transport.requests.length };
 }
 
-// The four fields a run assigns to itself, dropped from a *copy* rather than skipped while
-// rebuilding the event: that way every other field — including one added to an event later
-// — is compared by default, and only these four need a reason to be missing.
+// Run-scoped identity is dropped from a *copy* rather than skipped while rebuilding the
+// event: every other field — including one added later — is compared by default.
 function withoutVolatile(event: KernelEvent): Record<string, unknown> {
   const copy: Record<string, unknown> = { ...event };
   delete copy.seq;
   delete copy.ts;
   delete copy.sessionId;
   delete copy.turnId;
+  delete copy.invocation;
   return copy;
 }
 

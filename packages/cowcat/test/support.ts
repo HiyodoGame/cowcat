@@ -15,6 +15,12 @@ export class MemoryEventStore implements EventStore {
   async readHeader(sessionId: string): Promise<KernelEvent | null> {
     return this.events.find((e) => e.sessionId === sessionId) ?? null;
   }
+
+  async readAfter(sessionId: string, afterSeq: number): Promise<readonly KernelEvent[] | null> {
+    const events = this.events.filter((event) => event.sessionId === sessionId);
+    const lastSeq = events.at(-1)?.seq ?? 0;
+    return lastSeq < afterSeq ? null : events.filter((event) => event.seq > afterSeq);
+  }
 }
 
 export function fixedClock(start = 1_000): Clock {

@@ -1,4 +1,5 @@
 import { mascotFrames } from '../components/cowcat-art.js';
+import { costOf, formatCost } from './meter.js';
 import type { AgentView, TuiView, TodoView } from './view.js';
 
 /**
@@ -121,7 +122,7 @@ export function asideSpec(
 
   if (changedFiles.length > 0) {
     panels.push({
-      title: 'git 变更',
+      title: 'CowCat 变更',
       rows: changedFiles.slice(0, 10).map((file) => {
         const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
         const stat = file.added > 0 || file.removed > 0
@@ -142,11 +143,5 @@ function sessionCost(
   totals: { readonly input: number; readonly output: number; readonly cacheRead: number; readonly cacheCreation: number },
   price: { readonly input: number; readonly output: number; readonly cacheRead?: number | undefined; readonly cacheCreation?: number | undefined } | null,
 ): string | null {
-  if (price === null) return null;
-  const total =
-    totals.input * price.input +
-    totals.output * price.output +
-    totals.cacheRead * (price.cacheRead ?? 0) +
-    totals.cacheCreation * (price.cacheCreation ?? 0);
-  return `$${total.toFixed(2)}`;
+  return price === null ? null : formatCost(costOf(totals, price));
 }

@@ -123,6 +123,8 @@ export type KernelEvent = EventBase &
          * with empty content is a real failure mode).
          */
         readonly stopReason: StopReason | null;
+        /** The model call this message completes (ADR-169); absent on older logs. */
+        readonly invocation?: string | undefined;
       }
     | {
         /**
@@ -133,6 +135,8 @@ export type KernelEvent = EventBase &
          */
         readonly type: 'model.usage';
         readonly usage: ModelUsage;
+        /** Shared by every cumulative report from one model call (ADR-169). */
+        readonly invocation?: string | undefined;
       }
     | {
         /**

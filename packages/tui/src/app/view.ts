@@ -362,6 +362,8 @@ export interface TuiView {
     readonly cacheRead: number;
     readonly cacheCreation: number;
   } | null;
+  /** The invocation behind `usage`; cumulative reports replace it in the totals (ADR-169). */
+  readonly usageInvocation: string | null;
   /**
    * Everything the session has been billed, summed from the log's `model.usage` events
    * (ADR-131 ①). The fold lives in the kernel; a renderer only sees the events, so the
@@ -498,6 +500,7 @@ export function initialView(): TuiView {
     palette: null,
     todos: [],
     usage: null,
+    usageInvocation: null,
     usageTotals: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     price: null,
     unsupported: [],

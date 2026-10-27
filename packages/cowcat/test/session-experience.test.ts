@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Session, formatAttachedFiles, replay, type KernelEvent } from '../src/index.js';
@@ -102,6 +103,51 @@ test('the index derives title/cwd/model/parentRole defensively from raw logs', a
   assert.ok(bad !== undefined, 'a corrupt log still lists (line count is the store invariant)');
   assert.equal(bad.parentSessionId, null);
   assert.equal(bad.title, null, 'but no fact is derived from garbage');
+});
+
+test('the index uses bounded head/tail reads for ordinary logs', async (t) => {
+  const dir = tempDir(t, 'cowcat-index-bounded-');
+  const shell = { kind: 'posix', executable: '/bin/sh' };
+  const events = [
+    { seq: 1, ts: 1, sessionId: 'sess_bounded', turnId: null, type: 'session.opened', schemaVersion: 1, cowcatVersion: '1', shell, cwd: '/work/app', model: 'acme/m' },
+    { seq: 2, ts: 2, sessionId: 'sess_bounded', turnId: 'turn_1', type: 'turn.opened', input: 'bounded title', model: 'acme/m' },
+    { seq: 3, ts: 3, sessionId: 'sess_bounded', turnId: 'turn_1', type: 'model.message', text: 'ok', toolCalls: [], reasoning: [], stopReason: null },
+  ];
+  writeFileSync(join(dir, 'sess_bounded.jsonl'), `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+  let wholeReads = 0;
+
+  const entries = await createSessionIndex(dir, {
+    readFile: () => {
+      wholeReads += 1;
+      return Promise.reject(new Error('whole-file read is not allowed for an ordinary log'));
+    },
+  }).list();
+
+  assert.equal(wholeReads, 0);
+  assert.equal(entries[0]?.lastSeq, 3);
+  assert.equal(entries[0].title, 'bounded title');
+  assert.equal(entries[0].cwd, '/work/app');
+});
+
+test('a record larger than the read window uses the whole-file fallback', async (t) => {
+  const dir = tempDir(t, 'cowcat-index-large-');
+  const shell = { kind: 'posix', executable: '/bin/sh' };
+  const events = [
+    { seq: 1, ts: 1, sessionId: 'sess_large', turnId: null, type: 'session.opened', schemaVersion: 1, cowcatVersion: '1', shell },
+    { seq: 2, ts: 2, sessionId: 'sess_large', turnId: 'turn_1', type: 'model.message', text: 'x'.repeat(70_000), toolCalls: [], reasoning: [], stopReason: null },
+  ];
+  writeFileSync(join(dir, 'sess_large.jsonl'), `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
+  let wholeReads = 0;
+
+  const entries = await createSessionIndex(dir, {
+    readFile: async (path) => {
+      wholeReads += 1;
+      return readFile(path, 'utf8');
+    },
+  }).list();
+
+  assert.equal(wholeReads, 1);
+  assert.equal(entries[0]?.lastSeq, 2);
 });
 
 test('prompt.attached folds into a user message ahead of the prompt, and replays', async () => {

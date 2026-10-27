@@ -1818,6 +1818,8 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         }
         for (const rec of sessions.values()) {
           rec.unsubscribe();
+          // Snapshots are only an accelerator: a failed save must never prevent lock release.
+          await rec.session.saveSnapshot().catch(() => undefined);
           await rec.session.close();
         }
         sessions.clear();

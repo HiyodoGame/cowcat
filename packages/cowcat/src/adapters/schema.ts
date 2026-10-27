@@ -204,8 +204,9 @@ export const kernelEventSchema = z.discriminatedUnion('type', [
     // Nullable rather than optional, for the same reason as `tool.finished.facts`:
     // `null` says "the adapter reported nothing" out loud (ADR-035).
     stopReason: stopReasonSchema.nullable(),
+    invocation: z.string().min(1).optional(),
   }),
-  z.object({ ...base, type: z.literal('model.usage'), usage: modelUsageSchema }),
+  z.object({ ...base, type: z.literal('model.usage'), usage: modelUsageSchema, invocation: z.string().min(1).optional() }),
   z.object({
     ...base,
     type: z.literal('context.compacted'),
@@ -494,7 +495,12 @@ const sessionStateSchema = z.object({
   // The provider's last report and where it ended (ADR-070). `null` until one arrives,
   // and reset by every compaction.
   lastUsage: z
-    .object({ tokens: z.number().int().nonnegative(), anchorSeq: z.number().int().nonnegative() })
+    .object({
+      tokens: z.number().int().nonnegative(),
+      anchorSeq: z.number().int().nonnegative().nullable(),
+      invocation: z.string().min(1).optional(),
+      usage: modelUsageSchema.optional(),
+    })
     .nullable(),
   usageTotals: z.object({
     input: z.number().int().nonnegative(),

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { appendFile, mkdir, open, readFile, rename, rm, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { KernelEvent } from '../kernel/events.js';
 import {
   LockHeldError,
@@ -80,6 +82,33 @@ export class JsonlEventStore implements EventStore {
     } finally {
       await handle.close();
     }
+  }
+
+  async readAfter(sessionId: string, afterSeq: number): Promise<readonly KernelEvent[] | null> {
+    const events: KernelEvent[] = [];
+    let lastSeq = 0;
+    try {
+      const input = createReadStream(this.#file(sessionId), { encoding: 'utf8' });
+      const lines = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY });
+      for await (const line of lines) {
+        if (line.length === 0) continue;
+        lastSeq += 1;
+        if (lastSeq === 1) {
+          const header = decodeEventLine(line, `${sessionId}.jsonl at line 1`);
+          if (header.type !== 'session.opened') {
+            throw new Error(`corrupt session log ${sessionId}.jsonl at line 1: expected a session header, found ${header.type}`);
+          }
+          if (afterSeq === 0) events.push(header);
+        } else if (lastSeq > afterSeq) {
+          events.push(decodeEventLine(line, `${sessionId}.jsonl at line ${String(lastSeq)}`));
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return afterSeq === 0 ? [] : null;
+      throw error;
+    }
+    if (lastSeq === 0) throw new Error(`corrupt session log ${sessionId}.jsonl: missing session header`);
+    return lastSeq < afterSeq ? null : events;
   }
 
   async readAll(sessionId: string): Promise<readonly KernelEvent[]> {

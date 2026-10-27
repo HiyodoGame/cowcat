@@ -250,7 +250,7 @@ packages/tui/src/
 | `cowcat run "<prompt>"` | 一次性回合（非交互） | **可用**：`--yes` 放行审批，`--session <id>` 继续一个会话；默认逐条拒绝（ADR-065 ②） |
 | `cowcat doctor` | Node、配置、信任、指令链（注入了哪几份 / 跳过了什么）、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；指令链一行在 ADR-078 T6 补上；不查渲染器的原生二进制，说明理由） |
 | `cowcat sessions list \| resume <id>` | 会话管理 | **都可用了**：`list` 直接读会话目录，**默认折叠被委派的子会话**（`--all` 才列，并标出父会话——ADR-079 ④）；`resume` 就是「带 id 的 TUI」（同一条代码路径，Node 门槛只检查一次） |
-| `cowcat setup` | 交互式配置向导 | **未接线**：配置的**写入**路径尚未实现（键已定，见 ADR-063；现在直接编辑 `~/.cowcat/config.json`） |
+| `cowcat setup` | 非交互配置写入：`--migrate` / `--preset`，可配 `--api-key-env` / `--base-url` / `--force` / `--print` | **可用**（ADR-091；原子写入、覆盖前备份，密钥只写环境变量名；交互式向导仍未做） |
 
 子命令表是**数据**（`packages/cli/src/cli/spec.ts`：名字、摘要、参数 schema、**选项**、处理函数），帮助文本与参数/选项校验都从表生成，不做嵌套子命令。T4 落的是**结构与三个出口码**：
 

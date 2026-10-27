@@ -19,7 +19,11 @@ export interface TurnView {
  */
 export interface UsageAnchor {
   readonly tokens: number;
-  readonly anchorSeq: number;
+  /** Null until the assistant message exists; older logs always carry a numeric seq. */
+  readonly anchorSeq: number | null;
+  /** Identity and latest report used to replace cumulative billing (ADR-169). */
+  readonly invocation?: string | undefined;
+  readonly usage?: ModelUsage | undefined;
 }
 
 export interface SessionState {
@@ -197,36 +201,55 @@ export function reduce(state: SessionState, event: KernelEvent): SessionState {
       // it, and folding it into state would make it something the kernel has to reason
       // about (which is exactly what a note is not).
       return base;
-    case 'model.message':
+    case 'model.message': {
+      const lastUsage =
+        event.invocation !== undefined && state.lastUsage?.invocation === event.invocation
+          ? { ...state.lastUsage, anchorSeq: event.seq }
+          : state.lastUsage;
       return {
         ...base,
+        lastUsage,
         messages: [
           ...state.messages,
           { role: 'assistant', text: event.text, toolCalls: event.toolCalls, reasoning: event.reasoning },
         ],
         messageSeqs: [...state.messageSeqs, event.seq],
       };
-    case 'model.usage':
-      // The only thing folded from usage is the anchor (ADR-070): how full the next
-      // request already is. What the call *cost* stays in the log for whoever reports or
-      // audits it (ADR-041); this is a different question, asked once per turn. The
-      // totals ARE folded (ADR-131 ①): the meter is session state, and a reopened or
-      // forked session keeps counting where it left off.
+    }
+    case 'model.usage': {
+      if (event.invocation === undefined) {
+        return {
+          ...base,
+          lastUsage: {
+            tokens: event.usage.input + event.usage.cacheRead + event.usage.cacheCreation + event.usage.output,
+            anchorSeq: state.lastSeq,
+          },
+          usageTotals: {
+            input: state.usageTotals.input + event.usage.input,
+            output: state.usageTotals.output + event.usage.output,
+            cacheRead: state.usageTotals.cacheRead + event.usage.cacheRead,
+            cacheCreation: state.usageTotals.cacheCreation + event.usage.cacheCreation,
+          },
+        };
+      }
+      const replacing = state.lastUsage?.invocation === event.invocation;
+      const previous = replacing ? state.lastUsage.usage : undefined;
       return {
         ...base,
         lastUsage: {
           tokens: event.usage.input + event.usage.cacheRead + event.usage.cacheCreation + event.usage.output,
-          // The request ended at the model.message that this usage describes. Everything
-          // after it (the tool results this turn produced) is added by the estimator.
-          anchorSeq: state.lastSeq,
+          anchorSeq: replacing ? state.lastUsage.anchorSeq : null,
+          invocation: event.invocation,
+          usage: event.usage,
         },
         usageTotals: {
-          input: state.usageTotals.input + event.usage.input,
-          output: state.usageTotals.output + event.usage.output,
-          cacheRead: state.usageTotals.cacheRead + event.usage.cacheRead,
-          cacheCreation: state.usageTotals.cacheCreation + event.usage.cacheCreation,
+          input: state.usageTotals.input - (previous?.input ?? 0) + event.usage.input,
+          output: state.usageTotals.output - (previous?.output ?? 0) + event.usage.output,
+          cacheRead: state.usageTotals.cacheRead - (previous?.cacheRead ?? 0) + event.usage.cacheRead,
+          cacheCreation: state.usageTotals.cacheCreation - (previous?.cacheCreation ?? 0) + event.usage.cacheCreation,
         },
       };
+    }
     case 'context.compacted': {
       // Keep the tail, replace the head (ADR-071). `throughSeq` is the watermark: the
       // summary itself takes the compaction event's own seq, so a later compaction can

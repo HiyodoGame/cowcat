@@ -153,9 +153,8 @@ test('serve: a session is created on disk, listed, and the lock is released on e
     await withTimeout(child.waitForLine('"id":5'), 'the shutdown reply');
     assert.equal(await withTimeout(child.exited, 'the process to exit'), 0);
 
-    // The kernel holds the session lock for the Session's whole life (ADR-010); the verb
-    // closes the host on the way out, so nothing is left behind to refuse the next run.
-    assert.deepEqual(readdirSync(dir), ['sess_spawn.jsonl']);
+    // Closing saved the replay snapshot (ADR-170) and released the session lock (ADR-010).
+    assert.deepEqual(readdirSync(dir), ['sess_spawn.jsonl', 'sess_spawn.snapshot.json']);
   } finally {
     child.stop();
   }

@@ -123,7 +123,7 @@ export function contextUsage(state: SessionState): ContextUsage {
   let since = 0;
   for (const [index, message] of state.messages.entries()) {
     const seq = state.messageSeqs[index];
-    if (seq !== undefined && seq > anchor.anchorSeq) since += estimateMessage(message);
+    if (anchor.anchorSeq !== null && seq !== undefined && seq > anchor.anchorSeq) since += estimateMessage(message);
   }
   const measured = anchor.tokens + since;
   return { total: Math.max(estimated, measured), estimated, measured };

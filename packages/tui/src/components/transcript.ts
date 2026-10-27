@@ -6,6 +6,7 @@ import { callSummary, runningToolLines, toolCardLines } from './tool-card.js';
 import { line, type Line } from '../ui/line.js';
 import type { ImageSlot } from '../ui/screen.js';
 import { wrap } from '../text/wrap.js';
+import { createEntryCache, tailForRows } from './entry-cache.js';
 
 /**
  * The transcript: every entry as lines, top to bottom — plus the images, which are not lines.
@@ -34,6 +35,7 @@ export interface TranscriptLines {
 
 /** Four frames is enough for a 120ms cycle to read as motion, not as a flashing glyph. */
 const THINKING = ['✻', '✳', '✢', '✶'] as const;
+const cachedEntryLines = createEntryCache(entryLines);
 
 export function transcriptLines(view: TuiView, options: TranscriptOptions): TranscriptLines {
   const lines: Line[] = [];
@@ -46,15 +48,16 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
   };
 
   for (const entry of view.entries) {
-    push(entryLines(entry, view, options));
+    push(cachedEntryLines(entry, view, options.width));
     lines.push(line('', 'text'));
   }
 
   const thinking = revealedReasoning(view).trim();
   if (thinking !== '') {
-    // Live thinking, tail only: the point is "it is working", not a full transcript of the
-    // reasoning that is about to be replaced by the recorded blocks anyway.
-    const rows = wrap(thinking, Math.max(8, options.width - 4));
+    const width = Math.max(8, options.width - 4);
+    // Live thinking is tail-only, so bound the work before wrapping rather than wrapping the
+    // entire stream and throwing almost all of it away.
+    const rows = wrap(tailForRows(thinking, width, 6), width);
     const glyph = THINKING[Math.floor(options.now / 120) % THINKING.length] ?? '✻';
     lines.push(line(`${glyph} 思考中…`, 'textDim'));
     for (const row of rows.slice(-6)) lines.push(line(`  │ ${row}`, 'textDim'));
@@ -78,19 +81,19 @@ export function transcriptLines(view: TuiView, options: TranscriptOptions): Tran
   return { lines, images };
 }
 
-function entryLines(entry: Entry, view: TuiView, options: TranscriptOptions): TranscriptLines {
+function entryLines(entry: Entry, view: TuiView, width: number): TranscriptLines {
   switch (entry.kind) {
     case 'user':
-      return { lines: userMessageLines(entry, options.width), images: [] };
+      return { lines: userMessageLines(entry, width), images: [] };
     case 'assistant':
-      return { lines: assistantMessageLines(entry, options.width, view.thinkingExpanded), images: [] };
+      return { lines: assistantMessageLines(entry, width, view.thinkingExpanded), images: [] };
     case 'tool': {
       // The whole card is the click target: a title-only target would be a smaller hit area
       // for the same action, and the rows already carry the id for the loop to decode.
-      const part = toolCardLines(entry, view, options.width);
+      const part = toolCardLines(entry, view, width);
       return { lines: part.lines.map((row) => ({ ...row, hit: `tool:${entry.callId}` })), images: part.images };
     }
     case 'notice':
-      return { lines: noticeLines(entry.level, entry.text, options.width), images: [] };
+      return { lines: noticeLines(entry.level, entry.text, width), images: [] };
   }
 }

@@ -2653,3 +2653,17 @@ test('setProvider refuses a config corrupted after startup instead of replacing 
   await assert.rejects(() => fixture.client.setProvider('x', { baseUrl: 'https://x' }), /not valid JSON/);
   assert.match(readFileSync(configFile, 'utf8'), /crashed editor/, 'the broken file is untouched — the user fixes it, not us');
 });
+
+test('host.close saves a replay snapshot before releasing the session lock', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-snapshot-');
+  const home = tempDir(t, 'cowcat-host-snapshot-home-');
+  writeUserConfig(home, { model: { preset: PRESET } });
+  const model = new ScriptedModel([[{ type: 'text', text: 'ok' }]]);
+  const fixture = await start({ cwd, home, model });
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_host_snapshot');
+
+  await fixture.close();
+
+  assert.equal(existsSync(join(home, '.cowcat', 'sessions', 'sess_host_snapshot.snapshot.json')), true);
+});
