@@ -132,8 +132,11 @@ test('a wide terminal mounts the three-column layout: left rail, aside with git 
     await flush();
     await renderOnce();
     const frame = captureCharFrame();
-    const { writeFileSync } = await import('node:fs');
-    writeFileSync(process.env.FRAME_DUMP ?? 'frame-dump.txt', frame);
+    // Debugging aid, never a side effect: set FRAME_DUMP to capture the frame to a file.
+    if (process.env.FRAME_DUMP !== undefined) {
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(process.env.FRAME_DUMP, frame);
+    }
     assert.match(frame, /待办 0\/1/);
     assert.match(frame, /在改代码/);
     assert.match(frame, /后台任务/);
