@@ -77,8 +77,6 @@ test('markdown reaches the glass without its markers (ADR-162)', async () => {
 
 test('a modal dialog renders as a centred floating window with a highlighted row (ADR-166)', async () => {
   const { createTestRenderer } = await import('@opentui/core/testing');
-  const { renderMarkdown: _unused } = await import('../src/text/markdown.js');
-  void _unused;
   const { frameOf } = await import('../src/components/session-frame.js');
   const { THEME } = await import('../src/theme/tokens.js');
   const { createScreen } = await import('../src/ui/screen.js');
