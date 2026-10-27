@@ -160,10 +160,17 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
   const paint = (): void => {
     // The width is the renderer's to know (and it changes on resize); the clock is injected
-    // because a component that read it would not be a pure function.
+    // because a component that read it would not be a pure function. So are the cwd (the
+    // aside names the workspace) and the rail mode (narrow terminals fall back).
     if (disposed) return;
     screen.update(
-      frameOf(view.current, { width: screen.contentWidth(), height: screen.contentHeight(), now: Date.now() }),
+      frameOf(view.current, {
+        width: screen.contentWidth(),
+        height: screen.contentHeight(),
+        now: Date.now(),
+        cwd: process.cwd(),
+        rails: screen.wideRails(),
+      }),
     );
     syncActivity();
   };

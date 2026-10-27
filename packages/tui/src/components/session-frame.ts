@@ -1,11 +1,13 @@
 import { COMMANDS, paletteMatches, slashMatches } from '../app/commands.js';
 import { atQuery, rankAtCandidates } from '../app/atcomplete.js';
 import { copyFor, type Copy } from '../app/copy.js';
-import { historyMatches, runningAgents, type TuiView } from '../app/view.js';
+import { historyMatches, runningAgents, type AgentView, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
 import { line, runLine, type Line } from '../ui/line.js';
 import { padTo, truncate } from '../text/width.js';
 import { agentPanelLines } from './agent-panel.js';
+import { cowCatArt } from './cowcat-art.js';
+import { todoPanelLines } from './todo-panel.js';
 import { approvalCardLines } from './approval-card.js';
 import { planCardLines } from './plan-card.js';
 import { paletteLines } from './palette.js';
@@ -17,8 +19,8 @@ import { sessionPanelLines } from './session-panel.js';
 import { modelDialog, providerDialog } from '../app/dialog.js';
 import { trustCardLines } from './trust-card.js';
 import { changesPanelLines } from './changes-panel.js';
+import { changedFiles } from '../app/changes.js';
 import { permissionsPanelLines } from './permissions-panel.js';
-import { todoPanelLines } from './todo-panel.js';
 import { transcriptLines } from './transcript.js';
 
 /**
@@ -50,6 +52,11 @@ export interface FrameOptions {
    * not be one.
    */
   readonly cwd?: string;
+  /**
+   * Whether the three-column rails are mounted (ADR-167 ②). False — a narrow terminal —
+   * puts todos/tasks/agents back in the dock: the classic layout, nothing silently lost.
+   */
+  readonly rails?: boolean;
 }
 
 export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
@@ -90,8 +97,25 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.plan !== null) {
     dock.push(...planCardLines(view.plan, { width: options.width, cursor: view.planCursor }));
   }
+  // Tasks/agents/todos moved to the LEFT RAIL (ADR-167); the dock keeps only modal
+  // cards (approval, plan) — things that belong to the conversation's turn. A keyed
+  // panel (the /tasks cursor view) still shows inline when the user opened it.
   if (view.taskPanel !== null) {
     dock.push(...taskPanelLines(view.tasks, view.taskPanel.index, options.width, options.now));
+  }
+  if (options.rails === false) {
+    // Narrow terminal: the rails are not mounted, so the run-state views live here —
+    // the classic layout, nothing lost (ADR-167 ②).
+    if (view.todosVisible && view.todos.length > 0) {
+      dock.push(...todoPanelLines(view.todos, options.width));
+    }
+    if (view.tasks.length > 0) {
+      dock.push(...taskPanelLines(view.tasks, 0, options.width, options.now));
+    }
+    const agents = runningAgents(view);
+    if (agents.length > 0) {
+      dock.push(...agentPanelLines(agents, options.width, options.now));
+    }
   }
   if (view.cronPanel !== null) {
     dock.push(...cronPanelLines(view.cronJobs, view.cronPanel.index, options.width, options.now));
@@ -106,13 +130,6 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   const matches = questionOpen ? [] : slashMatches(view.input);
   if (matches.length > 0) {
     dock.push(...slashMenuLines(matches, view.slashIndex, options.width));
-  }
-  const agents = runningAgents(view);
-  if (agents.length > 0) {
-    dock.push(...agentPanelLines(agents, options.width, options.now));
-  }
-  if (view.todosVisible && view.todos.length > 0) {
-    dock.push(...todoPanelLines(view.todos, options.width));
   }
   if (view.changesVisible) {
     dock.push(...changesPanelLines(view, options.width));
@@ -139,6 +156,7 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   return {
     body,
     dock: dock.slice(0, maxDock),
+    leftRail: leftRailLines(view, runningAgents(view), options),
     aside: asideLines(view, options),
     ...(dialog === undefined ? {} : { dialog }),
     images,
@@ -231,6 +249,49 @@ const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const ASIDE_COLUMNS = 24;
 const ASIDE_LABEL = 4;
 
+/** Columns the LEFT rail occupies (ADR-167 ④); the reading column pays for it. */
+export const LEFT_RAIL_WIDTH = 24;
+
+/**
+ * The left rail (ADR-167 ①): todos, background tasks, sub-agents, and the mascot —
+ * the run-state stack, compact rows without card frames. Anything empty shrinks away;
+ * the mascot is always there, because the rail deserves a face.
+ */
+function leftRailLines(view: TuiView, agents: readonly AgentView[], options: FrameOptions): readonly Line[] {
+  const out: Line[] = [];
+  const width = LEFT_RAIL_WIDTH - 1;
+  const group = (title: string, rows: readonly Line[]): void => {
+    if (rows.length === 0) return;
+    if (out.length > 0) out.push(line('', 'text'));
+    out.push(line(truncate(title, width), 'brand', true));
+    out.push(...rows);
+  };
+
+  if (view.todosVisible && view.todos.length > 0) {
+    const rows = view.todos.map((todo) => {
+      const marker = todo.status === 'completed' ? '[x]' : todo.status === 'in_progress' ? '[▸]' : '[ ]';
+      const text = todo.status === 'in_progress' && todo.activeForm !== '' ? todo.activeForm : todo.content;
+      return line(truncate(`${marker} ${text}`, width), todo.status === 'completed' ? 'textDim' : 'text');
+    });
+    group(`待办 ${String(view.todos.filter((todo) => todo.status === 'completed').length)}/${String(view.todos.length)}`, rows);
+  }
+
+  group('后台任务', view.tasks.map((task) => {
+    const state = task.state === 'running' ? '▸' : task.state === 'unknown' ? '?' : '·';
+    return line(truncate(`${state} ${task.command.split('\n')[0] ?? ''}`, width), task.state === 'running' ? 'act' : 'textDim');
+  }));
+
+  group('子代理', agents.map((agent) => {
+    const seconds = Math.max(0, Math.round((options.now - agent.startedAt) / 1000));
+    const elapsed = seconds >= 60 ? `${String(Math.floor(seconds / 60))}m${String(seconds % 60)}s` : `${String(seconds)}s`;
+    return line(truncate(`▸ ${agent.role} · ${elapsed}`, width), 'act');
+  }));
+
+  if (out.length > 0) out.push(line('', 'text'));
+  out.push(...cowCatArt(runningAgents(view).length > 0 || (view.turn !== null && view.turn.state === 'streaming') ? 'running' : 'idle', options.now));
+  return out;
+}
+
 function asideLines(view: TuiView, options: FrameOptions): readonly Line[] {
   const out: Line[] = [];
   /** One titled group; skipped entirely when it has nothing to say, blank row between groups. */
@@ -260,6 +321,26 @@ function asideLines(view: TuiView, options: FrameOptions): readonly Line[] {
     ...(view.sessionId === null ? [] : [['id', view.sessionId] as readonly [string, string]]),
   ]);
   if (options.cwd !== undefined) group('工作区', [['目录', options.cwd]]);
+
+  // git 及文件预览 (ADR-167 ①): this session's changed files, newest understanding of
+  // the working tree — the Write/Edit transcript folded into one glance.
+  const files = changedFiles(view);
+  if (files.length > 0) {
+    const last = out.at(-1);
+    if (last !== undefined && last.text !== '') out.push(line('', 'text'));
+    out.push(runLine('', [{ text: 'git 变更', token: 'brand', bold: true }], ''));
+    for (const file of files.slice(0, 8)) {
+      const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
+      const stat = file.added > 0 || file.removed > 0
+        ? `+${String(file.added)} -${String(file.removed)}`
+        : `写入 ${String(file.written)} 行`;
+      out.push(runLine('', [
+        { text: truncate(name, ASIDE_COLUMNS - 10), token: 'text' },
+        { text: ` ${stat}`, token: file.added >= file.removed ? 'brand' : 'alert' },
+      ], ''));
+    }
+    if (files.length > 8) out.push(line(`… 另有 ${String(files.length - 8)} 个文件（/changes）`, 'textDim'));
+  }
   return out;
 }
 

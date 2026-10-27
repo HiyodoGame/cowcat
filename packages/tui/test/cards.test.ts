@@ -423,15 +423,17 @@ test('the todo panel shows what is happening now, not just the plan', () => {
       ],
     }),
   ]);
-  const text = bodyLines(view).map((row) => row.text).join('\n');
-  assert.match(text, /待办 1\/3/);
-  assert.match(text, /\[▸\] 在加输入校验/);
-  assert.match(text, /\[ \] 写测试/);
-  assert.match(text, /\[x\] 跑一遍/);
+  // Todos live in the LEFT RAIL now (ADR-167), not the dock.
+  const rail = frameOf(view, { width: WIDTH, now: 0 }).leftRail ?? [];
+  const railText = rail.map((row) => row.text).join('\n');
+  assert.match(railText, /待办 1\/3/);
+  assert.match(railText, /\[▸\] 在加输入校验/);
+  assert.match(railText, /\[ \] 写测试/);
+  assert.match(railText, /\[x\] 跑一遍/);
 
   // Hidden on request, without touching the log.
-  const hidden = frameOf({ ...view, todosVisible: false }, { width: WIDTH, now: 0 }).body.map((row) => row.text).join('\n');
-  assert.doesNotMatch(hidden, /待办 1\/3/);
+  const hidden = frameOf({ ...view, todosVisible: false }, { width: WIDTH, now: 0 }).leftRail ?? [];
+  assert.doesNotMatch(hidden.map((row) => row.text).join('\n'), /待办 1\/3/);
 });
 
 test('the palette draws the same table the /commands run through', () => {
@@ -635,8 +637,8 @@ test('a running sub-agent is a panel; a finished one collapses to its notice', (
     }),
   ]);
   const frame = frameOf(view, { width: WIDTH, now: 5_000 });
-  const text = (frame.dock ?? []).map((row) => row.text).join('\n');
-  assert.match(text, /子 agent 1 个运行中/u);
+  const text = (frame.leftRail ?? []).map((row) => row.text).join('\n');
+  assert.match(text, /子代理/u);
   assert.match(text, /explore/u);
   assert.match(text, / · \d+s/u);
 
