@@ -15,6 +15,7 @@ export function createRuntimeClient(
   initialProviders: readonly ProviderSummary[] = [BUILTIN_ZAI],
   models: readonly ModelSummary[] = [{ id: 'alpha/one', efforts: [] }, { id: 'beta/two', efforts: [] }],
   modelListConfigured = true,
+  turnSendDelayMs = 0,
 ) {
   const listeners = new Map<string, (payload: never) => void>();
   const providers = [...initialProviders];
@@ -24,6 +25,8 @@ export function createRuntimeClient(
   const modelWrites: { readonly id: string; readonly effort: string | null }[] = [];
   let current = { id: models[0]?.id ?? 'alpha/one', effort: null as string | null };
   let ready = false;
+  let markSessionOpened!: () => void;
+  const sessionReady = new Promise<void>((resolve) => { markSessionOpened = resolve; });
   const client = {
     on(event: string, listener: (payload: never) => void) {
       listeners.set(event, listener);
@@ -33,7 +36,11 @@ export function createRuntimeClient(
     initialize: async () => ({}),
     trustStatus: async () => ({ trusted: true, withheld: { rules: 0, instructions: 0, skills: 0, mcpServers: 0, hooks: 0 } }),
     createSession: async () => ({ sessionId: 'sess_runtime', lastSeq: 1 }),
-    openSession: async () => ({ lastSeq: 1 }),
+    openSession: async () => {
+      // Let runTui finish attaching before releasing the test at the event-loop boundary.
+      setImmediate(markSessionOpened);
+      return { lastSeq: 1 };
+    },
     listProviders: async () => ({ providers }),
     setProvider: async (name: string, fields: ProviderWrite['fields']) => {
       writes.push({ name, fields });
@@ -70,8 +77,9 @@ export function createRuntimeClient(
       return current;
     },
     request: async (method: string, params: { input?: string }) => {
-      if (method === 'turn.send' && !ready) throw new ProtocolClientError('no model is configured', ERROR_CODES.hostRefused, { problem: 'not-configured' });
       if (method === 'turn.send') {
+        if (turnSendDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, turnSendDelayMs));
+        if (!ready) throw new ProtocolClientError('no model is configured', ERROR_CODES.hostRefused, { problem: 'not-configured' });
         sent.push(params.input ?? '');
         return { turnId: 'turn_runtime' };
       }
@@ -82,6 +90,7 @@ export function createRuntimeClient(
   } as unknown as ProtocolClient;
   return {
     client,
+    sessionReady,
     writes,
     configured,
     sent,
