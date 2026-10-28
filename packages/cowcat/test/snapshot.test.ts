@@ -1,4 +1,4 @@
-﻿import { test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -122,6 +122,39 @@ test('a snapshot covering the whole log is used as the state, not rebuilt', asyn
   // Identity, not just equality: with every event covered there is nothing left to
   // reduce, so full replay would have built a different object.
   assert.equal(reopened.state, covered);
+  assert.deepEqual(reopened.state, expected);
+});
+
+test('a store with incremental reads opens a snapshot without decoding the whole log', async () => {
+  const store = new MemoryEventStore();
+  const { events, expected } = await (async () => {
+    const session = await Session.create(sessionDeps(store), 'sess_incremental');
+    await session.openTurn('hi');
+    await session.close();
+    return { events: await store.readAll('sess_incremental'), expected: session.state };
+  })();
+  const covered = replay('sess_incremental', events);
+  const originalReadAll = store.readAll.bind(store);
+  let fullReads = 0;
+  const suffixReads: number[] = [];
+  store.readAll = async (sessionId) => {
+    fullReads += 1;
+    return originalReadAll(sessionId);
+  };
+  Object.assign(store, {
+    readAfter: async (sessionId: string, afterSeq: number) => {
+      suffixReads.push(afterSeq);
+      return (await originalReadAll(sessionId)).filter((event) => event.seq > afterSeq);
+    },
+  });
+  const deps = sessionDeps(store, {
+    snapshots: snapshotsReturning({ schemaVersion: SCHEMA_VERSION, lastSeq: events.length, state: covered }),
+  });
+
+  const reopened = await Session.open(deps, 'sess_incremental');
+
+  assert.equal(fullReads, 0);
+  assert.deepEqual(suffixReads, [events.length]);
   assert.deepEqual(reopened.state, expected);
 });
 

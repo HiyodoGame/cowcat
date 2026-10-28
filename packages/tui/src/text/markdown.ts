@@ -201,7 +201,7 @@ export function renderMarkdown(source: string, width: number, base: TokenName = 
       flushParagraph();
       gap(out);
       const lang = fence[1] ?? '';
-      if (lang !== '') out.push(lineOf(`▸ ${lang}`, 'textDim'));
+      if (lang !== '') out.push(lineOf(lang, 'textDim'));
       i += 1;
       const body: string[] = [];
       while (i < lines.length && (lines[i] ?? '').trim() !== '```') {
@@ -220,15 +220,8 @@ export function renderMarkdown(source: string, width: number, base: TokenName = 
     if (heading !== null) {
       flushParagraph();
       gap(out);
-      const level = heading[1]?.length ?? 1;
       const text = heading[2] ?? '';
-      if (level <= 2) {
-        // The accent bar anchors the heading; its text stays the base voice, bold — a
-        // whole green headline is emphasis shouting down the whole answer (ADR-164).
-        out.push(runLine('', [{ text: '▌ ', token: 'brand' }, { text, token: base, bold: true }], ''));
-      } else {
-        out.push(...wrapRuns(inlineRuns(text, base).map((span) => ({ ...span, bold: true })), width));
-      }
+      out.push(...wrapRuns(inlineRuns(text, base).map((span) => ({ ...span, bold: true })), width));
       gap(out);
       i += 1;
       continue;

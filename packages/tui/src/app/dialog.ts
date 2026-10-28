@@ -29,14 +29,16 @@ export interface DialogSpec {
   readonly title: string;
   /** The search field's current text; present means the dialog filters as you type. */
   readonly query?: string;
-  /** An input dialog (the Connect 式 Other step): the composer types ONE value. */
+  /** An input dialog (the Connect 式 Other step): the dialog itself types ONE value. */
   readonly input?: { readonly placeholder: string; readonly value: string };
   readonly groups: readonly DialogGroup[];
   readonly footer: readonly { readonly key: string; readonly label: string }[];
+  /** Validation or save failure, kept inside the current form. */
+  readonly error?: string;
 }
 
 /** Case-insensitive substring match over label + detail — the whole search behaviour. */
-export function filterDialogRows(rows: readonly DialogRow[], query: string): readonly DialogRow[] {
+export function filterDialogRows<T extends DialogRow>(rows: readonly T[], query: string): readonly T[] {
   const needle = query.trim().toLowerCase();
   if (needle === '') return rows;
   return rows.filter(

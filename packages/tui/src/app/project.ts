@@ -67,6 +67,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
           return table;
         })(),
         turnStartedAt: number(event, 'ts') ?? base.turnStartedAt,
+        turnSettledAt: null,
         slashIndex: 0,
         // A new turn cannot have output from the previous one attached to it.
         toolOutput: {},
@@ -94,6 +95,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         // Its live tail is a view of a call that no longer exists; the durable output is in
         // the transcript already.
         toolOutput: done ? {} : base.toolOutput,
+        turnSettledAt: done ? number(event, 'ts') : base.turnSettledAt,
       };
     }
 
@@ -161,16 +163,21 @@ export function project(view: TuiView, event: WireEvent): TuiView {
         cacheRead: number(usage, 'cacheRead') ?? 0,
         cacheCreation: number(usage, 'cacheCreation') ?? 0,
       };
+      const invocation = text(event, 'invocation');
+      const previous =
+        invocation !== null && base.usageInvocation === invocation && base.usage !== null
+          ? base.usage
+          : { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
       return {
         ...base,
         usage: round,
-        // The session meter (ADR-131 1): accumulated from the same events the kernel
-        // folds, so renderer and kernel can never disagree about the bill.
+        usageInvocation: invocation,
+        // Cumulative reports from one call replace; a different invocation accumulates (ADR-169).
         usageTotals: {
-          input: base.usageTotals.input + round.input,
-          output: base.usageTotals.output + round.output,
-          cacheRead: base.usageTotals.cacheRead + round.cacheRead,
-          cacheCreation: base.usageTotals.cacheCreation + round.cacheCreation,
+          input: base.usageTotals.input - previous.input + round.input,
+          output: base.usageTotals.output - previous.output + round.output,
+          cacheRead: base.usageTotals.cacheRead - previous.cacheRead + round.cacheRead,
+          cacheCreation: base.usageTotals.cacheCreation - previous.cacheCreation + round.cacheCreation,
         },
       };
     }
@@ -256,7 +263,7 @@ export function project(view: TuiView, event: WireEvent): TuiView {
       // The old count described the history that was just replaced: keeping it would say
       // "94%" about a context that is now much smaller. Nothing is known again until the
       // next `model.usage` reports on the new prompt (ADR-105 ②).
-      return { ...shown, usage: null };
+      return { ...shown, usage: null, usageInvocation: null };
     }
 
     case 'context.compaction.started':

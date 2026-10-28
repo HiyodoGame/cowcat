@@ -1,66 +1,34 @@
 import type { AssistantEntry, UserEntry } from '../app/view.js';
-import { card } from '../ui/card.js';
-import { line, type Line } from '../ui/line.js';
+import { line } from '../ui/line.js';
 import { wrap } from '../text/wrap.js';
 import { renderMarkdown } from '../text/markdown.js';
+import { choiceBlock, panelBlock, stackBlock, textBlock, type SceneNode } from '../ui/scene.js';
 
-/**
- * What the person said, and what the agent said back.
- *
- * The user's words get a card — the brand guide's `┌─ user ─┐` bubble — because a
- * conversation with two voices and no boundary is a wall of text. The agent's words get no
- * box: they are the body of the transcript, and boxing them would double the vertical cost
- * of every answer.
- */
-export function userMessageLines(entry: UserEntry, width: number): readonly Line[] {
+export function userMessage(entry: UserEntry, width: number): SceneNode {
   const text = entry.text === '' ? '（空输入）' : entry.text;
-  // A cron-fired turn is unattended (ADR-142): the marker says who started it and what the
-  // model cannot do, so a refused write later in the card never reads as the model acting up.
-  const cronRow =
-    entry.cron === true
-      ? [{ text: '⏰ 定时任务触发（无人值守：不能询问审批，做不了会报告）', token: 'textDim' as const }]
-      : [];
-  return card({
-    title: entry.cron === true ? '⏰' : '你',
-    titleToken: 'user',
-    body: [...cronRow, ...wrap(text, width - 4).map((row) => ({ text: row, token: 'user' as const }))],
-    width,
+  return panelBlock({
+    key: `user-${String(entry.seq)}`, title: entry.cron === true ? '定时任务' : '你', tone: 'user',
+    children: [textBlock('content', [
+      ...(entry.cron === true ? [line('无人值守：不能询问审批，做不了会报告', 'textDim')] : []),
+      ...wrap(text, Math.max(8, width - 6)).map((row) => line(row, 'user')),
+    ])],
   });
 }
 
-export function assistantMessageLines(
-  entry: AssistantEntry,
-  width: number,
-  thinkingExpanded: boolean,
-): readonly Line[] {
-  const lines: Line[] = [];
+export function assistantMessage(entry: AssistantEntry, width: number, thinkingExpanded: boolean): SceneNode {
+  const children: SceneNode[] = [];
   const blocks = entry.reasoning.length + entry.redactedThinking;
   if (blocks > 0) {
-    // Collapsed by default: thinking is how the answer was reached, not the answer. The
-    // count is the only thing that tells the reader whether expanding is worth a screen.
-    const label = thinkingExpanded
-      ? `  ▾ 思考 · ${String(blocks)} 段（Ctrl-T 折叠）`
-      : `  ▸ 思考 · ${String(blocks)} 段（Ctrl-T 展开）`;
-    lines.push(...wrap(label, width).map((row) => line(row, 'textDim', false, 'thinking')));
+    children.push(choiceBlock('thinking-toggle', `思考 ${String(blocks)} 段  ${thinkingExpanded ? 'Ctrl-T 折叠' : 'Ctrl-T 展开'}`, {
+      selected: thinkingExpanded, token: 'textDim', hit: 'thinking',
+    }));
     if (thinkingExpanded) {
-      for (const block of entry.reasoning) {
-        lines.push(...wrap(block, width - 4).map((row) => line(`  │ ${row}`, 'textDim')));
-      }
-      if (entry.redactedThinking > 0) {
-        lines.push(
-          ...wrap(`  │ （${String(entry.redactedThinking)} 段已隐藏的思考）`, width).map((row) => line(row, 'textDim')),
-        );
-      }
+      const reasoning = entry.reasoning.flatMap((block) => wrap(block, Math.max(8, width - 4)));
+      if (entry.redactedThinking > 0) reasoning.push(`（${String(entry.redactedThinking)} 段已隐藏的思考）`);
+      children.push(textBlock('reasoning', reasoning.map((row) => line(row, 'textDim'))));
     }
   }
-  // The model answers in Markdown; printing it raw was the transcript-as-text-wall (ADR-162).
-  // The BODY is the terminal's own foreground — the colour discipline that makes OpenCode
-  // readable: colour is emphasis, never the default voice of a whole answer (ADR-164).
-  lines.push(...renderMarkdown(entry.text, width, 'text'));
-  if (entry.calls > 0) {
-    // A fact the log has and the screen would otherwise lose: the calls below are drawn as
-    // their own cards, and the answer itself arrived with them.
-    lines.push(line(`  （这一轮还带了 ${String(entry.calls)} 个工具调用）`, 'textDim'));
-  }
-  return lines;
+  children.push(textBlock('answer', renderMarkdown(entry.text, width, 'text')));
+  if (entry.calls > 0) children.push(textBlock('calls', [line(`这一轮还带了 ${String(entry.calls)} 个工具调用`, 'textDim')]));
+  return stackBlock(`assistant-${String(entry.seq)}`, children, 1);
 }

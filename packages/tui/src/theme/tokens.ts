@@ -47,6 +47,10 @@ export type TokenName =
   | 'assistant'
   | 'tool'
   | 'notice'
+  | 'catFur'
+  | 'catPatch'
+  | 'catNose'
+  | 'catEye'
   /** Markdown code (fenced blocks, inline code) — non-conversation content, act-blue family (ADR-162). */
   | 'code';
 
@@ -93,6 +97,10 @@ export const THEME: Theme = {
     assistant: BRAND.primary,
     tool: '#8A8A94',
     notice: BRAND.plan,
+    catFur: BRAND.paper,
+    catPatch: BRAND.ink,
+    catNose: '#E8A0A0',
+    catEye: BRAND.primary,
     code: BRAND.act,
   },
 };

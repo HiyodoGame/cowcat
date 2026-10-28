@@ -2,123 +2,67 @@ import type { ApprovalChoice, ApprovalView } from '../app/view.js';
 import { approvalChoicesFor } from '../app/view.js';
 import { copyFor } from '../app/copy.js';
 import { stripControl } from '../app/meter.js';
-import { card, type CardBodyLine } from '../ui/card.js';
 import { line, type Line } from '../ui/line.js';
 import { wrap } from '../text/wrap.js';
+import { accentBlock, choiceBlock, panelBlock, scrollTextBlock, textBlock, type SceneNode } from '../ui/scene.js';
 
-/**
- * The approval card: the one card that is waiting for a person.
- *
- * It carries the brand guide's voice (§2.2) and its interaction rule (§4.3: "审批等待即互动"
- * — a pending question is not a silent hang). The nudge after ten seconds is a fact the card
- * can state because `approval.requested` carries a timestamp and the frame builder is given
- * a clock; nothing else in the interface needs to know what time it is.
- *
- * The keys live on the input line (see `session-frame`), not in the card, for one measured
- * reason: a status row or a card title is one line, and at 64 columns the rule name was the
- * first thing to fall off the end when the prompt was in it too.
- */
 const NUDGE_AFTER_MS = 10_000;
 
 export interface ApprovalCardOptions {
   readonly width: number;
-  /** Milliseconds now. Injected: a card that read the clock would not be a pure function. */
   readonly now: number;
-  /** Which answer is highlighted; `APPROVAL_CHOICES` order. */
   readonly cursor: number;
 }
 
-export function approvalCardLines(approval: ApprovalView, options: ApprovalCardOptions): readonly Line[] {
+export function approvalCard(approval: ApprovalView, options: ApprovalCardOptions): SceneNode {
   const copy = copyFor('zh');
   const answered = approval.verdict !== null;
-  const waitingLong = !answered && options.now - approval.askedAt > NUDGE_AFTER_MS;
-  // Everything a model wrote is scrubbed before it reaches the screen (security review
-  // P2-2): ESC and bidi controls can make the card show a different sentence than the
-  // one the grant key records, and the card and the key must be the same words.
-  const subject = stripControl(approval.command ?? approval.path ?? '');
-  // The exact subject comes FIRST (ADR-129 7): an answer grants this command or path,
-  // and a card that led with the model's own justification was asking for a blind
-  // click. It WRAPS rather than truncates (review of #180, P1-6): a truncated tail is
-  // exactly where a harmful suffix would hide, and the card and the grant key must be
-  // the same words, all of them.
-  const subjectLines: CardBodyLine[] =
-    subject === '' ? [] : wrap(subject, Math.max(8, options.width - 4)).map((text) => ({ text, token: 'text' as const }));
-  const body: CardBodyLine[] = [
-    { text: answered ? describeVerdict(approval) : copy.approveQuip, token: answered ? 'textDim' : 'plan' },
-    ...subjectLines,
-    { text: `规则：${stripControl(approval.rule)}`, token: 'textDim' },
+  const rows: Line[] = [
+    line(answered ? describeVerdict(approval) : copy.approveQuip, answered ? 'textDim' : 'plan'),
+    ...wrap(stripControl(approval.command ?? approval.path ?? ''), Math.max(8, options.width - 6)).map((text) => line(text, 'text')),
+    line(`规则：${stripControl(approval.rule)}`, 'textDim'),
   ];
-  // What an approval would widen, in words a non-author of the config can act on
-  // (ADR-129 7, ADR-130 ②). Plain asks widen nothing and print nothing.
   for (const dimension of approval.dimensions) {
-    if (dimension === 'deny-override') body.push({ text: '将放宽：放行这条被规则拒绝的操作（仅此命令/路径）', token: 'plan' });
-    if (dimension === 'unsandboxed') body.push({ text: '将放宽：本次脱离沙箱执行该命令', token: 'plan' });
+    if (dimension === 'deny-override') rows.push(line('将放宽：放行这条被规则拒绝的操作（仅此命令/路径）', 'plan'));
+    if (dimension === 'unsandboxed') rows.push(line('将放宽：本次脱离沙箱执行该命令', 'plan'));
   }
-  if (approval.reason !== null) body.push({ text: `理由：${stripControl(approval.reason)}`, token: 'textDim' });
-  // The only line on this card that is not dim: a warning is the reason to read it twice.
-  if (approval.warning !== null) body.push({ text: `注意：${stripControl(approval.warning)}`, token: 'alert' });
+  if (approval.reason !== null) rows.push(line(`理由：${stripControl(approval.reason)}`, 'textDim'));
+  if (approval.warning !== null) rows.push(line(`注意：${stripControl(approval.warning)}`, 'alert'));
+  const children: SceneNode[] = [scrollTextBlock('facts', rows.flatMap((row) => wrap(row.text, Math.max(8, options.width - 6)).map((text) => ({ ...row, text }))))];
+  const actions: SceneNode[] = [];
   if (!answered) {
-    // The four answers as rows, because "remember to type always" is a memory test, not a
-    // choice. The letters still work for anyone who has the habit (run.ts keeps them).
-    for (const [index, choice] of approvalChoicesFor(approval.rule).entries()) {
-      const selected = index === options.cursor;
-      body.push({
-        text: `${selected ? '▸' : ' '} ${labelFor(choice, approval.name)}`,
-        token: selected ? 'act' : 'textDim',
-        hit: `approval:${String(index)}`,
-      });
-    }
-    body.push({ text: copy.approveKeys, token: 'textDim' });
+    actions.push(...approvalChoicesFor(approval.rule).map((choice, index) => choiceBlock(`approval-${String(index)}`, labelFor(choice, approval.name), {
+      selected: index === options.cursor, token: 'textDim', hit: `approval:${String(index)}`,
+    })));
+    actions.push(textBlock('keys', [line(copy.approveKeys, 'textDim')]));
   }
-  if (waitingLong) {
-    // §2.2's line for exactly this moment. It is the whole "waiting is an interaction" rule.
-    body.push({ text: copy.approvalWaiting, token: 'act' });
-  }
-
-  return card({
-    title: `⚠ ${stripControl(approval.name)}`,
-    titleToken: 'plan',
-    suffix: answered ? '[已答]' : '[待回答]',
-    body,
-    width: options.width,
+  if (!answered && options.now - approval.askedAt > NUDGE_AFTER_MS) children.push(textBlock('nudge', [line(copy.approvalWaiting, 'act')]));
+  return panelBlock({
+    key: `approval-${approval.callId}`, title: `${stripControl(approval.name)} · ${answered ? '已回答' : '待回答'}`, tone: 'plan', children, actions,
   });
 }
 
-/** The option labels. The session grant names the tool: that was #96's whole confusion. */
 function labelFor(choice: ApprovalChoice, tool: string): string {
   switch (choice) {
-    case 'once':
-      return '允许一次';
-    case 'session':
-      return `本会话内 ${tool} 都不再问`;
-    case 'always':
-      return '只对这一个动作（同一条命令不再问）';
-    case 'reject':
-      return '拒绝';
+    case 'once': return '允许一次';
+    case 'session': return `本会话内 ${tool} 都不再问`;
+    case 'always': return '只对这一个动作（同一条命令不再问）';
+    case 'reject': return '拒绝';
   }
 }
 
 function describeVerdict(approval: ApprovalView): string {
   const copy = copyFor('zh');
   switch (approval.verdict) {
-    case 'once':
-      return '已允许（这一次）。';
-    case 'always':
-      return '已允许（只对这一个动作；同一条命令再来不会问）。';
-    case 'session':
-      return '已允许（本会话内这个工具都不再问）。';
-    case 'reject':
-      return approval.by === 'timeout' ? '没人回答，超时按拒绝处理。' : copy.denied;
-    default:
-      return `结果：${approval.verdict ?? '未知'}`;
+    case 'once': return '已允许（这一次）。';
+    case 'always': return '已允许（只对这一个动作；同一条命令再来不会问）。';
+    case 'session': return '已允许（本会话内这个工具都不再问）。';
+    case 'reject': return approval.by === 'timeout' ? '没人回答，超时按拒绝处理。' : copy.denied;
+    default: return `结果：${approval.verdict ?? '未知'}`;
   }
 }
 
-/** A one-line notice, used where a card would be too much. */
-export function noticeLines(level: 'info' | 'warn' | 'error', text: string, width: number): readonly Line[] {
-  const marker = level === 'info' ? '·' : '!';
+export function noticeBlock(level: 'info' | 'warn' | 'error', text: string, width: number): SceneNode {
   const token = level === 'error' ? 'alert' : level === 'warn' ? 'notice' : 'textDim';
-  const room = Math.max(4, width - 2);
-  const rows = wrap(text, room);
-  return rows.map((row, index) => line(`${index === 0 ? `${marker} ` : '  '}${row}`, token));
+  return accentBlock(`notice-${level}-${text}`, token, [textBlock('text', wrap(text, Math.max(4, width - 4)).map((row) => line(row, token)))]);
 }

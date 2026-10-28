@@ -37,6 +37,8 @@ export const METHODS = [
   'providers.list',
   /** Write ONE provider entry into the user config; a name, never a key (ADR-165 ①). */
   'provider.set',
+  /** Atomically configure and optionally activate one complete provider + model. */
+  'provider.configure',
   /** The workspace trust gate's read side (ADR-157 ②): the host's startup snapshot. */
   'trust.status',
   /** Persist the startup cwd into the trust store (ADR-157 ②); no config hot-reload. */
@@ -123,6 +125,21 @@ export const PARAMS = {
     name: z.string().min(1),
     baseUrl: z.string().min(1).optional(),
     apiKeyEnv: z.string().min(1).optional(),
+  }),
+  'provider.configure': z.strictObject({
+    sessionId: z.string().min(1),
+    name: z.string().min(1),
+    protocol: z.enum(['openai', 'anthropic']),
+    baseUrl: z.string().min(1).nullable(),
+    apiKeyEnv: z.string().min(1),
+    preset: z.string().min(1),
+    activate: z.boolean(),
+    definition: z.strictObject({
+      protocol: z.enum(['openai', 'anthropic']),
+      model: z.string().min(1),
+      limits: z.strictObject({ context: z.number().int().positive().optional(), output: z.number().int().positive().optional() }),
+      toolCalls: z.boolean(),
+    }).optional(),
   }),
   // Trust is asked about the host's own startup cwd (ADR-157), so neither method takes a
   // path: a client cannot ask about — or grant — anywhere else.
@@ -212,19 +229,54 @@ export interface ResultTable {
   readonly 'cron.remove': { readonly removed: boolean };
   readonly 'providers.list': { readonly providers: readonly ProviderSummary[] };
   readonly 'provider.set': { readonly saved: true };
+  readonly 'provider.configure': {
+    readonly saved: true;
+    readonly current: ModelSelectionSummary | null;
+    readonly keySet: boolean;
+    readonly requiresRestart: boolean;
+  };
   /** The startup snapshot (ADR-157 ②): what trusting this workspace would unlock. */
   readonly 'trust.status': { readonly trusted: boolean; readonly withheld: TrustWithheld };
   readonly 'trust.grant': { readonly granted: true };
   readonly shutdown: { readonly closing: true };
 }
 
-/** One user-layer provider as the `/providers` panel needs it (ADR-165 ①). */
+export type ProviderProtocol = 'openai' | 'anthropic';
+
+export interface ProviderModelDefinition {
+  readonly protocol: ProviderProtocol;
+  readonly model: string;
+  readonly limits: { readonly context?: number; readonly output?: number };
+  readonly toolCalls: boolean;
+}
+
+export interface ProviderModelSummary extends ProviderModelDefinition {
+  readonly id: string;
+  readonly contextWindow: number | null;
+  readonly outputLimit: number | null;
+}
+
+export interface ProviderConfiguration {
+  readonly name: string;
+  readonly protocol: ProviderProtocol;
+  readonly baseUrl: string | null;
+  readonly apiKeyEnv: string;
+  readonly preset: string;
+  readonly activate: boolean;
+  readonly definition?: ProviderModelDefinition;
+}
+
+/** One provider template or user entry, including the models it can actually select. */
 export interface ProviderSummary {
   readonly name: string;
   readonly baseUrl: string | null;
   readonly apiKeyEnv: string | null;
   /** Whether the named environment variable is set in the HOST's environment. */
   readonly keySet: boolean;
+  readonly custom: boolean;
+  readonly protocol: ProviderProtocol | null;
+  readonly complete: boolean;
+  readonly models: readonly ProviderModelSummary[];
 }
 
 /** What the project layer is holding back from an untrusted workspace (ADR-157 ②). */

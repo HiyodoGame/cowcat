@@ -804,3 +804,16 @@ test('accept-edits.mode-changed folds the switch and states its exact scope (ADR
   view = project(view, event('accept-edits.mode-changed', { enabled: false }));
   assert.equal(view.acceptEdits, false);
 });
+
+test('the TUI bills only the latest cumulative report per invocation', () => {
+  seq = 0;
+  const initial = { input: 10, output: 1, cacheRead: 4, cacheCreation: 2 };
+  const cumulative = { input: 10, output: 7, cacheRead: 4, cacheCreation: 2 };
+  const next = { input: 20, output: 3, cacheRead: 8, cacheCreation: 1 };
+  let view = project(initialView(), event('model.usage', { invocation: 'model_1', usage: initial }));
+  view = project(view, event('model.usage', { invocation: 'model_1', usage: cumulative }));
+  assert.deepEqual(view.usageTotals, cumulative);
+
+  view = project(view, event('model.usage', { invocation: 'model_2', usage: next }));
+  assert.deepEqual(view.usageTotals, { input: 30, output: 10, cacheRead: 12, cacheCreation: 3 });
+});

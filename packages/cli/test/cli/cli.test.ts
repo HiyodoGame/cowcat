@@ -341,9 +341,8 @@ test('serve is wired to the REAL host: a session is created on disk and a turn r
   await harness.settle(4);
   assert.equal(await harness.done, EXIT.ok);
 
-  // Closing the host released the lock: a leftover lock file would make the next run
-  // report "writer pid … is gone but left its lock file behind" (ADR-010).
-  assert.deepEqual(readdirSync(dir), ['sess_cli.jsonl']);
+  // Closing saved the replay snapshot (ADR-170) and released the lock (ADR-010).
+  assert.deepEqual(readdirSync(dir), ['sess_cli.jsonl', 'sess_cli.snapshot.json']);
 });
 
 test('run refuses a prompt when no model is configured, and stays exit 1', async (t) => {

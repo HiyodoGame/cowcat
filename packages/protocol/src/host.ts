@@ -1,5 +1,5 @@
 import { ERROR_CODES, type ErrorCode } from './jsonrpc.js';
-import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, ProviderSummary, SessionSummary, TrustWithheld } from './methods.js';
+import type { AttachmentBytes, ApprovalVerdict, CronJobSummary, GrantSummary, ModelListResult, ModelSelectionSummary, ProviderConfiguration, ProviderSummary, SessionSummary, TrustWithheld } from './methods.js';
 
 /**
  * What the frontend needs from whatever holds sessions. T3/T4 implement this over the
@@ -103,6 +103,12 @@ export interface ProtocolHost {
    * carried by the environment, never the wire — `apiKeyEnv` is a NAME.
    */
   setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }): Promise<void>;
+  configureProvider(sessionId: string, configuration: ProviderConfiguration): Promise<{
+    readonly saved: true;
+    readonly current: ModelSelectionSummary | null;
+    readonly keySet: boolean;
+    readonly requiresRestart: boolean;
+  }>;
   /**
    * The host's startup trust snapshot for its own cwd (ADR-157 ②): whether it is trusted
    * and what the project layer is holding back. Read-only — the host never hot-reloads

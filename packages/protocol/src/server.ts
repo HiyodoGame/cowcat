@@ -188,6 +188,8 @@ export function createServer(options: ServerOptions): ProtocolServer {
         return listProviders(id);
       case 'provider.set':
         return setProvider(id, params as Params<'provider.set'>);
+      case 'provider.configure':
+        return configureProvider(id, params as Params<'provider.configure'>);
       case 'trust.status':
         return trustStatus(id);
       case 'trust.grant':
@@ -342,6 +344,22 @@ export function createServer(options: ServerOptions): ProtocolServer {
       ...(params.apiKeyEnv === undefined ? {} : { apiKeyEnv: params.apiKeyEnv }),
     });
     reply(id, { saved: true });
+  }
+
+  async function configureProvider(id: RequestId, params: Params<'provider.configure'>): Promise<void> {
+    const { sessionId, definition, ...configuration } = params;
+    reply(id, await host.configureProvider(sessionId, {
+      ...configuration,
+      ...(definition === undefined ? {} : {
+        definition: {
+          ...definition,
+          limits: {
+            ...(definition.limits.context === undefined ? {} : { context: definition.limits.context }),
+            ...(definition.limits.output === undefined ? {} : { output: definition.limits.output }),
+          },
+        },
+      }),
+    }));
   }
 
   async function trustStatus(id: RequestId): Promise<void> {

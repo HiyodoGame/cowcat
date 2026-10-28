@@ -55,6 +55,17 @@ export class Session {
   static async open(deps: SessionDeps, sessionId: string): Promise<Session> {
     const lock = await deps.lock.acquire(sessionId);
     try {
+      const snapshot = await deps.snapshots.load(sessionId);
+      if (snapshot !== null && isSupportedSchemaVersion(snapshot.schemaVersion) && deps.store.readAfter !== undefined) {
+        const header = await deps.store.readHeader(sessionId);
+        if (header === null) throw new Error(`no such session: ${sessionId}`);
+        if (header.type !== 'session.opened') {
+          throw new Error(`session ${sessionId} has no session header; the log starts with ${header.type}`);
+        }
+        assertSupportedSchemaVersion(header.schemaVersion, sessionId);
+        const suffix = await deps.store.readAfter(sessionId, snapshot.lastSeq);
+        if (suffix !== null) return new Session(deps, suffix.reduce(reduce, snapshot.state), lock);
+      }
       const events = await deps.store.readAll(sessionId);
       const header = events[0];
       if (header === undefined) throw new Error(`no such session: ${sessionId}`);
@@ -62,7 +73,6 @@ export class Session {
         throw new Error(`session ${sessionId} has no session header; the log starts with ${header.type}`);
       }
       assertSupportedSchemaVersion(header.schemaVersion, sessionId);
-      const snapshot = await deps.snapshots.load(sessionId);
       return new Session(deps, stateFrom(sessionId, events, snapshot), lock);
     } catch (error) {
       // A failed open must not keep the lock: our own pid is alive, so this very

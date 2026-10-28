@@ -146,9 +146,10 @@ ADR-062 否掉方案 B 时反对的那件事（「`serve` 被绑在渲染器的 
 packages/tui/src/
   app/          project()（KernelEvent → view model，纯函数）、视图与界面状态、文案、命令表、键位
   text/         我们自己的排版：width（宽度表，v1 的排序缺陷在此修掉）、wrap（卡片内换行）、diff（LCS）
-  ui/           无状态原语：line（行模型）、card（逐字符画的卡片）、screen（**renderable 层，两个碰渲染器的文件之一**）
+  ui/           无状态原语：scene（纯数据节点）、panel / choice-list / composer 等原生组件、
+                screen（组合根）；原语用边框、背景与布局绘制装饰，不拼装饰字符
   components/   特性组件：session-frame / transcript / message / tool-card / approval-card /
-                todo-panel / palette / status-bar（全部产出 `Line[]`）
+                todo-panel / palette / status-bar（产出稳定的 `SceneNode` 与结构化状态）
   theme/        语义 token（ADR-061）
   image/        ImageRenderable 与能力探测（ADR-058）：`layout.ts` 算尺寸；**探测与协议选择交给渲染库**（ADR-068）
 ```
@@ -160,8 +161,8 @@ packages/tui/src/
 | `protocol/` | 只做传输与解码；不认识任何界面概念（它如今是自己的包） |
 | `app/` | **唯一**持有界面状态的地方；`project()` 是纯函数（同一段日志 → 同一屏）；命令表同时服务 `/命令` 与面板，键位是纯函数 |
 | `text/` | 排版与测量：宽度表是**我们的**（ADR-056、ADR-067 ②），diff 是迁移 v1 的 LCS |
-| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。**只有 `ui/screen.ts`（renderable 层）与 `run.ts`（渲染器生命周期）可以 import `@opentui/core`**（ADR-066 ③，由 lint 强制）；卡片是文本（ADR-067 ①） |
-| `components/` | 只读 view model，不订阅协议、不发命令；**产出 `Line[]` 与状态行**，因此不需要渲染器就能测 |
+| `ui/` | 原语**不认识业务**：出现 `session` / `tool` / `approval` 这些词就是分层被破坏的信号。renderable 适配层与 `run.ts`（渲染器生命周期）可以 import `@opentui/core`；UI 装饰用原生边框、背景和布局（ADR-171），不再逐字拼卡片 |
+| `components/` | 只读 view model，不订阅协议、不发命令；**产出纯数据 `SceneNode` 与结构化状态**，因此不需要渲染器就能测 |
 | `image/` | 能力探测与协议细节（kitty / iTerm2 / 半块）只在这里；组件只说「这里有一张图」 |
 
 **依赖方向**：`components → ui → image/theme`，`app → protocol`；**整个 `packages/tui` 都不 import `@corescense/cowcat-core`**（ADR-059 ③，lint 在它的 `eslint.config.js` 里，`tools/lint-probe.mjs` 有一条探针证明它真的会报错）。同时**反向**：`packages/cli` 不许直接 import `@opentui/*`——它通过 `@corescense/cowcat-tui` 取渲染器，进渲染器只有一个门。
@@ -250,7 +251,7 @@ packages/tui/src/
 | `cowcat run "<prompt>"` | 一次性回合（非交互） | **可用**：`--yes` 放行审批，`--session <id>` 继续一个会话；默认逐条拒绝（ADR-065 ②） |
 | `cowcat doctor` | Node、配置、信任、指令链（注入了哪几份 / 跳过了什么）、沙箱后端、模型与协议版本逐项检查 | **可用**（T4a 3/3 起真的查配置与沙箱；指令链一行在 ADR-078 T6 补上；不查渲染器的原生二进制，说明理由） |
 | `cowcat sessions list \| resume <id>` | 会话管理 | **都可用了**：`list` 直接读会话目录，**默认折叠被委派的子会话**（`--all` 才列，并标出父会话——ADR-079 ④）；`resume` 就是「带 id 的 TUI」（同一条代码路径，Node 门槛只检查一次） |
-| `cowcat setup` | 交互式配置向导 | **未接线**：配置的**写入**路径尚未实现（键已定，见 ADR-063；现在直接编辑 `~/.cowcat/config.json`） |
+| `cowcat setup` | 非交互配置写入：`--migrate` / `--preset`，可配 `--api-key-env` / `--base-url` / `--force` / `--print` | **可用**（ADR-091；原子写入、覆盖前备份，密钥只写环境变量名；交互式向导仍未做） |
 
 子命令表是**数据**（`packages/cli/src/cli/spec.ts`：名字、摘要、参数 schema、**选项**、处理函数），帮助文本与参数/选项校验都从表生成，不做嵌套子命令。T4 落的是**结构与三个出口码**：
 
@@ -285,7 +286,7 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 2. **`packages/tui/test/render.test.ts` 是这条前提的可重复形式**，不是一次性探针：原生二进制没解析到、没加载起来、或帧的列错位，它都会失败。因此 CI 不会在「TUI 静默不可用」时保持绿灯。
 3. **真实终端仍然没有证据**：刷新率、闪烁、图片协议的实际渲染全部未测，仍是 T10 的活（本节只证明「能装、能编帧」）。
 
-**T9 落地的形状（图片，ADR-068）**：三级回退是**渲染库内建的**（`ImageRenderable` 的 `protocol: 'auto'` → `kitty` / `sixel` / `blocks`，**没有 iTerm2**），能力探测也由它做（T1 捕获里那条 `a=q` 就是它的查询）。我们负责三件事：**尺寸**（`image/imageBox`：附件自带 `width`/`height`，按单元格 2:1 算行数，超过 12 行等比缩小——布局在渲染前就知道占多少行）、**位置**（帧规格里的 `images: ImageSlot[]`；图片**绝对定位**覆盖卡片预留的行，当 flex 子元素会被推到卡片外面并把下面顶下去）、**状态**（`loading` / `ready` / `failed` 各有一行字，终端没有图片协议时也要能说「这里有一张 320×200 的 PNG」）。字节只经 `attachment.read`，日志里只有引用。
+**T9 落地的形状（图片，ADR-068）**：三级回退是**渲染库内建的**（`ImageRenderable` 的 `protocol: 'auto'` → `kitty` / `sixel` / `blocks`，**没有 iTerm2**），能力探测也由它做。我们负责三件事：**尺寸**（`image/imageBox`：按单元格 2:1 算行数，超过 12 行等比缩小）、**位置**（ADR-171 的 `ImageNode` 参与原生组件布局，不再绝对定位覆盖预留行）、**状态**（`loading` / `ready` / `failed` 都有文字，终端没有图片协议时也要能说「这里有一张 320×200 的 PNG」）。字节只经 `attachment.read`，日志里只有引用。
 
 ## T10 收口（2026-10-19）
 
@@ -293,8 +294,8 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 
 | 出口标准 | 怎么被保证 |
 |---|---|
-| 用 headless 协议完整跑通一个带工具与审批的回合（**测试中**） | `packages/cli/test/exit-criteria.test.ts`：`createHost` + 真实协议服务端（内存传输）+ 脚本化模型 → `session.create` → `turn.send` → `approval.requested` → `respondApproval('once')` → 完成；**中间的事件流喂给 `project()` 与 `frameOf()`**，断言屏幕上出现用户卡、`⏺ Write ok` 的卡片与答案。它住在 cli 是因为只有它同时看得到两边（ADR-062 ③），而且**不碰渲染器**（`Line[]` 是纯函数产物，Node 22 腿也能跑） |
-| TUI 中删除任何直接访问内核内部的代码路径（**lint 或测试保证**） | `packages/tui/eslint.config.js` 两条：整包不许 import `@corescense/cowcat-core`；**只有 `ui/screen.ts` 与 `run.ts` 可以 import `@opentui/core`**（ADR-066 ③ 从约定变成规则）。`tools/lint-probe.mjs` 有 5 条 tui 探针证明它们**真的会报错**，以及两个豁免**真的成立**。**CI 教了这里一课**：第一版规则写的是「只有 `screen.ts`」，而 `src/smoke.ts`（测试辅助）与 `run.ts`（调用 `createCliRenderer`）立刻让它红了——**跑探针不等于跑包级 lint** |
+| 用 headless 协议完整跑通一个带工具与审批的回合（**测试中**） | `packages/cli/test/exit-criteria.test.ts`：`createHost` + 真实协议服务端（内存传输）+ 脚本化模型 → `session.create` → `turn.send` → `approval.requested` → `respondApproval('once')` → 完成；**中间的事件流喂给 `project()` 与 `frameOf()`**，断言原生用户 Panel、工具组件与答案。它住在 cli 是因为只有它同时看得到两边（ADR-062 ③），而且**不碰渲染器**（`SceneNode` 是纯函数产物，Node 22 腿也能跑） |
+| TUI 中删除任何直接访问内核内部的代码路径（**lint 或测试保证**） | `packages/tui/eslint.config.js` 两条：整包不许 import `@corescense/cowcat-core`；**只有 `ui/**` 与 `run.ts` 可以 import `@opentui/core`**（ADR-171 从约定变成规则）。`tools/lint-probe.mjs` 有 tui 探针证明它们**真的会报错**，以及适配器与生命周期豁免**真的成立**。**CI 教了这里一课**：第一版规则写的是「只有 `screen.ts`」，而 `src/smoke.ts`（测试辅助）与 `run.ts`（调用 `createCliRenderer`）立刻让它红了——**跑探针不等于跑包级 lint** |
 
 **待办与未验证**（`HANDOFF` §6 有同样的清单，这里是要人眼做的部分）：
 
@@ -306,15 +307,15 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
 | 4 | **图片三级回退**：真图片 / 半块 / 只有元信息 | 在 kitty 或 WezTerm（`TERM=xterm-kitty`）上 Read 一张 PNG 应是**真图片**；普通终端应是**半块字符**；`TERM=dumb` 下应只有一行 `图片 image/png …` |
 | 5 | **`a=q` 的答复会不会漏进键盘输入**（ADR-058 的「静默查询」现在是库内行为） | 图片出现后**连续打几个字符**，看输入框是否被吞字或串字 |
 | 6 | **退出**：Ctrl-C 后终端恢复 | 退出后光标是否可见、alternate screen 是否干净、`~/.cowcat` 里有没有残留 `.lock` |
-| 7 | **缩放**：改变窗口大小 | 边框是否按新宽度重排（每次重绘按 `renderer.width` 算，但没有监听 resize 事件——这条要专门看） |
-| 8 | **长对话**：视口停在最新 | 让它输出 30+ 行，最新的卡是否在屏上（尾部挂载，**没有滚动回看**） |
+| 7 | **缩放**：改变窗口大小 | 边框是否按新宽度重排；`run.ts` 已监听 resize，按新宽度重算 frame 与侧栏断点 |
+| 8 | **长对话**：视口停在最新 | 让它输出 30+ 行，最新的卡是否在屏上；滚轮/PgUp/PgDn 回看，Ctrl+End 回尾部 |
 
 **人眼验收的第一条真发现（2026-10-20）**：验收里 Read 一张 PNG，随后用 Bash 把文件删掉，下一回合**整回合失败**（状态条：「刚才那步失败了。（attachment … cannot be sent: the file it points at is gone or unreadable）」）。根因是字节在每次构建请求时重新 materialize，而引用留在历史里——因此**该会话之后每个回合都会以同样方式失败**，重开也救不回来。修法不在 UI 层，在请求构建：读不到的附件**点名缺席**而不是抛错（**ADR-069**）。它值得记在收口清单旁边，因为**自动测试覆盖不到**这种形状：单测里文件一直存在。
 
 ## 待办与未验证
 
 - **主题 token 已落（ADR-061）**：色值来自品牌指南 §3.1，组件只说语义 token。明暗切换与用户主题文件**没做**（前者等真实需求，后者是一个配置键，得先有 ADR）。
-- **卡片已落（ADR-067，T8）**：对话流是卡片（用户气泡 / 工具卡 / 审批卡 / 待办面板 / 命令面板），工具卡默认折叠成「退出状态 + 尾部三行」（品牌指南 §4.2），`Edit`/`Write` 显示 diff（靠日志里的**请求**接上结果）。**图片内联已落（ADR-068，T9）**；**预览模态没做**（它是「更大的矩形 + 一个开关键」，随 T10 的 UI 收口一起做）。**还没有**：滚动回看（只挂尾部）、Plan/Act 双模式（策略层的概念，不是组件）、语法高亮（v1 的着色是往字符串里塞 ANSI，与本仓库的 token 模型冲突，不迁移）、工具输出的自研列对齐（宽度表已在 `text/width.ts`，但还没有需要对齐的组件）。
+- **原生组件已落（ADR-171）**：对话流是原生 Panel / accentBlock / ChoiceList（用户气泡 / 工具卡 / 审批卡 / 待办面板 / 命令面板），不再逐字拼装饰。工具卡默认折叠成「退出状态 + 尾部三行」，`Edit`/`Write` 显示 diff；附件说明与图片是独立组件。**图片内联已落（ADR-068，T9）**，**预览模态没做**。滚动回看、Plan/Act 双模式与 Markdown 已落；语法高亮与工具输出的自研列对齐未做。奶牛猫采用「奶痞猫」头部标识：28×20 逻辑像素经上下半块渲染为 28 列×10 行，主回合与后台状态共用状态机，所有状态都可经 `COWCAT_ANIMATIONS=off` 冻结。配置弹窗使用不透明背景；服务商列表的 `a` 直接进入新增表单，Enter 提交表单自己的值。服务商配置按 ADR-172 使用内置模板或自定义 OpenAI/Anthropic 分步向导，完整写入端点、key 引用、模型及必要限额；未配置模型时保留草稿并跳转配置，保存后由用户再次按 Enter 发送。
 - **图片链路只验证到 `blocks`**：测试渲染器没有原生图片协议，所以真正画出来的证据是 opentui 的 **blocks 回退**（帧快照 `image` 那一幕里能看见 `████`）。**kitty / sixel 的原生渲染没有任何实测**，也没有验证 `a=q` 的答复是否可能漏进键盘输入——两件都要真终端（T10）。
 - **没有任何真实终端证据**：刷新率、闪烁、图片协议的实际渲染效果全部未测（调研 §5.6）。`tools/tui-smoke.mjs` 证明的是**进程链路**（起、画、Ctrl-C 干净退出、不留锁），**不是**观感。
 - **T1 已验证**：Node ≥26.4 与 Windows 原生二进制可用，ADR-056 的 CI 部分**不需要**降级（见「T1 前提验证」）。
@@ -326,7 +327,6 @@ T1 只问一件事：这套东西能不能真的装起来、跑起来。**答案
   Ctrl-C 退出 0、不留锁。
 - **仍未跑过一次真实的模型请求**，因此 `cowcat run` 的「整条回合」只在宿主层验证过
   （`packages/cowcat/test/host.test.ts` 注入脚本化模型），**没有**经由一个真实端点走完整条 CLI/TUI 路径。
-- **帧快照只覆盖 ASCII 与一个 CJK 宽度断言**：逐字节快照刻意不含宽字符（字宽是否跨平台一致没有实测过），
-  CJK 的**单元格**宽度单独用渲染器自己的 span 宽度断言（`test/frame.test.ts`）。
+- **帧快照包含 ASCII、CJK 与原生组件样式断言**：除逐字节帧外，`visual.test.ts` / `native-components.test.ts` 还用 color spans 验证选中背景、主题 token、奶牛花纹和鼻尖；长 CJK 审批另测尾部与所有操作可达。
 - **T8/T9 的缺口写在 `dev-plan-v2.md`**：卡片（message / tool-card / approval-card / todo-panel /
   diff-card / command-palette）、图片渲染与能力探测、命令面板与键位表、工具输出的自研对齐（宽度表）。

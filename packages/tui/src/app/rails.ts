@@ -1,15 +1,11 @@
-import { mascotFrames } from '../components/cowcat-art.js';
+import { mascotFrame, mascotState, type MascotState } from '../components/cowcat-art.js';
+import { spriteBlock, type SpriteNode } from '../ui/scene.js';
+import { animationsEnabled } from './preferences.js';
+import { costOf, formatCost } from './meter.js';
 import type { AgentView, TuiView, TodoView } from './view.js';
-
-/**
- * The two rails' structured data (ADR-167 → ADR-168): the rails are COMPONENTS now —
- * titled panels with a coloured header and pooled row renderables — so their specs are
- * data, not pre-drawn text lines. `frameOf` produces these; the screen mounts them.
- */
 
 export interface RailRow {
   readonly text: string;
-  /** Dim = secondary/finished; accent = running/active. Default is the body voice. */
   readonly dim?: boolean;
   readonly accent?: boolean;
 }
@@ -21,9 +17,9 @@ export interface RailPanel {
 
 export interface LeftRailSpec {
   readonly panels: readonly RailPanel[];
-  /** The mascot's ASCII lines; its mood travels separately so the screen can animate. */
-  readonly mascot: readonly string[];
-  readonly mascotState: 'idle' | 'running';
+  readonly mascot: SpriteNode;
+  readonly mascotState: MascotState;
+  readonly mascotLabel: string;
 }
 
 export interface AsideRow {
@@ -41,56 +37,47 @@ export interface AsideSpec {
   readonly panels: readonly AsidePanel[];
 }
 
-/** One panel's worth of todo rows; hidden entirely when the list is empty or closed. */
 function todoPanel(todos: readonly TodoView[], visible: boolean): RailPanel | null {
   if (!visible || todos.length === 0) return null;
   const done = todos.filter((todo) => todo.status === 'completed').length;
   return {
     title: `待办 ${String(done)}/${String(todos.length)}`,
-    rows: todos.map((todo) => {
-      const text = todo.status === 'in_progress' && todo.activeForm !== '' ? todo.activeForm : todo.content;
-      return {
-        text,
-        ...(todo.status === 'completed' ? { dim: true } : {}),
-        ...(todo.status === 'in_progress' ? { accent: true } : {}),
-      };
-    }),
+    rows: todos.map((todo) => ({
+      text: todo.status === 'in_progress' && todo.activeForm !== '' ? todo.activeForm : todo.content,
+      ...(todo.status === 'completed' ? { dim: true } : {}),
+      ...(todo.status === 'in_progress' ? { accent: true } : {}),
+    })),
   };
 }
 
-/** Everything the left rail shows, as data (ADR-168). Empty panels shrink away. */
-export function leftRailSpec(
-  view: { readonly todos: readonly TodoView[]; readonly todosVisible: boolean; readonly tasks: readonly { readonly command: string; readonly state: string }[] },
-  agents: readonly AgentView[],
-  now: number,
-): LeftRailSpec {
+const LABELS: Readonly<Record<MascotState, string>> = {
+  idle: '奶牛猫 / 待命', thinking: '奶牛猫 / 思考中', tools: '奶牛猫 / 工作中',
+  approval: '奶牛猫 / 等你决定', success: '奶牛猫 / 完成了', failed: '奶牛猫 / 需要关注',
+};
+
+export function leftRailSpec(view: TuiView, agents: readonly AgentView[], now: number): LeftRailSpec {
   const panels: RailPanel[] = [];
   const todos = todoPanel(view.todos, view.todosVisible);
   if (todos !== null) panels.push(todos);
-  if (view.tasks.length > 0) {
-    panels.push({
-      title: '后台任务',
-      rows: view.tasks.map((task) => ({
-        text: task.command.split('\n')[0] ?? '',
-        ...(task.state === 'running' ? { accent: true } : { dim: true }),
-      })),
-    });
-  }
-  if (agents.length > 0) {
-    panels.push({
-      title: '子代理',
-      rows: agents.map((agent) => {
-        const seconds = Math.max(0, Math.round((now - agent.startedAt) / 1000));
-        const elapsed = seconds >= 60 ? `${String(Math.floor(seconds / 60))}m${String(seconds % 60)}s` : `${String(seconds)}s`;
-        return { text: `${agent.role} · ${elapsed}`, accent: true };
-      }),
-    });
-  }
-  const running = agents.length > 0 || view.tasks.some((task) => task.state === 'running');
-  return { panels, mascot: mascotFrames(running ? 'running' : 'idle', now), mascotState: running ? 'running' : 'idle' };
+  if (view.tasks.length > 0) panels.push({
+    title: '后台任务',
+    rows: view.tasks.map((task) => ({
+      text: task.command.split('\n')[0] ?? '',
+      ...(task.state === 'running' ? { accent: true } : { dim: true }),
+    })),
+  });
+  if (agents.length > 0) panels.push({
+    title: '子代理',
+    rows: agents.map((agent) => {
+      const seconds = Math.max(0, Math.round((now - agent.startedAt) / 1000));
+      const elapsed = seconds >= 60 ? `${String(Math.floor(seconds / 60))}m${String(seconds % 60)}s` : `${String(seconds)}s`;
+      return { text: `${agent.role} · ${elapsed}`, accent: true };
+    }),
+  });
+  const state = mascotState(view, now);
+  return { panels, mascot: spriteBlock('cowcat', mascotFrame(state, now, animationsEnabled(process.env))), mascotState: state, mascotLabel: LABELS[state] };
 }
 
-/** Everything the right rail shows: session facts, then the git working-tree view. */
 export function asideSpec(
   view: TuiView,
   options: { readonly cwd?: string },
@@ -111,30 +98,17 @@ export function asideSpec(
   }
   panels.push({
     title: '会话',
-    rows: [
-      { label: '模型', value: view.model ?? '（未记录）' },
-      ...(view.sessionId === null ? [] : [{ label: 'id', value: view.sessionId }]),
-    ],
+    rows: [{ label: '模型', value: view.model ?? '（未记录）' }, ...(view.sessionId === null ? [] : [{ label: 'id', value: view.sessionId }])],
   });
-  const workspace: AsideRow[] = options.cwd === undefined ? [] : [{ label: '目录', value: options.cwd }];
-  if (workspace.length > 0) panels.push({ title: '工作区', rows: workspace });
-
-  if (changedFiles.length > 0) {
-    panels.push({
-      title: 'git 变更',
-      rows: changedFiles.slice(0, 10).map((file) => {
-        const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
-        const stat = file.added > 0 || file.removed > 0
-          ? `+${String(file.added)} -${String(file.removed)}`
-          : `写入 ${String(file.written)} 行`;
-        return {
-          label: name,
-          value: stat,
-          ...(file.added >= file.removed ? {} : { valueAccent: true }),
-        };
-      }),
-    });
-  }
+  if (options.cwd !== undefined) panels.push({ title: '工作区', rows: [{ label: '目录', value: options.cwd }] });
+  if (changedFiles.length > 0) panels.push({
+    title: 'CowCat 变更',
+    rows: changedFiles.slice(0, 10).map((file) => {
+      const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
+      const stat = file.added > 0 || file.removed > 0 ? `+${String(file.added)} -${String(file.removed)}` : `写入 ${String(file.written)} 行`;
+      return { label: name, value: stat, ...(file.added >= file.removed ? {} : { valueAccent: true }) };
+    }),
+  });
   return { panels };
 }
 
@@ -142,11 +116,5 @@ function sessionCost(
   totals: { readonly input: number; readonly output: number; readonly cacheRead: number; readonly cacheCreation: number },
   price: { readonly input: number; readonly output: number; readonly cacheRead?: number | undefined; readonly cacheCreation?: number | undefined } | null,
 ): string | null {
-  if (price === null) return null;
-  const total =
-    totals.input * price.input +
-    totals.output * price.output +
-    totals.cacheRead * (price.cacheRead ?? 0) +
-    totals.cacheCreation * (price.cacheCreation ?? 0);
-  return `$${total.toFixed(2)}`;
+  return price === null ? null : formatCost(costOf(totals, price));
 }

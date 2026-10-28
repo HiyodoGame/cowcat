@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Session,
+  contextUsage,
   replay,
   runTurn,
   type KernelEvent,
@@ -79,6 +80,44 @@ test('usage is written before the message it belongs to, and more than once if r
   assert.deepEqual(order, ['model.usage', 'model.usage', 'model.message']);
 });
 
+test('cumulative reports from one invocation replace the prior bill and anchor on the assistant message', async () => {
+  const initial: ModelUsage = { input: 10, output: 1, cacheRead: 4, cacheCreation: 2 };
+  const cumulative: ModelUsage = { input: 10, output: 7, cacheRead: 4, cacheCreation: 2 };
+  const model = new ScriptedModel([
+    [
+      { type: 'usage', usage: initial },
+      { type: 'text', text: 'hi' },
+      { type: 'usage', usage: cumulative },
+    ],
+  ]);
+  const { store, session, deps } = await setup(model);
+  await runTurn(deps, 'hi', new AbortController().signal);
+
+  const message = of(await store.readAll('sess_1'), 'model.message')[0];
+  assert.ok(message?.type === 'model.message');
+  assert.deepEqual(session.state.usageTotals, cumulative);
+  assert.equal(session.state.lastUsage?.anchorSeq, message.seq);
+  assert.equal(contextUsage(session.state).measured, 23);
+});
+
+test('different invocations accumulate instead of replacing each other', async () => {
+  const first: ModelUsage = { input: 10, output: 1, cacheRead: 4, cacheCreation: 2 };
+  const second: ModelUsage = { input: 20, output: 3, cacheRead: 8, cacheCreation: 1 };
+  const model = new ScriptedModel([
+    [{ type: 'usage', usage: first }, { type: 'text', text: 'one' }],
+    [{ type: 'usage', usage: second }, { type: 'text', text: 'two' }],
+  ]);
+  const { store, session, deps } = await setup(model);
+  await runTurn(deps, 'one', new AbortController().signal);
+  await runTurn(deps, 'two', new AbortController().signal);
+
+  const invocations = of(await store.readAll('sess_1'), 'model.usage').map((event) =>
+    event.type === 'model.usage' ? event.invocation : undefined,
+  );
+  assert.equal(new Set(invocations).size, 2);
+  assert.deepEqual(session.state.usageTotals, { input: 30, output: 4, cacheRead: 12, cacheCreation: 3 });
+});
+
 test('usage survives a cancelled stream (the reason it is not a field on model.message)', async () => {
   const controller = new AbortController();
   const { store, deps } = await setup(usageThenWaitForAbort(usage));
@@ -90,6 +129,8 @@ test('usage survives a cancelled stream (the reason it is not a field on model.m
   const outcome = await turn;
 
   assert.deepEqual(outcome.state, 'cancelled');
+  assert.equal(deps.session.state.lastUsage?.anchorSeq, null);
+  assert.equal(contextUsage(deps.session.state).measured, 57);
   const events = await store.readAll('sess_1');
   assert.equal(of(events, 'model.usage').length, 1);
   assert.equal(of(events, 'model.message').length, 0, 'a cancelled stream writes no half message');

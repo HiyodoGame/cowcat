@@ -1,4 +1,5 @@
 import { readdirSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
 export function atQuery(input: string): string | null {
@@ -26,6 +27,39 @@ export function atCandidates(cwd: string): readonly string[] {
   };
   walk(cwd);
   return files;
+}
+
+export async function atCandidatesAsync(cwd: string): Promise<readonly string[]> {
+  const files: string[] = [];
+  const pending = [cwd];
+  while (pending.length > 0 && files.length < 5_000) {
+    const directory = pending.pop();
+    if (directory === undefined) break;
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (files.length >= 5_000) break;
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (!['.git', '.cowcat', '.worktrees', 'node_modules', 'dist'].includes(entry.name)) pending.push(path);
+        } else if (entry.isFile()) {
+          files.push(relative(cwd, path).split(sep).join('/'));
+        }
+      }
+    } catch {
+      // An unreadable directory simply contributes no candidates, matching the sync walk.
+    }
+  }
+  return files;
+}
+
+export async function loadFileCandidates(
+  cwd: string,
+  isCurrent: () => boolean,
+  load: (directory: string) => Promise<readonly string[]> = atCandidatesAsync,
+): Promise<readonly string[] | null> {
+  const files = await load(cwd);
+  return isCurrent() ? files : null;
 }
 
 export function rankAtCandidates(query: string, candidates: readonly string[]): readonly string[] {

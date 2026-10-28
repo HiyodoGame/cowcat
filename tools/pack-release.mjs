@@ -123,6 +123,34 @@ async function main() {
       if (!version.includes(VERSION)) fail(`installed CLI reported "${version}", expected ${VERSION}`);
       const help = execFileSync(process.execPath, [cli, '--help'], { cwd: project, encoding: 'utf8' });
       if (!help.includes('cowcat')) fail('installed CLI --help did not mention cowcat');
+
+      const doctorHome = mkdtempSync(join(tmpdir(), 'cowcat-doctor-home-'));
+      try {
+        const env = { ...process.env, COWCAT_HOME: doctorHome };
+        const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
+        const supportsTui = major > 26 || (major === 26 && minor >= 4);
+        let status = 0;
+        let output = '';
+        try {
+          output = execFileSync(process.execPath, [cli, 'doctor'], { cwd: project, encoding: 'utf8', env });
+        } catch (error) {
+          status = typeof error.status === 'number' ? error.status : 1;
+          output = `${String(error.stdout ?? '')}${String(error.stderr ?? '')}`;
+        }
+        const expected = supportsTui ? 0 : 1;
+        if (status !== expected) fail(`installed doctor exited ${String(status)}, expected ${String(expected)}`);
+        if (!supportsTui && !output.includes('headless')) fail('installed doctor did not explain the headless path');
+        const doctor26 = execFileSync('npx', ['--yes', 'node@26.12.0', cli, 'doctor'], {
+          cwd: project,
+          encoding: 'utf8',
+          shell: true,
+          env,
+        });
+        if (!doctor26.includes('默认入口')) fail('installed doctor on Node 26 did not report the default entry');
+        console.log('installed doctor checks passed (isolated COWCAT_HOME)');
+      } finally {
+        rmSync(doctorHome, { recursive: true, force: true });
+      }
       console.log('installed check passed');
     } finally {
       rmSync(project, { recursive: true, force: true });

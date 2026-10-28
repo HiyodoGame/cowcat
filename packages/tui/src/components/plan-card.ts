@@ -1,47 +1,24 @@
 import type { PlanView } from '../app/view.js';
-import { card, type CardBodyLine } from '../ui/card.js';
-import type { Line } from '../ui/line.js';
+import { line } from '../ui/line.js';
 import { wrap } from '../text/wrap.js';
+import { choiceBlock, panelBlock, textBlock, type SceneNode } from '../ui/scene.js';
 
-/**
- * The plan review card (ADR-125 ③): the model's implementation options, one row each,
- * with a trailing "none of them" row. It borrows the approval card's interaction rule —
- * a pending question is not a silent hang — and its click targets (`plan:<index>`), so
- * run.ts can answer a click the same way it answers the approval rows.
- */
 export interface PlanCardOptions {
   readonly width: number;
-  /** Which row is highlighted: 0..plans.length, the last row being "none". */
   readonly cursor: number;
 }
 
-export function planCardLines(plan: PlanView, options: PlanCardOptions): readonly Line[] {
-  const body: CardBodyLine[] = [];
+export function planCard(plan: PlanView, options: PlanCardOptions): SceneNode {
+  const children: SceneNode[] = [];
   for (const [index, option] of plan.plans.entries()) {
-    const selected = index === options.cursor;
-    body.push({
-      text: `${selected ? '▸' : ' '} ${String(index + 1)}. ${option.title}`,
-      token: selected ? 'act' : 'text',
-      hit: `plan:${String(index)}`,
-    });
-    for (const wrapped of wrap(option.summary, Math.max(20, options.width - 6))) {
-      body.push({ text: `     ${wrapped}`, token: 'textDim' });
-    }
+    children.push(choiceBlock(`plan-${String(index)}`, `${String(index + 1)}. ${option.title}`, {
+      selected: index === options.cursor, hit: `plan:${String(index)}`,
+    }));
+    children.push(textBlock(`summary-${String(index)}`, wrap(option.summary, Math.max(8, options.width - 8)).map((row) => line(row, 'textDim'))));
   }
-  const noneIndex = plan.plans.length;
-  const noneSelected = noneIndex === options.cursor;
-  body.push({
-    text: `${noneSelected ? '▸' : ' '} ✕ 都不选，让模型改方案`,
-    token: noneSelected ? 'act' : 'textDim',
-    hit: `plan:none`,
-  });
-  body.push({ text: '↑↓ 选择 + 回车，或直接点一行', token: 'textDim' });
-
-  return card({
-    title: '选择一个方案',
-    titleToken: 'plan',
-    suffix: '[待选择]',
-    body,
-    width: options.width,
-  });
+  children.push(choiceBlock('plan-none', '都不选，让模型改方案', {
+    selected: plan.plans.length === options.cursor, token: 'textDim', hit: 'plan:none',
+  }));
+  children.push(textBlock('hint', [line('↑↓ 选择 + 回车，或直接点一行', 'textDim')]));
+  return panelBlock({ key: `plan-${plan.callId}`, title: '选择一个方案', tone: 'plan', children });
 }
