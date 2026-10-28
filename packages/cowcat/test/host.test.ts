@@ -2616,7 +2616,7 @@ test('providers.list reads the user layer and detects keys; setProvider writes a
   await fixture.client.initialize();
 
   const { providers } = await fixture.client.listProviders();
-  assert.equal(providers.length, 2);
+  assert.ok(providers.some((entry) => !entry.custom && entry.models.length > 0), 'built-in templates include real models');
   const deepseek = providers.find((entry) => entry.name === 'deepseek');
   assert.equal(deepseek?.keySet, true, 'the host env has the named variable');
   const hand = providers.find((entry) => entry.name === 'hand');
@@ -2633,6 +2633,46 @@ test('providers.list reads the user layer and detects keys; setProvider writes a
   const handAfter = document.model?.providers?.hand;
   assert.equal(handAfter?.['baseUrl'], 'https://gw.local/v1', 'the field is overwritten in place');
   assert.equal(await fixture.client.listProviders().then((r) => r.providers.find((entry) => entry.name === 'hand')?.keySet), false, 'the host env does not have GW_KEY');
+});
+
+test('provider.configure saves a full custom preset, applies it and reports missing keys honestly', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-configure-');
+  const home = tempDir(t, 'cowcat-host-configure-home-');
+  const fixture = await start({ cwd, home, model: new ScriptedModel([]), env: {} });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_configure');
+
+  const result = await fixture.client.configureProvider('sess_configure', {
+    name: 'local', protocol: 'openai', baseUrl: 'http://localhost:11434/v1', apiKeyEnv: 'LOCAL_API_KEY',
+    preset: 'local/qwen3-coder', activate: true,
+    definition: { protocol: 'openai', model: 'qwen3-coder', limits: { context: 128000, output: 8192 }, toolCalls: true },
+  });
+  assert.deepEqual(result, {
+    saved: true, current: { id: 'local/qwen3-coder', effort: null }, keySet: false, requiresRestart: true,
+  });
+  const document = JSON.parse(readFileSync(join(home, '.cowcat', 'config.json'), 'utf8')) as {
+    model: { preset: string; providers: Record<string, unknown>; presets: Record<string, unknown> };
+  };
+  assert.equal(document.model.preset, 'local/qwen3-coder');
+  assert.equal(document.model.presets['local/qwen3-coder'] !== undefined, true);
+  assert.equal((await fixture.client.listModels('sess_configure')).current.id, 'local/qwen3-coder');
+  assert.equal(fixture.host.config.model.preset, 'local/qwen3-coder');
+});
+
+test('provider.configure rejects endpoint credentials as a host refusal without writing', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-invalid-provider-');
+  const home = tempDir(t, 'cowcat-host-invalid-provider-home-');
+  const fixture = await start({ cwd, home, model: new ScriptedModel([]), env: {} });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_invalid_provider');
+  await assert.rejects(() => fixture.client.configureProvider('sess_invalid_provider', {
+    name: 'local', protocol: 'openai', baseUrl: 'https://user:password@example.com/v1', apiKeyEnv: 'LOCAL_API_KEY',
+    preset: 'local/model', activate: true,
+    definition: { protocol: 'openai', model: 'model', limits: { output: 500 }, toolCalls: true },
+  }), (error: unknown) => error instanceof ProtocolClientError && error.code === ERROR_CODES.hostRefused);
+  assert.equal(existsSync(join(home, '.cowcat', 'config.json')), false);
 });
 
 test('setProvider refuses a config corrupted after startup instead of replacing it (ADR-165 ①)', async (t) => {

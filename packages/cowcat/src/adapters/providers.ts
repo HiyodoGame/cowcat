@@ -6,14 +6,15 @@ import { dirname } from 'node:path';
  * The user layer's provider entries, as a FILE (ADR-165 ①).
  *
  * The host talks to this adapter; the layering rule puts node:fs here and nowhere else
- * (ADR-014/017). Two verbs, both about `model.providers` in `~/.cowcat/config.json`:
+ * (ADR-014/017). It reads the user provider catalog and offers two write paths:
  *
- *   * `readUserProviders` — the document the `/providers` panel lists. Unreadable means
- *     "none", the trust-store precedent: a missing file is a fresh install, not an error.
- *   * `writeUserProvider` — ONE entry, read-modify-write, atomically (temp + rename,
- *     mode 0600, `setup`'s idiom). A document that cannot be parsed REFUSES instead of
- *     being replaced: overwriting a hand-maintained config we could not read is how a
- *     user loses their setup.
+ *   * `readUserProviders` / `readUserProviderCatalog` — the `/providers` panel's entries and
+ *     model metadata. Unreadable means "none", the trust-store precedent: a missing file is
+ *     a fresh install, not an error.
+ *   * `writeUserProvider` / `writeUserProviderConfiguration` — field patches or a complete
+ *     provider + preset + active selection, read-modify-write, atomically (temp + rename,
+ *     mode 0600, `setup`'s idiom). Existing extension fields are preserved. A document
+ *     that cannot be parsed REFUSES instead of being replaced.
  *
  * The secret never appears here: `apiKeyEnv` is a variable NAME (ADR-063).
  */
@@ -28,40 +29,80 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-export async function readUserProviders(file: string): Promise<Record<string, ProviderEntry>> {
+export interface ProviderConfigurationWrite {
+  readonly provider: ProviderEntry;
+  readonly preset: string;
+  readonly definition?: import('../policy/config.js').CustomPresetSettings;
+  readonly activate: boolean;
+}
+
+export interface UserProviderCatalog {
+  readonly providers: Record<string, ProviderEntry>;
+  readonly presets: Record<string, import('../policy/config.js').CustomPresetSettings>;
+}
+
+export async function readUserProviderCatalog(file: string): Promise<UserProviderCatalog> {
   try {
     const parsed = asRecord(JSON.parse(await readFile(file, 'utf8')));
     const model = asRecord(parsed['model']);
-    const providers = asRecord(model['providers']);
-    const out: Record<string, ProviderEntry> = {};
-    for (const [name, entry] of Object.entries(providers)) {
+    const providers: Record<string, ProviderEntry> = {};
+    for (const [name, entry] of Object.entries(asRecord(model['providers']))) {
       const record = asRecord(entry);
-      out[name] = {
+      providers[name] = {
         ...(typeof record['baseUrl'] === 'string' ? { baseUrl: record['baseUrl'] } : {}),
         ...(typeof record['apiKeyEnv'] === 'string' ? { apiKeyEnv: record['apiKeyEnv'] } : {}),
       };
     }
-    return out;
+    const presets: UserProviderCatalog['presets'] = {};
+    for (const [id, entry] of Object.entries(asRecord(model['presets']))) {
+      const record = asRecord(entry);
+      const protocol = record['protocol'];
+      const modelId = record['model'];
+      if ((protocol !== 'openai' && protocol !== 'anthropic') || typeof modelId !== 'string' || modelId === '') continue;
+      const limits = asRecord(record['limits']);
+      const context = limits['context'];
+      const output = limits['output'];
+      presets[id] = {
+        protocol,
+        model: modelId,
+        limits: {
+          ...(typeof context === 'number' && Number.isInteger(context) && context > 0 ? { context } : {}),
+          ...(typeof output === 'number' && Number.isInteger(output) && output > 0 ? { output } : {}),
+        },
+        ...(typeof record['toolCalls'] === 'boolean' ? { toolCalls: record['toolCalls'] } : {}),
+      };
+    }
+    return { providers, presets };
   } catch {
-    return {};
+    return { providers: {}, presets: {} };
   }
+}
+
+export async function readUserProviders(file: string): Promise<Record<string, ProviderEntry>> {
+  return (await readUserProviderCatalog(file)).providers;
 }
 
 const writeQueues = new Map<string, Promise<void>>();
 
-export async function writeUserProvider(file: string, name: string, fields: ProviderEntry): Promise<void> {
+function enqueueWrite(file: string, write: () => Promise<void>): Promise<void> {
   const previous = writeQueues.get(file) ?? Promise.resolve();
-  const operation = previous.then(() => writeUserProviderNow(file, name, fields));
+  const operation = previous.then(write);
   const queued = operation.catch(() => undefined);
   writeQueues.set(file, queued);
-  try {
-    await operation;
-  } finally {
+  return operation.finally(() => {
     if (writeQueues.get(file) === queued) writeQueues.delete(file);
-  }
+  });
 }
 
-async function writeUserProviderNow(file: string, name: string, fields: ProviderEntry): Promise<void> {
+export async function writeUserProvider(file: string, name: string, fields: ProviderEntry): Promise<void> {
+  await enqueueWrite(file, () => writeUserProviderNow(file, name, fields));
+}
+
+export async function writeUserProviderConfiguration(file: string, name: string, configuration: ProviderConfigurationWrite): Promise<void> {
+  await enqueueWrite(file, () => writeUserProviderNow(file, name, configuration.provider, configuration));
+}
+
+async function writeUserProviderNow(file: string, name: string, fields: ProviderEntry, configuration?: ProviderConfigurationWrite): Promise<void> {
   let document: Record<string, unknown>;
   try {
     document = asRecord(JSON.parse(await readFile(file, 'utf8')));
@@ -81,6 +122,15 @@ async function writeUserProviderNow(file: string, name: string, fields: Provider
     ...(fields.apiKeyEnv === undefined ? {} : { apiKeyEnv: fields.apiKeyEnv }),
   };
   model['providers'] = providers;
+  if (configuration?.definition !== undefined) {
+    const presets = asRecord(model['presets']);
+    presets[configuration.preset] = {
+      ...asRecord(presets[configuration.preset]),
+      ...configuration.definition,
+    };
+    model['presets'] = presets;
+  }
+  if (configuration?.activate === true) model['preset'] = configuration.preset;
   document['model'] = model;
   const temporary = `${file}.tmp-${String(process.pid)}-${randomUUID()}`;
   await mkdir(dirname(file), { recursive: true });

@@ -34,15 +34,13 @@ import {
   pickModelEffort,
   planAnswerAt,
   providerFieldCount,
+  providerRowCount,
   moveSlash,
   moveTaskPanel,
-  beginProviderAdd,
   beginProviderEdit,
   closeModelPanel,
   closeProviderPanel,
   enterModelPanel,
-  endProviderEdit,
-  enterProviderPanel,
   openCronPanel,
   openModelPanel,
   openProviderPanel,
@@ -66,6 +64,7 @@ import {
   withAttachment,
   withHistory,
   withModelList,
+  modelMatches,
   withModelQuery,
   withProviderEditValue,
   withProviderQuery,
@@ -78,6 +77,15 @@ import {
 import { frameOf, titleOf } from './components/session-frame.js';
 import { THEME } from './theme/tokens.js';
 import { createScreen } from './ui/screen.js';
+import {
+  advanceProviderForm,
+  backProviderForm,
+  beginProviderForm,
+  failProviderForm,
+  moveProviderForm,
+  providerFormConfiguration,
+  setProviderFormValue,
+} from './app/provider-form.js';
 
 /**
  * `runTui` — the loop that turns a protocol client into a screen (ADR-066 ①).
@@ -122,6 +130,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   const screen = createScreen(render, THEME, { title: titleOf(options.version) });
   const detach: (() => void)[] = [];
   let disposed = false;
+  let onboardingDraft: { readonly input: string; readonly files: readonly string[] } | null = null;
   let connectionGeneration = 0;
   let nudgeTimer: ReturnType<typeof setTimeout> | undefined;
   let exitArmUntil = 0;
@@ -341,13 +350,26 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         queueMicrotask(syncInput);
       }),
       screen.onKey((key) => {
-        // ADR-166: a modal dialog owns the printable keys — they type into its search
-        // field or input, never into the composer underneath. Backspace deletes; a
-        // dialog input routes everything to `providerEdit.value`.
-        const dialogOpen = view.current.modelPanel !== null || view.current.providerPanel !== null;
+        const dialogOpen = view.current.modelPanel !== null || view.current.providerPanel !== null || view.current.providerForm !== null;
+        if (dialogOpen && key.name === 'return') {
+          key.preventDefault();
+          submit(view.current.providerEdit?.value ?? screen.inputValue());
+          return;
+        }
+        if (dialogOpen && view.current.providerForm === null && view.current.providerPanel?.entry === null && view.current.providerEdit === null && key.name === 'a' && !key.shift && !key.ctrl && !key.meta) {
+          key.preventDefault();
+          view.current = beginProviderForm(view.current);
+          draw();
+          return;
+        }
         if (dialogOpen && !key.ctrl && !key.meta && key.name !== 'escape' && key.name !== 'up' && key.name !== 'down' && key.name !== 'return') {
           key.preventDefault();
-          if (key.name === 'backspace') {
+          const form = view.current.providerForm;
+          const formText = form !== null && ['name', 'baseUrl', 'apiKeyEnv', 'modelId', 'context', 'output'].includes(form.step);
+          if (formText) {
+            if (key.name === 'backspace') view.current = setProviderFormValue(view.current, form.value.slice(0, -1));
+            else if (key.name.length === 1) view.current = setProviderFormValue(view.current, form.value + key.sequence);
+          } else if (key.name === 'backspace') {
             if (view.current.providerEdit !== null) {
               view.current = withProviderEditValue(view.current, view.current.providerEdit.value.slice(0, -1));
             } else if (view.current.modelPanel !== null) {
@@ -631,14 +653,23 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
           return;
         case 'providerMove':
-          view.current = moveProviderPanel(
-            view.current,
-            intent.delta,
-            view.current.providerPanel?.entry === null ? view.current.providerList.length + 1 : providerFieldCount(),
-          );
+          if (view.current.providerForm !== null) view.current = moveProviderForm(view.current, intent.delta);
+          else {
+            view.current = moveProviderPanel(
+              view.current,
+              intent.delta,
+              view.current.providerPanel?.entry === null ? providerRowCount(view.current) : providerFieldCount(),
+            );
+          }
           draw();
           return;
         case 'providerClose':
+          if (view.current.providerForm !== null) {
+            view.current = backProviderForm(view.current);
+            if (view.current.providerForm === null) restoreOnboardingDraft();
+            draw();
+            return;
+          }
           const openPanel = view.current.providerPanel;
           if (openPanel !== null && openPanel.entry !== null) {
             view.current = { ...view.current, providerPanel: { index: 0, entry: null, query: openPanel.query } };
@@ -1171,40 +1202,53 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       }
     }
 
-    /** `/providers`: the user layer's provider entries (ADR-165 ③). One fetch per open. */
-    async function openProviderPicker(): Promise<void> {
+    async function configureProviderForm(): Promise<void> {
+      const form = view.current.providerForm;
+      if (form === null || form.step !== 'review') return;
+      const configuration = providerFormConfiguration(form);
+      view.current = advanceProviderForm(view.current);
+      draw();
+      const gone = (): boolean => disposed;
       try {
-        const result = await client.listProviders();
-        if (disposed) return;
-        view.current = openProviderPanel(withProviderList(view.current, result.providers));
+        const result = await client.configureProvider(sessionId, configuration);
+        if (gone()) return;
+        const providers = await client.listProviders();
+        if (gone()) return;
+        view.current = withProviderList({ ...view.current, providerForm: null, modelCurrent: result.current }, providers.providers);
+        restoreOnboardingDraft();
+        view.current = addNotice(view.current, result.requiresRestart ? 'warn' : 'info', result.requiresRestart
+          ? `完整配置已保存。请设置 ${configuration.apiKeyEnv} 后重开 CowCat，再按 Enter 发送。`
+          : `已保存并应用 ${configuration.preset}。`);
         draw();
       } catch (error) {
         if (disposed) return;
-        view.current = addNotice(view.current, 'error', message(error));
+        view.current = failProviderForm(view.current, message(error));
         draw();
       }
     }
 
-    /** Save one field of one provider; the wire carries a variable NAME, never a key. */
-    function saveProviderField(name: string, field: 'baseUrl' | 'apiKeyEnv', value: string): void {
-      const fields = field === 'baseUrl' ? { baseUrl: value } : { apiKeyEnv: value };
-      client
-        .setProvider(name, fields)
-        .then(() => {
-          if (disposed) return;
-          // The panel's list is a snapshot; refresh it so the row shows what was saved.
-          client.listProviders().then((result) => {
-            if (disposed) return;
-            view.current = withProviderList(view.current, result.providers);
-            view.current = addNotice(view.current, 'info', `已保存 ${name}.${field}。重启 CowCat 后对新会话生效。`);
-            draw();
-          }, () => undefined);
-        })
-        .catch((error: unknown) => {
-          if (disposed) return;
-          view.current = addNotice(view.current, 'error', message(error));
-          draw();
-        });
+    function restoreOnboardingDraft(): void {
+      const draft = onboardingDraft;
+      if (draft === null) return;
+      onboardingDraft = null;
+      screen.setInput(draft.input);
+      view.current = withInput({ ...view.current, providerPanel: null }, draft.input);
+    }
+
+    /** `/providers`: the user layer's provider entries (ADR-165 ③). One fetch per open. */
+    async function openProviderPicker(onboarding = false): Promise<void> {
+      try {
+        const result = await client.listProviders();
+        if (disposed) return;
+        view.current = openProviderPanel(withProviderList(view.current, result.providers));
+        if (onboarding) view.current = beginProviderForm(view.current, true);
+        draw();
+      } catch (error) {
+        if (disposed) return;
+        restoreOnboardingDraft();
+        view.current = addNotice(view.current, 'error', message(error));
+        draw();
+      }
     }
 
     /**
@@ -1219,8 +1263,12 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         draw();
       } catch (error) {
         if (disposed) return;
-        view.current = addNotice(view.current, 'error', message(error));
-        draw();
+        if (hasModelProblem(error, 'not-configured')) {
+          void openProviderPicker(true);
+        } else {
+          view.current = addNotice(view.current, 'error', message(error));
+          draw();
+        }
       }
     }
 
@@ -1248,7 +1296,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       if (panel.preset !== null) {
         return view.current.modelList.find((model) => model.id === panel.preset)?.efforts.length ?? 0;
       }
-      return view.current.modelList.length;
+      return modelMatches(view.current).length;
     }
 
     /** The trust card's answer, however it was given (arrow+Enter, y/n, or Esc). */
@@ -1295,58 +1343,22 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         return;
       }
 
-      // A provider field is waiting for composer input (ADR-165 ③): Enter saves the
-      // typed value (empty cancels), and the panel comes back.
-      if (view.current.providerEdit !== null) {
-        const edit = view.current.providerEdit;
-        const value = trimmed;
-        screen.clearInput();
-        view.current = endProviderEdit(view.current).view;
-        if (value === '') {
-          // Empty input is the way out; the panel is still there.
-        } else if (edit.field === 'name') {
-          // Creating: an empty entry is valid — the field menu fills it in next.
-          client
-            .setProvider(value, {})
-            .then(async () => {
-              // Read through a function: two checks around an `await` — CFA narrows a
-              // bare variable across the boundary and calls the second one dead (§7).
-              const gone = (): boolean => disposed;
-              if (gone()) return;
-              const result = await client.listProviders();
-              if (gone()) return;
-              view.current = openProviderPanel(withProviderList(view.current, result.providers));
-              const pp = view.current.providerPanel;
-              if (pp === null) return;
-              view.current = { ...view.current, providerPanel: { index: 0, entry: value, query: pp.query } };
-              view.current = addNotice(view.current, 'info', `已创建 ${value}：选一个字段填值。`);
-              draw();
-            })
-            // falls through to the shared catch below
-            .catch((error: unknown) => {
-              if (disposed) return;
-              view.current = addNotice(view.current, 'error', message(error));
-              draw();
-            });
+      if (view.current.providerForm !== null) {
+        if (view.current.providerForm.step === 'saving') return;
+        if (view.current.providerForm.step === 'review') {
+          void configureProviderForm();
         } else {
-          saveProviderField(edit.name, edit.field, value);
+          view.current = advanceProviderForm(view.current);
+          draw();
         }
-        draw();
         return;
       }
 
-      // The `/providers` panel owns Enter while it is open (ADR-165 ③): a provider row
-      // opens its field menu, the add row asks for a name through the composer, a field
-      // row starts editing it.
       const providerRow = view.current.providerPanel;
       if (providerRow !== null && providerRow.entry === null) {
         screen.clearInput();
         view.current = withInput(view.current, '');
-        if (providerRow.index === view.current.providerList.length) {
-          view.current = beginProviderAdd(addNotice(view.current, 'info', '新服务商：输入名字后回车。'));
-        } else {
-          view.current = enterProviderPanel(view.current);
-        }
+        view.current = beginProviderForm(view.current);
         draw();
         return;
       }
@@ -1504,9 +1516,13 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           draw();
         }
       }).catch((error: unknown) => {
-        // The host refuses with a sentence a user can act on ("no model is configured …",
-        // "already has a turn running"); showing it verbatim is the point of that work.
-        view.current = addNotice(view.current, 'error', message(error));
+        if (hasModelProblem(error, 'not-configured')) {
+          onboardingDraft = { input: trimmed, files };
+          view.current = addNotice(view.current, 'info', '还没有可用的模型。先完成服务商配置，再按 Enter 发送。');
+          void openProviderPicker(true);
+        } else {
+          view.current = addNotice(view.current, 'error', message(error));
+        }
         draw();
       });
     }
@@ -1545,6 +1561,12 @@ async function defaultRenderer(): Promise<CliRenderer> {
     targetFps: 60,
     maxFps: 60,
   });
+}
+
+function hasModelProblem(error: unknown, problem: string): boolean {
+  if (typeof error !== 'object' || error === null || !('data' in error)) return false;
+  const data = error.data;
+  return typeof data === 'object' && data !== null && Reflect.get(data, 'problem') === problem;
 }
 
 function message(error: unknown): string {

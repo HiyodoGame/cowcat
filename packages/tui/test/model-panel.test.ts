@@ -53,3 +53,11 @@ test('the dialog owns arrows and Esc and retains search and empty states', () =>
   assert.equal(closeModelPanel(view).modelPanel, null);
   assert.match(textOf([modelPanel([], 0, null, null, 70)]), /先配置 model/);
 });
+
+test('Enter picks the visible filtered model and changing the query resets the cursor', () => {
+  const moved = moveModelPanel(panelView(), 1, MODELS.length);
+  const queried = withModelQuery(moved, 'sonnet');
+  assert.equal(queried.modelPanel?.index, 0);
+  const picked = enterModelPanel(queried);
+  assert.equal(picked.picked, 'anthropic/claude-sonnet-5-5');
+});

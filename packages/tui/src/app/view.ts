@@ -1,6 +1,7 @@
 import type { GrantSummary, ModelSelectionSummary, ModelSummary, ProviderSummary, SessionSummary, TrustWithheld } from '@corescense/cowcat-protocol';
 import type { Lang } from './copy.js';
 import { detectLang } from './copy.js';
+import { filterDialogRows } from './dialog.js';
 
 /**
  * The interface's own state — and the ONLY state this package holds (06-frontend.md).
@@ -454,6 +455,8 @@ export interface TuiView {
     readonly field: 'name' | 'baseUrl' | 'apiKeyEnv';
     readonly value: string;
   } | null;
+  /** The complete provider + model setup flow (ADR-172). */
+  readonly providerForm: import('./provider-form.js').ProviderForm | null;
 }
 
 export function initialView(): TuiView {
@@ -523,6 +526,7 @@ export function initialView(): TuiView {
     providerPanel: null,
     providerList: [],
     providerEdit: null,
+    providerForm: null,
   };
 }
 
@@ -877,10 +881,19 @@ export function openModelPanel(view: TuiView): TuiView {
   return { ...view, modelPanel: { index: 0, preset: null, query: '' } };
 }
 
+/** The same filtered models that the dialog renders and Enter selects. */
+export function modelMatches(view: TuiView): readonly ModelSummary[] {
+  return filterDialogRows(view.modelList.map((model) => ({
+    ...model,
+    label: model.id,
+    ...(model.efforts.length === 0 ? {} : { detail: `effort: ${model.efforts.join('/')}` }),
+  })), view.modelPanel?.query ?? '');
+}
+
 /** The dialog's search field: characters append, backspace deletes. */
 export function withModelQuery(view: TuiView, query: string): TuiView {
   if (view.modelPanel === null) return view;
-  return { ...view, modelPanel: { ...view.modelPanel, query } };
+  return { ...view, modelPanel: { ...view.modelPanel, index: 0, query } };
 }
 
 export function closeModelPanel(view: TuiView): TuiView {
@@ -898,7 +911,7 @@ export function moveModelPanel(view: TuiView, delta: number, count: number): Tui
 export function enterModelPanel(view: TuiView): { readonly view: TuiView; readonly picked: string | null } {
   const panel = view.modelPanel;
   if (panel === null) return { view, picked: null };
-  const model = view.modelList[panel.index];
+  const model = modelMatches(view)[panel.index];
   if (model === undefined) return { view, picked: null };
   if (model.efforts.length === 0) return { view: closeModelPanel(view), picked: model.id };
   if (panel.preset === model.id) {
@@ -928,10 +941,19 @@ export function openProviderPanel(view: TuiView): TuiView {
   return { ...view, providerPanel: { index: 0, entry: null, query: '' }, providerEdit: null };
 }
 
+/** The same filtered providers that the dialog renders and Enter selects. */
+export function providerMatches(view: TuiView): readonly ProviderSummary[] {
+  return filterDialogRows(view.providerList.map((provider) => ({
+    ...provider,
+    label: provider.name,
+    detail: provider.baseUrl ?? '（内置端点）',
+  })), view.providerPanel?.query ?? '');
+}
+
 /** The providers dialog's search field. */
 export function withProviderQuery(view: TuiView, query: string): TuiView {
   if (view.providerPanel === null) return view;
-  return { ...view, providerPanel: { ...view.providerPanel, query } };
+  return { ...view, providerPanel: { ...view.providerPanel, index: 0, query } };
 }
 
 export function closeProviderPanel(view: TuiView): TuiView {
@@ -942,9 +964,10 @@ export function closeProviderPanel(view: TuiView): TuiView {
 export function enterProviderPanel(view: TuiView): TuiView {
   const panel = view.providerPanel;
   if (panel === null) return view;
-  const entry = panel.index < view.providerList.length
-    ? view.providerList[panel.index]?.name ?? null
-    : panel.index === view.providerList.length
+  const providers = providerMatches(view);
+  const entry = panel.index < providers.length
+    ? providers[panel.index]?.name ?? null
+    : panel.index === providers.length
       ? ''
       : null;
   return { ...view, providerPanel: { index: 0, entry, query: panel.query } };
@@ -977,15 +1000,15 @@ export function withProviderEditValue(view: TuiView, value: string): TuiView {
   return { ...view, providerEdit: { ...view.providerEdit, value } };
 }
 
-/** The composer delivered a value (empty means cancel): clear the edit state, keep the panel. */
+/** The dialog delivered a value (empty means cancel): clear the edit state, keep the panel. */
 export function endProviderEdit(view: TuiView): { readonly view: TuiView; readonly value: string | null } {
   if (view.providerEdit === null) return { view, value: null };
   return { view: { ...view, providerEdit: null }, value: '' };
 }
 
-/** Rows the list-phase cursor moves over: every provider plus the add row. */
+/** Rows the list-phase cursor moves over: every visible provider plus the add row. */
 export function providerRowCount(view: TuiView): number {
-  return view.providerPanel === null ? 0 : view.providerList.length + 1;
+  return view.providerPanel === null ? 0 : providerMatches(view).length + 1;
 }
 
 /** Rows the field-menu cursor moves over. */

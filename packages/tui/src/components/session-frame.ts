@@ -14,6 +14,7 @@ import { taskPanel } from './task-panel.js';
 import { cronPanel } from './cron-panel.js';
 import { sessionPanel } from './session-panel.js';
 import { modelDialog, providerDialog } from '../app/dialog.js';
+import { providerFormDialog } from './provider-form.js';
 import { trustCard } from './trust-card.js';
 import { changesPanel } from './changes-panel.js';
 import { changedFiles } from '../app/changes.js';
@@ -57,11 +58,13 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.changesVisible) dock.push(changesPanel(view, options.width));
   if (view.permissionsVisible) dock.push(permissionsPanel(view, options.width));
   if (view.palette !== null) dock.push(commandPalette(paletteMatches(view), view.palette.index, options.width));
-  const dialog = view.modelPanel !== null
-    ? modelDialog(view.modelList, view.modelCurrent, view.modelPanel.query)
-    : view.providerPanel !== null
-      ? view.providerEdit !== null ? providerEditDialog(view) : providerDialog(view.providerList, view.providerPanel.query)
-      : undefined;
+  const dialog = view.providerForm !== null
+    ? providerFormDialog(view.providerForm)
+    : view.modelPanel !== null
+      ? modelDialog(view.modelList, view.modelCurrent, view.modelPanel.query)
+      : view.providerPanel !== null
+        ? view.providerEdit !== null ? providerEditDialog(view) : providerDialog(view.providerList, view.providerPanel.query)
+        : undefined;
   return {
     body: transcriptBlocks(view, options),
     dock,

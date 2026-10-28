@@ -22,8 +22,25 @@ test('primary turns and background-only work reschedule immediately at 200ms', (
 });
 
 test('idle blink schedules its exact opening and closing deadlines', () => {
-  assert.equal(activityDelay(initialView(), 1_000, true, true), 3_000);
+  assert.equal(activityDelay(initialView(), 1_000, true, true), 400);
   assert.equal(activityDelay(initialView(), 4_000, true, true), 200);
   assert.equal(activityDelay(initialView(), 4_100, true, true), 100);
-  assert.equal(activityDelay(initialView(), 4_200, true, true), 4_000);
+  assert.equal(activityDelay(initialView(), 4_200, true, true), 1_000);
+});
+
+test('idle schedules breathing, gaze and blink transitions without external redraws', () => {
+  assert.equal(activityDelay(initialView(), 0, true, true), 1_400);
+  assert.equal(activityDelay(initialView(), 1_399, true, true), 1);
+  assert.equal(activityDelay(initialView(), 1_400, true, true), 1_400);
+  assert.equal(activityDelay(initialView(), 2_800, true, true), 1_200);
+  assert.equal(activityDelay(initialView(), 5_200, true, true), 400);
+  assert.equal(activityDelay(initialView(), 5_600, true, true), 400);
+  assert.equal(activityDelay(initialView(), 6_000, true, true), 1_000);
+});
+
+test('thinking and tools schedule the phases their pixels actually use', () => {
+  const thinking = { ...initialView(), turn: { id: 't', state: 'streaming', reason: null, cronSourced: false } };
+  assert.equal(activityDelay(thinking, 0, true, true), 600);
+  const tools = { ...initialView(), tasks: [{ taskId: 't', callId: 'c', command: 'npm test', startedAt: 0, startedSeq: 1, state: 'running' as const, endedAt: null, exitCode: null }] };
+  assert.equal(activityDelay(tools, 0, true, true), 240);
 });

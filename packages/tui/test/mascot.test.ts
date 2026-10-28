@@ -19,7 +19,7 @@ test('every frame is a fixed-size cow-spotted sprite, not a different ASCII layo
   for (const state of ['idle', 'thinking', 'tools', 'approval', 'success', 'failed'] as const) {
     const pixels = mascotFrame(state, 1_000);
     assert.ok(pixels.length >= 12);
-    assert.ok(pixels.every((row) => row.length === 24));
+    assert.ok(pixels.every((row) => row.length === 28));
     const colors = new Set(pixels.flat());
     assert.ok(colors.has('fur'));
     assert.ok(colors.has('patch'));
@@ -28,8 +28,8 @@ test('every frame is a fixed-size cow-spotted sprite, not a different ASCII layo
 });
 
 test('thinking and tool animations move without changing dimensions; disabled motion is static', () => {
-  assert.notDeepEqual(mascotFrame('thinking', 0), mascotFrame('thinking', 240));
-  assert.notDeepEqual(mascotFrame('tools', 0), mascotFrame('tools', 200));
+  assert.notDeepEqual(mascotFrame('thinking', 0), mascotFrame('thinking', 600));
+  assert.notDeepEqual(mascotFrame('tools', 0), mascotFrame('tools', 240));
   assert.deepEqual(mascotFrame('tools', 0, false), mascotFrame('tools', 1_000, false));
   assert.notDeepEqual(mascotFrame('idle', 0), mascotFrame('idle', 4_000));
 });

@@ -6,7 +6,7 @@ import {
   type JsonRpcResponse,
   type RequestId,
 } from './jsonrpc.js';
-import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, ProviderSummary, Result, ResultTable, SessionSummary, TrustWithheld } from './methods.js';
+import type { AttachmentBytes, CronJobSummary, GrantSummary, MethodName, ModelListResult, Params, ProviderConfiguration, ProviderSummary, Result, ResultTable, SessionSummary, TrustWithheld } from './methods.js';
 import { parseNotification, type NotificationName, type NotificationParams } from './notifications.js';
 import { PROTOCOL_VERSION } from './version.js';
 import type { Transport } from './transport.js';
@@ -64,6 +64,7 @@ export interface ProtocolClient {
   listProviders(): Promise<{ readonly providers: readonly ProviderSummary[] }>;
   /** Write one provider entry (a variable NAME, never the secret) into the user config. */
   setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }): Promise<void>;
+  configureProvider(sessionId: string, configuration: ProviderConfiguration): Promise<ResultTable['provider.configure']>;
   /** The host's workspace-trust snapshot for its own cwd (ADR-157 ②). */
   trustStatus(): Promise<{ readonly trusted: boolean; readonly withheld: TrustWithheld }>;
   /** Persist the host's cwd into the trust store; the running host stays as-is (ADR-157 ②). */
@@ -259,6 +260,10 @@ export function createClient(options: ClientOptions): ProtocolClient {
 
     async setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }) {
       await request('provider.set', { name, ...fields });
+    },
+
+    async configureProvider(sessionId: string, configuration: ProviderConfiguration) {
+      return request('provider.configure', { sessionId, ...configuration });
     },
 
     async trustStatus() {

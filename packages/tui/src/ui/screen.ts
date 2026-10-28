@@ -9,7 +9,7 @@ import { createComposer } from './composer.js';
 import { wrap } from '../text/wrap.js';
 
 const READING_WIDTH = 100;
-const LEFT_RAIL_WIDTH = 24;
+const LEFT_RAIL_WIDTH = 30;
 const ASIDE_WIDTH = 28;
 
 export interface ImageSlot {

@@ -5,8 +5,8 @@ export type MascotState = 'idle' | 'thinking' | 'tools' | 'approval' | 'success'
 type Pixel = SpriteColor | null;
 type Grid = Pixel[][];
 
-const WIDTH = 24;
-const HEIGHT = 16;
+const WIDTH = 28;
+const HEIGHT = 20;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 export function mascotState(view: TuiView, now: number): MascotState {
@@ -22,59 +22,74 @@ export function mascotState(view: TuiView, now: number): MascotState {
 }
 
 export function mascotFrame(state: MascotState, now: number, animate = true): readonly (readonly Pixel[])[] {
-  const frame = animate && state === 'thinking' ? Math.floor(now / 240) % 2 : 0;
-  const wag = animate && (state === 'tools' || state === 'success') ? Math.floor(now / 200) % 2 : 0;
-  const blink = animate && state === 'idle' && Math.floor(now / 100) % 42 >= 40;
-  const grid = Array.from({ length: HEIGHT }, () => Array<Pixel>(WIDTH).fill(null));
-  const tail = wag === 0 ? 0 : 1;
-  for (const [x, y] of [[21, 13], [22, 12], [22, 11 - tail], [21, 10 - tail], [20, 10 - tail]] as const) {
-    paint(grid, x, y, 'patch');
-    if (y > 10) paint(grid, x - 1, y, 'fur');
+  const grid = head(state);
+  const gaze = animate && state === 'thinking' ? Math.floor(now / 600) % 3 - 1 : animate && state === 'idle' && now % 6_000 >= 5_200 ? 1 : 0;
+  const blink = animate && state === 'idle' && now % 4_200 >= 4_000;
+  eyes(grid, state, gaze, blink);
+  if (state === 'tools' && animate) {
+    const frame = Math.floor(now / 240) % 2;
+    paint(grid, 22, 1, frame === 0 ? 'fur' : 'patch');
+    paint(grid, 20, 16, frame === 0 ? 'fur' : 'patch');
   }
-  ellipse(grid, 12, 12, 8, 4, 'patch');
-  ellipse(grid, 11, 12, 6, 4, 'fur');
-  ellipse(grid, 17, 13, 3, 2, 'patch');
-  ellipse(grid, 7, 14, 3, 2, 'fur');
-  ellipse(grid, 15, 14, 3, 2, 'fur');
-  const earBase = state === 'failed' ? 2 : 0;
-  for (let y = 0; y < 6; y += 1) {
-    for (let x = 3 - y; x <= 7 + y; x += 1) paint(grid, x, y + earBase, 'patch');
-    for (let x = 20 + y; x >= 16 - y; x -= 1) paint(grid, x, y + earBase, 'patch');
+  if (state === 'success' && animate && now % 800 < 400) return [...grid.slice(1), Array<Pixel>(WIDTH).fill(null)];
+  if (state === 'failed' && animate) {
+    const shift = Math.floor(now / 180) % 2 === 0 ? -1 : 1;
+    return grid.map((row) => shift < 0 ? [...row.slice(1), null] : [null, ...row.slice(0, -1)]);
   }
-  for (let y = 1; y < 5; y += 1) {
-    for (let x = 4 - y; x <= 6 + y; x += 1) paint(grid, x, y + earBase, 'fur');
-    for (let x = 19 + y; x >= 17 - y; x -= 1) paint(grid, x, y + earBase, 'fur');
+  if (state === 'idle' && animate && Math.floor(now / 1_400) % 2 === 1) {
+    return grid.map((row, y) => y >= 3 ? (grid[y + 1] ?? Array<Pixel>(WIDTH).fill(null)) : row);
   }
-  paint(grid, 4, 2 + earBase, 'nose');
-  paint(grid, 18, 2 + earBase, 'nose');
-  ellipse(grid, 12, 7, 10, 6, 'patch');
-  ellipse(grid, 12, 7, 9, 5, 'fur');
-  ellipse(grid, 7, 5, 4, 3, 'patch');
-  ellipse(grid, 19, 7, 3, 3, 'patch');
-  ellipse(grid, 10, 9, 4, 2, 'fur');
-  ellipse(grid, 14, 9, 4, 2, 'fur');
-  const gaze = state === 'thinking' ? frame : 0;
-  if (blink) {
-    paint(grid, 8, 7, 'patch');
-    paint(grid, 16, 7, 'patch');
-  } else {
-    paint(grid, 8 + gaze, 7, 'eye');
-    paint(grid, 16 + gaze, 7, 'eye');
-    if (state === 'approval') {
-      paint(grid, 8, 6, 'eye');
-      paint(grid, 16, 6, 'eye');
-    }
-  }
-  paint(grid, 12, 9, 'nose');
-  paint(grid, 13, 9, 'nose');
-  paint(grid, 12, 11, 'patch');
-  if (state !== 'failed') {
-    paint(grid, 11, 10, 'patch');
-    paint(grid, 14, 10, 'patch');
-  }
-  for (const x of [3, 4, 5, 18, 19, 20]) paint(grid, x, 10, 'patch');
-  if (state === 'success' && animate) return [...grid.slice(1), Array<Pixel>(WIDTH).fill(null)];
   return grid;
+}
+
+function head(state: MascotState): Grid {
+  const grid = Array.from({ length: HEIGHT }, () => Array<Pixel>(WIDTH).fill(null));
+  ellipse(grid, 15, 11, 10.5, 8, 'patch');
+  ellipse(grid, 15, 10.5, 9.5, 7.5, 'fur');
+  const base = state === 'failed' ? 2 : 0;
+  for (let y = 0; y < 6; y += 1) {
+    for (let x = 6 - y; x <= 9 + y; x += 1) paint(grid, x, y + base, 'patch');
+    for (let x = 22 + y; x >= 18 - y; x -= 1) paint(grid, x, y + base, 'fur');
+  }
+  paint(grid, 26, 5, 'patch');
+  paint(grid, 25, 4, 'patch');
+  ellipse(grid, 6, 5, 3, 2, 'patch');
+  ellipse(grid, 22, 6, 2.5, 2.3, 'patch');
+  ellipse(grid, 8, 14, 2, 1, 'nose');
+  paint(grid, 15, 14, 'nose');
+  paint(grid, 16, 14, 'nose');
+  paint(grid, 16, 17, 'patch');
+  paint(grid, 24, 3, 'eye');
+  if (state !== 'failed') {
+    paint(grid, 15, 16, 'patch');
+    paint(grid, 18, 15, 'patch');
+  } else {
+    paint(grid, 10, 9, 'patch');
+    paint(grid, 20, 9, 'patch');
+  }
+  return grid.map((row, y) => {
+    const shift = Math.round((10 - y) / 4);
+    return shift > 0 ? [...Array<Pixel>(shift).fill(null), ...row.slice(0, -shift)] : [...row.slice(-shift), ...Array<Pixel>(-shift).fill(null)];
+  });
+}
+
+function eyes(grid: Grid, state: MascotState, gaze: number, blink: boolean): void {
+  if (blink) {
+    paint(grid, 11, 11, 'patch');
+    paint(grid, 20, 11, 'patch');
+    paint(grid, 11, 10, 'patch');
+    paint(grid, 20, 10, 'patch');
+    return;
+  }
+  if (state === 'success') {
+    for (const [x, y] of [[10, 11], [11, 10], [19, 10], [20, 11]] as const) paint(grid, x, y, 'patch');
+    return;
+  }
+  const radius = state === 'approval' ? 1.8 : 1.3;
+  ellipse(grid, 11 + gaze, 11, radius, 1.7, 'patch');
+  ellipse(grid, 20 + gaze, 11, radius, 1.7, 'patch');
+  paint(grid, 11 + gaze, 10, 'fur');
+  paint(grid, 20 + gaze, 10, 'fur');
 }
 
 function paint(grid: Grid, x: number, y: number, color: SpriteColor): void {

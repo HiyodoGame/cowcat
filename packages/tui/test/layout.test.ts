@@ -23,7 +23,7 @@ test('a wide terminal has an activity rail without making prose more than 100 co
   try {
     const screen = createScreen(renderer, THEME, { title: 't' });
     assert.equal(screen.activityRail(), true);
-    assert.equal(screen.contentWidth(), 100);
+    assert.ok(screen.contentWidth() <= 100);
   } finally {
     await dispose();
   }

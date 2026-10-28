@@ -13,19 +13,24 @@ export interface DialogView {
 export function createDialog(renderer: CliRenderer, theme: Theme, parent: BoxRenderable, onHit: (id: string) => void): DialogView {
   const layer = new BoxRenderable(renderer, {
     id: 'cowcat-dialog-layer', position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-    zIndex: 50, backgroundColor: RGBA.fromHex('#00000066'), flexDirection: 'column',
+    zIndex: 50, backgroundColor: RGBA.fromHex('#141419'), flexDirection: 'column',
     alignItems: 'center', justifyContent: 'center', visible: false,
   });
   parent.add(layer);
   const window = new BoxRenderable(renderer, {
     id: 'cowcat-dialog', width: 70, border: true, borderStyle: 'rounded', borderColor: resolveToken(theme, 'border'),
-    backgroundColor: RGBA.fromHex('#1B1B22'), paddingLeft: 1, paddingRight: 1, flexDirection: 'column', overflow: 'hidden',
+    backgroundColor: RGBA.fromHex('#2A2A33'), paddingLeft: 1, paddingRight: 1, flexDirection: 'column', overflow: 'hidden',
   });
   layer.add(window);
   const search = new TextRenderable(renderer, {
     id: 'cowcat-dialog-search', content: '', height: 1, width: '100%', wrapMode: 'none', marginBottom: 1,
   });
   window.add(search);
+  const error = new TextRenderable(renderer, {
+    id: 'cowcat-dialog-error', content: '', height: 1, width: '100%', wrapMode: 'none', marginBottom: 1,
+    fg: resolveToken(theme, 'alert'), visible: false,
+  });
+  window.add(error);
   const list = new ScrollBoxRenderable(renderer, {
     id: 'cowcat-dialog-list', width: '100%', height: 1, flexShrink: 0, scrollY: true,
     contentOptions: { flexDirection: 'column' },
@@ -64,8 +69,10 @@ export function createDialog(renderer: CliRenderer, theme: Theme, parent: BoxRen
       search.content = value === '' ? (spec.input?.placeholder ?? '输入以筛选') : value;
       search.fg = resolveToken(theme, value === '' ? 'textDim' : 'text');
       footer.content = spec.footer.map((entry) => `${entry.label} ${entry.key}`).join('   ');
+      error.visible = spec.error !== undefined;
+      error.content = spec.error === undefined ? '' : truncate(spec.error, 60);
       const maxHeight = Math.max(6, Math.floor(renderer.height * 0.86));
-      const fixed = 4 + (searching ? 2 : 0);
+      const fixed = 4 + (searching ? 2 : 0) + (spec.error === undefined ? 0 : 2);
       const listHeight = Math.max(1, Math.min(children.length, maxHeight - fixed));
       list.height = listHeight;
       list.content.height = children.length;

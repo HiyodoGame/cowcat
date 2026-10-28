@@ -154,8 +154,8 @@ test('accept-edits.set is a user-act toggle with the applied state echoed (ADR-1
 test('providers.list reports the user layer; provider.set writes one entry (ADR-165)', async () => {
   const host = new ScriptedHost([]);
   host.providerRows = [
-    { name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', keySet: true },
-    { name: 'selfhost', baseUrl: 'https://gw.local/v1', apiKeyEnv: 'GW_KEY', keySet: false },
+    { name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', keySet: true, custom: false, protocol: 'openai', complete: true, models: [] },
+    { name: 'selfhost', baseUrl: 'https://gw.local/v1', apiKeyEnv: 'GW_KEY', keySet: false, custom: true, protocol: 'openai', complete: false, models: [] },
   ];
   const { client } = wire(host);
   await client.initialize();
@@ -166,4 +166,18 @@ test('providers.list reports the user layer; provider.set writes one entry (ADR-
 
   await client.setProvider('selfhost', { baseUrl: 'https://gw2.local/v1' });
   assert.deepEqual(host.writtenProviders, [{ name: 'selfhost', fields: { baseUrl: 'https://gw2.local/v1' } }]);
+});
+
+test('provider.configure carries a complete custom model and its activation result', async () => {
+  const host = new ScriptedHost([]);
+  const { client } = wire(host);
+  await client.initialize();
+  const configuration = {
+    name: 'local', protocol: 'openai' as const, baseUrl: 'http://localhost:11434/v1', apiKeyEnv: 'LOCAL_API_KEY',
+    preset: 'local/qwen3-coder', activate: true,
+    definition: { protocol: 'openai' as const, model: 'qwen3-coder', limits: { context: 128000, output: 8192 }, toolCalls: true },
+  };
+  const result = await client.configureProvider('s1', configuration);
+  assert.deepEqual(host.configuredProviders, [{ sessionId: 's1', configuration }]);
+  assert.deepEqual(result, { saved: true, current: { id: 'local/qwen3-coder', effort: null }, keySet: true, requiresRestart: false });
 });

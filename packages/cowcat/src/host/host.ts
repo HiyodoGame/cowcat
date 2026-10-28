@@ -27,7 +27,7 @@ import { AttachmentUnavailableError, materializeAttachment } from '../adapters/a
 import { createSpanTranslator, initTelemetry, type TelemetryHandle } from '../adapters/otel/index.js';
 import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
 import { NodeFs } from '../adapters/fs.js';
-import { readUserProviders, writeUserProvider } from '../adapters/providers.js';
+import { readUserProviderCatalog, writeUserProvider, writeUserProviderConfiguration } from '../adapters/providers.js';
 import { NodePlatform } from '../adapters/platform.js';
 import { NodeProcess } from '../adapters/process.js';
 import { createSandboxExecutor } from '../adapters/sandbox/executor.js';
@@ -82,6 +82,7 @@ import {
 } from '../ports/index.js';
 import { ModelConfigError, createModelPort, selectModel, type ModelSelection } from './model.js';
 import { BUILTIN_PRESETS } from './presets.js';
+import { providerSummaries, validateProviderConfiguration } from './provider-config.js';
 import { loadHostConfig, selectMcpServers, withHostRules } from './config.js';
 import { cowcatPaths, type CowcatPaths } from './paths.js';
 import { rulesForRole, toolsForRole } from './subagent-roles.js';
@@ -734,6 +735,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const attachments = new Map<string, Attachment>();
 
 
+  let activeModelSettings = config.model;
   let selection: ModelSelection | null = null;
   let model: ModelPort | null = options.model ?? null;
   const modelOverrides = new Map<string, ResolvedModelSettings>();
@@ -753,7 +755,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         modelCache.set(sessionId, configured);
         return configured;
       }
-      selection ??= selectModel(config.model);
+      selection ??= selectModel(activeModelSettings);
       model ??= createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
       return { port: model, selection };
     } catch (error) {
@@ -1256,7 +1258,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   return {
     serverVersion: version,
     paths,
-    config,
+    get config() { return { ...config, model: activeModelSettings }; },
     rules,
     sandbox,
     configWarnings: warnings,
@@ -1267,23 +1269,53 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
      * hide which layer a field came from.
      */
     async listProviders() {
-      const providers = await readUserProviders(paths.userConfig);
-      return {
-        providers: Object.entries(providers).map(([name, entry]) => ({
-          name,
-          baseUrl: entry.baseUrl ?? null,
-          apiKeyEnv: entry.apiKeyEnv ?? null,
-          // Detection uses the HOST's environment — the same process that would send
-          // the request — not whatever the client shell happens to have.
-          keySet: entry.apiKeyEnv !== undefined && (options.env[entry.apiKeyEnv] ?? '') !== '',
-        })),
-      };
+      return { providers: providerSummaries(await readUserProviderCatalog(paths.userConfig), options.env) };
     },
 
     async setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }) {
       // The adapter owns the file and the atomic write; a corrupt document refuses
       // rather than being replaced (ADR-165 ①).
       await writeUserProvider(paths.userConfig, name, fields);
+    },
+
+    async configureProvider(sessionId: string, configuration: import('@corescense/cowcat-protocol').ProviderConfiguration) {
+      const rec = open(sessionId);
+      if (rec.running !== null || rec.turnStarting || rec.reflecting) {
+        throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
+      }
+      let validated: ReturnType<typeof validateProviderConfiguration>;
+      try {
+        validated = validateProviderConfiguration(activeModelSettings, configuration);
+      } catch (error) {
+        throw new ProtocolHostError(message(error), ERROR_CODES.hostRefused, { problem: 'invalid-provider-configuration' });
+      }
+      await writeUserProviderConfiguration(paths.userConfig, configuration.name, {
+        provider: {
+          ...(configuration.baseUrl === null ? {} : { baseUrl: configuration.baseUrl }),
+          apiKeyEnv: configuration.apiKeyEnv,
+        },
+        preset: configuration.preset,
+        ...(configuration.definition === undefined ? {} : { definition: configuration.definition }),
+        activate: configuration.activate,
+      });
+      activeModelSettings = validated.settings;
+      selection = null;
+      model = options.model ?? null;
+      modelCache.clear();
+      if (configuration.activate) modelOverrides.set(sessionId, activeModelSettings);
+      const keySet = (options.env[configuration.apiKeyEnv] ?? '') !== '';
+      if (configuration.activate && keySet && validated.selected !== null) {
+        modelCache.set(sessionId, {
+          port: options.model ?? createModelPort(validated.selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch }),
+          selection: validated.selected,
+        });
+      }
+      return {
+        saved: true as const,
+        current: validated.selected === null ? null : { id: validated.selected.id, effort: validated.selected.effort },
+        keySet,
+        requiresRestart: configuration.activate && !keySet,
+      };
     },
 
     /** The startup snapshot, not a live fact (ADR-157 ②): the host never hot-reloads. */
@@ -1323,7 +1355,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         // configured preset is the initial model, per-turn truth stays on turn.opened.
         session = await Session.create(sessionDeps, id, {
           cwd: options.cwd,
-          ...(config.model.preset === null ? {} : { model: config.model.preset }),
+          ...(activeModelSettings.preset === null ? {} : { model: activeModelSettings.preset }),
         });
       } catch (error) {
         if (error instanceof LockHeldError) throw lockedError(id, error);
@@ -1517,15 +1549,23 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
 
     listModels(sessionId: string) {
       const rec = open(sessionId);
-      const current = currentModel(rec.session.state.sessionId).selection;
-      const ids = [...new Set([...Object.keys(BUILTIN_PRESETS), ...Object.keys(config.model.presets)])].sort();
-      return Promise.resolve({
-        current: { id: current.id, effort: current.effort },
-        models: ids.map((id) => ({
-          id,
-          efforts: Object.keys(config.model.presets[id]?.efforts ?? BUILTIN_PRESETS[id]?.efforts ?? {}),
-        })),
-      });
+      const settings = modelOverrides.get(rec.session.state.sessionId) ?? activeModelSettings;
+      try {
+        const current = selectModel(settings);
+        const ids = [...new Set([...Object.keys(BUILTIN_PRESETS), ...Object.keys(activeModelSettings.presets)])].sort();
+        return Promise.resolve({
+          current: { id: current.id, effort: current.effort },
+          models: ids.map((id) => ({
+            id,
+            efforts: Object.keys(activeModelSettings.presets[id]?.efforts ?? BUILTIN_PRESETS[id]?.efforts ?? {}),
+          })),
+        });
+      } catch (error) {
+        if (error instanceof ModelConfigError) {
+          throw new ProtocolHostError(error.message, ERROR_CODES.hostRefused, { problem: error.problem });
+        }
+        throw error;
+      }
     },
 
     setModel(sessionId: string, preset: string, effort?: string | null) {
@@ -1533,7 +1573,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       if (rec.running !== null || rec.turnStarting || rec.reflecting) {
         throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
       }
-      const override = { ...config.model, preset, effort: effort ?? null };
+      const override = { ...activeModelSettings, preset, effort: effort ?? null };
       try {
         const selected = selectModel(override);
         const built = createModelPort(selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });

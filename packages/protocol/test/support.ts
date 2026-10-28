@@ -13,6 +13,8 @@ import {
   type ProtocolClient,
   type ProtocolHost,
   type ProtocolServer,
+  type ProviderConfiguration,
+  type ProviderSummary,
   type SessionSummary,
   type Transport,
 } from '../src/index.js';
@@ -185,8 +187,9 @@ export class ScriptedHost implements ProtocolHost {
     return Promise.resolve();
   }
 
-  providerRows: { readonly name: string; readonly baseUrl: string | null; readonly apiKeyEnv: string | null; readonly keySet: boolean }[] = [];
+  providerRows: ProviderSummary[] = [];
   readonly writtenProviders: { readonly name: string; readonly fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string } }[] = [];
+  readonly configuredProviders: { readonly sessionId: string; readonly configuration: ProviderConfiguration }[] = [];
 
   listProviders() {
     return Promise.resolve({ providers: this.providerRows });
@@ -195,6 +198,11 @@ export class ScriptedHost implements ProtocolHost {
   setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }): Promise<void> {
     this.writtenProviders.push({ name, fields });
     return Promise.resolve();
+  }
+
+  configureProvider(sessionId: string, configuration: ProviderConfiguration) {
+    this.configuredProviders.push({ sessionId, configuration });
+    return Promise.resolve({ saved: true as const, current: { id: configuration.preset, effort: null }, keySet: true, requiresRestart: false });
   }
 
   /** What `trust.status` reports (ADR-157): the startup snapshot, scriptable per test. */

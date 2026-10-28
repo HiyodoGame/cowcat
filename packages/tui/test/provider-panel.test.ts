@@ -2,15 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ProviderSummary } from '@corescense/cowcat-protocol';
 import { intentFor } from '../src/app/keymap.js';
-import { beginProviderAdd, beginProviderEdit, closeProviderPanel, enterProviderPanel, initialView, moveProviderPanel, openProviderPanel, providerFieldCount, providerRowCount, withProviderList } from '../src/app/view.js';
+import { beginProviderAdd, beginProviderEdit, closeProviderPanel, enterProviderPanel, initialView, moveProviderPanel, openProviderPanel, providerFieldCount, providerRowCount, withProviderList, withProviderQuery } from '../src/app/view.js';
 import { findCommand } from '../src/app/commands.js';
 import { frameOf } from '../src/components/session-frame.js';
 import { providerFields, providerPanel } from '../src/components/provider-panel.js';
 import { textOf } from './scene.js';
 
 const PROVIDERS: readonly ProviderSummary[] = [
-  { name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', keySet: true },
-  { name: 'selfhost', baseUrl: null, apiKeyEnv: 'GW_KEY', keySet: false },
+  { name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY', keySet: true, custom: false, protocol: 'openai', complete: true, models: [] },
+  { name: 'selfhost', baseUrl: null, apiKeyEnv: 'GW_KEY', keySet: false, custom: true, protocol: 'openai', complete: false, models: [] },
 ];
 
 test('provider choices include endpoint and key state, never a secret', () => {
@@ -50,4 +50,12 @@ test('provider commands open a real dialog spec', () => {
   assert.deepEqual(dialog?.groups[0]?.rows.map((row) => row.label), ['deepseek', 'selfhost']);
   assert.equal(dialog?.groups[0]?.rows[0]?.mark, '✓');
   assert.equal(dialog?.groups[0]?.rows[1]?.mark, undefined);
+});
+
+test('Enter edits the visible filtered provider and changing the query resets the cursor', () => {
+  const moved = moveProviderPanel(openProviderPanel(withProviderList(initialView(), PROVIDERS)), 1, 3);
+  const queried = withProviderQuery(moved, 'selfhost');
+  assert.equal(queried.providerPanel?.index, 0);
+  assert.equal(providerRowCount(queried), 2);
+  assert.equal(enterProviderPanel(queried).providerPanel?.entry, 'selfhost');
 });

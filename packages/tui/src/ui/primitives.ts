@@ -211,9 +211,12 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
       const rows: BoxRenderable[] = [];
       const cells: TextRenderable[][] = [];
       const update = (next: SpriteNode): void => {
-        root.height = next.pixels.length;
+        root.height = heightOf(next);
         root.width = next.pixels[0]?.length ?? 0;
-        next.pixels.forEach((pixels, y) => {
+        const colorOfPixel = (pixel: SpriteNode['pixels'][number][number]) => pixel === null
+          ? undefined
+          : resolveToken(context.theme, `cat${pixel[0]?.toUpperCase() ?? ''}${pixel.slice(1)}` as TokenName);
+        for (let y = 0; y < Math.ceil(next.pixels.length / 2); y += 1) {
           let row = rows[y];
           if (row === undefined) {
             row = new BoxRenderable(renderer, { id: `${root.id}-y-${String(y)}`, height: 1, flexDirection: 'row' });
@@ -221,7 +224,7 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
             cells[y] = [];
             root.add(row);
           }
-          pixels.forEach((pixel, x) => {
+          for (let x = 0; x < (next.pixels[0]?.length ?? 0); x += 1) {
             let cell = cells[y]?.[x];
             if (cell === undefined) {
               cell = new TextRenderable(renderer, {
@@ -230,9 +233,13 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
               (cells[y] as TextRenderable[])[x] = cell;
               row.add(cell);
             }
-            cell.bg = pixel === null ? undefined : resolveToken(context.theme, `cat${pixel[0]?.toUpperCase() ?? ''}${pixel.slice(1)}` as TokenName);
-          });
-        });
+            const top = next.pixels[y * 2]?.[x] ?? null;
+            const bottom = next.pixels[y * 2 + 1]?.[x] ?? null;
+            cell.content = top === null && bottom !== null ? '▄' : top === null ? ' ' : '▀';
+            cell.fg = colorOfPixel(top ?? bottom);
+            cell.bg = top !== null && bottom !== null ? colorOfPixel(bottom) : undefined;
+          }
+        }
       };
       update(node);
       binding = { renderable: root, node, update(next) { if (next.kind === 'sprite') update(next); } };

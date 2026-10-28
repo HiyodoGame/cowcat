@@ -112,7 +112,7 @@ test('ordinary long dialogs keep the selected final choice and footer visible', 
 test('dialog connection and current marks remain as readable status text', async () => {
   const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 70, height: 24 });
   try {
-    const view = openProviderPanel(withProviderList(initialView(), [{ name: 'deepseek', baseUrl: null, apiKeyEnv: 'KEY', keySet: true }]));
+    const view = openProviderPanel(withProviderList(initialView(), [{ name: 'deepseek', baseUrl: null, apiKeyEnv: 'KEY', keySet: true, custom: false, protocol: 'openai', complete: true, models: [] }]));
     const screen = createScreen(renderer, THEME, { title: 't' });
     screen.update(frameOf(view, { width: screen.contentWidth(), now: 0 }));
     await renderOnce();
