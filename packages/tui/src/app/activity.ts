@@ -13,7 +13,7 @@ export function activityDelay(view: TuiView, now: number, catVisible: boolean, a
     case 'success':
     case 'failed': {
       const feedback = Math.max(1, 1_600 - (now - (view.turnSettledAt ?? now)));
-      return Math.min(feedback, untilPhase(now, state === 'success' ? 400 : 180));
+      return Math.min(feedback, untilPhase(now, state === 'success' ? 400 : 1_600));
     }
     case 'approval': return null;
     case 'idle': return Math.min(untilPhase(now, 1_400), untilPhase(now, 4_200, 4_000), untilPhase(now, 6_000, 5_200), untilPhase(now, 6_000));

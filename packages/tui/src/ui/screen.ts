@@ -194,7 +194,7 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         asideMounted = wantAside;
       }
       if (wantLeft) {
-        const mascotHeight = spec.leftRail === undefined ? 0 : heightOf(spec.leftRail.mascot);
+        const mascotHeight = heightOf(spec.leftRail.mascot);
         const activityHeight = Math.max(2, Math.floor((renderer.height - mascotHeight - 3) / 3));
         leftGroup.update(railPanels(spec.leftRail, activityHeight), (node, index) => ({
           marginTop: index === 0 ? 0 : 1,
