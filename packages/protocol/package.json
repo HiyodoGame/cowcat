@@ -1,6 +1,6 @@
 {
   "name": "@corescense/cowcat-protocol",
-  "version": "1.0.0-beta.4",
+  "version": "1.0.0-beta.5",
   "description": "CowCat's headless protocol: JSON-RPC over stdio, the in-memory transport, and the serve() lifecycle. Knows no renderer and no kernel.",
   "type": "module",
   "license": "MIT",

@@ -17,7 +17,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statS
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const VERSION = '1.0.0-beta.4';
+const VERSION = '1.0.0-beta.5';
 const PACKAGES = [
   { dir: 'packages/protocol', name: '@corescense/cowcat-protocol', entry: 'dist/src/index.js' },
   { dir: 'packages/cowcat', name: '@corescense/cowcat-core', entry: 'dist/src/index.js' },

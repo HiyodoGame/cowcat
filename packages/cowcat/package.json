@@ -1,6 +1,6 @@
 {
   "name": "@corescense/cowcat-core",
-  "version": "1.0.0-beta.4",
+  "version": "1.0.0-beta.5",
   "description": "CowCat's kernel: event-sourced session runtime, policy engine, ports and the composition root.",
   "type": "module",
   "license": "MIT",
