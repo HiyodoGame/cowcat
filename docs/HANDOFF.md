@@ -3,7 +3,7 @@
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
 > 最近一次更新：**2026-10-29（固定侧栏与灰阶点阵猫）**。
-> 交接时仓库状态：**分支 `feat/dotcat-rails`，基线 `aa77e4b`，实现提交至 `f5a0076`，未推送远端**。
+> 交接时仓库状态：**分支 `feat/dotcat-rails`，基线 `aa77e4b`，实现与审查修复均在本分支，未推送远端**。
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实终端验收；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 
@@ -32,7 +32,7 @@
 |---|---|---|
 | protocol | **48/48，0 fail** | `npm --prefix packages/protocol test` |
 | cowcat | **939 通过、16 个既有平台 skip，0 fail** | `npm --prefix packages/cowcat test`；build + ESLint 通过 |
-| tui | **232/232，0 fail** | `npm --prefix packages/tui run pretest` 后 Node 26.12 跑完整 `node:test` |
+| tui | **237/237，0 fail** | `npm --prefix packages/tui run pretest` 后 Node 26.12 跑完整 `node:test` |
 | cli | **41/41，0 fail** | `npm --prefix packages/cli test` |
 | 空态与布局 | 固定顺序、空态、160/高度断点、长列表截断、长路径换行 | `test/rails.test.ts`、`test/layout.test.ts` 与真实渲染帧 |
 | 猫咪与光栅 | 82×46、左右对称、右耳收齐、单鼻点、六种眼形、41×23 mount、灰阶 color spans | `mascot*`、`quadrants`、`native-components` 与 160/180 列实际捕获帧 |
@@ -47,6 +47,8 @@
 - 光栅横向索引由第二个单元测试先失败再修正；背景点阵、透明降级和多色优先级各有独立断言。
 - 失败状态不再按 180ms 抖动；1500/1599ms 的反馈窗口与返回 idle 的边界分别验证。
 - 四包与真实进程 smoke 前补齐 protocol → cowcat → tui → cli 的标准构建链，没有绕过 CLI 入口。
+- 独立整分支审查发现 4 个 Important，另有 1 个空态信息问题因明确规格提升为 Important：32 行裁切、双栏溢出计数、双向视线、重复成功脉冲和空态辅助信息均先 RED 后 GREEN，最终套件 237/237。
+- deferred Minor：idle 呼吸亮度当前无可见变化；少量旧品牌/文档措辞待后续清理，不冒充本轮已修。
 
 ## 4. 本批 ADR
 

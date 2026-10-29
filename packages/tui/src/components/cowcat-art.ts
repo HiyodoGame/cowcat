@@ -21,7 +21,7 @@ export function mascotState(view: TuiView, now: number): MascotState {
   return 'idle';
 }
 
-export function mascotFrame(state: MascotState, now: number, animate = true): readonly (readonly Pixel[])[] {
+export function mascotFrame(state: MascotState, now: number, animate = true, settledAt: number | null = 0): readonly (readonly Pixel[])[] {
   const grid = baseFrame();
   const gaze = animate && state === 'thinking' ? Math.floor(now / 600) % 3 - 1 : 0;
   const blink = animate && state === 'idle' && now % 4_200 >= 4_000;
@@ -30,7 +30,7 @@ export function mascotFrame(state: MascotState, now: number, animate = true): re
   if (state === 'thinking') return shade(grid, (x, y) => (x + y + Math.floor(now / 600)) % 12 === 0);
   if (state === 'tools') return shade(grid, (x) => (x + Math.floor(now / 240)) % 16 === 0);
   if (state === 'idle' && Math.floor(now / 1_400) % 2 === 1) return shade(grid, () => true, true);
-  if (state === 'success' && now % 800 < 400) return shade(grid, () => true);
+  if (state === 'success' && settledAt !== null && now - settledAt < 400) return shade(grid, () => true);
   return grid;
 }
 
@@ -62,7 +62,7 @@ function renderEyes(grid: Grid, state: MascotState, gaze: number, blink: boolean
 }
 
 function openEyes(grid: Grid, gaze: number, height: number): void {
-  for (const [index, cx] of [14 + gaze, 27 - gaze].entries()) {
+  for (const [index, cx] of [14 + gaze, 27 + gaze].entries()) {
     for (let y = 11; y < 13 + height; y += 1) {
       for (let x = cx - 2; x <= cx + 1; x += 1) dot(grid, x, y, 'iris');
     }

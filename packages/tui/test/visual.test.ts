@@ -16,7 +16,7 @@ function event(type: string, body: Record<string, unknown> = {}): WireEvent {
 }
 
 test('a medium terminal gives prose room while the info rail keeps full ids and paths', async () => {
-  const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 120, height: 30 });
+  const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 120, height: 32 });
   try {
     const screen = createScreen(renderer, THEME, { title: titleOf('0.0.0-test') });
     const view = [event('session.opened', {}), event('turn.opened', { input: 'hi', model: 'zai/glm-5.3-flash' })].reduce(project, initialView());

@@ -43,3 +43,13 @@ test('tools squints, approval widens, success smiles and failure droops', () => 
   assert.notDeepEqual(mascotFrame('failed', 0), mascotFrame('idle', 0));
   assert.deepEqual(mascotFrame('failed', 0), mascotFrame('failed', 180));
 });
+
+
+test('both pupils look left, center and right together', () => {
+  const eyeXs = (now: number): number[] => [...new Set(mascotFrame('thinking', now).flatMap((row) => row.flatMap((pixel, x) => pixel === 'eye' ? [x] : [])))].sort((a, b) => a - b);
+  const left = eyeXs(0);
+  const center = eyeXs(600);
+  const right = eyeXs(1_200);
+  assert.ok(left.every((x, index) => x < (center[index] ?? -1)));
+  assert.ok(center.every((x, index) => x < (right[index] ?? -1)));
+});

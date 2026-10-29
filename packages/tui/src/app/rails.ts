@@ -42,7 +42,7 @@ function todoPanel(todos: readonly TodoView[], visible: boolean): RailPanel {
   const done = shown.filter((todo) => todo.status === 'completed').length;
   return {
     title: `待办 ${String(done)}/${String(shown.length)}`,
-    rows: shown.length === 0 ? [{ text: '暂无待办', dim: true }] : shown.map((todo) => ({
+    rows: shown.length === 0 ? [{ text: '暂无待办', dim: true }, { text: '任务出现后会列在这里', dim: true }] : shown.map((todo) => ({
       text: todo.status === 'in_progress' && todo.activeForm !== '' ? todo.activeForm : todo.content,
       ...(todo.status === 'completed' ? { dim: true } : {}),
       ...(todo.status === 'in_progress' ? { accent: true } : {}),
@@ -73,7 +73,7 @@ export function leftRailSpec(view: TuiView, agents: readonly AgentView[], now: n
     })),
   });
   const state = mascotState(view, now);
-  return { panels, mascot: spriteBlock('cowcat', mascotFrame(state, now, animationsEnabled(process.env))), mascotState: state, mascotLabel: LABELS[state] };
+  return { panels, mascot: spriteBlock('cowcat', mascotFrame(state, now, animationsEnabled(process.env), view.turnSettledAt)), mascotState: state, mascotLabel: LABELS[state] };
 }
 
 export function asideSpec(
@@ -93,6 +93,8 @@ export function asideSpec(
         ...(spent === null ? [] : [{ label: '费用', value: spent }]),
       ],
     });
+  } else {
+    panels.push({ title: '上下文', rows: [{ label: '窗口', value: '等待首次用量' }] });
   }
   panels.push({
     title: '会话',
@@ -101,7 +103,10 @@ export function asideSpec(
   if (options.cwd !== undefined) panels.push({ title: '工作区', rows: [{ label: '目录', value: options.cwd }] });
   panels.push({
     title: 'CowCat 变更',
-    rows: changedFiles.length === 0 ? [{ label: '暂无 CowCat 变更', value: '' }] : changedFiles.slice(0, 10).map((file) => {
+    rows: changedFiles.length === 0 ? [
+      { label: '暂无 CowCat 变更', value: '' },
+      { label: 'Write / Edit 成功后会显示文件与 diffstat', value: '' },
+    ] : changedFiles.map((file) => {
       const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
       const stat = file.added > 0 || file.removed > 0 ? `+${String(file.added)} -${String(file.removed)}` : `写入 ${String(file.written)} 行`;
       return { label: name, value: stat, ...(file.added >= file.removed ? {} : { valueAccent: true }) };

@@ -10,6 +10,7 @@ test('empty activity rails keep fixed sections and explicit empty states', () =>
     '暂无待办', '暂无运行中的子代理', '暂无后台任务',
   ]);
   assert.ok(left.panels.every((panel) => panel.rows[0]?.dim));
+  assert.equal(left.panels[0]?.rows[1]?.text, '任务出现后会列在这里');
 });
 
 test('non-empty activity rails preserve real rows in the approved order', () => {
@@ -33,6 +34,9 @@ test('the information rail keeps an empty change section and real diffstat when 
   assert.equal(empty.panels.at(-1)?.title, 'CowCat 变更');
   assert.equal(empty.panels.at(-1)?.rows[0]?.label, '暂无 CowCat 变更');
   assert.equal(empty.panels.at(-1)?.rows[0]?.value, '');
+  assert.equal(empty.panels.at(-1)?.rows[1]?.label, 'Write / Edit 成功后会显示文件与 diffstat');
+  assert.equal(empty.panels[0]?.title, '上下文');
+  assert.equal(empty.panels[0]?.rows[0]?.value, '等待首次用量');
 
   const changed = asideSpec(initialView(), { cwd: 'F:/project' }, [{ path: 'F:/project/a.ts', added: 3, removed: 1, written: 0 }]);
   assert.equal(changed.panels.at(-1)?.rows[0]?.label, 'a.ts');

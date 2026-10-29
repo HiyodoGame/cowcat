@@ -25,3 +25,12 @@ test('success has one pulse and reduced motion stays still', () => {
   assert.notDeepEqual(mascotFrame('success', 0), mascotFrame('success', 400));
   assert.deepEqual(mascotFrame('success', 0, false), mascotFrame('success', 400, false));
 });
+
+
+test('success pulses once from the actual settlement time and never repeats', () => {
+  const bright = mascotFrame('success', 400, true, 1_000);
+  const settled = mascotFrame('success', 1_400, true, 1_000);
+  assert.notDeepEqual(bright, settled);
+  assert.deepEqual(settled, mascotFrame('success', 1_800, true, 1_000));
+  assert.deepEqual(settled, mascotFrame('success', 2_200, true, 1_000));
+});

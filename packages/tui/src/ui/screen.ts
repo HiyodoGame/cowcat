@@ -107,14 +107,23 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   };
 
   const activityRail = (): boolean => renderer.width >= 160 && renderer.height >= 32 && process.env.COWCAT_SIDEBAR !== 'off';
-  const asideVisible = (): boolean => renderer.width >= 104 && process.env.COWCAT_SIDEBAR !== 'off';
+  const asideVisible = (): boolean => renderer.width >= 104 && renderer.height >= 32 && process.env.COWCAT_SIDEBAR !== 'off';
   let leftMounted = false;
   let asideMounted = false;
 
-  function clipLines(rows: readonly ReturnType<typeof line>[], capacity: number): readonly ReturnType<typeof line>[] {
-    if (rows.length <= capacity) return rows;
-    const shown = Math.max(0, capacity - 1);
-    return [...rows.slice(0, shown), line(`另有 ${String(rows.length - shown)} 项`, 'textDim')];
+  function clipRailRows(rows: readonly import('../app/rails.js').RailRow[], capacity: number): readonly ReturnType<typeof line>[] {
+    const items = rows.map((row) => wrap(row.text, LEFT_RAIL_WIDTH - 2).map((text) => line(text, row.accent === true ? 'act' : row.dim === true ? 'textDim' : 'text')));
+    if (items.length <= 1) return items.flat();
+    const shown: ReturnType<typeof line>[] = [];
+    let included = 0;
+    let used = 0;
+    for (const item of items) {
+      if (used + item.length > Math.max(1, capacity - 1)) break;
+      shown.push(...item);
+      used += item.length;
+      included += 1;
+    }
+    return included === items.length ? shown : [...shown, line(`另有 ${String(items.length - included)} 项`, 'textDim')];
   }
 
   function railPanels(spec: import('../app/rails.js').LeftRailSpec | undefined, activityHeight: number): readonly SceneNode[] {
@@ -122,20 +131,31 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     return [
       ...spec.panels.map((panel, index) => panelBlock({
         key: `activity-${panel.title}-${String(index)}`, title: panel.title, tone: 'brand', rail: true,
-        children: [textBlock('rows', clipLines(panel.rows.flatMap((row) => wrap(row.text, LEFT_RAIL_WIDTH - 2).map((text) => line(text, row.accent === true ? 'act' : row.dim === true ? 'textDim' : 'text'))), activityHeight - 1))],
+        children: [textBlock('rows', clipRailRows(panel.rows, activityHeight - 1))],
       })),
       spec.mascot,
     ];
   }
 
-  function infoPanels(spec: import('../app/rails.js').AsideSpec | undefined): readonly SceneNode[] {
-    return (spec?.panels ?? []).map((panel, index) => panelBlock({
-      key: `info-${panel.title}-${String(index)}`, title: panel.title, tone: 'brand', rail: true,
-      children: panel.rows.map((row, rowIndex) => stackBlock(`fact-${String(rowIndex)}`, [
-        textBlock('label', [line(row.label, 'textDim')]),
-        textBlock('value', wrap(row.value, ASIDE_WIDTH - 2).map((text) => line(text, row.valueAccent === true ? 'act' : 'text'))),
-      ])),
-    }));
+  function asidePanelHeight(panel: import('../app/rails.js').AsidePanel): number {
+    return panel.rows.reduce((height, row) => height + 1 + wrap(row.value, ASIDE_WIDTH - 2).length, 2);
+  }
+
+  function infoPanels(spec: import('../app/rails.js').AsideSpec | undefined, heights: readonly number[]): readonly SceneNode[] {
+    const panels = spec?.panels ?? [];
+    return panels.map((panel, index) => {
+      const capacity = Math.max(1, Math.floor(((heights[index] ?? 2) - 2) / 2));
+      const visible = panel.rows.slice(0, panel.rows.length > capacity ? Math.max(1, capacity - 1) : capacity);
+      const hidden = panel.rows.length - visible.length;
+      const rows = hidden === 0 ? visible : [...visible, { label: `另有 ${String(hidden)} 项`, value: '' }];
+      return panelBlock({
+        key: `info-${panel.title}-${String(index)}`, title: panel.title, tone: 'brand', rail: true,
+        children: rows.map((row, rowIndex) => stackBlock(`fact-${String(rowIndex)}`, [
+          textBlock('label', [line(row.label, 'textDim')]),
+          textBlock('value', wrap(row.value, ASIDE_WIDTH - 2).map((text) => line(text, row.valueAccent === true ? 'act' : 'text'))),
+        ])),
+      });
+    });
   }
 
   return {
@@ -195,16 +215,27 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
       }
       if (wantLeft) {
         const mascotHeight = heightOf(spec.leftRail.mascot);
-        const activityHeight = Math.max(2, Math.floor((renderer.height - mascotHeight - 3) / 3));
+        const activityHeight = Math.max(2, Math.floor((renderer.height - 1 - mascotHeight - 2) / 3));
         leftGroup.update(railPanels(spec.leftRail, activityHeight), (node, index) => ({
-          marginTop: index === 0 ? 0 : 1,
+          marginTop: index === 0 || index === 3 ? 0 : 1,
           height: index < 3 ? activityHeight : heightOf(node),
           flexShrink: 0,
         }));
       }
       if (wantAside) {
-        const nodes = infoPanels(spec.aside);
-        asideGroup.update(nodes, (_node, index) => ({ marginTop: index === 0 ? 0 : 1, flexGrow: index === nodes.length - 1 ? 1 : 0 }));
+        const panels = spec.aside.panels;
+        const natural = panels.map(asidePanelHeight);
+        const otherHeight = natural.slice(0, -1).reduce((sum, height) => sum + height, 0);
+        const pageHeight = renderer.height - 1;
+        const heights = natural.map((height, index) => index === panels.length - 1
+          ? Math.max(2, pageHeight - otherHeight - (panels.length - 1))
+          : Math.min(height, Math.max(2, Math.floor((pageHeight - 2 - (panels.length - 1)) / Math.max(1, panels.length - 1)))));
+        const nodes = infoPanels(spec.aside, heights);
+        asideGroup.update(nodes, (node, index) => ({
+          marginTop: index === 0 ? 0 : 1,
+          height: heights[index] ?? heightOf(node),
+          flexGrow: index === nodes.length - 1 ? 1 : 0,
+        }));
       }
       dialog.update(spec.dialog);
       composer.setPlaceholder(spec.placeholder);

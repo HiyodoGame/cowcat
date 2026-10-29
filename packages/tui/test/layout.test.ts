@@ -105,3 +105,59 @@ test('overfull rail content is bounded with an overflow count instead of pushing
     await dispose();
   }
 });
+
+
+test('the minimum full layout keeps all 23 mascot rows and hides both rails below 32 rows', async () => {
+  const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 32 });
+  try {
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(initialView(), { width: 160, height: 32, now: 0, cwd: 'F:/project' }));
+    await renderOnce();
+    assert.equal(captureCharFrame().split('\n').filter((row) => row.includes('▪')).length, 23);
+    assert.equal(screen.wideRails(), true);
+  } finally {
+    await dispose();
+  }
+
+  const { renderer: shortRenderer, dispose: disposeShort } = await createTestRenderer({ width: 160, height: 31 });
+  try {
+    const screen = createScreen(shortRenderer, THEME, { title: 't' });
+    assert.equal(screen.activityRail(), false);
+    assert.equal(screen.wideRails(), false);
+  } finally {
+    await disposeShort();
+  }
+});
+
+test('one long todo remains one item instead of becoming several overflow items', async () => {
+  const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 40 });
+  try {
+    const view = { ...initialView(), todosVisible: true, todos: [{ content: 'x'.repeat(200), status: 'pending', activeForm: '' }] };
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(view, { width: 160, height: 40, now: 0, cwd: 'F:/project' }));
+    await renderOnce();
+    assert.doesNotMatch(captureCharFrame(), /另有 \d+ 项/);
+  } finally {
+    await dispose();
+  }
+});
+
+test('more than ten changed files reports the exact hidden item count', async () => {
+  const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 40 });
+  try {
+    const view = {
+      ...initialView(),
+      entries: Array.from({ length: 20 }, (_, index) => ({
+        kind: 'tool' as const, seq: index + 1, callId: `call-${String(index)}`, name: 'Write', ok: true,
+        output: '', truncation: null, attachments: [], path: `F:/project/file-${String(index)}.ts`,
+      })),
+      calls: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`call-${String(index)}`, { name: 'Write', input: { content: 'x' } }])),
+    };
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(view, { width: 160, height: 40, now: 0, cwd: 'F:/project' }));
+    await renderOnce();
+    assert.match(captureCharFrame(), /另有 10 项/);
+  } finally {
+    await dispose();
+  }
+});
