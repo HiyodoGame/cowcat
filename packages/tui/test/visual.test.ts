@@ -73,7 +73,7 @@ test('the model dialog uses a native selected-row background and a text field', 
 });
 
 test('the wide rail renders the cow-spotted cat, activities and themed panels', async () => {
-  const { renderer, renderOnce, captureCharFrame, captureSpans, dispose, flush } = await createTestRenderer({ width: 150, height: 36 });
+  const { renderer, renderOnce, captureCharFrame, captureSpans, dispose, flush } = await createTestRenderer({ width: 160, height: 36 });
   try {
     const theme = { ...THEME, foreground: { ...THEME.foreground, brand: '#010203', act: '#040506' } };
     const screen = createScreen(renderer, theme, { title: 't' });
@@ -84,7 +84,7 @@ test('the wide rail renders the cow-spotted cat, activities and themed panels', 
     await flush();
     await renderOnce();
     const frame = captureCharFrame();
-    assert.match(frame, /奶牛猫 \/ 工作中/);
+    assert.doesNotMatch(frame, /奶牛猫\s*\//);
     assert.match(frame, /在改代码/);
     assert.match(frame, /npm test/);
     const spans = captureSpans().lines.flatMap((row) => row.spans);

@@ -9,7 +9,7 @@ import { createComposer } from './composer.js';
 import { wrap } from '../text/wrap.js';
 
 const READING_WIDTH = 100;
-const LEFT_RAIL_WIDTH = 30;
+const LEFT_RAIL_WIDTH = 43;
 const ASIDE_WIDTH = 28;
 
 export interface ImageSlot {
@@ -106,22 +106,25 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     scrollHandler(scroll.direction === 'up' ? step : -step);
   };
 
-  const activityRail = (): boolean => renderer.width >= 144 && process.env.COWCAT_SIDEBAR !== 'off';
+  const activityRail = (): boolean => renderer.width >= 160 && renderer.height >= 32 && process.env.COWCAT_SIDEBAR !== 'off';
   const asideVisible = (): boolean => renderer.width >= 104 && process.env.COWCAT_SIDEBAR !== 'off';
   let leftMounted = false;
   let asideMounted = false;
 
-  function railPanels(spec: import('../app/rails.js').LeftRailSpec | undefined): readonly SceneNode[] {
+  function clipLines(rows: readonly ReturnType<typeof line>[], capacity: number): readonly ReturnType<typeof line>[] {
+    if (rows.length <= capacity) return rows;
+    const shown = Math.max(0, capacity - 1);
+    return [...rows.slice(0, shown), line(`另有 ${String(rows.length - shown)} 项`, 'textDim')];
+  }
+
+  function railPanels(spec: import('../app/rails.js').LeftRailSpec | undefined, activityHeight: number): readonly SceneNode[] {
     if (spec === undefined) return [];
     return [
-      stackBlock('cowcat-mascot', [
-        spec.mascot,
-        textBlock('mascot-label', [line(spec.mascotLabel, 'textDim')]),
-      ], 1),
       ...spec.panels.map((panel, index) => panelBlock({
         key: `activity-${panel.title}-${String(index)}`, title: panel.title, tone: 'brand', rail: true,
-        children: [textBlock('rows', panel.rows.flatMap((row) => wrap(row.text, LEFT_RAIL_WIDTH - 2).map((text) => line(text, row.accent === true ? 'act' : row.dim === true ? 'textDim' : 'text'))))],
+        children: [textBlock('rows', clipLines(panel.rows.flatMap((row) => wrap(row.text, LEFT_RAIL_WIDTH - 2).map((text) => line(text, row.accent === true ? 'act' : row.dim === true ? 'textDim' : 'text'))), activityHeight - 1))],
       })),
+      spec.mascot,
     ];
   }
 
@@ -190,8 +193,19 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         else page.remove(aside);
         asideMounted = wantAside;
       }
-      if (wantLeft) leftGroup.update(railPanels(spec.leftRail), () => ({ marginTop: 1 }));
-      if (wantAside) asideGroup.update(infoPanels(spec.aside), () => ({ marginTop: 1 }));
+      if (wantLeft) {
+        const mascotHeight = spec.leftRail === undefined ? 0 : heightOf(spec.leftRail.mascot);
+        const activityHeight = Math.max(2, Math.floor((renderer.height - mascotHeight - 3) / 3));
+        leftGroup.update(railPanels(spec.leftRail, activityHeight), (node, index) => ({
+          marginTop: index === 0 ? 0 : 1,
+          height: index < 3 ? activityHeight : heightOf(node),
+          flexShrink: 0,
+        }));
+      }
+      if (wantAside) {
+        const nodes = infoPanels(spec.aside);
+        asideGroup.update(nodes, (_node, index) => ({ marginTop: index === 0 ? 0 : 1, flexGrow: index === nodes.length - 1 ? 1 : 0 }));
+      }
       dialog.update(spec.dialog);
       composer.setPlaceholder(spec.placeholder);
       renderer.requestRender();

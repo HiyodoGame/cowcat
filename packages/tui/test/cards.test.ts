@@ -186,7 +186,7 @@ test('todos and running agents remain structured rail panels', () => {
   assert.deepEqual(rail?.panels[0]?.rows.map((row) => row.text), ['在加输入校验', '写测试', '跑一遍']);
   assert.equal(rail?.panels[0]?.rows[0]?.accent, true);
   assert.equal(rail?.mascotState, 'tools');
-  assert.equal(frameOf({ ...view, todosVisible: false }, { width: WIDTH, now: 0 }).leftRail?.panels.some((panel) => panel.title.startsWith('待办')), false);
+  assert.equal(frameOf({ ...view, todosVisible: false }, { width: WIDTH, now: 0 }).leftRail?.panels[0]?.rows[0]?.text, '暂无待办');
 });
 
 test('palettes window around the selection and preserve absolute hit ids', () => {

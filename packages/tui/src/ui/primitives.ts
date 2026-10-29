@@ -274,7 +274,14 @@ interface MountedChild {
 }
 
 export interface SceneGroup {
-  update(nodes: readonly SceneNode[], layout?: (node: SceneNode, index: number) => { readonly top?: number; readonly marginTop?: number; readonly height?: number }): void;
+  update(nodes: readonly SceneNode[], layout?: (node: SceneNode, index: number) => {
+    readonly top?: number;
+    readonly marginTop?: number;
+    readonly height?: number;
+    readonly flexGrow?: number;
+    readonly flexShrink?: number;
+    readonly minHeight?: number;
+  }): void;
   readonly bindings: readonly SceneBinding[];
 }
 
@@ -300,6 +307,9 @@ export function createChildGroup(context: SceneContext, parent: BoxRenderable): 
         child.binding.renderable.top = place?.top ?? 0;
         child.binding.renderable.marginTop = place?.marginTop ?? 0;
         child.binding.renderable.height = place?.height ?? heightOf(node);
+        child.binding.renderable.flexGrow = place?.flexGrow ?? 0;
+        child.binding.renderable.flexShrink = place?.flexShrink ?? 0;
+        child.binding.renderable.minHeight = place?.minHeight ?? 0;
         child.binding.resize?.(child.binding.renderable.height);
       });
       for (const extra of mounted.splice(nodes.length)) parent.remove(extra.binding.renderable);
