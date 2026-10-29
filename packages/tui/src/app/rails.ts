@@ -102,10 +102,10 @@ export function asideSpec(
   });
   if (options.cwd !== undefined) panels.push({ title: '工作区', rows: [{ label: '目录', value: options.cwd }] });
   panels.push({
-    title: 'CowCat 变更',
+    title: '文件变更',
     rows: changedFiles.length === 0 ? [
-      { label: '暂无 CowCat 变更', value: '' },
-      { label: 'Write / Edit 成功后会显示文件与 diffstat', value: '' },
+      { label: '暂无文件变更', value: '' },
+      { label: '文件修改后会显示在这里', value: '' },
     ] : changedFiles.map((file) => {
       const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
       const stat = file.added > 0 || file.removed > 0 ? `+${String(file.added)} -${String(file.removed)}` : `写入 ${String(file.written)} 行`;

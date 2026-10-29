@@ -2,11 +2,12 @@ import { BoxRenderable, TextRenderable, createTextAttributes, type CliRenderer, 
 import type { Theme } from '../theme/tokens.js';
 import type { DialogSpec } from '../app/dialog.js';
 import { line } from './line.js';
-import { heightOf, panelBlock, stackBlock, textBlock, type SceneNode, type StatusNode } from './scene.js';
+import { heightOf, panelBlock, textBlock, type SceneNode, type StatusNode } from './scene.js';
 import { createChildGroup, resolveToken, type SceneContext } from './primitives.js';
 import { createDialog } from './dialog.js';
 import { createComposer } from './composer.js';
-import { wrap } from '../text/wrap.js';
+import { wrap, wrapPath } from '../text/wrap.js';
+import { stringWidth } from '../text/width.js';
 
 const READING_WIDTH = 100;
 const LEFT_RAIL_WIDTH = 43;
@@ -112,8 +113,9 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
   let asideMounted = false;
 
   function clipRailRows(rows: readonly import('../app/rails.js').RailRow[], capacity: number): readonly ReturnType<typeof line>[] {
-    const items = rows.map((row) => wrap(row.text, LEFT_RAIL_WIDTH - 2).map((text) => line(text, row.accent === true ? 'act' : row.dim === true ? 'textDim' : 'text')));
-    if (items.length <= 1) return items.flat();
+    const items = rows.map((row) => wrap(row.text, LEFT_RAIL_WIDTH - 4).map((text) => line(text, row.accent === true ? 'act' : row.dim === true ? 'textDim' : 'text')));
+    const total = items.reduce((sum, item) => sum + item.length, 0);
+    if (total <= capacity || items.length <= 1) return items.flat();
     const shown: ReturnType<typeof line>[] = [];
     let included = 0;
     let used = 0;
@@ -126,34 +128,72 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
     return included === items.length ? shown : [...shown, line(`另有 ${String(items.length - included)} 项`, 'textDim')];
   }
 
-  function railPanels(spec: import('../app/rails.js').LeftRailSpec | undefined, activityHeight: number): readonly SceneNode[] {
-    if (spec === undefined) return [];
+  function panelNaturalHeight(panel: import('../app/rails.js').RailPanel): number {
+    return panel.rows.reduce((height, row) => height + wrap(row.text, LEFT_RAIL_WIDTH - 4).length, 2);
+  }
+
+  function fitRailHeights(desired: readonly number[], budget: number): readonly number[] {
+    const heights = desired.map((height) => Math.max(3, height));
+    let excess = heights.reduce((sum, height) => sum + height, 0) - budget;
+    while (excess > 0) {
+      let tallest = -1;
+      for (let index = 0; index < heights.length; index += 1) {
+        if ((heights[index] ?? 3) > 3 && (tallest < 0 || (heights[index] ?? 0) > (heights[tallest] ?? 0))) tallest = index;
+      }
+      if (tallest < 0) break;
+      heights[tallest] = (heights[tallest] ?? 3) - 1;
+      excess -= 1;
+    }
+    return heights;
+  }
+
+  function railPanels(spec: import('../app/rails.js').LeftRailSpec, heights: readonly number[]): readonly SceneNode[] {
     return [
       ...spec.panels.map((panel, index) => panelBlock({
         key: `activity-${panel.title}-${String(index)}`, title: panel.title, tone: 'brand', rail: true,
-        children: [textBlock('rows', clipRailRows(panel.rows, activityHeight - 1))],
+        children: [textBlock('rows', clipRailRows(panel.rows, Math.max(1, (heights[index] ?? 3) - 2)))],
       })),
       spec.mascot,
     ];
   }
 
+  function factLines(row: import('../app/rails.js').AsideRow) {
+    const values = row.label === '目录' ? wrapPath(row.value, ASIDE_WIDTH - 4) : wrap(row.value, ASIDE_WIDTH - 4);
+    if (values.length === 1 && stringWidth(`${row.label}  ${row.value}`) <= ASIDE_WIDTH - 4) {
+      return [[line(row.value === '' ? row.label : `${row.label}  ${row.value}`, row.value === '' ? 'textDim' : row.valueAccent === true ? 'act' : 'text')]];
+    }
+    return [
+      [line(row.label, 'textDim')],
+      values.map((text) => line(text, row.valueAccent === true ? 'act' : 'text')),
+    ];
+  }
+
   function asidePanelHeight(panel: import('../app/rails.js').AsidePanel): number {
-    return panel.rows.reduce((height, row) => height + 1 + wrap(row.value, ASIDE_WIDTH - 2).length, 2);
+    return panel.rows.reduce((height, row) => height + factLines(row).reduce((sum, rows) => sum + rows.length, 0), 2);
   }
 
   function infoPanels(spec: import('../app/rails.js').AsideSpec | undefined, heights: readonly number[]): readonly SceneNode[] {
     const panels = spec?.panels ?? [];
     return panels.map((panel, index) => {
-      const capacity = Math.max(1, Math.floor(((heights[index] ?? 2) - 2) / 2));
-      const visible = panel.rows.slice(0, panel.rows.length > capacity ? Math.max(1, capacity - 1) : capacity);
-      const hidden = panel.rows.length - visible.length;
-      const rows = hidden === 0 ? visible : [...visible, { label: `另有 ${String(hidden)} 项`, value: '' }];
+      const items = panel.rows.map(factLines);
+      const capacity = Math.max(1, (heights[index] ?? 2) - 2);
+      const total = items.reduce((sum, rows) => sum + rows.reduce((count, row) => count + row.length, 0), 0);
+      let included = items.length;
+      if (total > capacity) {
+        included = 0;
+        let used = 0;
+        for (const item of items) {
+          const rows = item.reduce((sum, row) => sum + row.length, 0);
+          if (used + rows > Math.max(1, capacity - 1)) break;
+          used += rows;
+          included += 1;
+        }
+      }
+      const shown = items.slice(0, included);
+      if (included < items.length) shown.push([[line(`另有 ${String(items.length - included)} 项`, 'textDim')]]);
       return panelBlock({
         key: `info-${panel.title}-${String(index)}`, title: panel.title, tone: 'brand', rail: true,
-        children: rows.map((row, rowIndex) => stackBlock(`fact-${String(rowIndex)}`, [
-          textBlock('label', [line(row.label, 'textDim')]),
-          textBlock('value', wrap(row.value, ASIDE_WIDTH - 2).map((text) => line(text, row.valueAccent === true ? 'act' : 'text'))),
-        ])),
+        children: shown.map((rows, rowIndex) => textBlock(`fact-${String(rowIndex)}`, rows.flat())),
       });
     });
   }
@@ -214,11 +254,16 @@ export function createScreen(renderer: CliRenderer, theme: Theme, options: { rea
         asideMounted = wantAside;
       }
       if (wantLeft) {
+        const pageHeight = renderer.height - 1;
         const mascotHeight = heightOf(spec.leftRail.mascot);
-        const activityHeight = Math.max(2, Math.floor((renderer.height - 1 - mascotHeight - 2) / 3));
-        leftGroup.update(railPanels(spec.leftRail, activityHeight), (node, index) => ({
-          marginTop: index === 0 || index === 3 ? 0 : 1,
-          height: index < 3 ? activityHeight : heightOf(node),
+        const mascotWidth = Math.ceil((spec.leftRail.mascot.pixels[0]?.length ?? 0) / 2);
+        const desired = spec.leftRail.panels.map(panelNaturalHeight);
+        const heights = fitRailHeights(desired, Math.max(9, pageHeight - mascotHeight - 2));
+        const panelHeight = heights.reduce((sum, height) => sum + height, 0);
+        leftGroup.update(railPanels(spec.leftRail, heights), (node, index) => ({
+          marginTop: index === 0 ? 0 : index === 3 ? Math.max(1, pageHeight - panelHeight - 2 - mascotHeight) : 1,
+          marginLeft: index === 3 ? Math.max(0, Math.floor((LEFT_RAIL_WIDTH - mascotWidth) / 2)) : 0,
+          height: index < 3 ? heights[index] ?? 3 : heightOf(node),
           flexShrink: 0,
         }));
       }

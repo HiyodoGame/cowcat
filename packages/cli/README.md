@@ -1,27 +1,46 @@
 # @corescense/cowcat
 
-CowCat 的可执行文件：`cowcat` 命令、子命令表、headless `serve`、一次性 `run`、会话管理与 `doctor`。
+CowCat 的可执行文件：一个跑在本地终端里的事件溯源编程 Agent。代码、API Key 和会话都留在你的机器上。
+
+## 安装
 
 ```bash
-npm i -g @corescense/cowcat@beta
+npm i -g @corescense/cowcat@beta --registry=https://registry.npmjs.org
 cowcat doctor
-cowcat setup --migrate     # 从 v1 升级时
-cowcat run "解释一下这个仓库的入口"
+cowcat
 ```
 
-`latest` 目前仍是 v1 的 `0.15.0`；v2 beta 用 `@beta` 安装。
+npm `latest` 目前仍是 v1 `0.15.0`；v2 请使用 **`@beta`**。
 
-- Node.js **>= 22**；`cowcat tui` 需要 Node.js **>= 26.4**（opentui）。
-- 模型与密钥由配置或环境变量提供，包内不附带任何 key。
-- v1 配置（`model` 字符串 + `providers.*.apiKey`）以兼容模式读取，不重写文件（ADR-089）。
+## 运行要求
 
-完整文档见仓库：<https://github.com/HiyodoGame/cowcat>。
+- 默认 TUI / `sessions resume`：Node.js **>= 26.4**，推荐 **26.12+**
+- `run` / `serve` / `sessions list` / `doctor`：Node.js **>= 22**
+- 一个 Anthropic 或 OpenAI 兼容模型端点与 API Key
 
-## 包结构
+Node 26.4 需要 `--experimental-ffi`；Node 26.12 不需要。
 
-| 包 | 作用 |
-|---|---|
-| `@corescense/cowcat` | 本包：可执行文件 |
-| `@corescense/cowcat-core` | 内核、策略、端口与组合根 |
-| `@corescense/cowcat-protocol` | headless JSON-RPC 协议 |
-| `@corescense/cowcat-tui` | 终端渲染器（按需动态加载） |
+## 配置模型
+
+```bash
+cowcat setup --preset anthropic/claude-sonnet-5-5
+export ANTHROPIC_API_KEY=...
+```
+
+也可以在 TUI 中通过 `/model` 与 `/providers` 配置。API Key 只从环境变量读取，包内不附带密钥。v1 用户可执行 `cowcat setup --migrate` 备份并迁移配置。
+
+## 常用命令
+
+```bash
+cowcat                      # 原生终端工作台
+cowcat run "解释这个仓库"   # 一次性回合
+cowcat serve                # JSON-RPC over stdio
+cowcat sessions list        # 会话列表
+cowcat sessions resume <id> # 恢复会话
+cowcat trust                # 信任当前项目目录
+cowcat doctor               # 环境与配置诊断
+```
+
+TUI 包含对话、待办、子代理、后台任务、上下文与文件变更分栏，以及黑白灰 Braille 点阵猫。完整三栏建议至少 160 列 × 32 行。
+
+完整文档、架构与贡献指南：<https://github.com/HiyodoGame/cowcat>。

@@ -18,16 +18,21 @@ test('the primary turn drives the cow cat, including an approval and tool activi
   assert.equal(mascotState({ ...initialView(), turn: { id: 't', state: 'failed', reason: 'x', cronSourced: false }, turnSettledAt: 1_000 }, 5_000), 'idle');
 });
 
-test('every state is an 82 by 46 grayscale dot matrix with a full backdrop', () => {
+test('every state is a 64 by 40 grayscale dot matrix with a sparse transparent backdrop', () => {
   for (const state of STATES) {
     const pixels = mascotFrame(state, 1_000);
-    assert.equal(pixels.length, 46);
-    assert.ok(pixels.every((row) => row.length === 82));
+    assert.equal(pixels.length, 40);
+    assert.ok(pixels.every((row) => row.length === 64));
     assert.ok(pixels.flat().every((pixel) => ROLES.has(pixel)));
-    assert.ok(pixels.flat().every((pixel) => pixel !== null));
+    assert.ok(pixels.flat().some((pixel) => pixel === null));
+    assert.ok(pixels.flat().some((pixel) => 'backdrop' === pixel));
     assert.equal((pixels.flat() as string[]).includes('fur'), false);
     assert.equal((pixels.flat() as string[]).includes('patch'), false);
   }
+});
+
+test('idle breathing changes visible gray pixels without moving the silhouette', () => {
+  assert.notDeepEqual(mascotFrame('idle', 0), mascotFrame('idle', 1_400));
 });
 
 test('thinking and tools animate without changing dimensions and reduced motion is static', () => {

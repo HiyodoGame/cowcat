@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { BoxRenderable } from '@opentui/core';
 import { createTestRenderer } from '@opentui/core/testing';
 import { createScreen } from '../src/ui/screen.js';
 import { THEME } from '../src/theme/tokens.js';
@@ -58,8 +59,61 @@ test('a full terminal keeps fixed empty sections in order and preserves the read
     assert.ok(screen.contentWidth() >= 80);
     assert.ok(frame.indexOf('暂无待办') < frame.indexOf('暂无运行中的子代理'));
     assert.ok(frame.indexOf('暂无运行中的子代理') < frame.indexOf('暂无后台任务'));
-    assert.match(frame, /暂无 CowCat 变更/);
+    assert.match(frame, /暂无文件变更/);
     assert.doesNotMatch(frame, /奶牛猫\s*\//);
+  } finally {
+    await dispose();
+  }
+});
+
+test('empty activity panels use their natural heights instead of equal thirds', async () => {
+  const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 40 });
+  try {
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(initialView(), { width: 160, height: 40, now: 0, cwd: 'F:/project' }));
+    await renderOnce();
+    const todo = renderer.root.findDescendantById('scene-panel-activity-待办 0/0-0');
+    const agents = renderer.root.findDescendantById('scene-panel-activity-子代理-1');
+    const tasks = renderer.root.findDescendantById('scene-panel-activity-后台任务-2');
+    assert.ok(todo instanceof BoxRenderable);
+    assert.ok(agents instanceof BoxRenderable);
+    assert.ok(tasks instanceof BoxRenderable);
+    assert.equal(todo.height, 4);
+    assert.equal(agents.height, 3);
+    assert.equal(tasks.height, 3);
+    assert.match(captureCharFrame(), /任务出现后会列在这里/);
+    assert.doesNotMatch(captureCharFrame(), /另有 1 项/);
+  } finally {
+    await dispose();
+  }
+});
+
+test('the compact mascot is centered horizontally and aligned to the bottom', async () => {
+  const { renderer, renderOnce, dispose } = await createTestRenderer({ width: 160, height: 32 });
+  try {
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(initialView(), { width: 160, height: 32, now: 0, cwd: 'F:/project' }));
+    await renderOnce();
+    const mascot = renderer.root.findDescendantById('scene-sprite-cowcat');
+    assert.ok(mascot instanceof BoxRenderable);
+    assert.equal(mascot.width, 32);
+    assert.equal(mascot.height, 10);
+    assert.equal(mascot.x, 5);
+    assert.equal(mascot.y, 22);
+  } finally {
+    await dispose();
+  }
+});
+
+test('short information values share one line with their labels', async () => {
+  const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 40 });
+  try {
+    const screen = createScreen(renderer, THEME, { title: 't' });
+    screen.update(frameOf(initialView(), { width: 160, height: 40, now: 0, cwd: 'F:/project' }));
+    await renderOnce();
+    const frame = captureCharFrame();
+    assert.match(frame, /窗口 {2}等待首次用量/);
+    assert.match(frame, /模型 {2}（未记录）/);
   } finally {
     await dispose();
   }
@@ -107,13 +161,13 @@ test('overfull rail content is bounded with an overflow count instead of pushing
 });
 
 
-test('the minimum full layout keeps all 23 mascot rows and hides both rails below 32 rows', async () => {
+test('the minimum full layout keeps all 10 mascot rows and hides both rails below 32 rows', async () => {
   const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 32 });
   try {
     const screen = createScreen(renderer, THEME, { title: 't' });
     screen.update(frameOf(initialView(), { width: 160, height: 32, now: 0, cwd: 'F:/project' }));
     await renderOnce();
-    assert.equal(captureCharFrame().split('\n').filter((row) => row.includes('▪')).length, 23);
+    assert.equal(captureCharFrame().split('\n').filter((row) => /[⠀-⣿]/u.test(row)).length, 10);
     assert.equal(screen.wideRails(), true);
   } finally {
     await dispose();
@@ -142,21 +196,21 @@ test('one long todo remains one item instead of becoming several overflow items'
   }
 });
 
-test('more than ten changed files reports the exact hidden item count', async () => {
+test('changed files report the exact hidden item count when they exceed the panel', async () => {
   const { renderer, renderOnce, captureCharFrame, dispose } = await createTestRenderer({ width: 160, height: 40 });
   try {
     const view = {
       ...initialView(),
-      entries: Array.from({ length: 20 }, (_, index) => ({
+      entries: Array.from({ length: 60 }, (_, index) => ({
         kind: 'tool' as const, seq: index + 1, callId: `call-${String(index)}`, name: 'Write', ok: true,
         output: '', truncation: null, attachments: [], path: `F:/project/file-${String(index)}.ts`,
       })),
-      calls: Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`call-${String(index)}`, { name: 'Write', input: { content: 'x' } }])),
+      calls: Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`call-${String(index)}`, { name: 'Write', input: { content: 'x' } }])),
     };
     const screen = createScreen(renderer, THEME, { title: 't' });
     screen.update(frameOf(view, { width: 160, height: 40, now: 0, cwd: 'F:/project' }));
     await renderOnce();
-    assert.match(captureCharFrame(), /另有 10 项/);
+    assert.match(captureCharFrame(), /另有 36 项/);
   } finally {
     await dispose();
   }

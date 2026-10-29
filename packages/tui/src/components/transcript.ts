@@ -6,7 +6,7 @@ import { callSummary, runningToolCard, toolCard } from './tool-card.js';
 import { line } from '../ui/line.js';
 import { wrap } from '../text/wrap.js';
 import { createEntryCache, tailForRows } from './entry-cache.js';
-import { accentBlock, textBlock, type SceneNode } from '../ui/scene.js';
+import { accentBlock, panelBlock, textBlock, type SceneNode } from '../ui/scene.js';
 
 export interface TranscriptOptions {
   readonly width: number;
@@ -30,6 +30,10 @@ export function transcriptBlocks(view: TuiView, options: TranscriptOptions): rea
     nodes.push(runningToolCard(tool.callId, tool.name, callSummary(view.calls[tool.callId]?.input), options.width, view.toolOutput[tool.callId]));
   }
   if (view.streaming !== '') nodes.push(textBlock('streaming', wrap(view.streaming, options.width).map((row) => line(row, 'text'))));
+  if (nodes.length === 0 && view.reasoningStream === '') return [panelBlock({
+    key: 'empty-session', title: '开始新会话', tone: 'border',
+    children: [textBlock('hint', [line('在下方输入一个问题或任务，Enter 发送。', 'textDim')])],
+  })];
   return nodes;
 }
 

@@ -93,7 +93,7 @@ test('the wide rail renders the cow-spotted cat, activities and themed panels', 
     assert.ok(colors.includes(RGBA.fromHex('#F7F5F0').toInts().join(',')), 'white face');
     assert.ok(colors.includes(RGBA.fromHex('#626269').toInts().join(',')), 'gray fur');
     assert.ok(colors.includes(RGBA.fromHex('#A0A0A5').toInts().join(',')), 'gray nose');
-    assert.ok(backgrounds.includes('1,2,3,255'), 'themed panel headers');
+    assert.ok(backgrounds.every((color) => color !== '1,2,3,255'), 'rail headers avoid a brand background wash');
     assert.ok(spans.some((span) => span.fg.toInts().join(',') === '4,5,6,255'), 'active rows use the theme');
   } finally {
     await dispose();

@@ -5,8 +5,8 @@ export type MascotState = 'idle' | 'thinking' | 'tools' | 'approval' | 'success'
 type Pixel = SpriteColor | null;
 type Grid = Pixel[][];
 
-const WIDTH = 82;
-const HEIGHT = 46;
+const WIDTH = 64;
+const HEIGHT = 40;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 export function mascotState(view: TuiView, now: number): MascotState {
@@ -35,17 +35,16 @@ export function mascotFrame(state: MascotState, now: number, animate = true, set
 }
 
 function baseFrame(): Grid {
-  const grid = Array.from({ length: HEIGHT }, (_, y) => Array.from({ length: WIDTH }, (_, x) => baseRole(x, y)));
-  return grid;
+  return Array.from({ length: HEIGHT }, (_, y) => Array.from({ length: WIDTH }, (_, x) => baseRole(x, y)));
 }
 
-function baseRole(px: number, py: number): SpriteColor {
-  const x = Math.min((px + 0.5) / 2, 41 - (px + 0.5) / 2);
-  const y = (py + 0.5) / 2;
+function baseRole(px: number, py: number): Pixel {
+  const x = Math.min(px, WIDTH - 1 - px) * 40 / (WIDTH - 1);
+  const y = py * 22 / (HEIGHT - 1);
   const head = roundedRect(x, y, 5, 35, 6, 21, 4);
   const ears = triangle(x, y, [5, 8], [8, 1], [15, 6]);
-  if (!(head || ears)) return 'backdrop';
-  return roundedRect(x, y, 9, 31, 9, 19, 3) ? 'on' : 'furMid';
+  if (head || ears) return roundedRect(x, y, 9, 31, 9, 19, 3) ? 'on' : 'furMid';
+  return Math.min(px, WIDTH - 1 - px) % 2 === 0 && py % 2 === 0 ? 'backdrop' : null;
 }
 
 function renderEyes(grid: Grid, state: MascotState, gaze: number, blink: boolean): void {
@@ -58,7 +57,7 @@ function renderEyes(grid: Grid, state: MascotState, gaze: number, blink: boolean
   } else {
     openEyes(grid, state === 'thinking' ? gaze : 0, state === 'approval' ? 6 : state === 'tools' ? 2 : 4);
   }
-  dot(grid, 20, 17, 'nose');
+  pair(grid, [[19.5, 17]], 'nose');
 }
 
 function openEyes(grid: Grid, gaze: number, height: number): void {
@@ -74,12 +73,10 @@ function openEyes(grid: Grid, gaze: number, height: number): void {
 }
 
 function dot(grid: Grid, lx: number, ly: number, role: SpriteColor): void {
-  for (let dy = 0; dy < 2; dy += 1) {
-    for (let dx = 0; dx < 2; dx += 1) {
-      const row = grid[ly * 2 + dy];
-      if (row !== undefined && lx * 2 + dx >= 0 && lx * 2 + dx < WIDTH) row[lx * 2 + dx] = role;
-    }
-  }
+  const x = Math.round(lx * (WIDTH - 1) / 40);
+  const y = Math.round(ly * (HEIGHT - 1) / 22);
+  const row = grid[y];
+  if (row !== undefined) row[x] = role;
 }
 
 function pair(grid: Grid, points: readonly (readonly [number, number])[], role: SpriteColor): void {
@@ -92,7 +89,7 @@ function pair(grid: Grid, points: readonly (readonly [number, number])[], role: 
 function shade(grid: Grid, active: (x: number, y: number) => boolean, dim = false): Grid {
   return grid.map((row, y) => row.map((pixel, x) => {
     if (!active(x, y)) return pixel;
-    if (dim && pixel === 'furLight') return 'furMid';
+    if (dim && pixel === 'furMid') return 'furDark';
     if (!dim && pixel === 'furDark') return 'furMid';
     if (!dim && pixel === 'furMid') return 'furLight';
     return pixel;

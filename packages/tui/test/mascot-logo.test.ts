@@ -6,19 +6,19 @@ import { heightOf, spriteBlock } from '../src/ui/scene.js';
 test('the static cat is symmetric, has one small nose and no protruding right ear', () => {
   for (const state of ['idle', 'success'] as const) {
     const pixels = mascotFrame(state, 0, false);
-    for (const row of pixels) for (let x = 0; x < 41; x += 1) assert.equal(row[x], row[81 - x]);
+    for (const row of pixels) for (let x = 0; x < 32; x += 1) assert.equal(row[x], row[63 - x]);
   }
   const pixels = mascotFrame('idle', 0, false);
   const nose = pixels.flatMap((row, y) => row.flatMap((pixel, x) => pixel === 'nose' ? [{ x, y }] : []));
-  assert.deepEqual(nose, [{ x: 40, y: 34 }, { x: 41, y: 34 }, { x: 40, y: 35 }, { x: 41, y: 35 }]);
+  assert.deepEqual(nose, [{ x: 31, y: 30 }, { x: 32, y: 30 }]);
   const shape = pixels.flatMap((row) => row.flatMap((pixel, x) => (pixel as string) === 'backdrop' || pixel === null ? [] : [x]));
-  assert.equal(Math.min(...shape), 10);
-  assert.equal(Math.max(...shape), 71);
+  assert.equal(Math.min(...shape), 8);
+  assert.equal(Math.max(...shape), 55);
 });
 
-test('the quadrant avatar occupies 23 terminal rows', () => {
+test('the Braille avatar occupies ten terminal rows', () => {
   const sprite = spriteBlock('cat', mascotFrame('idle', 0));
-  assert.equal(heightOf(sprite), 23);
+  assert.equal(heightOf(sprite), 10);
 });
 
 test('success has one pulse and reduced motion stays still', () => {

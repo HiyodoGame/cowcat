@@ -86,3 +86,27 @@ function wrapOne(logical: string, width: number): readonly string[] {
   }
   return lines;
 }
+
+export function wrapPath(value: string, width: number): readonly string[] {
+  if (width <= 0) return [];
+  if (stringWidth(value) <= width) return [value];
+  const segments = value.match(/[^\\/]+[\\/]?|[\\/]+/g) ?? [value];
+  const lines: string[] = [];
+  let current = '';
+  for (const segment of segments) {
+    if (stringWidth(segment) > width) {
+      if (current !== '') lines.push(current);
+      lines.push(...wrap(segment, width));
+      current = '';
+    } else if (current === '') {
+      current = segment;
+    } else if (stringWidth(current + segment) <= width) {
+      current += segment;
+    } else {
+      lines.push(current);
+      current = segment;
+    }
+  }
+  if (current !== '') lines.push(current);
+  return lines;
+}

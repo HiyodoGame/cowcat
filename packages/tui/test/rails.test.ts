@@ -31,10 +31,10 @@ test('non-empty activity rails preserve real rows in the approved order', () => 
 
 test('the information rail keeps an empty change section and real diffstat when present', () => {
   const empty = asideSpec(initialView(), { cwd: 'F:/project' }, []);
-  assert.equal(empty.panels.at(-1)?.title, 'CowCat 变更');
-  assert.equal(empty.panels.at(-1)?.rows[0]?.label, '暂无 CowCat 变更');
+  assert.equal(empty.panels.at(-1)?.title, '文件变更');
+  assert.equal(empty.panels.at(-1)?.rows[0]?.label, '暂无文件变更');
   assert.equal(empty.panels.at(-1)?.rows[0]?.value, '');
-  assert.equal(empty.panels.at(-1)?.rows[1]?.label, 'Write / Edit 成功后会显示文件与 diffstat');
+  assert.equal(empty.panels.at(-1)?.rows[1]?.label, '文件修改后会显示在这里');
   assert.equal(empty.panels[0]?.title, '上下文');
   assert.equal(empty.panels[0]?.rows[0]?.value, '等待首次用量');
 

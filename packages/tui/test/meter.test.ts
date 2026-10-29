@@ -47,6 +47,6 @@ test('the aside uses the same per-million cost arithmetic as the status meter', 
 test('the changes panel names only the writes CowCat actually tracked', () => {
   const panels = asideSpec(initialView(), {}, [{ path: '/work/a.ts', added: 1, removed: 0, written: 0 }]).panels;
 
-  assert.ok(panels.some((panel) => panel.title === 'CowCat 变更'));
+  assert.ok(panels.some((panel) => panel.title === '文件变更'));
   assert.equal(panels.some((panel) => panel.title === 'git 变更'), false);
 });
