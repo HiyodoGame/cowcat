@@ -27,18 +27,18 @@ test('panel borders and choice selection come from native renderables', async ()
   }
 });
 
-test('a cow sprite paints white fur, dark patches and a pink nose without glyphs', async () => {
+test('a cow sprite paints a white face, gray fur and a gray nose without glyphs', async () => {
   const { renderer, renderOnce, captureCharFrame, captureSpans, dispose } = await createTestRenderer({ width: 8, height: 3 });
   try {
     const root = new BoxRenderable(renderer, { id: 'test', width: 8, height: 3 });
     renderer.root.add(root);
-    mountScene({ renderer, theme: THEME, onHit: () => undefined }, root, spriteBlock('cat', [['fur', 'patch', 'nose']]));
+    mountScene({ renderer, theme: THEME, onHit: () => undefined }, root, spriteBlock('cat', [['on', 'furDark', 'nose']]));
     await renderOnce();
     assert.doesNotMatch(captureCharFrame(), /[A-Za-z]/);
     const colors = captureSpans().lines.flatMap((row) => row.spans).flatMap((span) => [span.fg.toInts().join(','), span.bg.toInts().join(',')]);
     assert.ok(colors.includes(RGBA.fromHex('#F7F5F0').toInts().join(',')));
-    assert.ok(colors.includes(RGBA.fromHex('#141419').toInts().join(',')));
-    assert.ok(colors.includes(RGBA.fromHex('#E8A0A0').toInts().join(',')));
+    assert.ok(colors.includes(RGBA.fromHex('#45454C').toInts().join(',')));
+    assert.ok(colors.includes(RGBA.fromHex('#A0A0A5').toInts().join(',')));
   } finally {
     await dispose();
   }
@@ -50,13 +50,13 @@ test('sprite pixels keep independent upper and lower colors and transparent blan
     const root = new BoxRenderable(renderer, { id: 'test', width: 4, height: 1 });
     renderer.root.add(root);
     mountScene({ renderer, theme: THEME, onHit: () => undefined }, root, spriteBlock('pixels', [
-      ['fur', null, 'fur', null],
+      ['on', null, 'on', null],
       [null, 'nose', 'nose', null],
     ]));
     await renderOnce();
     assert.match(captureCharFrame(), /^▀▄▀ $/m);
     const fur = RGBA.fromHex('#F7F5F0').toInts().join(',');
-    const nose = RGBA.fromHex('#E8A0A0').toInts().join(',');
+    const nose = RGBA.fromHex('#A0A0A5').toInts().join(',');
     const actual = captureSpans().lines[0]?.spans.map((span) => ({
       text: span.text,
       fg: span.fg.toInts().join(','),

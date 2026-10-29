@@ -28,8 +28,8 @@ test('stacks have deliberate gaps instead of blank decorative characters', () =>
 });
 
 test('a sprite is a fixed-size pixel matrix, not lines of ASCII art', () => {
-  const node = spriteBlock('cat', [['fur', 'patch', 'nose']]);
+  const node = spriteBlock('cat', [['on', 'furDark', 'nose']]);
   assert.equal(node.kind, 'sprite');
   assert.equal(heightOf(node), 1);
-  assert.equal(node.pixels[0]?.[1], 'patch');
+  assert.equal(node.pixels[0]?.[1], 'furDark');
 });

@@ -3,6 +3,9 @@ import { test } from 'node:test';
 import { mascotFrame, mascotState } from '../src/components/cowcat-art.js';
 import { initialView } from '../src/app/view.js';
 
+const STATES = ['idle', 'thinking', 'tools', 'approval', 'success', 'failed'] as const;
+const ROLES = new Set(['backdrop', 'on', 'furDark', 'furMid', 'furLight', 'iris', 'eye', 'nose', 'highlight', null]);
+
 test('the primary turn drives the cow cat, including an approval and tool activity', () => {
   assert.equal(mascotState({ ...initialView(), turn: { id: 't', state: 'streaming', reason: null, cronSourced: false } }, 1_000), 'thinking');
   assert.equal(mascotState({ ...initialView(), turn: { id: 't', state: 'awaiting_tools', reason: null, cronSourced: false } }, 1_000), 'tools');
@@ -15,21 +18,28 @@ test('the primary turn drives the cow cat, including an approval and tool activi
   assert.equal(mascotState({ ...initialView(), turn: { id: 't', state: 'failed', reason: 'x', cronSourced: false }, turnSettledAt: 1_000 }, 5_000), 'idle');
 });
 
-test('every frame is a fixed-size cow-spotted sprite, not a different ASCII layout', () => {
-  for (const state of ['idle', 'thinking', 'tools', 'approval', 'success', 'failed'] as const) {
+test('every state is an 82 by 46 grayscale dot matrix with a full backdrop', () => {
+  for (const state of STATES) {
     const pixels = mascotFrame(state, 1_000);
-    assert.ok(pixels.length >= 12);
-    assert.ok(pixels.every((row) => row.length === 28));
-    const colors = new Set(pixels.flat());
-    assert.ok(colors.has('fur'));
-    assert.ok(colors.has('patch'));
-    assert.ok(colors.has('nose'));
+    assert.equal(pixels.length, 46);
+    assert.ok(pixels.every((row) => row.length === 82));
+    assert.ok(pixels.flat().every((pixel) => ROLES.has(pixel)));
+    assert.ok(pixels.flat().every((pixel) => pixel !== null));
+    assert.equal((pixels.flat() as string[]).includes('fur'), false);
+    assert.equal((pixels.flat() as string[]).includes('patch'), false);
   }
 });
 
-test('thinking and tool animations move without changing dimensions; disabled motion is static', () => {
+test('thinking and tools animate without changing dimensions and reduced motion is static', () => {
   assert.notDeepEqual(mascotFrame('thinking', 0), mascotFrame('thinking', 600));
   assert.notDeepEqual(mascotFrame('tools', 0), mascotFrame('tools', 240));
-  assert.deepEqual(mascotFrame('tools', 0, false), mascotFrame('tools', 1_000, false));
-  assert.notDeepEqual(mascotFrame('idle', 0), mascotFrame('idle', 4_000));
+  for (const state of STATES) assert.deepEqual(mascotFrame(state, 0, false), mascotFrame(state, 600, false));
+});
+
+test('tools squints, approval widens, success smiles and failure droops', () => {
+  const eyeCount = (state: typeof STATES[number]): number => mascotFrame(state, 0).flat().filter((pixel) => pixel === 'eye').length;
+  assert.ok(eyeCount('approval') > eyeCount('tools'));
+  assert.notDeepEqual(mascotFrame('success', 0), mascotFrame('idle', 0));
+  assert.notDeepEqual(mascotFrame('failed', 0), mascotFrame('idle', 0));
+  assert.deepEqual(mascotFrame('failed', 0), mascotFrame('failed', 180));
 });

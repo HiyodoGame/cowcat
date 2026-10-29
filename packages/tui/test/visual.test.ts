@@ -89,9 +89,9 @@ test('the wide rail renders the cow-spotted cat, activities and themed panels', 
     assert.match(frame, /npm test/);
     const spans = captureSpans().lines.flatMap((row) => row.spans);
     const backgrounds = spans.map((span) => span.bg.toInts().join(','));
-    assert.ok(backgrounds.includes(RGBA.fromHex('#F7F5F0').toInts().join(',')), 'white fur');
-    assert.ok(backgrounds.includes(RGBA.fromHex('#141419').toInts().join(',')), 'dark cow patches');
-    assert.ok(backgrounds.includes(RGBA.fromHex('#E8A0A0').toInts().join(',')), 'pink nose');
+    assert.ok(backgrounds.includes(RGBA.fromHex('#F7F5F0').toInts().join(',')), 'white face');
+    assert.ok(backgrounds.includes(RGBA.fromHex('#626269').toInts().join(',')), 'gray fur');
+    assert.ok(backgrounds.includes(RGBA.fromHex('#A0A0A5').toInts().join(',')), 'gray nose');
     assert.ok(backgrounds.includes('1,2,3,255'), 'themed panel headers');
     assert.ok(spans.some((span) => span.fg.toInts().join(',') === '4,5,6,255'), 'active rows use the theme');
   } finally {
