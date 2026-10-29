@@ -13,6 +13,7 @@ import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import { heightOf, type SceneNode, type SpriteNode, type StatusNode } from './scene.js';
 import type { Line } from './line.js';
 import { mountScrollText } from './scroll-text.js';
+import { quadrantCell } from './quadrants.js';
 
 export interface SceneContext {
   readonly renderer: CliRenderer;
@@ -212,7 +213,7 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
       const cells: TextRenderable[][] = [];
       const update = (next: SpriteNode): void => {
         root.height = heightOf(next);
-        root.width = next.pixels[0]?.length ?? 0;
+        root.width = Math.ceil((next.pixels[0]?.length ?? 0) / 2);
         const colorOfPixel = (pixel: SpriteNode['pixels'][number][number]) => pixel === null
           ? undefined
           : resolveToken(context.theme, `cat${pixel[0]?.toUpperCase() ?? ''}${pixel.slice(1)}` as TokenName);
@@ -224,7 +225,7 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
             cells[y] = [];
             root.add(row);
           }
-          for (let x = 0; x < (next.pixels[0]?.length ?? 0); x += 1) {
+          for (let x = 0; x < Math.ceil((next.pixels[0]?.length ?? 0) / 2); x += 1) {
             let cell = cells[y]?.[x];
             if (cell === undefined) {
               cell = new TextRenderable(renderer, {
@@ -233,11 +234,10 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
               (cells[y] as TextRenderable[])[x] = cell;
               row.add(cell);
             }
-            const top = next.pixels[y * 2]?.[x] ?? null;
-            const bottom = next.pixels[y * 2 + 1]?.[x] ?? null;
-            cell.content = top === null && bottom !== null ? '▄' : top === null ? ' ' : '▀';
-            cell.fg = colorOfPixel(top ?? bottom);
-            cell.bg = top !== null && bottom !== null ? colorOfPixel(bottom) : undefined;
+            const raster = quadrantCell(next.pixels, x, y);
+            cell.content = raster.glyph;
+            cell.fg = colorOfPixel(raster.foreground);
+            cell.bg = colorOfPixel(raster.background);
           }
         }
       };
@@ -274,7 +274,14 @@ interface MountedChild {
 }
 
 export interface SceneGroup {
-  update(nodes: readonly SceneNode[], layout?: (node: SceneNode, index: number) => { readonly top?: number; readonly marginTop?: number; readonly height?: number }): void;
+  update(nodes: readonly SceneNode[], layout?: (node: SceneNode, index: number) => {
+    readonly top?: number;
+    readonly marginTop?: number;
+    readonly height?: number;
+    readonly flexGrow?: number;
+    readonly flexShrink?: number;
+    readonly minHeight?: number;
+  }): void;
   readonly bindings: readonly SceneBinding[];
 }
 
@@ -300,6 +307,9 @@ export function createChildGroup(context: SceneContext, parent: BoxRenderable): 
         child.binding.renderable.top = place?.top ?? 0;
         child.binding.renderable.marginTop = place?.marginTop ?? 0;
         child.binding.renderable.height = place?.height ?? heightOf(node);
+        child.binding.renderable.flexGrow = place?.flexGrow ?? 0;
+        child.binding.renderable.flexShrink = place?.flexShrink ?? 0;
+        child.binding.renderable.minHeight = place?.minHeight ?? 0;
         child.binding.resize?.(child.binding.renderable.height);
       });
       for (const extra of mounted.splice(nodes.length)) parent.remove(extra.binding.renderable);

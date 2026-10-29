@@ -47,10 +47,15 @@ export type TokenName =
   | 'assistant'
   | 'tool'
   | 'notice'
-  | 'catFur'
-  | 'catPatch'
+  | 'catBackdrop'
+  | 'catOn'
+  | 'catFurDark'
+  | 'catFurMid'
+  | 'catFurLight'
+  | 'catIris'
   | 'catNose'
   | 'catEye'
+  | 'catHighlight'
   /** Markdown code (fenced blocks, inline code) — non-conversation content, act-blue family (ADR-162). */
   | 'code';
 
@@ -97,10 +102,15 @@ export const THEME: Theme = {
     assistant: BRAND.primary,
     tool: '#8A8A94',
     notice: BRAND.plan,
-    catFur: BRAND.paper,
-    catPatch: BRAND.ink,
-    catNose: '#E8A0A0',
-    catEye: BRAND.primary,
+    catBackdrop: '#2F2F35',
+    catOn: BRAND.paper,
+    catFurDark: '#45454C',
+    catFurMid: '#626269',
+    catFurLight: '#85858C',
+    catIris: '#D4D4D2',
+    catNose: '#A0A0A5',
+    catEye: '#77777F',
+    catHighlight: BRAND.paper,
     code: BRAND.act,
   },
 };

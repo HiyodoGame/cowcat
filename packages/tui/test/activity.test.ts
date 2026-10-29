@@ -44,3 +44,15 @@ test('thinking and tools schedule the phases their pixels actually use', () => {
   const tools = { ...initialView(), tasks: [{ taskId: 't', callId: 'c', command: 'npm test', startedAt: 0, startedSeq: 1, state: 'running' as const, endedAt: null, exitCode: null }] };
   assert.equal(activityDelay(tools, 0, true, true), 240);
 });
+
+
+test('success pulses once while failed waits only for the settled feedback window', () => {
+  const success = { ...initialView(), turn: { id: 't', state: 'completed' as const, reason: null, cronSourced: false }, turnSettledAt: 0 };
+  assert.equal(activityDelay(success, 0, true, true), 400);
+  assert.equal(activityDelay(success, 500, true, true), 1_100);
+
+  const failed = { ...initialView(), turn: { id: 't', state: 'failed' as const, reason: 'x', cronSourced: false }, turnSettledAt: 0 };
+  assert.equal(activityDelay(failed, 0, true, true), 1_600);
+  assert.equal(activityDelay(failed, 500, true, true), 1_100);
+  assert.equal(activityDelay(failed, 1_599, true, true), 1);
+});

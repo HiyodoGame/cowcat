@@ -1,7 +1,7 @@
 import type { TokenName } from '../theme/tokens.js';
 import type { Line } from './line.js';
 
-export type SpriteColor = 'fur' | 'patch' | 'nose' | 'eye';
+export type SpriteColor = 'backdrop' | 'on' | 'furDark' | 'furMid' | 'furLight' | 'iris' | 'eye' | 'nose' | 'highlight';
 
 interface NodeBase {
   readonly key: string;

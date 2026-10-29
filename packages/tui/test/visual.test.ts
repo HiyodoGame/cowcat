@@ -16,7 +16,7 @@ function event(type: string, body: Record<string, unknown> = {}): WireEvent {
 }
 
 test('a medium terminal gives prose room while the info rail keeps full ids and paths', async () => {
-  const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 120, height: 30 });
+  const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 120, height: 32 });
   try {
     const screen = createScreen(renderer, THEME, { title: titleOf('0.0.0-test') });
     const view = [event('session.opened', {}), event('turn.opened', { input: 'hi', model: 'zai/glm-5.3-flash' })].reduce(project, initialView());
@@ -73,7 +73,7 @@ test('the model dialog uses a native selected-row background and a text field', 
 });
 
 test('the wide rail renders the cow-spotted cat, activities and themed panels', async () => {
-  const { renderer, renderOnce, captureCharFrame, captureSpans, dispose, flush } = await createTestRenderer({ width: 150, height: 36 });
+  const { renderer, renderOnce, captureCharFrame, captureSpans, dispose, flush } = await createTestRenderer({ width: 160, height: 36 });
   try {
     const theme = { ...THEME, foreground: { ...THEME.foreground, brand: '#010203', act: '#040506' } };
     const screen = createScreen(renderer, theme, { title: 't' });
@@ -84,14 +84,15 @@ test('the wide rail renders the cow-spotted cat, activities and themed panels', 
     await flush();
     await renderOnce();
     const frame = captureCharFrame();
-    assert.match(frame, /奶牛猫 \/ 工作中/);
+    assert.doesNotMatch(frame, /奶牛猫\s*\//);
     assert.match(frame, /在改代码/);
     assert.match(frame, /npm test/);
     const spans = captureSpans().lines.flatMap((row) => row.spans);
     const backgrounds = spans.map((span) => span.bg.toInts().join(','));
-    assert.ok(backgrounds.includes(RGBA.fromHex('#F7F5F0').toInts().join(',')), 'white fur');
-    assert.ok(backgrounds.includes(RGBA.fromHex('#141419').toInts().join(',')), 'dark cow patches');
-    assert.ok(backgrounds.includes(RGBA.fromHex('#E8A0A0').toInts().join(',')), 'pink nose');
+    const colors = spans.flatMap((span) => [span.fg.toInts().join(','), span.bg.toInts().join(',')]);
+    assert.ok(colors.includes(RGBA.fromHex('#F7F5F0').toInts().join(',')), 'white face');
+    assert.ok(colors.includes(RGBA.fromHex('#626269').toInts().join(',')), 'gray fur');
+    assert.ok(colors.includes(RGBA.fromHex('#A0A0A5').toInts().join(',')), 'gray nose');
     assert.ok(backgrounds.includes('1,2,3,255'), 'themed panel headers');
     assert.ok(spans.some((span) => span.fg.toInts().join(',') === '4,5,6,255'), 'active rows use the theme');
   } finally {

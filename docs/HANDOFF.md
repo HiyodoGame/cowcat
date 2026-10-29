@@ -2,8 +2,8 @@
 
 > **本文件是快照，不是活文档。** 每次阶段收尾重写；权威计划始终是 [`dev-plan-v2.md`](dev-plan-v2.md)，决策是 [`architecture/README.md`](architecture/README.md) 的 ADR 表。
 >
-> 最近一次更新：**2026-10-28（完整服务商配置与首次启用引导）**。
-> 交接时仓库状态：**未提交分支 `fix/provider-dialog-cowcat-logo`，基线 `f39c085`，未推送远端**。
+> 最近一次更新：**2026-10-29（固定侧栏与灰阶点阵猫）**。
+> 交接时仓库状态：**分支 `feat/dotcat-rails`，基线 `aa77e4b`，实现与审查修复均在本分支，未推送远端**。
 >
 > **证据分级**：**【源码】**读代码；**【构建】**`tsc` 通过；**【本机测试】**Windows 上跑 `node:test`（v2 跑 `dist/`）；**【CI 远端】**GitHub Actions；**【真机】**真实模型 API / 真实终端验收；**【上游】**官方文档/上游源码；**【推断】**未实测，不作为决策依据。
 
@@ -11,18 +11,18 @@
 
 ## 1. 本批完成
 
-本批先修复弹窗与「奶痞猫」，随后按用户实际测试补齐服务商配置和首次启用流程。新增 ADR-172；不改变内核事件格式或模型 SDK。
+按用户确认的固定分区、简化设备猫和六种眼神实施。协议、内核事件、端口、模型与工具行为未改，未新增依赖。
 
 | 类别 | 内容 | 结果 |
 |---|---|---|
-| 完整服务商配置 | `provider.configure` + `providerForm` 分步状态机 | 内置模板选择真实模型；自定义 OpenAI/Anthropic 收集端点、key 引用、模型、必要限额和工具能力，不再只保存名称 |
-| 原子持久化与应用 | `writeUserProviderConfiguration`、宿主校验与缓存更新 | provider、preset、默认模型一次写入；保留其它配置；成功后应用当前会话，保留其它显式会话覆盖 |
-| 首次启用 | 结构化 `not-configured` 路由与草稿保存 | 发送或 `/model` 直接进入配置；保存或取消后恢复草稿，保存不自动调用模型 |
-| 凭据边界 | 仅 `apiKeyEnv` 名称 | 不接收或保存 secret；URL 凭据被拒绝；缺 key 返回 `requiresRestart`，不冒充已可用 |
-| 弹窗与筛选 | 不透明背景、修饰键边界、共享过滤结果 | 普通 `a` 新增、Shift+A 搜索、Enter 不选错项目；旧的 incomplete 条目可用同一向导补全 |
-| 奶痞猫与动画 | 方向 B 标识、28×20 半像素头像、六态相位排程 | 不透明半块、idle 呼吸/眨眼/视线、思考/工具动画，关闭动画全部静止 |
-
-官方调研与证据见 `docs/research/provider-onboarding.md`（OpenCode、Codex、Claude Code 官方文档）。
+| 固定活动区 | 左栏固定待办 / 子代理 / 后台任务 / 猫咪 | 空数据显示明确空态，不再用整片空白代替面板 |
+| 固定信息区 | 右栏固定信息 / Git 与变更文件 | 无变更时也显示说明，真实 Write/Edit diffstat 保留 |
+| 有界布局 | 长列表按可视高度截断并显示 `另有 N 项` | 猫咪固定底部，不被列表顶出；160 列时中栏至少约 80 列 |
+| 响应式 | ≥160 且 ≥32 行三栏，104–159 信息栏，其余 dock | 不缩放或裁掉 82×46 猫咪，窄屏活动信息仍可达 |
+| 灰阶点阵猫 | 82×46 逻辑点经 41×23 终端单元绘制 | 圆角对称头、外撇耳、右耳收齐、白色面罩和一个小灰鼻点；无文字、无彩色 |
+| 六种眼神 | idle 眨眼、thinking 视线、tools 半阖、approval 睁大、success 弯眼、failed 垂眼 | 浅灰外圈 + 中灰内芯；失败不持续抖动，关闭动画保留静态眼形 |
+| 光栅与调度 | 2×2 象限映射、背景小点、确定性多色降级 | 不依赖终端图片协议；隐藏、销毁和 reduced-motion 不排程 |
+| 文档 | ADR-173、品牌指南 v1.3、changelog 与专项设计/计划 | 决策与实现同分支，`.superpowers/` 本地工作区已忽略 |
 
 ## 2. 验证结果
 
@@ -30,43 +30,42 @@
 
 | 包 / 检查 | 结果 | 证据 |
 |---|---|---|
-| tui | **220/220，0 fail** | Node 26.12，build + ESLint 后完整 `node:test` |
-| 配置交互 | 完整自定义键盘流程、无模型发送、保存/取消恢复、`/model` 入口 | `test/provider-dialog.test.ts`、`test/provider-form.test.ts`；断言完整 `provider.configure` 与零自动模型调用 |
-| 宿主与持久化 | 目录、校验、完整写盘、激活、缺 key、原子写、扩展字段保留、非法输入分类 | `test/provider-onboarding.test.ts`、`test/providers.test.ts` 与 `test/host.test.ts` 定向通过 |
-| protocol | **48/48，0 fail** | 完整 `provider.configure` 协议往返 |
+| protocol | **48/48，0 fail** | `npm --prefix packages/protocol test` |
 | cowcat | **939 通过、16 个既有平台 skip，0 fail** | `npm --prefix packages/cowcat test`；build + ESLint 通过 |
-| cli | **41/41，0 fail** | `npm --prefix packages/cli test`；真实协议审批回合通过 |
-| 猫咪渲染与动画 | 固定尺寸、透明组合、真实相位与 reduced-motion | 完整 TUI 套件覆盖 |
-| 探针 / 打包 / 真实进程 | 全部通过 | `lint-probe`、Node 26.12 `tui-api-probe`、`tui-smoke`（启动、绘制、退出 0、无残留锁）、`check-tarball` 与 `git diff --check`；不宣称真实终端观感或远端 CI |
+| tui | **237/237，0 fail** | `npm --prefix packages/tui run pretest` 后 Node 26.12 跑完整 `node:test` |
+| cli | **41/41，0 fail** | `npm --prefix packages/cli test` |
+| 空态与布局 | 固定顺序、空态、160/高度断点、长列表截断、长路径换行 | `test/rails.test.ts`、`test/layout.test.ts` 与真实渲染帧 |
+| 猫咪与光栅 | 82×46、左右对称、右耳收齐、单鼻点、六种眼形、41×23 mount、灰阶 color spans | `mascot*`、`quadrants`、`native-components` 与 160/180 列实际捕获帧 |
+| 探针 | 分层、OpenTUI API、性能均通过 | `tools/lint-probe.mjs`、Node 26.12 `tui-api-probe.mjs`、`tui-perf-probe.mjs` |
+| 真实进程 | 启动、绘制、Ctrl+C 退出 0、会话落盘、无残留锁 | Node 26.12 `tools/tui-smoke.mjs`，隔离 `COWCAT_HOME` |
+| 打包 | 四包白名单通过 | `node tools/check-tarball.mjs` |
 
 ## 3. 自审与修复
 
-前一轮 4 个 Important（Shift+A、半像素透明、动画排程、过滤选择）均已先失败复现再修复。新配置批次两次尝试独立 reviewer：主模型遇到 5 小时配额限制，备用模型路由不可用，因此改为**当前会话自审**（弱于独立 reviewer，不冒充独立审查）。
-
-自审补上的两项回归：
-- **preset 扩展字段保留**：编辑时不再丢弃 effort、价格和厂商扩展项；只合并本次明确配置的字段。
-- **非法输入分类**：配置校验失败返回 `hostRefused`，不写成内部错误，也不留下半截配置。
-
-通用 Sprite 缩小后的旧行/列残留仍为 deferred Minor：当前猫咪尺寸固定，不触发该路径。
+- 固定空态与布局均先观察失败再实现；完整 TUI 套件中两处旧契约断言已更新为「空面板保留、猫咪无文字标签」。
+- 82×46 轮廓的镜像轴与右眼高光位置经坐标级排查修正，避免左右耳不对称和右尖角。
+- 光栅横向索引由第二个单元测试先失败再修正；背景点阵、透明降级和多色优先级各有独立断言。
+- 失败状态不再按 180ms 抖动；1500/1599ms 的反馈窗口与返回 idle 的边界分别验证。
+- 四包与真实进程 smoke 前补齐 protocol → cowcat → tui → cli 的标准构建链，没有绕过 CLI 入口。
+- 独立整分支审查发现 4 个 Important，另有 1 个空态信息问题因明确规格提升为 Important：32 行裁切、双栏溢出计数、双向视线、重复成功脉冲和空态辅助信息均先 RED 后 GREEN，最终套件 237/237。
+- deferred Minor：idle 呼吸亮度当前无可见变化；少量旧品牌/文档措辞待后续清理，不冒充本轮已修。
 
 ## 4. 本批 ADR
 
-- **ADR-172** 完整服务商配置、原子保存并应用、未配置模型的可恢复引导。
-- **ADR-171** 奶痞猫头部标识、28×20 半像素头像与真实相位排程。
-- **ADR-166/165** 普通 dialog 输入与字段补丁保留兼容，完整配置由 `providerForm` 和 `provider.configure` 承担。
-- **ADR-167** 活动栏预算左 32 / 右 30。
-- 品牌指南升级 v1.2；`06-frontend.md` 同步。
+- **ADR-173** 固定侧栏空态、160×32 三栏断点、82×46 灰阶点阵猫和六种眼神。
+- ADR-171 的原生 Scene/ keyed 更新与状态优先级保留；其旧布局与像素猫形状由 ADR-173 修订。
+- 品牌指南升级 v1.3；`06-frontend.md` 与 changelog 同步。
 
 ## 5. 未验证 / 风险
 
-- **真实终端观感**：真实进程启动与退出已验证，但没有取得新分支的可见窗口截图；不同终端的色彩、闪烁、原生图片协议与长时间使用仍需按 beta-checklist 人眼验收。自动化工具不能直接操作终端窗口。
-- **原生图片协议**：headless 证明 `ImageRenderable` 的布局及 blocks 回退；kitty/sixel 未实测。
+- **真实终端观感**：headless 帧与 color spans、真实进程启动退出已验证，但不同终端的象限字形、灰阶、闪烁和长时间使用仍需人眼验收；本批没有可见窗口截图。
+- **原生图片协议**：kitty/sixel 未实测，与本次猫咪不依赖图片协议的实现无关，仍是既有 beta 验收项。
 - **远端 CI**：本批没有推送或运行 GitHub Actions，三平台 CI 仍需作为合并前权威门。
 - **真实模型**：本批不调用付费模型端点，不新增模型行为声明。
-- **公开 TUI 组件 API**：旧的字符卡片导出被结构化组件替代；这是刻意的界面与渲染契约重构，不保留旧装饰兼容层。
+- **多色光栅上限**：单个终端单元只有前景/背景两种颜色；超过两种非透明颜色时按确定优先级降级，眼睛与鼻点优先于装饰灰阶。
 
 ## 6. 下一步建议
 
-1. 由用户决定提交、推送分支和创建 PR；不直推 main。
-2. 在目标终端检查 80/120/160 列、关闭动画、长对话滚动、审批与真实图片协议。
-3. 合并后按 beta-checklist 做真实模型与持续使用验收。
+1. 完成整体代码审查与发现修复后，由用户决定推送分支和创建 PR；不直推 main。
+2. 在目标终端检查 80/120/160/180 列、关闭动画、长列表、审批与六种眼神。
+3. 合并前跑三平台 CI，合并后按 beta-checklist 做真实模型与持续使用验收。
