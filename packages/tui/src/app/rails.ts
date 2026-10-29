@@ -37,12 +37,12 @@ export interface AsideSpec {
   readonly panels: readonly AsidePanel[];
 }
 
-function todoPanel(todos: readonly TodoView[], visible: boolean): RailPanel | null {
-  if (!visible || todos.length === 0) return null;
-  const done = todos.filter((todo) => todo.status === 'completed').length;
+function todoPanel(todos: readonly TodoView[], visible: boolean): RailPanel {
+  const shown = visible ? todos : [];
+  const done = shown.filter((todo) => todo.status === 'completed').length;
   return {
-    title: `待办 ${String(done)}/${String(todos.length)}`,
-    rows: todos.map((todo) => ({
+    title: `待办 ${String(done)}/${String(shown.length)}`,
+    rows: shown.length === 0 ? [{ text: '暂无待办', dim: true }] : shown.map((todo) => ({
       text: todo.status === 'in_progress' && todo.activeForm !== '' ? todo.activeForm : todo.content,
       ...(todo.status === 'completed' ? { dim: true } : {}),
       ...(todo.status === 'in_progress' ? { accent: true } : {}),
@@ -56,23 +56,21 @@ const LABELS: Readonly<Record<MascotState, string>> = {
 };
 
 export function leftRailSpec(view: TuiView, agents: readonly AgentView[], now: number): LeftRailSpec {
-  const panels: RailPanel[] = [];
-  const todos = todoPanel(view.todos, view.todosVisible);
-  if (todos !== null) panels.push(todos);
-  if (view.tasks.length > 0) panels.push({
-    title: '后台任务',
-    rows: view.tasks.map((task) => ({
-      text: task.command.split('\n')[0] ?? '',
-      ...(task.state === 'running' ? { accent: true } : { dim: true }),
-    })),
-  });
-  if (agents.length > 0) panels.push({
+  const panels: RailPanel[] = [todoPanel(view.todos, view.todosVisible)];
+  panels.push({
     title: '子代理',
-    rows: agents.map((agent) => {
+    rows: agents.length === 0 ? [{ text: '暂无运行中的子代理', dim: true }] : agents.map((agent) => {
       const seconds = Math.max(0, Math.round((now - agent.startedAt) / 1000));
       const elapsed = seconds >= 60 ? `${String(Math.floor(seconds / 60))}m${String(seconds % 60)}s` : `${String(seconds)}s`;
       return { text: `${agent.role} · ${elapsed}`, accent: true };
     }),
+  });
+  panels.push({
+    title: '后台任务',
+    rows: view.tasks.length === 0 ? [{ text: '暂无后台任务', dim: true }] : view.tasks.map((task) => ({
+      text: task.command.split('\n')[0] ?? '',
+      ...(task.state === 'running' ? { accent: true } : { dim: true }),
+    })),
   });
   const state = mascotState(view, now);
   return { panels, mascot: spriteBlock('cowcat', mascotFrame(state, now, animationsEnabled(process.env))), mascotState: state, mascotLabel: LABELS[state] };
@@ -101,9 +99,9 @@ export function asideSpec(
     rows: [{ label: '模型', value: view.model ?? '（未记录）' }, ...(view.sessionId === null ? [] : [{ label: 'id', value: view.sessionId }])],
   });
   if (options.cwd !== undefined) panels.push({ title: '工作区', rows: [{ label: '目录', value: options.cwd }] });
-  if (changedFiles.length > 0) panels.push({
+  panels.push({
     title: 'CowCat 变更',
-    rows: changedFiles.slice(0, 10).map((file) => {
+    rows: changedFiles.length === 0 ? [{ label: '暂无 CowCat 变更', value: '' }] : changedFiles.slice(0, 10).map((file) => {
       const name = file.path.split(/[\\/]/).slice(-1)[0] ?? file.path;
       const stat = file.added > 0 || file.removed > 0 ? `+${String(file.added)} -${String(file.removed)}` : `写入 ${String(file.written)} 行`;
       return { label: name, value: stat, ...(file.added >= file.removed ? {} : { valueAccent: true }) };

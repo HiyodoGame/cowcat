@@ -13,3 +13,4 @@ artifacts/
 tools/patch/runtime/cli.patched.js
 analysis/sdk-reference/
 analysis/tmp/
+.superpowers/
