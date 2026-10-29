@@ -138,7 +138,7 @@ export function heightOf(node: SceneNode): number {
     case 'stack': return node.children.reduce((sum, child, index) => sum + heightOf(child) + (index === 0 ? 0 : node.gap), 0);
     case 'block': return Math.max(1, node.children.reduce((sum, child) => sum + heightOf(child), 0));
     case 'panel': return [...node.children, ...(node.actions ?? [])].reduce((sum, child) => sum + heightOf(child), 0) + 2;
-    case 'sprite': return Math.ceil(node.pixels.length / 2);
+    case 'sprite': return Math.ceil(node.pixels.length / 4);
     case 'image': return node.image.rows;
     case 'choice':
     case 'status': return 1;

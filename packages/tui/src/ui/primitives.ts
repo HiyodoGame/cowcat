@@ -13,7 +13,7 @@ import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import { heightOf, type SceneNode, type SpriteNode, type StatusNode } from './scene.js';
 import type { Line } from './line.js';
 import { mountScrollText } from './scroll-text.js';
-import { quadrantCell } from './quadrants.js';
+import { brailleCell } from './braille.js';
 
 export interface SceneContext {
   readonly renderer: CliRenderer;
@@ -145,13 +145,15 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
         current = next;
         root.height = heightOf(next);
         const rail = next.rail === true;
-        root.borderColor = resolveToken(context.theme, next.tone);
-        root.border = !rail;
-        root.title = rail ? undefined : ` ${next.title} `;
-        header.content = rail ? ` ${next.title}` : '';
-        header.height = rail ? 1 : 0;
-        header.bg = rail ? resolveToken(context.theme, 'brand') : undefined;
-        header.fg = rail ? RGBA.fromHex('#141419') : resolveToken(context.theme, next.tone);
+        root.borderColor = resolveToken(context.theme, rail ? 'border' : next.tone);
+        root.border = true;
+        root.borderStyle = rail ? 'single' : 'rounded';
+        root.title = ` ${next.title} `;
+        root.titleColor = resolveToken(context.theme, rail ? 'text' : next.tone);
+        header.content = '';
+        header.height = 0;
+        header.bg = undefined;
+        header.fg = resolveToken(context.theme, next.tone);
         layoutChildren(root.height);
         actionGroup.update(next.actions ?? []);
         hit(next.hit);
@@ -217,7 +219,7 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
         const colorOfPixel = (pixel: SpriteNode['pixels'][number][number]) => pixel === null
           ? undefined
           : resolveToken(context.theme, `cat${pixel[0]?.toUpperCase() ?? ''}${pixel.slice(1)}` as TokenName);
-        for (let y = 0; y < Math.ceil(next.pixels.length / 2); y += 1) {
+        for (let y = 0; y < Math.ceil(next.pixels.length / 4); y += 1) {
           let row = rows[y];
           if (row === undefined) {
             row = new BoxRenderable(renderer, { id: `${root.id}-y-${String(y)}`, height: 1, flexDirection: 'row' });
@@ -234,7 +236,7 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
               (cells[y] as TextRenderable[])[x] = cell;
               row.add(cell);
             }
-            const raster = quadrantCell(next.pixels, x, y);
+            const raster = brailleCell(next.pixels, x, y);
             cell.content = raster.glyph;
             cell.fg = colorOfPixel(raster.foreground);
             cell.bg = colorOfPixel(raster.background);
@@ -277,6 +279,7 @@ export interface SceneGroup {
   update(nodes: readonly SceneNode[], layout?: (node: SceneNode, index: number) => {
     readonly top?: number;
     readonly marginTop?: number;
+    readonly marginLeft?: number;
     readonly height?: number;
     readonly flexGrow?: number;
     readonly flexShrink?: number;
@@ -306,6 +309,7 @@ export function createChildGroup(context: SceneContext, parent: BoxRenderable): 
         const place = layout?.(node, index);
         child.binding.renderable.top = place?.top ?? 0;
         child.binding.renderable.marginTop = place?.marginTop ?? 0;
+        child.binding.renderable.marginLeft = place?.marginLeft ?? 0;
         child.binding.renderable.height = place?.height ?? heightOf(node);
         child.binding.renderable.flexGrow = place?.flexGrow ?? 0;
         child.binding.renderable.flexShrink = place?.flexShrink ?? 0;

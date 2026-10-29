@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createTestRenderer, type MockInput } from '@opentui/core/testing';
 import { THEME } from '../src/theme/tokens.js';
+import { copyFor } from '../src/app/copy.js';
 import { createScreen } from '../src/ui/screen.js';
 
 /**
@@ -151,4 +152,9 @@ test('without the kitty protocol, Shift+Enter is indistinguishable from Enter �
   } finally {
     await h.dispose();
   }
+});
+
+test('the default placeholder discovers multiline input in both languages', () => {
+  assert.match(copyFor('zh').inputPlaceholder, /Shift\+Enter 换行/);
+  assert.match(copyFor('en').inputPlaceholder, /Shift\+Enter newline/);
 });

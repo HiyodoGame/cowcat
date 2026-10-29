@@ -2,131 +2,153 @@
 
 > 跑在你自己终端里的开源 CLI 编程 Agent。代码、密钥、终端都在你手里。
 
-CowCat 是一个事件溯源的 CLI 编程 agent：会话日志只追加、回合状态可重放、策略与审批在内核里，前端（TUI / headless）只读协议。它支持 Anthropic 与 OpenAI 兼容的模型端点，也支持通过 stdio 接入 MCP 服务器。
+CowCat 是一个事件溯源的终端编程 Agent：会话日志只追加、回合状态可重放，策略与审批在内核，TUI 与 headless 前端只通过协议读取会话。支持 Anthropic 和 OpenAI 兼容端点，以及 stdio MCP 服务器。
 
-**状态：`1.0.0-beta.4`（P8 发布切换）。** v1（`agent/`）已在 P8 删除；v1 的用户配置以兼容模式读取（ADR-089），不会重写文件。`latest` 仍是 v1 的 `0.15.0`，beta 用 `@beta`。
+**当前渠道：v2 `1.0.0-beta` 系列。** npm `latest` 仍是 v1 `0.15.0`，新版请使用 `@beta` 安装。v1 配置可以兼容读取，不会被静默重写。
 
-## 要求
+## 特性
 
-- 默认 `cowcat` / `cowcat tui` / `sessions resume`：Node.js **>= 26.4**（opentui 门槛）
-- `serve` / `run` / `sessions list` / headless 诊断：Node.js **>= 22**
-- 一个 Anthropic 或 OpenAI 兼容的模型端点与 API key（CowCat 不附带 key）
+- **原生终端工作台**：对话、待办、子代理、后台任务、上下文与文件变更分栏显示；空数据也有明确空态。
+- **灰阶点阵奶牛猫**：64×40 Braille 点阵、六种眼神状态，支持关闭动画。
+- **可回放的 Agent 内核**：事件溯源会话、工具审批、权限授予、Plan / 接受编辑模式。
+- **完整的开发工具**：Read / Write / Edit / Bash / Glob / Grep、后台任务、子代理、Cron、Git worktree。
+- **配置与恢复**：模型和服务商向导、会话恢复、上下文压缩、断线重连、Write/Edit undo/redo。
+- **密钥留在本机**：只从环境变量读取 API Key，不写日志、不进配置模板。
 
-## 快速开始（npm）
+## 运行要求
 
-先确认 `node --version` 满足默认 TUI 的 **>= 26.4** 要求。beta 版本发布在 `@beta` 标签上（`latest` 仍是 v1 的 `0.15.0`）：
+| 使用方式 | Node.js |
+|---|---|
+| 默认 `cowcat`、`cowcat tui`、`sessions resume` | **>= 26.4**，推荐 **26.12+** |
+| `run`、`serve`、`sessions list`、`doctor` 等 headless 命令 | **>= 22** |
+| 模型 | 一个 Anthropic 或 OpenAI 兼容端点及 API Key |
+
+> Node 26.4 需要显式 `--experimental-ffi` 才能加载 OpenTUI；Node 26.12 不需要。日常运行推荐使用 Node 26.12 或更新版本。
+
+## 安装与启动
 
 ```bash
-npm i -g @corescense/cowcat@beta
+npm i -g @corescense/cowcat@beta --registry=https://registry.npmjs.org
 
 cowcat doctor
-cowcat setup --migrate      # 从 v1 升级：备份并迁移 ~/.cowcat/config.json，不复制密钥
-cowcat trust                # 信任当前目录：项目层 cowcat.json 的 allow 与 AGENTS.md 才会生效
-cowcat run "解释一下这个仓库的入口"
-cowcat                      # TUI
+cowcat                      # 启动 TUI
 ```
 
-`cowcat trust` 记录的是**目录本身**（精确匹配、不继承子目录，ADR-028）；`--list` 查看、`--remove` 撤销。未信任时 `AGENTS.md` 不会注入，`run` 会打印一行说明（ADR-092/093）。
+首次使用时配置模型：
 
-配置用户层 `~/.cowcat/config.json`：
+```bash
+cowcat setup --preset anthropic/claude-sonnet-5-5
+export ANTHROPIC_API_KEY=...
+```
+
+也可以在 TUI 中使用 `/model` 和 `/providers` 完成服务商与模型配置。密钥只通过环境变量提供。
+
+从 v1 升级：
+
+```bash
+cowcat setup --migrate      # 备份并迁移配置，不复制密钥
+```
+
+在项目目录中启用项目级指令与配置：
+
+```bash
+cowcat trust                # 只信任当前目录，不继承子目录
+cowcat run "解释一下这个仓库的入口"
+```
+
+## 常用命令
+
+| 命令 | 作用 |
+|---|---|
+| `cowcat` / `cowcat tui` | 启动交互式 TUI |
+| `cowcat run "<prompt>"` | 执行一次性回合；默认拒绝审批，`--yes` 放行 |
+| `cowcat serve` | 启动 JSON-RPC over stdio |
+| `cowcat sessions list` | 列出会话 |
+| `cowcat sessions resume <id>` | 恢复会话 |
+| `cowcat doctor` | 检查运行时、配置、信任、技能、沙箱、模型与 Key |
+| `cowcat trust [dir]` | 信任目录；`--list` 查看、`--remove` 撤销 |
+| `cowcat setup --preset <provider/model>` | 新建模型配置 |
+| `cowcat setup --migrate` | 迁移 v1 配置并保留备份 |
+
+使用 `cowcat <command> --help` 查看参数。帮助命令不启动 TUI，也不读取模型配置。
+
+## 配置
+
+用户层配置位于 `~/.cowcat/config.json`：
 
 ```json
 {
   "model": {
     "preset": "anthropic/claude-sonnet-5-5",
-    "providers": { "anthropic": { "apiKeyEnv": "ANTHROPIC_API_KEY" } }
+    "providers": {
+      "anthropic": { "apiKeyEnv": "ANTHROPIC_API_KEY" }
+    }
   }
 }
 ```
 
-然后设置 key：
+配置分为用户层、项目层 `<cwd>/cowcat.json` 和会话层 `--config <path>`。项目层的规则与 MCP 受工作区信任约束。
 
-```bash
-export ANTHROPIC_API_KEY=...
+MCP stdio 示例：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "everything": {
+        "command": "node",
+        "args": ["/path/to/server-everything/dist/index.js", "stdio"]
+      }
+    }
+  }
+}
 ```
 
-## 从源码
+Skills 支持 `~/.cowcat/skills/<name>/SKILL.md` 和项目 `.cowcat/skills/`；同时只读兼容 `.claude/skills/`。项目技能需要工作区信任。
+
+## 从源码运行
 
 ```bash
-# 四个包按依赖顺序构建（file: 依赖是链接，不会自动构建）
+git clone https://github.com/HiyodoGame/cowcat.git
+cd cowcat
+
 (cd packages/protocol && npm ci && npm run build)
 (cd packages/cowcat && npm ci && npm run build)
 (cd packages/tui && npm ci && npm run build)
 (cd packages/cli && npm ci && npm run build)
 
 node packages/cli/dist/src/cli/main.js doctor
+node packages/cli/dist/src/cli/main.js
 ```
 
-发布到 npm 后（人工 2FA）可直接 `npm i -g @corescense/cowcat`。
+Windows / Git Bash 可临时使用 Node 26.12，不修改系统默认版本：
 
-## 命令
-
-| 动词 | 作用 |
-|---|---|
-| `cowcat` / `cowcat tui` | 交互式 TUI（Node ≥ 26.4） |
-| `cowcat run "<prompt>"` | 一次性回合；默认拒绝所有审批，`--yes` 放行 |
-| `cowcat serve` | headless JSON-RPC over stdio |
-| `cowcat sessions list\|resume <id>` | 会话列表 / 恢复 |
-| `cowcat doctor` | 环境、配置、信任、指令链、技能、沙箱、模型与 key 逐项检查 |
-| `cowcat trust [dir] [--list] [--remove]` | 信任一个目录（项目层 `allow` 与 `AGENTS.md` 才会生效），或列出/撤销 |
-| `cowcat setup --migrate` | 把现有 v1 配置翻译成 v2（备份原文件，不写密钥） |
-| `cowcat setup --preset <provider/model>` | 新建 v2 配置（`--api-key-env` / `--base-url` / `--force` / `--print`） |
-
-用 `cowcat <command> --help` 或 `cowcat help <command>` 查看单个命令的参数与选项；帮助只读命令表，不启动 TUI、不读取模型配置。
-
-## 配置
-
-- 用户层：`~/.cowcat/config.json`
-- 项目层：`<cwd>/cowcat.json`（`rules`、`mcp.servers` 受工作区信任约束）
-- 会话层：`--config <path>`
-- 密钥只从环境变量读取（`apiKeyEnv`）；v1 的内联 `apiKey` 仅在兼容模式下于内存中使用，不写回、不记录
-
-MCP 服务器（stdio）：
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "everything": { "command": "node", "args": ["/path/to/server-everything/dist/index.js", "stdio"] }
-    }
-  }
-}
+```bash
+npx -y node@26.12.0 packages/cli/dist/src/cli/main.js
 ```
 
-Skills（`SKILL.md`，兼容 Claude Code 的目录与 frontmatter）：
-
-- 位置：`~/.cowcat/skills/<name>/`、`<项目>/.cowcat/skills/<name>/`，同时只读兼容 `~/.claude/skills/` 与 `<项目>/.claude/skills/`
-- 首轮只注入 `name` + `description`（catalog），正文在模型调用 `Skill` 工具时才读取；`/skills` 查看本次会话的目录
-- 项目层的技能受工作区信任约束（未受信不加载并提示）；同名时项目覆盖个人、`.cowcat` 覆盖 `.claude`
-- frontmatter 的 `allowed-tools` **当前不生效**（技能不能给自己扩权），`doctor` 会列出被忽略的字段
+完整三栏建议终端至少 **160 列 × 32 行**；104–159 列保留信息栏，更窄或更矮时回退到单栏 dock。
 
 ## 包结构
 
 | 包 | 内容 |
 |---|---|
-| `@corescense/cowcat` | 可执行文件（`packages/cli`） |
-| `@corescense/cowcat-core` | 内核、策略、端口、工具与组合根（`packages/cowcat`） |
-| `@corescense/cowcat-protocol` | headless JSON-RPC 协议（`packages/protocol`） |
-| `@corescense/cowcat-tui` | 终端渲染器，动态加载（`packages/tui`） |
+| `@corescense/cowcat` | 可执行文件与命令行入口（`packages/cli`） |
+| `@corescense/cowcat-core` | 事件溯源内核、策略、端口、工具与组合根 |
+| `@corescense/cowcat-protocol` | headless JSON-RPC 协议与传输 |
+| `@corescense/cowcat-tui` | OpenTUI 终端渲染器，按需动态加载 |
 
-本地开发继续使用 `file:` 依赖（ADR-062）；发布由 `tools/pack-release.mjs` 改写为精确版本（ADR-090）。
+## 文档与贡献
 
-## 文档
+- [架构与 ADR](docs/architecture/)
+- [变更记录](docs/changelog.md)
+- [Beta 验收清单](docs/beta-checklist.md)
+- [贡献指南](CONTRIBUTING.md)
+- [发布手册](docs/PUBLISH.md)
+- [安全政策](SECURITY.md)
 
-- [`docs/dev-plan-v2.md`](docs/dev-plan-v2.md)：阶段计划与出口标准
-- [`docs/architecture/`](docs/architecture/)：ADR 表（001~170）与分层、内核、策略、平台契约
-- [`docs/guides/hindsight-mcp.md`](docs/guides/hindsight-mcp.md)：接入 Hindsight 跨会话记忆（MCP 路径）
-- [`docs/HANDOFF.md`](docs/HANDOFF.md)：最近一次交接快照
-- [`docs/beta-checklist.md`](docs/beta-checklist.md)：`1.0.0-beta.2` 反馈期验收清单与切换 `latest` 的门槛
-- [`docs/research/`](docs/research/)：各阶段调研（含 MCP 2026-07-28 对照与真实端点实测）
-- [`docs/archive/`](docs/archive/)：v1 与旧架构的历史档案，不是现行规范
-
-## 安全
-
-- 所有子进程只经 `ProcessPort` 启动；env 脱敏、输出截断与进程树终止都在网关里（ADR-014/015）。
-- `light` 档**不是** OS 级沙箱，只做脱敏与审计。
-- 密钥不写日志、不进配置模板；`doctor` 只报告「是否设置」。
+`docs/archive/` 是历史档案，不是现行规范。
 
 ## 许可
 
-MIT。见 [`LICENSE`](LICENSE)。
+MIT。见 [LICENSE](LICENSE)。

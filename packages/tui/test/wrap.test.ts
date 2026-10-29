@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { wrap } from '../src/text/wrap.js';
+import { wrap, wrapPath } from '../src/text/wrap.js';
 import { stringWidth } from '../src/text/width.js';
 
 /** Breaks at a space past a third of the line, keeping the ragged edge readable. */
@@ -43,4 +43,16 @@ test('a space carrying combining marks falls back to re-segmenting the remainder
   const rows = wrap(text, 6);
   assert.ok(rows.length > 1);
   assert.equal(rows.join(''), 'aaaa\u0301bbbb');
+});
+
+test('path wrapping prefers complete path segments', () => {
+  assert.deepEqual(wrapPath('F:/WorkSpace/AIProjects/cowcat', 16), ['F:/WorkSpace/', 'AIProjects/', 'cowcat']);
+  assert.deepEqual(wrapPath('F:/short/path', 30), ['F:/short/path']);
+});
+
+test('path wrapping falls back to grapheme wrapping for an overlong segment', () => {
+  const rows = wrapPath('F:/abcdefghijklmnopqrstuvwxyz', 8);
+  assert.equal(rows[0], 'F:/');
+  assert.equal(rows.join(''), 'F:/abcdefghijklmnopqrstuvwxyz');
+  assert.ok(rows.every((row) => stringWidth(row) <= 8));
 });
