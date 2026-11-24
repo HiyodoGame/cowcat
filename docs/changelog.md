@@ -1,6 +1,6 @@
 # CowCat changelog
 
-## 未发布
+## 1.0.0-beta.6（2026-11-24）—— OpenTelemetry 3.x 安全升级与 Node 下限调整
 
 - **依赖与运行时下限（ADR-175）**：OpenTelemetry 统一升级到 3.x（`api 1.10`、`core/resources 3.1.1`、`sdk-trace 3.1.1`、`exporter-trace-otlp-http 0.301.2`），修复 GHSA-8988-4f7v-96qf；由于 OTel 3.x 的 `engines` 为 `>=22.15`，`run` / `serve` / `sessions list` / `doctor` 等 headless 命令的 Node 下限从 22 提到 22.15，TUI 的 26.4 门槛不变。
 
