@@ -1,6 +1,6 @@
 # `1.0.0-beta.6` 反馈期验收清单
 
-> 目标：判断 beta 产物是否稳定到可以把 npm `latest` 从 v1 `0.15.0` 切到 1.0.0。
+> 目标：判断 beta 产物是否稳定到可以把 npm `latest` 从 v1 `0.15.0` 切到 1.0.0。**2026-11-24 已由 ADR-176 提前切换（见 §7 注记），本清单的门槛仍须逐条执行。**
 > 范围：**已发布的 beta 产物**，不是源码单元测试的替代品。
 > 记录日期用绝对日期；没实际跑过的项不要勾。
 > §1.4 / §2.1 / §3.1 / §4.3 的记录来自 `1.0.0-beta.2`；§4.4 来自 `main` 源码（beta.3 发布前）。beta.4 的新功能（Cron/Worktree、视觉、记忆蒸馏、可观测性、审批闭环等十个 P7 模块）的真机验收记录见各 `docs/research/p7-*.md` 尾节与 HANDOFF。
@@ -241,6 +241,8 @@ COWCAT_HOME：临时目录 / 真实 home
 4. 一次真实 MCP 服务器调用成功（list + call）。
 5. TUI 在真实终端连续用 30 分钟无崩溃、无锁残留。
 
+> **2026-11-24 提前切换**：用户决定把 CLI 的 `latest` 指向 `1.0.0-beta.6`（ADR-176）。下列五条门槛不因此取消，仍未逐条执行，结果待补。
+
 结果记录：
 
 | 门槛 | 日期 | 结果 | 证据 / issue |
@@ -253,12 +255,12 @@ COWCAT_HOME：临时目录 / 真实 home
 
 ## 8. 已知缺口（不作为 beta 门槛）
 
-- CLI 的 `latest` 仍是 v1 `0.15.0`；beta 用 `@beta`。
+- CLI 的 `latest` 自 2026-11-24 起指向 `1.0.0-beta.6`（ADR-176，提前于 §7 门槛）；`@beta` 同样指向 beta.6。
 - v1 项目 `.cowcat/config.json`、`state.json` 不自动迁移。
 - `setup` 是非交互 flags，没有向导式问答。
 - Windows `.cmd` / `npx` 形式的 MCP 入口未支持。
 - 真实 MCP 服务器的 `list_changed` / 分页未触发。
-- 三个 support 包（protocol / core / tui）的 `latest` 与 `beta` 都随批次推进（beta.3 已对齐）；CLI 的 `latest` 仍是 v1 `0.15.0`，由 §7 的门槛决定何时切。
+- 三个 support 包（protocol / core / tui）的 `latest` 与 `beta` 都随批次推进（beta.3 已对齐）；CLI 的 `latest` 自 2026-11-24 起与它们一致（ADR-176）。
 - `system` 沙箱在 Windows 上被显式拒绝（设计如此）。
 - **`Shift+Enter` 换行依赖终端**：只有实现 kitty 键盘协议的终端才能把它与回车分开。2026-10-22 实测的验收终端（Tabby Terminal，Electron + xterm.js）对 `Shift+Enter` 发的是单个 `0d`（即回车本身），因此该终端上 `Shift+Enter` 会直接发送消息。**换行用 `Ctrl+J` 或 `Ctrl+Enter`**——两者在该终端上是同一个 `0x0a`/LF，与终端能力无关；`Alt+Enter` 多数终端可用（`ESC CR`）。见 ADR-104 ⑥⑦、#140 / #141。**终端渲染之外的形态不受此限**：桌面端 / Web 端能拿到完整的 keyboard 事件，`Shift+Enter` 到那时再实现（已由用户 2026-10-22 决定，不在 beta 内做）。
 
