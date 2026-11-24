@@ -2,7 +2,7 @@ import { COMMANDS, type CommandSpec } from './spec.js';
 
 const TAGLINE = 'headless 协议服务（`cowcat serve`）、一次性回合（`cowcat run`）与 TUI（T7 起）';
 const RUNTIME_HELP = [
-  '运行环境：默认 TUI 需要 Node >= 26.4；serve / headless / run / doctor 等命令需要 Node >= 22',
+  '运行环境：默认 TUI 需要 Node >= 26.4；serve / headless / run / doctor 等命令需要 Node >= 22.15',
 ];
 
 /**

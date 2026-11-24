@@ -216,7 +216,7 @@ test('doctor reports what it can check, and names the model it could not find', 
   // backend. The default TUI entry is a separate readiness check (ADR-148).
   assert.equal(run.code, RENDERER_AVAILABLE ? EXIT.ok : EXIT.failed, run.out.join('\n'));
   const text = run.out.join('\n');
-  assert.match(text, /node\s+v\d+\.\d+\.\d+（需要 >=22）/);
+  assert.match(text, /node\s+v\d+\.\d+\.\d+（需要 >=22\.15）/);
   assert.match(text, /protocol\s+version \d+/);
   // With no config file the defaults are in effect, and that is stated rather than
   // reported as a fault.
@@ -232,7 +232,7 @@ test('doctor reports what it can check, and names the model it could not find', 
   assert.match(text, /sandbox\s+mode \w+ \/ backend \w+ \/ network \w+/);
   // The package can run headless while the default TUI entry is not ready (ADR-148).
   assert.match(text, /默认入口\s+.*(TUI 可以在当前运行时启动|默认 TUI 需要 >=26\.4|默认 TUI 需要 Node >=26\.4)/);
-  assert.match(text, /headless\s+serve \/ run .*Node >= 22/);
+  assert.match(text, /headless\s+serve \/ run .*Node >= 22\.15/);
   assert.match(text, /模型\s+未配置/);
 });
 

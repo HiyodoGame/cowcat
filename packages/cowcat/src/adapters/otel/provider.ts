@@ -5,8 +5,8 @@
 // (ADR-132 ④: telemetry failures, configuration included, do not surface).
 
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
-import { BasicTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { BatchSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
 import { createOtelSink } from './otel-sink.js';
 import type { SpanSink } from './translate.js';
 
@@ -73,18 +73,18 @@ export function initTelemetry(input: TelemetryInput): TelemetryHandle | null {
     // Plain semconv keys, not the SemanticResourceAttributes constants: the constants
     // live in a second package for keys that are frozen forever, and 'service.name'
     // is exactly that.
-    const resource = new Resource({
+    const resource = resourceFromAttributes({
       'service.name': env.OTEL_SERVICE_NAME ?? 'cowcat',
       ...(input.serviceVersion === undefined ? {} : { 'service.version': input.serviceVersion }),
     });
     // spanProcessors via the constructor config: addSpanProcessor() is deprecated on
     // the 1.x SDK line, and a constructor argument ages better than a lint override.
-    const provider = new BasicTracerProvider({
+    const provider = new TracerProvider({
       resource,
       spanProcessors: [
-        new BatchSpanProcessor(
-          new OTLPTraceExporter({ url: endpoint, timeoutMillis: EXPORT_TIMEOUT_MS, ...(headers === undefined ? {} : { headers }) }),
-        ),
+        new BatchSpanProcessor({
+          exporter: new OTLPTraceExporter({ url: endpoint, timeoutMillis: EXPORT_TIMEOUT_MS, ...(headers === undefined ? {} : { headers }) }),
+        }),
       ],
     });
 

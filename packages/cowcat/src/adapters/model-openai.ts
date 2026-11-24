@@ -65,6 +65,11 @@ export function openAIModel(options: OpenAIModelOptions): ModelPort {
               // Without this the stream carries no usage at all, and the usage that does
               // arrive comes on a chunk whose `choices` is empty (ADR-040).
               stream_options: { include_usage: true },
+              // `max_tokens` is deprecated by OpenAI but is the spelling
+              // OpenAI-compatible endpoints universally accept; choosing the
+              // newer field is a wire decision (research/p4-models.md B-3), not
+              // an adapter default.
+              // eslint-disable-next-line @typescript-eslint/no-deprecated
               ...(request.maxTokens === undefined ? {} : { max_tokens: request.maxTokens }),
               ...(request.tools.length === 0 ? {} : { tools: request.tools.map(toWireTool) }),
               // What the preset declared goes last; the reserved-field check above is

@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { InMemorySpanExporter, SimpleSpanProcessor, BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
 import { loadConfig, type ConfigSource, type KernelEvent } from '../src/index.js';
 import {
   createOtelSink,
@@ -295,7 +295,7 @@ test('ephemeral stream updates are not facts and produce no spans', () => {
 
 test('the OTel sink maps spans, attributes, parenting, and events faithfully', async () => {
   const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+  const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
   const tap = createSpanTranslator(createOtelSink(provider, 'cowcat', '2.0.0'), { agentVersion: '2.0.0' });
   for (const event of fullTurnEvents()) tap.observe(event);
 
@@ -308,14 +308,14 @@ test('the OTel sink maps spans, attributes, parenting, and events faithfully', a
   assert.equal(turn.spanContext().traceId, spans.find((s) => s.name === 'chat glm-5.3-flash')?.spanContext().traceId);
   const chat = byName('chat glm-5.3-flash');
   assert.ok(chat);
-  assert.equal(chat.parentSpanId, turn.spanContext().spanId);
+  assert.equal(chat.parentSpanContext?.spanId, turn.spanContext().spanId);
   assert.equal(chat.kind, 2, 'SpanKind.CLIENT');
   assert.equal(chat.attributes['gen_ai.operation.name'], 'chat');
   assert.equal(chat.attributes['gen_ai.usage.input_tokens'], 100);
   assert.equal(chat.attributes['gen_ai.request.stream'], true);
   const tool = byName('execute_tool Bash');
   assert.ok(tool);
-  assert.equal(tool.parentSpanId, turn.spanContext().spanId);
+  assert.equal(tool.parentSpanContext?.spanId, turn.spanContext().spanId);
   assert.equal(tool.attributes['gen_ai.tool.call.id'], 'c1');
   assert.equal(turn.attributes['gen_ai.conversation.id'], SESSION);
   assert.equal(turn.attributes['gen_ai.agent.version'], '2.0.0');

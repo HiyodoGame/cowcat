@@ -9,7 +9,8 @@ import { readVersion } from './version.js';
 import { defaultEntryProblem, meetsNodeFloor } from './runtime.js';
 
 /**
- * This package's Node floor is the kernel's: 22.
+ * This package's Node floor is the kernel's: 22.15, raised from 22 by
+ * OpenTelemetry 3.x's own `engines` (the OTel adapter is imported statically).
  *
  * ADR-062 ③ rejected option B because it "would bind `serve` to the renderer's Node
  * floor", and that is exactly what a >=26 floor on the BIN does — the headless server,
@@ -17,7 +18,8 @@ import { defaultEntryProblem, meetsNodeFloor } from './runtime.js';
  * So the floor is this package's own, and the renderer's is checked where it is loaded
  * (`cowcat tui`, T7) and reported as its own row here (ADR-065 ①).
  */
-const MIN_NODE = { major: 22, minor: 0 } as const;
+const MIN_NODE = { major: 22, minor: 15 } as const;
+const MIN_NODE_TEXT = `${String(MIN_NODE.major)}.${String(MIN_NODE.minor)}`;
 
 /**
  * `cowcat doctor`.
@@ -48,10 +50,10 @@ export async function runDoctor(context: CommandContext, nodeVersion = process.v
 
   context.stdout(`cowcat ${readVersion()} doctor`);
 
-  row('node', `v${nodeVersion}（需要 >=${String(MIN_NODE.major)}）`, meetsNodeFloor(nodeVersion, MIN_NODE));
+  row('node', `v${nodeVersion}（需要 >=${MIN_NODE_TEXT}）`, meetsNodeFloor(nodeVersion, MIN_NODE));
   const problem = defaultEntryProblem(nodeVersion);
   row('默认入口', problem ?? 'TUI 可以在当前运行时启动', problem === null);
-  note('headless', 'serve / run / sessions list / doctor 使用 Node >= 22；默认入口检查不表示这些命令失败');
+  note('headless', `serve / run / sessions list / doctor 使用 Node >= ${MIN_NODE_TEXT}；默认入口检查不表示这些命令失败`);
 
   // What this build does NOT check: the renderer's native core. It lives in
   // `packages/tui`'s own `node_modules` (a `file:` dependency is a junction, so npm does

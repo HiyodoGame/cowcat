@@ -46,7 +46,7 @@ import {
   type SkillFile,
 } from '../src/index.js';
 import { MemoryEventStore, ScriptedModel } from './support.js';
-import { InMemorySpanExporter, SimpleSpanProcessor, BasicTracerProvider } from '@opentelemetry/sdk-trace-base';
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
 import { createOtelSink } from '../src/adapters/otel/index.js';
 
 const PRESET = 'anthropic/claude-sonnet-5-5';
@@ -1978,7 +1978,7 @@ test('a plan-mode block does not burn the escalation grant', async (t) => {
 /** An in-memory telemetry handle: SimpleSpanProcessor exports synchronously on span end. */
 function memoryTelemetry() {
   const exporter = new InMemorySpanExporter();
-  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+  const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
   return {
     handle: { sink: createOtelSink(provider, 'cowcat', '0.0.0-test'), finish: async () => undefined },
     spans: () => exporter.getFinishedSpans(),

@@ -20,7 +20,7 @@ CowCat 是一个事件溯源的终端编程 Agent：会话日志只追加、回�
 | 使用方式 | Node.js |
 |---|---|
 | 默认 `cowcat`、`cowcat tui`、`sessions resume` | **>= 26.4**，推荐 **26.12+** |
-| `run`、`serve`、`sessions list`、`doctor` 等 headless 命令 | **>= 22** |
+| `run`、`serve`、`sessions list`、`doctor` 等 headless 命令 | **>= 22.15** |
 | 模型 | 一个 Anthropic 或 OpenAI 兼容端点及 API Key |
 
 > Node 26.4 需要显式 `--experimental-ffi` 才能加载 OpenTUI；Node 26.12 不需要。日常运行推荐使用 Node 26.12 或更新版本。

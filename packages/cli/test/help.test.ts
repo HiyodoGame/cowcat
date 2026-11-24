@@ -19,7 +19,7 @@ function capture(): { readonly options: CliOptions; readonly stdout: string[]; r
 test('global help states the TUI and headless Node floors', () => {
   const help = renderHelp();
   assert.match(help, /默认 TUI 需要 Node >= 26\.4/);
-  assert.match(help, /headless \/ run \/ doctor 等命令需要 Node >= 22/);
+  assert.match(help, /headless \/ run \/ doctor 等命令需要 Node >= 22\.15/);
 });
 
 test('tui --help renders command help without starting the TUI', async () => {
@@ -30,7 +30,7 @@ test('tui --help renders command help without starting the TUI', async () => {
   assert.match(output, /cowcat tui/);
   assert.match(output, /--worktree <name>/);
   assert.match(output, /默认 TUI 需要 Node >= 26\.4/);
-  assert.match(output, /headless \/ run \/ doctor 等命令需要 Node >= 22/);
+  assert.match(output, /headless \/ run \/ doctor 等命令需要 Node >= 22\.15/);
   assert.deepEqual(captured.stderr, []);
 });
 
