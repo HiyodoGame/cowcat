@@ -52,7 +52,7 @@ test('doctor fails default-entry readiness below Node 26.4 and passes it at the 
   const oldCode = await runDoctor(old.context, '24.18.0');
   assert.equal(oldCode, 1);
   assert.match(old.stdout.join('\n'), /默认入口.*FAIL/);
-  assert.match(old.stdout.join('\n'), /serve \/ run.*Node >= 22/);
+  assert.match(old.stdout.join('\n'), /serve \/ run.*Node >= 22\.15/);
 
   const supported = captureDoctor();
   const supportedCode = await runDoctor(supported.context, '26.4.0');

@@ -57,6 +57,8 @@ function killer(options: {
  * `child(undefined)` — the "never got a pid" case — into a real pid.
  */
 function child(pid: number | undefined): ChildProcess {
+  // Only `pid` is read, and a real ChildProcess cannot be constructed here.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-class-instance-assignment
   return { pid } as ChildProcess;
 }
 

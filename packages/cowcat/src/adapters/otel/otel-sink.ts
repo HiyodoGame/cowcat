@@ -14,10 +14,7 @@ import { millisToHrTime } from '@opentelemetry/core';
 import type { SpanAttributeValue, SpanSink, SpanStatus, StartedSpan } from './translate.js';
 
 function toOtAttributes(attributes: Readonly<Record<string, SpanAttributeValue>>): Attributes {
-  // SpanAttributeValue is string | number | boolean | string[] — a structural
-  // subset of OTel's AttributeValue, so the cast is safe; kept explicit so a
-  // future widening of SpanAttributeValue fails here, not in the exporter.
-  return attributes as unknown as Attributes;
+  return attributes;
 }
 
 class OtelStartedSpan implements StartedSpan {
@@ -57,10 +54,12 @@ export function createOtelSink(provider: TracerProvider, tracerName: string, ver
       // Parenting is explicit (trace.setSpan on context.active()) rather than
       // ambient: a CLI process runs without a registered context manager, so
       // relying on ambient context would silently flatten the tree.
+      const parent = input.parent;
+      if (parent !== undefined && !(parent instanceof OtelStartedSpan)) {
+        throw new Error('the parent span was not created by this sink');
+      }
       const parentContext =
-        input.parent === undefined
-          ? undefined
-          : trace.setSpan(context.active(), (input.parent as OtelStartedSpan).otelSpan);
+        parent === undefined ? undefined : trace.setSpan(context.active(), parent.otelSpan);
       const span = tracer.startSpan(
         input.name,
         {
