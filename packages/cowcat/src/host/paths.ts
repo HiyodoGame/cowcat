@@ -20,6 +20,8 @@ export interface CowcatPaths {
   readonly trustFile: string;
   /** The user layer: `~/.cowcat/config.json`. */
   readonly userConfig: string;
+  /** The user's API keys: `~/.cowcat/credentials.json` (ADR-177). Never read by the config layers. */
+  readonly credentialsFile: string;
   /** The project layer: `<cwd>/cowcat.json`. */
   readonly projectConfig: string;
 }
@@ -45,6 +47,7 @@ export function cowcatPaths(options: { readonly cwd: string; readonly home: stri
     sessionsDir: join(dir, SESSIONS_DIR_NAME),
     trustFile: join(dir, TRUST_FILENAME),
     userConfig: join(dir, 'config.json'),
+    credentialsFile: join(dir, 'credentials.json'),
     projectConfig: join(options.cwd, PROJECT_CONFIG_FILENAME),
   };
 }

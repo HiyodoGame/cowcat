@@ -2,7 +2,7 @@ import type { ProviderConfiguration, ProviderModelSummary, ProviderSummary } fro
 import type { TuiView } from './view.js';
 import { providerMatches } from './view.js';
 
-export type ProviderFormStep = 'template' | 'model' | 'name' | 'baseUrl' | 'apiKeyEnv' | 'modelId' | 'context' | 'output' | 'toolCalls' | 'review' | 'saving';
+export type ProviderFormStep = 'template' | 'model' | 'name' | 'baseUrl' | 'apiKey' | 'apiKeyEnv' | 'modelId' | 'context' | 'output' | 'toolCalls' | 'review' | 'saving';
 
 export interface ProviderForm {
   readonly step: ProviderFormStep;
@@ -15,6 +15,11 @@ export interface ProviderForm {
   readonly name: string;
   readonly baseUrl: string | null;
   readonly apiKeyEnv: string;
+  /**
+   * The key typed into the wizard (ADR-177). Lives in memory until the save completes; the
+   * dialog only ever renders it masked, and it never goes into a log, a notice or an error.
+   */
+  readonly apiKey: string;
   readonly preset: string;
   readonly model: string;
   readonly context: string;
@@ -33,7 +38,7 @@ export function beginProviderForm(view: TuiView, onboarding = false): TuiView {
     providerForm: {
       step: 'template', onboarding, custom: selected?.custom ?? false, protocol: selected?.protocol ?? 'openai',
       index: Math.max(0, index), templates, models: selected?.models ?? [],
-      name: selected?.name ?? '', baseUrl: selected?.baseUrl ?? null, apiKeyEnv: selected?.apiKeyEnv ?? '',
+      name: selected?.name ?? '', baseUrl: selected?.baseUrl ?? null, apiKeyEnv: selected?.apiKeyEnv ?? '', apiKey: '',
       preset: selected?.models[0]?.id ?? '', model: selected?.models[0]?.model ?? '',
       context: selected?.models[0]?.contextWindow?.toString() ?? '', output: selected?.models[0]?.outputLimit?.toString() ?? '',
       toolCalls: selected?.models[0]?.toolCalls ?? true, value: '', error: null,
@@ -106,9 +111,21 @@ export function advanceProviderForm(view: TuiView): TuiView {
       return update({ ...form, name: form.value.trim(), step: 'baseUrl', value: form.baseUrl ?? '', error: null });
     case 'baseUrl':
       if (form.custom && form.value.trim() === '') return invalid('自定义服务商必须填写 Base URL');
-      return update({ ...form, baseUrl: form.value.trim() === '' ? null : form.value.trim(), step: 'apiKeyEnv', value: form.apiKeyEnv, error: null });
+      return update({ ...form, baseUrl: form.value.trim() === '' ? null : form.value.trim(), step: 'apiKey', value: form.apiKey, error: null });
+    case 'apiKey': {
+      // The key itself. Empty is allowed: the environment variable named on the next step
+      // may already be set. Whitespace inside a key is a paste accident, refused without echo.
+      const key = form.value.trim();
+      if (/\s/.test(key)) return invalid('密钥里不能有空格或换行，请只粘贴密钥本身');
+      return update({ ...form, apiKey: key, step: 'apiKeyEnv', value: form.apiKeyEnv, error: null });
+    }
     case 'apiKeyEnv':
-      if (form.value.trim() === '') return invalid('请填写 API key 的环境变量名（不填写密钥本身）');
+      if (form.value.trim() === '') return invalid('请填写 API key 的环境变量名');
+      // Same rule the core applies at confirm time, caught here in Chinese. The value is
+      // never echoed: a key pasted into this step is refused without showing it.
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(form.value.trim())) {
+        return invalid('这里只填环境变量名，例如 DEEPSEEK_API_KEY；密钥请回到上一步粘贴');
+      }
       return update({ ...form, apiKeyEnv: form.value.trim(), step: form.custom ? 'modelId' : 'review', value: form.custom ? form.model : '', error: null });
     case 'modelId':
       if (form.value.trim() === '') return invalid('请填写服务商实际提供的模型 ID');
@@ -139,11 +156,11 @@ export function backProviderForm(view: TuiView): TuiView {
   if (form.step === 'template') return { ...view, providerForm: null };
   if (form.step === 'saving') return view;
   const previous: Partial<Record<ProviderFormStep, ProviderFormStep>> = {
-    model: 'template', name: 'template', baseUrl: form.custom ? 'name' : 'model', apiKeyEnv: 'baseUrl',
+    model: 'template', name: 'template', baseUrl: form.custom ? 'name' : 'model', apiKey: 'baseUrl', apiKeyEnv: 'apiKey',
     modelId: 'apiKeyEnv', context: 'modelId', output: 'context', toolCalls: 'output', review: form.custom ? 'toolCalls' : 'apiKeyEnv',
   };
   const step = previous[form.step] ?? 'template';
-  const value = step === 'name' ? form.name : step === 'baseUrl' ? form.baseUrl ?? '' : step === 'apiKeyEnv' ? form.apiKeyEnv
+  const value = step === 'name' ? form.name : step === 'baseUrl' ? form.baseUrl ?? '' : step === 'apiKey' ? form.apiKey : step === 'apiKeyEnv' ? form.apiKeyEnv
     : step === 'modelId' ? form.model : step === 'context' ? form.context : step === 'output' ? form.output : '';
   return { ...view, providerForm: { ...form, step, value, error: null } };
 }
@@ -159,6 +176,7 @@ export function providerFormConfiguration(form: ProviderForm): ProviderConfigura
     protocol: form.protocol,
     baseUrl: form.baseUrl,
     apiKeyEnv: form.apiKeyEnv,
+    ...(form.apiKey === '' ? {} : { apiKey: form.apiKey }),
     preset: form.preset,
     activate: true,
     ...(form.custom ? {

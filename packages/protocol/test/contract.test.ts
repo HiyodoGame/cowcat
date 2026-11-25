@@ -179,5 +179,5 @@ test('provider.configure carries a complete custom model and its activation resu
   };
   const result = await client.configureProvider('s1', configuration);
   assert.deepEqual(host.configuredProviders, [{ sessionId: 's1', configuration }]);
-  assert.deepEqual(result, { saved: true, current: { id: 'local/qwen3-coder', effort: null }, keySet: true, requiresRestart: false });
+  assert.deepEqual(result, { saved: true, current: { id: 'local/qwen3-coder', effort: null }, keySet: true, keySource: 'env', requiresRestart: false });
 });

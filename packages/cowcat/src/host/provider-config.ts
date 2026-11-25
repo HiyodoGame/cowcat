@@ -4,7 +4,11 @@ import type { CustomPresetSettings, ResolvedModelSettings } from '../policy/conf
 import { BUILTIN_PRESETS, BUILTIN_PROVIDERS } from './presets.js';
 import { selectModel, type ModelSelection } from './model.js';
 
-export function providerSummaries(catalog: UserProviderCatalog, env: Readonly<Record<string, string | undefined>>): ProviderSummary[] {
+export function providerSummaries(
+  catalog: UserProviderCatalog,
+  env: Readonly<Record<string, string | undefined>>,
+  stored: ReadonlyMap<string, string> = new Map(),
+): ProviderSummary[] {
   const names = new Set([...Object.keys(BUILTIN_PROVIDERS), ...Object.keys(catalog.providers)]);
   return [...names].sort().map((name) => {
     const builtin = BUILTIN_PROVIDERS[name];
@@ -17,7 +21,9 @@ export function providerSummaries(catalog: UserProviderCatalog, env: Readonly<Re
       name,
       baseUrl,
       apiKeyEnv,
-      keySet: apiKeyEnv !== null && (env[apiKeyEnv] ?? '') !== '',
+      // Either source counts; the value itself is never part of the summary (ADR-177 ③).
+      keySet: (apiKeyEnv !== null && (env[apiKeyEnv] ?? '') !== '') || (stored.get(name) ?? '') !== '',
+      keySource: apiKeyEnv !== null && (env[apiKeyEnv] ?? '') !== '' ? 'env' : (stored.get(name) ?? '') !== '' ? 'file' : null,
       custom: builtin === undefined,
       protocol,
       complete: apiKeyEnv !== null && protocol !== null && models.length > 0 && (builtin !== undefined || baseUrl !== null),

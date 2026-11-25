@@ -93,7 +93,7 @@ test('a long CJK approval keeps its suffix and all choices reachable', async () 
 test('ordinary long dialogs keep the selected final choice and footer visible', async () => {
   const { renderer, renderOnce, captureCharFrame, dispose, flush } = await createTestRenderer({ width: 60, height: 24 });
   try {
-    const models = Array.from({ length: 9 }, (_, index) => ({ id: `provider/model-${String(index + 1)}`, efforts: [] }));
+    const models = Array.from({ length: 9 }, (_, index) => ({ id: `provider/model-${String(index + 1)}`, efforts: [], available: true, missingKey: null }));
     const current = { id: 'provider/model-9', effort: null };
     const view = openModelPanel(withModelList(initialView(), models, current));
     const screen = createScreen(renderer, THEME, { title: 't' });

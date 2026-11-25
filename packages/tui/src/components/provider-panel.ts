@@ -7,7 +7,9 @@ export function providerPanel(providers: readonly ProviderSummary[], index: numb
     key: 'providers', title: `服务商 ${String(providers.length)} · 回车编辑 · Esc 关闭`, tone: 'brand',
     children: [
       ...providers.map((provider, row) => {
-        const key = provider.apiKeyEnv === null ? '未设 apiKeyEnv' : provider.keySet ? `${provider.apiKeyEnv} 已设置` : `${provider.apiKeyEnv} 未设置`;
+        // The source is shown so a stale environment variable that overrides a saved key is visible.
+        const source = provider.keySource === 'env' ? '（来自环境变量）' : provider.keySource === 'file' ? '（来自保存的密钥）' : '';
+        const key = provider.apiKeyEnv === null ? '未设 apiKeyEnv' : provider.keySet ? `${provider.apiKeyEnv} 已设置${source}` : `${provider.apiKeyEnv} 未设置`;
         return choiceBlock(provider.name, truncate(`${provider.name} · ${provider.baseUrl ?? '内置端点'} · ${key}`, Math.max(8, width - 6)), {
           selected: row === index, token: 'textDim',
         });

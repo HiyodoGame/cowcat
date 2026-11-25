@@ -28,6 +28,7 @@ import { createSpanTranslator, initTelemetry, type TelemetryHandle } from '../ad
 import { FileLockPort, FileSnapshotPort, JsonlEventStore, randomIds, systemClock } from '../adapters/node.js';
 import { NodeFs } from '../adapters/fs.js';
 import { readUserProviderCatalog, writeUserProvider, writeUserProviderConfiguration } from '../adapters/providers.js';
+import { readCredentials, writeCredential } from '../adapters/credentials.js';
 import { NodePlatform } from '../adapters/platform.js';
 import { NodeProcess } from '../adapters/process.js';
 import { createSandboxExecutor } from '../adapters/sandbox/executor.js';
@@ -81,7 +82,7 @@ import {
   type ModelUsage,
 } from '../ports/index.js';
 import { ModelConfigError, createModelPort, selectModel, type ModelSelection } from './model.js';
-import { BUILTIN_PRESETS } from './presets.js';
+import { BUILTIN_PRESETS, BUILTIN_PROVIDERS } from './presets.js';
 import { providerSummaries, validateProviderConfiguration } from './provider-config.js';
 import { loadHostConfig, selectMcpServers, withHostRules } from './config.js';
 import { cowcatPaths, type CowcatPaths } from './paths.js';
@@ -271,6 +272,14 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
   const fs = options.fs ?? new NodeFs();
   const version = options.version ?? '0.0.0';
 
+  // The wizard's keys (ADR-177). Loaded once, updated by configureProvider; the environment still wins
+  // inside createModelPort, so this map is only the second source.
+  const storedKeys = new Map(await readCredentials(paths.credentialsFile));
+  const modelOptions = (provider: string) => ({
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    storedKey: storedKeys.get(provider) ?? null,
+  });
+
   // Trust is a statement about the workspace (ADR-028), so it is read here and applied
   // to the rules: without this, a repository's own `cowcat.json` could hand itself
   // permissions the user never granted.
@@ -417,7 +426,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
     if (visionCache === null) {
       const selection = selectModel({ ...config.model, preset: visionPresetId, effort: null });
       visionCache = {
-        port: createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch }),
+        port: createModelPort(selection, options.env, modelOptions(selection.provider)),
         model: selection.preset.model,
         // Anthropic-protocol presets refuse a request without max_tokens
         // (model-anthropic.ts); the vision preset's declared output limit is the
@@ -750,13 +759,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         const cached = modelCache.get(sessionId);
         if (cached !== undefined) return cached;
         const selected = selectModel(override);
-        const built = createModelPort(selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
+        const built = createModelPort(selected, options.env, modelOptions(selected.provider));
         const configured = { port: options.model ?? built, selection: selected };
         modelCache.set(sessionId, configured);
         return configured;
       }
       selection ??= selectModel(activeModelSettings);
-      model ??= createModelPort(selection, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
+      model ??= createModelPort(selection, options.env, modelOptions(selection.provider));
       return { port: model, selection };
     } catch (error) {
       if (error instanceof ModelConfigError) {
@@ -1269,7 +1278,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
      * hide which layer a field came from.
      */
     async listProviders() {
-      return { providers: providerSummaries(await readUserProviderCatalog(paths.userConfig), options.env) };
+      return { providers: providerSummaries(await readUserProviderCatalog(paths.userConfig), options.env, storedKeys) };
     },
 
     async setProvider(name: string, fields: { readonly baseUrl?: string; readonly apiKeyEnv?: string }) {
@@ -1283,11 +1292,21 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       if (rec.running !== null || rec.turnStarting || rec.reflecting) {
         throw new ProtocolHostError(`session ${sessionId} has a turn running`, ERROR_CODES.hostRefused, { sessionId });
       }
+      // The secret is checked for shape only, and its text never reaches an error (ADR-177 ③).
+      if (configuration.apiKey !== undefined && (configuration.apiKey.trim() === '' || /\s/.test(configuration.apiKey.trim()))) {
+        throw new ProtocolHostError('the API key must be one token without spaces', ERROR_CODES.hostRefused, { problem: 'invalid-api-key' });
+      }
       let validated: ReturnType<typeof validateProviderConfiguration>;
       try {
         validated = validateProviderConfiguration(activeModelSettings, configuration);
       } catch (error) {
         throw new ProtocolHostError(message(error), ERROR_CODES.hostRefused, { problem: 'invalid-provider-configuration' });
+      }
+      // Key first: if the file cannot be written, nothing else has changed yet.
+      if (configuration.apiKey !== undefined) {
+        const key = configuration.apiKey.trim();
+        await writeCredential(paths.credentialsFile, configuration.name, key);
+        storedKeys.set(configuration.name, key);
       }
       await writeUserProviderConfiguration(paths.userConfig, configuration.name, {
         provider: {
@@ -1303,10 +1322,13 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       model = options.model ?? null;
       modelCache.clear();
       if (configuration.activate) modelOverrides.set(sessionId, activeModelSettings);
-      const keySet = (options.env[configuration.apiKeyEnv] ?? '') !== '';
+      const fromEnv = (options.env[configuration.apiKeyEnv] ?? '') !== '';
+      const fromFile = (storedKeys.get(configuration.name) ?? '') !== '';
+      const keySet = fromEnv || fromFile;
+      const keySource = fromEnv ? 'env' : fromFile ? 'file' : null;
       if (configuration.activate && keySet && validated.selected !== null) {
         modelCache.set(sessionId, {
-          port: options.model ?? createModelPort(validated.selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch }),
+          port: options.model ?? createModelPort(validated.selected, options.env, modelOptions(validated.selected.provider)),
           selection: validated.selected,
         });
       }
@@ -1314,6 +1336,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
         saved: true as const,
         current: validated.selected === null ? null : { id: validated.selected.id, effort: validated.selected.effort },
         keySet,
+        keySource,
         requiresRestart: configuration.activate && !keySet,
       };
     },
@@ -1552,13 +1575,24 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       const settings = modelOverrides.get(rec.session.state.sessionId) ?? activeModelSettings;
       try {
         const current = selectModel(settings);
-        const ids = [...new Set([...Object.keys(BUILTIN_PRESETS), ...Object.keys(activeModelSettings.presets)])].sort();
+        // Vision bridges (ADR-138) are not chat models: selecting one makes every turn a
+        // vision-only turn, so they are not offered here.
+        const ids = [...new Set([...Object.keys(BUILTIN_PRESETS), ...Object.keys(activeModelSettings.presets)])]
+          .filter((id) => (activeModelSettings.presets[id] ?? BUILTIN_PRESETS[id])?.vision !== true)
+          .sort();
         return Promise.resolve({
           current: { id: current.id, effort: current.effort },
-          models: ids.map((id) => ({
-            id,
-            efforts: Object.keys(activeModelSettings.presets[id]?.efforts ?? BUILTIN_PRESETS[id]?.efforts ?? {}),
-          })),
+          models: ids.map((id) => {
+            const provider = id.split('/')[0] ?? id;
+            const envName = activeModelSettings.providers[provider]?.apiKeyEnv ?? BUILTIN_PROVIDERS[provider]?.apiKeyEnv ?? null;
+            const available = (envName !== null && (options.env[envName] ?? '') !== '') || (storedKeys.get(provider) ?? '') !== '';
+            return {
+              id,
+              efforts: Object.keys(activeModelSettings.presets[id]?.efforts ?? BUILTIN_PRESETS[id]?.efforts ?? {}),
+              available,
+              missingKey: available ? null : envName,
+            };
+          }),
         });
       } catch (error) {
         if (error instanceof ModelConfigError) {
@@ -1576,7 +1610,7 @@ export async function createHost(options: CreateHostOptions): Promise<CowcatHost
       const override = { ...activeModelSettings, preset, effort: effort ?? null };
       try {
         const selected = selectModel(override);
-        const built = createModelPort(selected, options.env, options.fetch === undefined ? {} : { fetch: options.fetch });
+        const built = createModelPort(selected, options.env, modelOptions(selected.provider));
         modelOverrides.set(sessionId, override);
         modelCache.set(sessionId, { port: options.model ?? built, selection: selected });
         return Promise.resolve({ current: { id: selected.id, effort: selected.effort } });

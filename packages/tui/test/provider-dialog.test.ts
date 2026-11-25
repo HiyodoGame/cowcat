@@ -31,6 +31,7 @@ test('a opens a complete provider wizard with an opaque backdrop and saves every
     await next();
     mockInput.typeText('http://localhost:11434/v1');
     await next();
+    await next(); // API key step: leave empty and use the environment variable
     for (let index = 0; index < 14; index += 1) mockInput.pressBackspace();
     mockInput.typeText('DEMO_API_KEY');
     await next();
@@ -108,7 +109,7 @@ test('a missing model opens setup and restores the draft after saving without au
     mockInput.typeText('hello local model');
     mockInput.pressEnter();
     await waitForFrame((frame) => frame.includes('先完成服务商配置'));
-    for (let step = 0; step < 4; step += 1) {
+    for (let step = 0; step < 5; step += 1) {
       mockInput.pressEnter();
       await flush();
     }

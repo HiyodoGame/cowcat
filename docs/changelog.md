@@ -1,5 +1,11 @@
 # CowCat changelog
 
+## 未发布
+
+- **向导内录入 API key（ADR-177）**：/providers 向导新增密钥输入步骤，密钥保存到 ~/.cowcat/credentials.json（POSIX 0600），环境变量优先；config.json、日志、事件与错误信息都不含密钥，/providers 显示来源（环境变量 / 保存的密钥）。
+- **模型选择器修复**：高亮与光标统一，回车执行的就是高亮那一行；只列出密钥可用的模型，视觉桥接模型 glm-4v-flash 不再出现在对话模型列表里。
+- **配置弹窗的输入框自己画光标**；窄布局下 /tasks 面板不再重复渲染；状态栏按优先级择取信息，窄屏优先保留连接、模式和新输出提示。
+
 ## 1.0.0-beta.6（2026-11-24）—— OpenTelemetry 3.x 安全升级与 Node 下限调整
 
 - **依赖与运行时下限（ADR-175）**：OpenTelemetry 统一升级到 3.x（`api 1.10`、`core/resources 3.1.1`、`sdk-trace 3.1.1`、`exporter-trace-otlp-http 0.301.2`），修复 GHSA-8988-4f7v-96qf；由于 OTel 3.x 的 `engines` 为 `>=22.15`，`run` / `serve` / `sessions list` / `doctor` 等 headless 命令的 Node 下限从 22 提到 22.15，TUI 的 26.4 门槛不变。

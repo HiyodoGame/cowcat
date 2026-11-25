@@ -51,15 +51,25 @@ export function modelDialog(
   models: readonly ModelSummary[],
   current: ModelSelectionSummary | null,
   query: string,
+  cursor: string | null = null,
 ): DialogSpec {
-  const visible = filterDialogRows(
-    models.map((model) => ({
-      label: model.id,
-      ...(model.efforts.length === 0 ? {} : { detail: `effort: ${model.efforts.join('/')}` }),
-      selected: model.id === current?.id,
-    })),
-    query,
-  );
+  // `models` arrives already ordered and filtered (modelMatches). The cursor — not the current
+  // model — is the highlighted row, because the cursor is what Enter runs. The current model
+  // keeps a '当前' mark.
+  const visible = models.map((model) => ({
+    label: model.id,
+    ...(model.efforts.length === 0 ? {} : { detail: `effort: ${model.efforts.join('/')}` }),
+    selected: model.id === cursor,
+    ...(model.id === current?.id ? { mark: '当前' } : {}),
+  }));
+  if (visible.length === 0) {
+    return {
+      title: '选择模型',
+      query,
+      groups: [{ title: '还没有可用的模型', rows: [{ label: '先用 /providers 配置服务商并设置 API key' }] }],
+      footer: [{ key: 'esc', label: '关闭' }],
+    };
+  }
   const groups = new Map<string, DialogRow[]>();
   for (const row of visible) {
     const provider = row.label.includes('/') ? row.label.slice(0, row.label.indexOf('/')) : row.label;

@@ -30,6 +30,8 @@ test('a built-in wizard selects a real model and confirms endpoint and key refer
   view = advanceProviderForm(view);
   assert.equal(view.providerForm?.step, 'baseUrl');
   view = advanceProviderForm(view);
+  assert.equal(view.providerForm?.step, 'apiKey');
+  view = advanceProviderForm(view);
   assert.equal(view.providerForm?.step, 'apiKeyEnv');
   view = advanceProviderForm(view);
   assert.equal(view.providerForm?.step, 'review');
@@ -48,7 +50,8 @@ test('a custom wizard collects every field required for a callable model', () =>
   view = advanceProviderForm(view);
   for (const [step, value, next] of [
     ['name', 'local', 'baseUrl'],
-    ['baseUrl', 'http://localhost:11434/v1', 'apiKeyEnv'],
+    ['baseUrl', 'http://localhost:11434/v1', 'apiKey'],
+    ['apiKey', '', 'apiKeyEnv'],
     ['apiKeyEnv', 'LOCAL_API_KEY', 'modelId'],
     ['modelId', 'qwen3-coder', 'context'],
     ['context', '128000', 'output'],
@@ -78,4 +81,43 @@ test('editing after filtering starts with the provider visible to the user', () 
   const filtered = withProviderQuery(openProviderPanel(withProviderList(initialView(), [other, ZAI])), 'zai');
   const view = advanceProviderForm(beginProviderForm(filtered));
   assert.equal(view.providerForm?.name, 'zai');
+});
+
+test('the API key step takes a pasted key masked, and the name step refuses one without echo', () => {
+  let view = setup();
+  view = advanceProviderForm(view);
+  view = advanceProviderForm(view);
+  view = advanceProviderForm(view);
+  assert.equal(view.providerForm?.step, 'apiKey');
+  const pasted = 'sk-test-0123456789abcdef';
+  view = advanceProviderForm({ ...view, providerForm: { ...formOf(view), value: 'sk-test 0123' } });
+  assert.equal(view.providerForm?.step, 'apiKey', 'a key with a space is not accepted');
+  assert.equal((formOf(view).error ?? '').includes('sk-test'), false, 'the rejected text is not echoed');
+  view = advanceProviderForm({ ...view, providerForm: { ...formOf(view), value: pasted } });
+  assert.equal(view.providerForm?.step, 'apiKeyEnv');
+  assert.equal(formOf(view).apiKey, pasted, 'the key is kept in the form for saving');
+  assert.equal(formOf(view).value, formOf(view).apiKeyEnv, 'the env name step is prefilled with the template default');
+  // A key pasted into the name step is refused, and not echoed.
+  view = advanceProviderForm({ ...view, providerForm: { ...formOf(view), value: pasted } });
+  assert.equal(view.providerForm?.step, 'apiKeyEnv', 'the name step does not advance on a key value');
+  assert.match(formOf(view).error ?? '', /环境变量名/);
+  assert.equal((formOf(view).error ?? '').includes(pasted), false, 'the rejected value is not echoed back');
+  view = advanceProviderForm({ ...view, providerForm: { ...formOf(view), value: 'DEEPSEEK_API_KEY' } });
+  assert.equal(view.providerForm?.step, 'review');
+});
+
+test('the secret is masked in the dialog input and shows only its last four characters', async () => {
+  const { maskSecret, providerFormDialog } = await import('../src/components/provider-form.js');
+  assert.equal(maskSecret(''), '');
+  assert.equal(maskSecret('abc'), '•••', 'short input reveals nothing');
+  const masked = maskSecret('sk-0123456789abcdef');
+  assert.equal(masked.endsWith('cdef'), true);
+  assert.equal(masked.includes('0123456789ab'), false);
+  let view = setup();
+  for (let step = 0; step < 3; step += 1) view = advanceProviderForm(view);
+  view = advanceProviderForm({ ...view, providerForm: { ...formOf(view), value: 'sk-0123456789abcdef' } });
+  view = { ...view, providerForm: { ...formOf(view), step: 'apiKey', value: 'sk-0123456789abcdef' } };
+  const dialog = providerFormDialog(formOf(view));
+  assert.equal(dialog.input?.value.includes('sk-0123'), false, 'the dialog never renders the key prefix');
+  assert.equal(dialog.input?.value.endsWith('cdef'), true);
 });

@@ -365,7 +365,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         if (dialogOpen && !key.ctrl && !key.meta && key.name !== 'escape' && key.name !== 'up' && key.name !== 'down' && key.name !== 'return') {
           key.preventDefault();
           const form = view.current.providerForm;
-          const formText = form !== null && ['name', 'baseUrl', 'apiKeyEnv', 'modelId', 'context', 'output'].includes(form.step);
+          const formText = form !== null && ['name', 'baseUrl', 'apiKey', 'apiKeyEnv', 'modelId', 'context', 'output'].includes(form.step);
           if (formText) {
             if (key.name === 'backspace') view.current = setProviderFormValue(view.current, form.value.slice(0, -1));
             else if (key.name.length === 1) view.current = setProviderFormValue(view.current, form.value + key.sequence);
@@ -1383,7 +1383,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           if (picked.preset !== null) applyModel(picked.preset, picked.effort);
         } else {
           const entered = enterModelPanel(view.current);
-          view.current = entered.view;
+          view.current = entered.refused === undefined ? entered.view : addNotice(entered.view, 'error', entered.refused);
           if (entered.picked !== null) applyModel(entered.picked, null);
         }
         draw();

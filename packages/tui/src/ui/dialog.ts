@@ -66,7 +66,8 @@ export function createDialog(renderer: CliRenderer, theme: Theme, parent: BoxRen
       const searching = spec.query !== undefined || spec.input !== undefined;
       search.visible = searching;
       const value = spec.input?.value ?? spec.query ?? '';
-      search.content = value === '' ? (spec.input?.placeholder ?? '输入以筛选') : value;
+      // A dialog input owns its own caret: the terminal cursor sits in the composer, so draw one here.
+      search.content = value === '' ? (spec.input?.placeholder ?? '输入以筛选') : spec.input === undefined ? value : `${value}▏`;
       search.fg = resolveToken(theme, value === '' ? 'textDim' : 'text');
       footer.content = spec.footer.map((entry) => `${entry.label} ${entry.key}`).join('   ');
       error.visible = spec.error !== undefined;

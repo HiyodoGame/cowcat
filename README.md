@@ -13,7 +13,7 @@ CowCat 是一个事件溯源的终端编程 Agent：会话日志只追加、回�
 - **可回放的 Agent 内核**：事件溯源会话、工具审批、权限授予、Plan / 接受编辑模式。
 - **完整的开发工具**：Read / Write / Edit / Bash / Glob / Grep、后台任务、子代理、Cron、Git worktree。
 - **配置与恢复**：模型和服务商向导、会话恢复、上下文压缩、断线重连、Write/Edit undo/redo。
-- **密钥留在本机**：只从环境变量读取 API Key，不写日志、不进配置模板。
+- **密钥留在本机**：API Key 可以在向导里直接粘贴，保存到 `~/.cowcat/credentials.json`（POSIX 上权限 0600）；环境变量优先。密钥不写入配置文件、日志或会话记录。
 
 ## 运行要求
 
@@ -41,7 +41,7 @@ cowcat setup --preset anthropic/claude-sonnet-5-5
 export ANTHROPIC_API_KEY=...
 ```
 
-也可以在 TUI 中使用 `/model` 和 `/providers` 完成服务商与模型配置。密钥只通过环境变量提供。
+也可以在 TUI 中使用 `/model` 和 `/providers` 完成服务商与模型配置。API Key 可以在向导里粘贴保存，也可以通过环境变量提供；两者都有时以环境变量为准。
 
 从 v1 升级：
 

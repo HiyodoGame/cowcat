@@ -1,6 +1,16 @@
 import type { DialogSpec } from '../app/dialog.js';
 import type { ProviderForm } from '../app/provider-form.js';
 
+/**
+ * What the input shows for a secret (ADR-177 ③): dots, and the last four characters once the
+ * key is long enough that four characters reveal nothing useful. Short input is all dots.
+ */
+export function maskSecret(value: string): string {
+  if (value === '') return '';
+  if (value.length <= 8) return '•'.repeat(value.length);
+  return `${'•'.repeat(Math.min(value.length - 4, 24))}${value.slice(-4)}`;
+}
+
 export function providerFormDialog(form: ProviderForm): DialogSpec {
   const error = form.error === null ? {} : { error: form.error };
   if (form.step === 'template') {
@@ -53,7 +63,8 @@ export function providerFormDialog(form: ProviderForm): DialogSpec {
           { label: '服务商', detail: form.name },
           { label: '协议', detail: form.protocol },
           { label: 'Base URL', detail: form.baseUrl ?? 'SDK 默认端点' },
-          { label: 'API key 环境变量', detail: form.apiKeyEnv },
+          { label: 'API key', detail: apiKeyStatus(form) },
+          { label: '环境变量名', detail: form.apiKeyEnv },
           { label: '模型', detail: form.preset },
           { label: '上下文限额', detail: form.context === '' ? '未声明' : form.context },
           { label: '输出限额', detail: form.output === '' ? '未声明' : form.output },
@@ -68,7 +79,8 @@ export function providerFormDialog(form: ProviderForm): DialogSpec {
   const labels = {
     name: ['服务商 ID', '例如 local'],
     baseUrl: ['Base URL', form.custom ? '例如 http://localhost:11434/v1' : '留空使用内置端点'],
-    apiKeyEnv: ['API key 环境变量名', '例如 ZHIPU_API_KEY（密钥本身走环境变量）'],
+    apiKey: ['API key', '粘贴密钥本身；输入不会明文显示，留空则使用环境变量'],
+    apiKeyEnv: ['环境变量名', '例如 DEEPSEEK_API_KEY；设置了这个变量时它优先于保存的密钥'],
     modelId: ['实际模型 ID', '例如 qwen3-coder'],
     context: ['上下文限额', '可选，例如 128000；留空表示未知'],
     output: ['输出限额', form.protocol === 'anthropic' ? '必填，例如 8192' : '可选，例如 8192'],
@@ -76,9 +88,15 @@ export function providerFormDialog(form: ProviderForm): DialogSpec {
   const [label, placeholder] = labels[form.step];
   return {
     title: `${form.name === '' ? '自定义服务商' : form.name} · ${label}`,
-    input: { placeholder, value: form.value },
+    input: { placeholder, value: form.step === 'apiKey' ? maskSecret(form.value) : form.value },
     groups: [],
     footer: [{ key: 'enter', label: '下一步' }, { key: 'esc', label: '上一步' }],
     ...error,
   };
+}
+
+/** The review row for the key: where it comes from, never the key itself beyond its last four characters. */
+function apiKeyStatus(form: ProviderForm): string {
+  if (form.apiKey !== '') return `已输入 ${maskSecret(form.apiKey)}（保存到凭据文件）`;
+  return `未输入，使用环境变量 ${form.apiKeyEnv}`;
 }

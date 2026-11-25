@@ -132,6 +132,7 @@ export const PARAMS = {
     protocol: z.enum(['openai', 'anthropic']),
     baseUrl: z.string().min(1).nullable(),
     apiKeyEnv: z.string().min(1),
+    apiKey: z.string().min(1).optional(),
     preset: z.string().min(1),
     activate: z.boolean(),
     definition: z.strictObject({
@@ -233,6 +234,8 @@ export interface ResultTable {
     readonly saved: true;
     readonly current: ModelSelectionSummary | null;
     readonly keySet: boolean;
+    /** Where the key the provider will use comes from; never the key itself (ADR-177). */
+    readonly keySource: 'env' | 'file' | null;
     readonly requiresRestart: boolean;
   };
   /** The startup snapshot (ADR-157 ②): what trusting this workspace would unlock. */
@@ -260,7 +263,13 @@ export interface ProviderConfiguration {
   readonly name: string;
   readonly protocol: ProviderProtocol;
   readonly baseUrl: string | null;
+  /** The environment variable NAME the key is read from (ADR-063). Always present. */
   readonly apiKeyEnv: string;
+  /**
+   * The key itself, typed into the wizard (ADR-177). Write-only: the host stores it in the
+   * credentials file and never echoes it back, logs it, or puts it in an error.
+   */
+  readonly apiKey?: string | undefined;
   readonly preset: string;
   readonly activate: boolean;
   readonly definition?: ProviderModelDefinition;
@@ -271,8 +280,10 @@ export interface ProviderSummary {
   readonly name: string;
   readonly baseUrl: string | null;
   readonly apiKeyEnv: string | null;
-  /** Whether the named environment variable is set in the HOST's environment. */
+  /** Whether a key is available at all: the environment variable or the saved file (ADR-177). */
   readonly keySet: boolean;
+  /** Which source that key comes from, so a stale environment variable is visible. */
+  readonly keySource?: 'env' | 'file' | null;
   readonly custom: boolean;
   readonly protocol: ProviderProtocol | null;
   readonly complete: boolean;
@@ -302,6 +313,10 @@ export interface GrantSummary {
 export interface ModelSummary {
   readonly id: string;
   readonly efforts: readonly string[];
+  /** Whether this preset can be selected now: its key is available (env or saved file). */
+  readonly available: boolean;
+  /** The environment variable name to set when `available` is false; null when none is needed. */
+  readonly missingKey: string | null;
 }
 
 export interface ModelSelectionSummary {

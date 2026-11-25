@@ -1,7 +1,7 @@
 import { COMMANDS, paletteMatches, slashMatches } from '../app/commands.js';
 import { atQuery, rankAtCandidates } from '../app/atcomplete.js';
 import { copyFor, type Copy } from '../app/copy.js';
-import { historyMatches, runningAgents, type TuiView } from '../app/view.js';
+import { historyMatches, modelMatches, runningAgents, type TuiView } from '../app/view.js';
 import type { ScreenSpec } from '../ui/screen.js';
 import { agentPanel } from './agent-panel.js';
 import { todoPanel } from './todo-panel.js';
@@ -46,7 +46,9 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   if (view.taskPanel !== null) dock.push(taskPanel(view.tasks, view.taskPanel.index, options.width, options.now));
   if ((options.activityRail ?? options.rails) === false) {
     if (view.todosVisible && view.todos.length > 0) dock.push(todoPanel(view.todos, options.width));
-    if (view.tasks.length > 0) dock.push(taskPanel(view.tasks, 0, options.width, options.now));
+    // The inline list is the narrow-layout stand-in for the task panel; an open /tasks panel
+    // already draws the same rows with its cursor, so both at once would show the list twice.
+    if (view.tasks.length > 0 && view.taskPanel === null) dock.push(taskPanel(view.tasks, 0, options.width, options.now));
     const agents = runningAgents(view);
     if (agents.length > 0) dock.push(agentPanel(agents, options.width, options.now));
   }
@@ -61,7 +63,7 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   const dialog = view.providerForm !== null
     ? providerFormDialog(view.providerForm)
     : view.modelPanel !== null
-      ? modelDialog(view.modelList, view.modelCurrent, view.modelPanel.query)
+      ? modelDialog(modelMatches(view), view.modelCurrent, view.modelPanel.query, modelMatches(view)[view.modelPanel.index]?.id ?? null)
       : view.providerPanel !== null
         ? view.providerEdit !== null ? providerEditDialog(view) : providerDialog(view.providerList, view.providerPanel.query)
         : undefined;
