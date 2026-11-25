@@ -1189,10 +1189,14 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         const model = view.current.modelList.find((entry) => entry.id === current.id);
         if (model === undefined) {
           view.current = addNotice(view.current, 'warn', '还没有可调档位的模型：先用 /model 选一个。');
+        } else if (model.efforts.length === 0) {
+          // No rows to show is not a dialog: say so and leave the picker closed.
+          view.current = closeModelPanel(addNotice(view.current, 'info', `${model.id} 没有声明思考档位。`));
         } else {
           const panel = view.current.modelPanel;
           if (panel === null) return;
-          view.current = { ...view.current, modelPanel: { index: 0, preset: current.id, query: panel.query } };
+          const start = Math.max(0, model.efforts.indexOf(current.effort ?? ''));
+          view.current = { ...view.current, modelPanel: { index: current.effort === null ? 0 : start, preset: current.id, query: panel.query } };
         }
         draw();
       } catch (error) {

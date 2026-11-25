@@ -2,6 +2,7 @@ import { COMMANDS, paletteMatches, slashMatches } from '../app/commands.js';
 import { atQuery, rankAtCandidates } from '../app/atcomplete.js';
 import { copyFor, type Copy } from '../app/copy.js';
 import { historyMatches, modelMatches, runningAgents, type TuiView } from '../app/view.js';
+import { effortDialog } from '../app/dialog.js';
 import type { ScreenSpec } from '../ui/screen.js';
 import { agentPanel } from './agent-panel.js';
 import { todoPanel } from './todo-panel.js';
@@ -30,6 +31,18 @@ export interface FrameOptions {
   readonly cwd?: string;
   readonly rails?: boolean;
   readonly activityRail?: boolean;
+}
+
+/** The picker has two phases (ADR-161): models, then the locked preset's efforts. */
+function modelPickerDialog(view: TuiView): import('../app/dialog.js').DialogSpec | undefined {
+  const panel = view.modelPanel;
+  if (panel === null) return undefined;
+  if (panel.preset !== null) {
+    const efforts = view.modelList.find((model) => model.id === panel.preset)?.efforts ?? [];
+    return effortDialog(panel.preset, efforts, panel.index, view.modelCurrent);
+  }
+  const rows = modelMatches(view);
+  return modelDialog(rows, view.modelCurrent, panel.query, rows[panel.index]?.id ?? null);
 }
 
 export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
@@ -63,7 +76,7 @@ export function frameOf(view: TuiView, options: FrameOptions): ScreenSpec {
   const dialog = view.providerForm !== null
     ? providerFormDialog(view.providerForm)
     : view.modelPanel !== null
-      ? modelDialog(modelMatches(view), view.modelCurrent, view.modelPanel.query, modelMatches(view)[view.modelPanel.index]?.id ?? null)
+      ? modelPickerDialog(view)
       : view.providerPanel !== null
         ? view.providerEdit !== null ? providerEditDialog(view) : providerDialog(view.providerList, view.providerPanel.query)
         : undefined;

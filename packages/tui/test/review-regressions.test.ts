@@ -103,7 +103,7 @@ test('ordinary long dialogs keep the selected final choice and footer visible', 
     await renderOnce();
     const frame = captureCharFrame();
     assert.match(frame, /provider\/model-9/);
-    assert.match(frame, /切换 enter/);
+    assert.match(frame, /Enter 切换 · Esc 关闭/, 'key hints sit on the bottom border, key first like the dock panels');
   } finally {
     await dispose();
   }

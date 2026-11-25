@@ -47,6 +47,27 @@ export function filterDialogRows<T extends DialogRow>(rows: readonly T[], query:
 }
 
 /** Group models by their provider prefix, current selection first (the Select model shape). */
+/** Phase two of the model picker (ADR-161): the reasoning efforts of a locked preset. */
+export function effortDialog(
+  preset: string,
+  efforts: readonly string[],
+  index: number,
+  current: ModelSelectionSummary | null,
+): DialogSpec {
+  return {
+    title: `${preset} · 选择推理力度`,
+    groups: [{
+      title: '档位',
+      rows: efforts.map((effort, offset) => ({
+        label: effort,
+        selected: offset === index,
+        ...(current?.id === preset && current.effort === effort ? { mark: '当前' } : {}),
+      })),
+    }],
+    footer: [{ key: 'enter', label: '切换' }, { key: 'esc', label: '返回' }],
+  };
+}
+
 export function modelDialog(
   models: readonly ModelSummary[],
   current: ModelSelectionSummary | null,
@@ -82,25 +103,6 @@ export function modelDialog(
     query,
     groups: [...groups.entries()].map(([title, rows]) => ({ title, rows })),
     footer: [{ key: 'enter', label: '切换' }, { key: 'esc', label: '关闭' }],
-  };
-}
-
-/** One group: the current model's reasoning levels (the /effort shortcut). */
-export function effortDialog(
-  models: readonly ModelSummary[],
-  current: ModelSelectionSummary,
-  index: number,
-): DialogSpec {
-  const model = models.find((entry) => entry.id === current.id);
-  const rows = (model?.efforts ?? []).map((effort, row) => ({
-    label: effort,
-    selected: row === index,
-    ...(current.effort === effort ? { mark: '●' } : {}),
-  }));
-  return {
-    title: `思考档位 · ${current.id}`,
-    groups: rows.length === 0 ? [{ title: null, rows: [{ label: '该模型没有可调档位', selected: true }] }] : [{ title: null, rows }],
-    footer: [{ key: 'enter', label: '确认' }, { key: 'esc', label: '关闭' }],
   };
 }
 

@@ -934,7 +934,10 @@ export function enterModelPanel(view: TuiView): { readonly view: TuiView; readon
     // `pickModelEffort` — this function only descends.
     return { view, picked: null };
   }
-  return { view: { ...view, modelPanel: { index: 0, preset: model.id, query: panel.query } }, picked: null };
+  // Start the cursor on the effort in use, so 'current' and the highlight agree on entry.
+  const currentEffort = view.modelCurrent?.id === model.id ? view.modelCurrent.effort : null;
+  const start = currentEffort === null ? 0 : Math.max(0, model.efforts.indexOf(currentEffort));
+  return { view: { ...view, modelPanel: { index: start, preset: model.id, query: panel.query } }, picked: null };
 }
 
 /** Enter on phase two: the effort for the locked preset. */

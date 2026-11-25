@@ -74,3 +74,21 @@ test('the picker offers only models whose key is set, and Enter runs the row the
   assert.equal(entered.picked, 'deepseek/deepseek-flash', 'the only offered row is the one that runs');
   assert.equal(moveModelPanel(view, 1, 1).modelPanel?.index, 0, 'the cursor stays inside the offered rows');
 });
+
+test('phase two of the picker shows the locked preset’s efforts and Enter runs the highlighted one', async () => {
+  const { openModelPanel, withModelList, initialView, enterModelPanel, pickModelEffort } = await import('../src/app/view.js');
+  const { frameOf } = await import('../src/components/session-frame.js');
+  const models = [{ id: 'zai/glm-5.3', efforts: ['low', 'high', 'max'], available: true, missingKey: null }];
+  const view = openModelPanel(withModelList(initialView(), models, { id: 'zai/glm-5.3', effort: 'high' }));
+  const entered = enterModelPanel(view);
+  assert.equal(entered.view.modelPanel?.preset, 'zai/glm-5.3', 'a model with efforts descends into phase two');
+  assert.equal(entered.view.modelPanel?.index, 1, 'phase two starts on the effort in use');
+  const dialog = frameOf(entered.view, { width: 80, now: 0 }).dialog;
+  const labels = dialog?.groups.flatMap((group) => group.rows.map((row) => row.label)) ?? [];
+  assert.deepEqual(labels, ['low', 'high', 'max'], 'the dialog shows efforts, not the model list');
+  const highlighted = dialog?.groups.flatMap((group) => group.rows).findIndex((row) => row.selected === true);
+  assert.equal(highlighted, 1, 'the highlight is on the cursor');
+  const picked = pickModelEffort(entered.view);
+  assert.equal(picked.preset, 'zai/glm-5.3');
+  assert.equal(picked.effort, 'high', 'Enter runs the effort under the cursor');
+});

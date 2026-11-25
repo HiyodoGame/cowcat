@@ -66,6 +66,10 @@ export const BUILTIN_PROVIDERS: Readonly<Record<string, BuiltinProvider>> = {
 };
 
 /**
+ * Only families whose reasoning extension is documented carry `efforts` (ADR-046 ④; research
+ * p4 §7.2). zai, moonshotai, volcengine and the rest are unverified upstream, so they declare
+ * none and a requested level is reported and skipped instead of being guessed onto the wire.
+ *
  * `provider/model-id` → the preset the kernel calls. The key is what a config's
  * `model.preset` names, so it is also the id a user sees in an error message.
  */
@@ -75,12 +79,25 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
     model: 'claude-sonnet-5-5',
     limits: { output: 128000, context: 1000000 },
     toolCalls: true,
+    // ADR-046 / research p4 B-2: Anthropic's thinking budget is the wire form of a depth
+    // level; the SDK documents budget_tokens as >=1024 and < max_tokens, which the adapter
+    // asserts. Three levels keep the picker honest without inventing a fourth.
+    efforts: {
+      low: { thinking: { type: 'enabled', budget_tokens: 4096 } },
+      medium: { thinking: { type: 'enabled', budget_tokens: 16384 } },
+      high: { thinking: { type: 'enabled', budget_tokens: 32768 } },
+    },
   },
   'anthropic/claude-opus-5-5': {
     protocol: 'anthropic',
     model: 'claude-opus-5-5',
     limits: { output: 128000, context: 1000000 },
     toolCalls: true,
+    efforts: {
+      low: { thinking: { type: 'enabled', budget_tokens: 4096 } },
+      medium: { thinking: { type: 'enabled', budget_tokens: 16384 } },
+      high: { thinking: { type: 'enabled', budget_tokens: 32768 } },
+    },
   },
   'openai/gpt-6.1-sol': {
     protocol: 'openai',
@@ -93,6 +110,13 @@ export const BUILTIN_PRESETS: Readonly<Record<string, ModelPreset>> = {
     model: 'deepseek-flash',
     limits: { output: 393216, context: 1000000 },
     toolCalls: true,
+    // research p4 B-4: DeepSeek's OpenAI-compatible endpoint carries reasoning_effort as a
+    // vendor extension. The three values are the OpenAI-compatible spelling DeepSeek mirrors.
+    efforts: {
+      low: { reasoning_effort: 'low' },
+      medium: { reasoning_effort: 'medium' },
+      high: { reasoning_effort: 'high' },
+    },
   },
   'moonshotai/kimi-k3': {
     protocol: 'openai',
