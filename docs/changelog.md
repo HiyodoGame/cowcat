@@ -4,6 +4,8 @@
 
 - **依赖与运行时下限（ADR-175）**：OpenTelemetry 统一升级到 3.x（`api 1.10`、`core/resources 3.1.1`、`sdk-trace 3.1.1`、`exporter-trace-otlp-http 0.301.2`），修复 GHSA-8988-4f7v-96qf；由于 OTel 3.x 的 `engines` 为 `>=22.15`，`run` / `serve` / `sessions list` / `doctor` 等 headless 命令的 Node 下限从 22 提到 22.15，TUI 的 26.4 门槛不变。
 
+- **npm `latest` 切换（ADR-176）**：`@corescense/cowcat` 的 `latest` 由 v1 `0.15.0` 指向 `1.0.0-beta.6`，与三个 support 包一致；beta-checklist §7 的门槛未取消，仍需逐条执行。
+
 ## 1.0.0-beta.5（2026-10-29）—— 原生工作台、Braille 点阵猫与产品化收口
 
 - **固定侧栏与灰阶点阵猫（ADR-173/174）**：待办、子代理、后台任务、信息与变更区始终渲染并带空态和原生细边框，面板按内容自然增高，长列表按高度截断；完整三栏要求 160 列×32 行。猫咪使用 64×40 灰阶点阵，以 32×10 Braille 终端单元绘制，水平居中、底部对齐，保留对称圆角轮廓、白色面罩、小鼻点和六种眼神，不再显示文字标签或象限实块。右侧短字段紧凑显示，长路径按段换行；完全空会话增加引导，输入提示补充 Shift+Enter 换行。

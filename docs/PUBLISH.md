@@ -73,7 +73,7 @@ npm dist-tag add "@corescense/cowcat-core@$TAG"     latest --registry=https://re
 npm dist-tag add "@corescense/cowcat-tui@$TAG"      latest --registry=https://registry.npmjs.org
 ```
 
-> `@corescense/cowcat`（CLI）的 `latest` **不要**动：它仍指 v1 `0.15.0`，切换门槛见 `beta-checklist.md` §7。
+> `@corescense/cowcat`（CLI）的 `latest` 自 2026-11-24 起指向 `1.0.0-beta.6`（ADR-176，提前于 `beta-checklist.md` §7 门槛）。后续批次发布 beta 时不要无意把 `latest` 留在旧版本；回退 v1 用 `npm dist-tag add "@corescense/cowcat@0.15.0" latest --registry=https://registry.npmjs.org`。
 
 > `pack-release.mjs` 的暂存目录默认会清理；发布批次请显式传 `--out`，再手动进入每个暂存目录发布。
 
