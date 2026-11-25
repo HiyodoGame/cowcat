@@ -882,8 +882,21 @@ export function openModelPanel(view: TuiView): TuiView {
 }
 
 /** The same filtered models that the dialog renders and Enter selects. */
+/**
+ * The rows the picker offers, in the order it shows them: only models whose key is set, grouped
+ * by provider. This ONE list drives both the drawing and the Enter key, so the row under the
+ * cursor is always the row that runs (a second ordering here is how the cursor and the
+ * highlight came apart).
+ */
 export function modelMatches(view: TuiView): readonly ModelSummary[] {
-  return filterDialogRows(view.modelList.map((model) => ({
+  const usable = view.modelList.filter((model) => model.available);
+  const groups = new Map<string, ModelSummary[]>();
+  for (const model of usable) {
+    const provider = model.id.includes('/') ? model.id.slice(0, model.id.indexOf('/')) : model.id;
+    groups.set(provider, [...(groups.get(provider) ?? []), model]);
+  }
+  const ordered = [...groups.values()].flat();
+  return filterDialogRows(ordered.map((model) => ({
     ...model,
     label: model.id,
     ...(model.efforts.length === 0 ? {} : { detail: `effort: ${model.efforts.join('/')}` }),
@@ -908,18 +921,23 @@ export function moveModelPanel(view: TuiView, delta: number, count: number): Tui
 }
 
 /** Enter on phase one: a preset with efforts descends into phase two; bare ones pick directly. */
-export function enterModelPanel(view: TuiView): { readonly view: TuiView; readonly picked: string | null } {
+export function enterModelPanel(view: TuiView): { readonly view: TuiView; readonly picked: string | null; readonly refused?: string } {
   const panel = view.modelPanel;
   if (panel === null) return { view, picked: null };
   const model = modelMatches(view)[panel.index];
   if (model === undefined) return { view, picked: null };
+  // A model whose key is not set cannot run: refuse here, with the variable to set, instead of
+  // letting the host refuse the switch with a bare environment message.
   if (model.efforts.length === 0) return { view: closeModelPanel(view), picked: model.id };
   if (panel.preset === model.id) {
     // Already in phase two for this preset: Enter there means the effort row, handled by
     // `pickModelEffort` — this function only descends.
     return { view, picked: null };
   }
-  return { view: { ...view, modelPanel: { index: 0, preset: model.id, query: panel.query } }, picked: null };
+  // Start the cursor on the effort in use, so 'current' and the highlight agree on entry.
+  const currentEffort = view.modelCurrent?.id === model.id ? view.modelCurrent.effort : null;
+  const start = currentEffort === null ? 0 : Math.max(0, model.efforts.indexOf(currentEffort));
+  return { view: { ...view, modelPanel: { index: start, preset: model.id, query: panel.query } }, picked: null };
 }
 
 /** Enter on phase two: the effort for the locked preset. */

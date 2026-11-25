@@ -16,7 +16,7 @@ export function modelPanel(models: readonly ModelSummary[], index: number, curre
       selected: start + offset === index, token: 'textDim',
     })));
   } else {
-    children.push(...models.slice(start, start + WINDOW).map((model, offset) => choiceBlock(model.id, truncate(`${model.id}${current?.id === model.id ? '（当前）' : ''}${model.efforts.length === 0 ? '' : ` · effort: ${model.efforts.join('/')}`}`, Math.max(8, width - 6)), {
+    children.push(...models.slice(start, start + WINDOW).map((model, offset) => choiceBlock(model.id, truncate(`${model.id}${current?.id === model.id ? '（当前）' : ''}${!model.available ? `  · 需要 ${model.missingKey ?? '密钥'}` : ''}${model.efforts.length === 0 ? '' : ` · effort: ${model.efforts.join('/')}`}`, Math.max(8, width - 6)), {
       selected: start + offset === index, token: 'textDim',
     })));
   }

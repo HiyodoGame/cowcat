@@ -94,7 +94,7 @@ export class ScriptedHost implements ProtocolHost {
 
   listModels(sessionId: string) {
     const current = this.modelSelections.get(sessionId) ?? { id: 'anthropic/claude-sonnet-5-5', effort: null };
-    return Promise.resolve({ current, models: [{ id: current.id, efforts: [] }] });
+    return Promise.resolve({ current, models: [{ id: current.id, efforts: [], available: true, missingKey: null }] });
   }
 
   setModel(sessionId: string, preset: string, effort?: string | null) {
@@ -202,7 +202,7 @@ export class ScriptedHost implements ProtocolHost {
 
   configureProvider(sessionId: string, configuration: ProviderConfiguration) {
     this.configuredProviders.push({ sessionId, configuration });
-    return Promise.resolve({ saved: true as const, current: { id: configuration.preset, effort: null }, keySet: true, requiresRestart: false });
+    return Promise.resolve({ saved: true as const, current: { id: configuration.preset, effort: null }, keySet: true, keySource: 'env' as const, requiresRestart: false });
   }
 
   /** What `trust.status` reports (ADR-157): the startup snapshot, scriptable per test. */

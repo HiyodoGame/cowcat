@@ -9,7 +9,7 @@ import {
   type CliRenderer,
   type TextChunk,
 } from '@opentui/core';
-import { colorOf, type Theme, type TokenName } from '../theme/tokens.js';
+import { BRAND, colorOf, type Theme, type TokenName } from '../theme/tokens.js';
 import { heightOf, type SceneNode, type SpriteNode, type StatusNode } from './scene.js';
 import type { Line } from './line.js';
 import { mountScrollText } from './scroll-text.js';
@@ -171,7 +171,7 @@ export function mountScene(context: SceneContext, parent: BoxRenderable, node: S
       const update = (next: typeof node): void => {
         root.backgroundColor = next.selected ? resolveToken(context.theme, 'act') : undefined;
         text.content = ` ${next.text}`;
-        text.fg = next.selected ? RGBA.fromHex('#141419') : resolveToken(context.theme, next.token);
+        text.fg = next.selected ? RGBA.fromHex(BRAND.ink) : resolveToken(context.theme, next.token);
         text.attributes = next.selected ? BOLD : TextAttributes.NONE;
         hit(next.hit);
       };

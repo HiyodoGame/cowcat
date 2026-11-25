@@ -107,6 +107,7 @@ export interface ProtocolHost {
     readonly saved: true;
     readonly current: ModelSelectionSummary | null;
     readonly keySet: boolean;
+    readonly keySource: 'env' | 'file' | null;
     readonly requiresRestart: boolean;
   }>;
   /**

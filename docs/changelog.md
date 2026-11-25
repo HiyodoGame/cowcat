@@ -1,5 +1,14 @@
 # CowCat changelog
 
+## 未发布
+
+- **向导内录入 API key（ADR-177）**：/providers 向导新增密钥输入步骤，密钥保存到 ~/.cowcat/credentials.json（POSIX 0600），环境变量优先；config.json、日志、事件与错误信息都不含密钥，/providers 显示来源（环境变量 / 保存的密钥）。
+- **模型选择器修复**：高亮与光标统一，回车执行的就是高亮那一行；只列出密钥可用的模型，视觉桥接模型 glm-4v-flash 不再出现在对话模型列表里。
+- **内置思考档位**：Anthropic 的 sonnet/opus 声明 low/medium/high（thinking budget 4k/16k/32k），DeepSeek flash 声明 `reasoning_effort` 三档；其余服务商因上游未核实保持不声明（ADR-046 ④）。
+- **思考档位选择修复**：`/model` 第二阶段此前把推理力度渲染成了模型列表，高亮与实际执行的行不对应；现在按 ADR-161 显示锁定模型的档位、进入时停在当前档位，回车执行高亮项。`/effort` 对没有声明档位的模型不再打开空弹窗，改为一行说明。
+- **配置弹窗与会话同一套渲染（ADR-178）**：弹窗底色跟随终端主题（浅色用纸白、深色用近黑），背板同色系压暗以恢复层级，标题、分组标签与按键提示按会话语言统一；输入框使用与主输入框相同的边框盒，并自绘光标。
+- **配置弹窗的输入框自己画光标**；窄布局下 /tasks 面板不再重复渲染；状态栏按优先级择取信息，窄屏优先保留连接、模式和新输出提示。
+
 ## 1.0.0-beta.6（2026-11-24）—— OpenTelemetry 3.x 安全升级与 Node 下限调整
 
 - **依赖与运行时下限（ADR-175）**：OpenTelemetry 统一升级到 3.x（`api 1.10`、`core/resources 3.1.1`、`sdk-trace 3.1.1`、`exporter-trace-otlp-http 0.301.2`），修复 GHSA-8988-4f7v-96qf；由于 OTel 3.x 的 `engines` 为 `>=22.15`，`run` / `serve` / `sessions list` / `doctor` 等 headless 命令的 Node 下限从 22 提到 22.15，TUI 的 26.4 门槛不变。

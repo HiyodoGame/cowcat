@@ -283,3 +283,13 @@ test('slash hints and image sizing stay intact', () => {
   assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: null, height: null }), { cols: 24, rows: 8 });
   assert.deepEqual(imageBox({ cols: 44, maxRows: 12, width: 4, height: 4 }), { cols: 4, rows: 2 });
 });
+
+test('a narrow status row keeps the disconnect and mode facts before cumulative usage', () => {
+  const view: TuiView = { ...initialView(), closed: true, usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, usageTotals: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 } };
+  const base = statusBar(view, { now: 0 });
+  assert.ok(base.facts.some((fact) => fact.label === '累计'), 'wide enough: cumulative usage is shown');
+  // Exactly enough for the disconnect fact and no more: the cumulative fact must yield.
+  const width = stringWidth(base.activity) + stringWidth(' 连接 已断开 ') + 1;
+  const narrow = statusBar(view, { now: 0, width });
+  assert.deepEqual(narrow.facts.map((fact) => fact.label), ['连接']);
+});

@@ -151,6 +151,11 @@ export interface CreateModelOptions {
    * (ADR-042): a test asserts the endpoint and the mapping without reaching the network.
    */
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * The key saved by the wizard for this provider (ADR-177), read by the host from the
+   * credentials file. It is the second source: the environment variable always wins.
+   */
+  readonly storedKey?: string | null;
 }
 
 /**
@@ -164,8 +169,11 @@ export function createModelPort(
   options: CreateModelOptions = {},
 ): ModelPort {
   // Environment first: an inline key is a legacy fallback, never the preferred source.
-  const fromEnv = selection.apiKeyEnv === null ? undefined : env[selection.apiKeyEnv];
-  const apiKey = fromEnv !== undefined && fromEnv !== '' ? fromEnv : (selection.apiKey ?? undefined);
+  // Trimmed: a value pasted into a shell profile or a settings dialog often carries a trailing
+  // newline or space, which the provider rejects as an invalid key while the user sees a 'correct' one.
+  const fromEnv = selection.apiKeyEnv === null ? undefined : env[selection.apiKeyEnv]?.trim();
+  const stored = options.storedKey?.trim();
+  const apiKey = fromEnv !== undefined && fromEnv !== '' ? fromEnv : stored !== undefined && stored !== '' ? stored : (selection.apiKey ?? undefined);
   if (apiKey === undefined || apiKey === '') {
     throw new ModelConfigError(
       'missing-api-key',

@@ -5,7 +5,7 @@ import { createTestRenderer } from '@opentui/core/testing';
 import { runTui } from '../src/run.js';
 import { createRuntimeClient } from './runtime-client.js';
 
-test('a opens a complete provider wizard with an opaque backdrop and saves every model field', async () => {
+test('a opens a complete provider wizard on the terminal background and saves every model field', async () => {
   const { renderer, captureSpans, dispose, mockInput, flush, waitFor, waitForFrame } = await createTestRenderer({ width: 100, height: 32 });
   try {
     const { client, sessionReady, configured } = createRuntimeClient([{ name: 'existing', baseUrl: null, apiKeyEnv: null, keySet: false, custom: true, protocol: null, complete: false, models: [] }]);
@@ -19,9 +19,11 @@ test('a opens a complete provider wizard with an opaque backdrop and saves every
 
     const spans = captureSpans().lines.flatMap((row) => row.spans);
     const ink = RGBA.fromHex('#141419').toInts().join(',');
+    // ADR-178: the dialog paints no surface of its own and no scrim; it sits on the terminal
+    // background like every session panel. Only the selected row brings a fill.
     const surface = RGBA.fromHex('#2A2A33').toInts().join(',');
-    assert.ok(spans.some((span) => span.bg.toInts().join(',') === ink), 'backdrop is opaque brand ink');
-    assert.ok(spans.some((span) => span.bg.toInts().join(',') === surface), 'dialog has an independent surface');
+    assert.equal(spans.some((span) => span.bg.toInts().join(',') === ink), false, 'no opaque scrim');
+    assert.equal(spans.some((span) => span.bg.toInts().join(',') === surface), false, 'no independent surface');
 
     const next = async (): Promise<void> => {
       mockInput.pressEnter();
@@ -31,6 +33,7 @@ test('a opens a complete provider wizard with an opaque backdrop and saves every
     await next();
     mockInput.typeText('http://localhost:11434/v1');
     await next();
+    await next(); // API key step: leave empty and use the environment variable
     for (let index = 0; index < 14; index += 1) mockInput.pressBackspace();
     mockInput.typeText('DEMO_API_KEY');
     await next();
@@ -108,7 +111,7 @@ test('a missing model opens setup and restores the draft after saving without au
     mockInput.typeText('hello local model');
     mockInput.pressEnter();
     await waitForFrame((frame) => frame.includes('先完成服务商配置'));
-    for (let step = 0; step < 4; step += 1) {
+    for (let step = 0; step < 5; step += 1) {
       mockInput.pressEnter();
       await flush();
     }

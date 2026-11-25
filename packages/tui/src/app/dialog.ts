@@ -47,19 +47,50 @@ export function filterDialogRows<T extends DialogRow>(rows: readonly T[], query:
 }
 
 /** Group models by their provider prefix, current selection first (the Select model shape). */
+/** Phase two of the model picker (ADR-161): the reasoning efforts of a locked preset. */
+export function effortDialog(
+  preset: string,
+  efforts: readonly string[],
+  index: number,
+  current: ModelSelectionSummary | null,
+): DialogSpec {
+  return {
+    title: `${preset} · 选择推理力度`,
+    groups: [{
+      title: '档位',
+      rows: efforts.map((effort, offset) => ({
+        label: effort,
+        selected: offset === index,
+        ...(current?.id === preset && current.effort === effort ? { mark: '当前' } : {}),
+      })),
+    }],
+    footer: [{ key: 'enter', label: '切换' }, { key: 'esc', label: '返回' }],
+  };
+}
+
 export function modelDialog(
   models: readonly ModelSummary[],
   current: ModelSelectionSummary | null,
   query: string,
+  cursor: string | null = null,
 ): DialogSpec {
-  const visible = filterDialogRows(
-    models.map((model) => ({
-      label: model.id,
-      ...(model.efforts.length === 0 ? {} : { detail: `effort: ${model.efforts.join('/')}` }),
-      selected: model.id === current?.id,
-    })),
-    query,
-  );
+  // `models` arrives already ordered and filtered (modelMatches). The cursor — not the current
+  // model — is the highlighted row, because the cursor is what Enter runs. The current model
+  // keeps a '当前' mark.
+  const visible = models.map((model) => ({
+    label: model.id,
+    ...(model.efforts.length === 0 ? {} : { detail: `effort: ${model.efforts.join('/')}` }),
+    selected: model.id === cursor,
+    ...(model.id === current?.id ? { mark: '当前' } : {}),
+  }));
+  if (visible.length === 0) {
+    return {
+      title: '选择模型',
+      query,
+      groups: [{ title: '还没有可用的模型', rows: [{ label: '先用 /providers 配置服务商并设置 API key' }] }],
+      footer: [{ key: 'esc', label: '关闭' }],
+    };
+  }
   const groups = new Map<string, DialogRow[]>();
   for (const row of visible) {
     const provider = row.label.includes('/') ? row.label.slice(0, row.label.indexOf('/')) : row.label;
@@ -72,25 +103,6 @@ export function modelDialog(
     query,
     groups: [...groups.entries()].map(([title, rows]) => ({ title, rows })),
     footer: [{ key: 'enter', label: '切换' }, { key: 'esc', label: '关闭' }],
-  };
-}
-
-/** One group: the current model's reasoning levels (the /effort shortcut). */
-export function effortDialog(
-  models: readonly ModelSummary[],
-  current: ModelSelectionSummary,
-  index: number,
-): DialogSpec {
-  const model = models.find((entry) => entry.id === current.id);
-  const rows = (model?.efforts ?? []).map((effort, row) => ({
-    label: effort,
-    selected: row === index,
-    ...(current.effort === effort ? { mark: '●' } : {}),
-  }));
-  return {
-    title: `思考档位 · ${current.id}`,
-    groups: rows.length === 0 ? [{ title: null, rows: [{ label: '该模型没有可调档位', selected: true }] }] : [{ title: null, rows }],
-    footer: [{ key: 'enter', label: '确认' }, { key: 'esc', label: '关闭' }],
   };
 }
 

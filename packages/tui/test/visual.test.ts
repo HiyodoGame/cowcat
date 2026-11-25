@@ -55,7 +55,7 @@ test('the model dialog uses a native selected-row background and a text field', 
   const { renderer, renderOnce, captureCharFrame, captureSpans, dispose, flush } = await createTestRenderer({ width: 100, height: 30 });
   try {
     const screen = createScreen(renderer, THEME, { title: 't' });
-    const view = openModelPanel(withModelList(initialView(), [{ id: 'openai/gpt-6.1-sol', efforts: ['high'] }, { id: 'zai/glm-5.3-flash', efforts: [] }], { id: 'zai/glm-5.3-flash', effort: null }));
+    const view = openModelPanel(withModelList(initialView(), [{ id: 'openai/gpt-6.1-sol', efforts: ['high'], available: true, missingKey: null }, { id: 'zai/glm-5.3-flash', efforts: [], available: true, missingKey: null }], { id: 'zai/glm-5.3-flash', effort: null }));
     screen.update(frameOf(view, { width: screen.contentWidth(), now: 1_000 }));
     await renderOnce();
     await flush();

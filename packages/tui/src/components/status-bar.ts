@@ -13,39 +13,42 @@ export interface StatusOptions {
 export function statusBar(view: TuiView, options: StatusOptions = { now: 0 }): StatusNode {
   const copy = copyFor(view.lang);
   const state = stateOf(view, copy, options.now);
-  const facts: StatusFact[] = [];
-  if (view.planMode) facts.push({ label: '模式', value: 'plan' });
-  if (view.acceptEdits) facts.push({ label: '模式', value: copy.modeAcceptEdits });
-  if (view.model !== null) facts.push({ label: '模型', value: shortModel(view.model) });
+  // Each fact carries a rank: when the row is too narrow, the lowest-ranked facts go first.
+  // Display order is the order of the calls below (unchanged); rank only decides what fits.
+  const ranked: { readonly fact: StatusFact; readonly rank: number }[] = [];
+  const add = (rank: number, fact: StatusFact): void => { ranked.push({ fact, rank }); };
+  if (view.planMode) add(1, { label: '模式', value: 'plan' });
+  if (view.acceptEdits) add(1, { label: '模式', value: copy.modeAcceptEdits });
+  if (view.model !== null) add(5, { label: '模型', value: shortModel(view.model) });
   const elapsed = elapsedOf(view, options.now);
-  if (elapsed !== null) facts.push({ label: '用时', value: elapsed });
-  if (view.scrollOffset > 0) facts.push({ label: '新输出', value: String(view.newSinceScroll) });
+  if (elapsed !== null) add(3, { label: '用时', value: elapsed });
+  if (view.scrollOffset > 0) add(2, { label: '新输出', value: String(view.newSinceScroll) });
   if (view.todos.length > 0) {
     const done = view.todos.filter((todo) => todo.status === 'completed').length;
-    facts.push({ label: '待办', value: `${String(done)}/${String(view.todos.length)}` });
+    add(6, { label: '待办', value: `${String(done)}/${String(view.todos.length)}` });
   }
   const background = view.tasks.filter((task) => task.state === 'running').length;
-  if (background > 0) facts.push({ label: '后台', value: String(background) });
-  if (view.usage !== null) {
-    const window = view.contextWindow;
-    if (window !== null && window > 0) {
-      const used = view.usage.input + view.usage.cacheRead + view.usage.cacheCreation + view.usage.output;
-      facts.push({ label: '上下文', value: `${String(Math.round((used / window) * 100))}%` });
-    }
-    facts.push({ label: '累计', value: `↑${String(view.usageTotals.input)} ↓${String(view.usageTotals.output)}` });
-    if (view.price !== null) facts.push({ label: '费用', value: formatCost(costOf(view.usageTotals, view.price)) });
+  if (background > 0) add(7, { label: '后台', value: String(background) });
+  if (view.usage !== null && view.contextWindow !== null && view.contextWindow > 0) {
+    const used = view.usage.input + view.usage.cacheRead + view.usage.cacheCreation + view.usage.output;
+    add(4, { label: '上下文', value: `${String(Math.round((used / view.contextWindow) * 100))}%` });
   }
-  if (view.closed) facts.push({ label: '连接', value: '已断开' });
+  if (view.usage !== null) add(9, { label: '累计', value: `↑${String(view.usageTotals.input)} ↓${String(view.usageTotals.output)}` });
+  if (view.usage !== null && view.price !== null) add(8, { label: '费用', value: formatCost(costOf(view.usageTotals, view.price)) });
+  if (view.closed) add(0, { label: '连接', value: '已断开' });
   const width = options.width;
-  const kept: StatusFact[] = [];
+
+  const chosen = new Set<number>();
   let room = width === undefined ? Number.POSITIVE_INFINITY : Math.max(0, width - stringWidth(state.text));
-  for (const fact of facts) {
-    const cost = stringWidth(` ${fact.label} ${fact.value} `) + 1;
+  const byRank = ranked.map((entry, index) => ({ ...entry, index })).sort((a, b) => a.rank - b.rank || a.index - b.index);
+  for (const entry of byRank) {
+    const cost = stringWidth(` ${entry.fact.label} ${entry.fact.value} `) + 1;
     if (cost <= room) {
-      kept.push(fact);
+      chosen.add(entry.index);
       room -= cost;
     }
   }
+  const kept = ranked.filter((_, index) => chosen.has(index)).map((entry) => entry.fact);
   return statusBlock('session-status', width === undefined ? state.text : truncate(state.text, width), kept, state.token);
 }
 

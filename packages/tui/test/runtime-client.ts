@@ -13,7 +13,7 @@ export interface ProviderWrite {
 
 export function createRuntimeClient(
   initialProviders: readonly ProviderSummary[] = [BUILTIN_ZAI],
-  models: readonly ModelSummary[] = [{ id: 'alpha/one', efforts: [] }, { id: 'beta/two', efforts: [] }],
+  models: readonly ModelSummary[] = [{ id: 'alpha/one', efforts: [], available: true, missingKey: null }, { id: 'beta/two', efforts: [], available: true, missingKey: null }],
   modelListConfigured = true,
   turnSendDelayMs = 0,
 ) {

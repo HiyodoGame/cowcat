@@ -365,7 +365,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         if (dialogOpen && !key.ctrl && !key.meta && key.name !== 'escape' && key.name !== 'up' && key.name !== 'down' && key.name !== 'return') {
           key.preventDefault();
           const form = view.current.providerForm;
-          const formText = form !== null && ['name', 'baseUrl', 'apiKeyEnv', 'modelId', 'context', 'output'].includes(form.step);
+          const formText = form !== null && ['name', 'baseUrl', 'apiKey', 'apiKeyEnv', 'modelId', 'context', 'output'].includes(form.step);
           if (formText) {
             if (key.name === 'backspace') view.current = setProviderFormValue(view.current, form.value.slice(0, -1));
             else if (key.name.length === 1) view.current = setProviderFormValue(view.current, form.value + key.sequence);
@@ -1189,10 +1189,14 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
         const model = view.current.modelList.find((entry) => entry.id === current.id);
         if (model === undefined) {
           view.current = addNotice(view.current, 'warn', '还没有可调档位的模型：先用 /model 选一个。');
+        } else if (model.efforts.length === 0) {
+          // No rows to show is not a dialog: say so and leave the picker closed.
+          view.current = closeModelPanel(addNotice(view.current, 'info', `${model.id} 没有声明思考档位。`));
         } else {
           const panel = view.current.modelPanel;
           if (panel === null) return;
-          view.current = { ...view.current, modelPanel: { index: 0, preset: current.id, query: panel.query } };
+          const start = Math.max(0, model.efforts.indexOf(current.effort ?? ''));
+          view.current = { ...view.current, modelPanel: { index: current.effort === null ? 0 : start, preset: current.id, query: panel.query } };
         }
         draw();
       } catch (error) {
@@ -1383,7 +1387,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
           if (picked.preset !== null) applyModel(picked.preset, picked.effort);
         } else {
           const entered = enterModelPanel(view.current);
-          view.current = entered.view;
+          view.current = entered.refused === undefined ? entered.view : addNotice(entered.view, 'error', entered.refused);
           if (entered.picked !== null) applyModel(entered.picked, null);
         }
         draw();

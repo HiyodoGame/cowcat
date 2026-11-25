@@ -2649,7 +2649,7 @@ test('provider.configure saves a full custom preset, applies it and reports miss
     definition: { protocol: 'openai', model: 'qwen3-coder', limits: { context: 128000, output: 8192 }, toolCalls: true },
   });
   assert.deepEqual(result, {
-    saved: true, current: { id: 'local/qwen3-coder', effort: null }, keySet: false, requiresRestart: true,
+    saved: true, current: { id: 'local/qwen3-coder', effort: null }, keySet: false, keySource: null, requiresRestart: true,
   });
   const document = JSON.parse(readFileSync(join(home, '.cowcat', 'config.json'), 'utf8')) as {
     model: { preset: string; providers: Record<string, unknown>; presets: Record<string, unknown> };
@@ -2706,4 +2706,59 @@ test('host.close saves a replay snapshot before releasing the session lock', asy
   await fixture.close();
 
   assert.equal(existsSync(join(home, '.cowcat', 'sessions', 'sess_host_snapshot.snapshot.json')), true);
+});
+
+test('provider.configure stores a typed key in the credentials file and never echoes or writes it to config (ADR-177)', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-key-');
+  const home = tempDir(t, 'cowcat-host-key-home-');
+  const fixture = await start({ cwd, home, model: new ScriptedModel([]), env: {} });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_key');
+  const secret = 'ds-live-0123456789abcdef';
+
+  const result = await fixture.client.configureProvider('sess_key', {
+    name: 'deepseek', protocol: 'openai', baseUrl: null, apiKeyEnv: 'DEEPSEEK_API_KEY', apiKey: secret,
+    preset: 'deepseek/deepseek-flash', activate: true,
+  });
+  assert.equal(result.keySet, true, 'the stored key counts as set');
+  assert.equal(result.keySource, 'file', 'the source is named, the value is not');
+  assert.equal(JSON.stringify(result).includes(secret), false, 'the response never carries the key');
+
+  const credentials = JSON.parse(readFileSync(join(home, '.cowcat', 'credentials.json'), 'utf8')) as Record<string, { apiKey: string }>;
+  assert.equal(credentials['deepseek']?.apiKey, secret, 'the key is stored where ADR-177 says');
+  const config = readFileSync(join(home, '.cowcat', 'config.json'), 'utf8');
+  assert.equal(config.includes(secret), false, 'config.json never holds the key');
+  assert.equal((await fixture.client.listProviders()).providers.find((entry) => entry.name === 'deepseek')?.keySet, true);
+  assert.equal(JSON.stringify(await fixture.client.listProviders()).includes(secret), false);
+});
+
+test('provider.configure refuses a key with spaces, without echoing it', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-key-bad-');
+  const home = tempDir(t, 'cowcat-host-key-bad-home-');
+  const fixture = await start({ cwd, home, model: new ScriptedModel([]), env: {} });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_key_bad');
+  await assert.rejects(() => fixture.client.configureProvider('sess_key_bad', {
+    name: 'deepseek', protocol: 'openai', baseUrl: null, apiKeyEnv: 'DEEPSEEK_API_KEY', apiKey: 'ds-live part-of-a-line',
+    preset: 'deepseek/deepseek-flash', activate: true,
+  }), (error: unknown) => error instanceof ProtocolClientError && !(error as Error).message.includes('ds-live'));
+  assert.equal(existsSync(join(home, '.cowcat', 'credentials.json')), false);
+});
+
+test('model.list offers chat models only, and says which ones cannot run yet (ADR-177 ④)', async (t) => {
+  const cwd = tempDir(t, 'cowcat-host-models-');
+  const home = tempDir(t, 'cowcat-host-models-home-');
+  writeUserConfig(home, { model: { preset: 'deepseek/deepseek-flash' } });
+  const fixture = await start({ cwd, home, model: new ScriptedModel([]), env: {} });
+  t.after(() => fixture.close());
+  await fixture.client.initialize();
+  await fixture.client.createSession('sess_models');
+  const { models } = await fixture.client.listModels('sess_models');
+  assert.equal(models.some((entry) => entry.id === 'zai/glm-4v-flash'), false, 'a vision bridge is not a chat model');
+  const deepseek = models.find((entry) => entry.id === 'deepseek/deepseek-flash');
+  assert.ok(deepseek !== undefined);
+  assert.equal(deepseek.available, false);
+  assert.equal(deepseek.missingKey, 'DEEPSEEK_API_KEY', 'the variable to set is named');
 });
