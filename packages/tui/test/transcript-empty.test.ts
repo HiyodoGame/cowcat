@@ -24,3 +24,15 @@ test('real content and running work suppress the welcome panel', () => {
     assert.ok(transcriptBlocks(view, { width: 80, now: 0 }).every((node) => node.key !== 'empty-session'));
   }
 });
+
+test('streaming text renders through the same Markdown path as the settled answer', () => {
+  const streamed = '# 标题\n\n- **粗体** 项\n\n```ts\nconst x = 1;';
+  const view: TuiView = { ...initialView(), streaming: streamed };
+  const nodes = transcriptBlocks(view, { width: 60, now: 0 });
+  const node = nodes.find((n) => n.key === 'streaming');
+  assert.ok(node !== undefined && node.kind === 'text');
+  const texts = node.rows.map((row) => row.text);
+  assert.ok(!texts.some((text) => text.includes('# 标题')), 'heading marker is consumed, not shown raw');
+  assert.ok(texts.includes('标题'));
+  assert.ok(texts.some((text) => text.includes('const x = 1;')), 'an unclosed fence still shows its body');
+});
